@@ -24,6 +24,8 @@ npx cmux@latest
 bun add -g cmux@latest
 npm install -g cmux@latest
 ```
+ 
+**cmux uninstall**
 
 <!-- ```bash
 # with uv
