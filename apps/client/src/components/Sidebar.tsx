@@ -1,19 +1,36 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
+import { GitHubIcon } from "@/components/icons/github";
+import SearchableSelect, {
+  type SelectOption,
+  type SelectOptionObject,
+} from "@/components/ui/searchable-select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
+import { api } from "@cmux/convex/api";
 import { type Doc } from "@cmux/convex/dataModel";
+import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentType,
   type CSSProperties,
 } from "react";
+import { useQuery } from "convex/react";
+import { toast } from "sonner";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
@@ -59,6 +76,95 @@ const navItems: SidebarNavItem[] = [
   },
 ];
 
+const PROJECT_SELECTION_STORAGE_KEY = "selectedProject";
+const CLOUD_MODE_STORAGE_KEY = "isCloudMode";
+
+const parseStoredProjectSelection = (stored: string | null): string | null => {
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      typeof parsed[0] === "string"
+    ) {
+      return parsed[0];
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return null;
+};
+
+type ProjectSelectionListener = () => void;
+
+const projectSelectionListeners = new Set<ProjectSelectionListener>();
+let projectSelectionEventsInitialized = false;
+
+const notifyProjectSelectionListeners = () => {
+  for (const listener of projectSelectionListeners) {
+    listener();
+  }
+};
+
+const initializeProjectSelectionEvents = () => {
+  if (projectSelectionEventsInitialized) return;
+  if (typeof window === "undefined") return;
+  projectSelectionEventsInitialized = true;
+  window.addEventListener("storage", (event) => {
+    if (event.key === PROJECT_SELECTION_STORAGE_KEY) {
+      notifyProjectSelectionListeners();
+    }
+  });
+};
+
+const subscribeToProjectSelection = (listener: ProjectSelectionListener) => {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  initializeProjectSelectionEvents();
+  projectSelectionListeners.add(listener);
+  return () => {
+    projectSelectionListeners.delete(listener);
+  };
+};
+
+const readStoredProjectSelection = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return parseStoredProjectSelection(
+    window.localStorage.getItem(PROJECT_SELECTION_STORAGE_KEY)
+  );
+};
+
+const getServerProjectSelection = (): string | null => null;
+
+function useStoredSelectedProject(): string | null {
+  return useSyncExternalStore(
+    subscribeToProjectSelection,
+    readStoredProjectSelection,
+    getServerProjectSelection
+  );
+}
+
+const writeStoredProjectSelection = (value: string | null): void => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    PROJECT_SELECTION_STORAGE_KEY,
+    JSON.stringify(value ? [value] : [])
+  );
+  notifyProjectSelectionListeners();
+};
+
+const getFirstSelectableValue = (options: SelectOption[]): string | null => {
+  for (const option of options) {
+    if (typeof option === "string") return option;
+    if (!option.heading) {
+      return option.value;
+    }
+  }
+  return null;
+};
+
 export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
@@ -79,7 +185,125 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     return stored === "true";
   });
 
-  const { expandTaskIds } = useExpandTasks();
+  const { expandTaskIds, addTaskToExpand } = useExpandTasks();
+  const { socket } = useSocket();
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+
+  const selectedProject = useStoredSelectedProject();
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
+  const reposByOrg = useQuery(api.github.getReposByOrg, { teamSlugOrId });
+
+  const projectOptions = useMemo<SelectOption[]>(() => {
+    const envOptions =
+      environments?.map((env) => ({
+        label: env.name,
+        value: `env:${env._id}`,
+        icon: (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Environment: {env.name}</TooltipContent>
+          </Tooltip>
+        ),
+        iconKey: "environment",
+      })) ?? [];
+
+    const repoGroups = reposByOrg ?? {};
+    const repoDocs = Object.values(repoGroups).flatMap((repos) => repos);
+    const uniqueRepos = repoDocs.reduce(
+      (acc, repo) => {
+        const existing = acc.get(repo.fullName);
+        if (!existing) {
+          acc.set(repo.fullName, repo);
+          return acc;
+        }
+        const existingActivity =
+          existing.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+        const candidateActivity =
+          repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+        if (candidateActivity > existingActivity) {
+          acc.set(repo.fullName, repo);
+        }
+        return acc;
+      },
+      new Map<string, Doc<"repos">>()
+    );
+    const sortedRepos = Array.from(uniqueRepos.values()).sort((a, b) => {
+      const aPushedAt = a.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+      const bPushedAt = b.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+      if (aPushedAt !== bPushedAt) {
+        return bPushedAt - aPushedAt;
+      }
+      return a.fullName.localeCompare(b.fullName);
+    });
+    const repoOptions = sortedRepos.map((repo) => ({
+      label: repo.fullName,
+      value: repo.fullName,
+      icon: (
+        <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+      ),
+      iconKey: "github",
+    }));
+
+    const options: SelectOption[] = [];
+    if (envOptions.length > 0) {
+      options.push({
+        label: "Environments",
+        value: "__heading-env",
+        heading: true,
+      });
+      options.push(...envOptions);
+    }
+    if (repoOptions.length > 0) {
+      options.push({
+        label: "Repositories",
+        value: "__heading-repo",
+        heading: true,
+      });
+      options.push(...repoOptions);
+    }
+
+    return options;
+  }, [environments, reposByOrg]);
+
+  const projectOptionMap = useMemo(() => {
+    const map = new Map<string, SelectOptionObject>();
+    for (const option of projectOptions) {
+      const normalized =
+        typeof option === "string"
+          ? { label: option, value: option }
+          : option;
+      if (normalized.heading) continue;
+      map.set(normalized.value, normalized);
+    }
+    return map;
+  }, [projectOptions]);
+
+  const effectiveSelection = useMemo(() => {
+    if (selectedProject && projectOptionMap.has(selectedProject)) {
+      return selectedProject;
+    }
+    return getFirstSelectableValue(projectOptions);
+  }, [projectOptionMap, projectOptions, selectedProject]);
+
+  const selectedOption = effectiveSelection
+    ? projectOptionMap.get(effectiveSelection)
+    : undefined;
+
+  const isLoadingProjects =
+    environments === undefined || reposByOrg === undefined;
+
+  useEffect(() => {
+    if (!effectiveSelection) return;
+    if (selectedProject === effectiveSelection) return;
+    writeStoredProjectSelection(effectiveSelection);
+    if (effectiveSelection.startsWith("env:")) {
+      localStorage.setItem(CLOUD_MODE_STORAGE_KEY, JSON.stringify(true));
+    }
+  }, [effectiveSelection, selectedProject]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -115,7 +339,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Listen for storage events from command bar
+  // Listen for storage events from command bar (sidebar visibility sync)
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === "sidebarHidden" && e.newValue !== null) {
@@ -126,6 +350,96 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
+
+  const handleProjectChange = useCallback((values: string[]) => {
+    const next = values[0] ?? null;
+    writeStoredProjectSelection(next);
+    if (next && next.startsWith("env:")) {
+      localStorage.setItem(CLOUD_MODE_STORAGE_KEY, JSON.stringify(true));
+    }
+  }, []);
+
+  const handleCreateWorkspace = useCallback(async () => {
+    if (isCreatingWorkspace) return;
+    const selection = effectiveSelection;
+    if (!selection) {
+      toast.error("Select a project before creating a workspace.");
+      return;
+    }
+    if (selection.startsWith("env:")) {
+      toast.error("Local workspaces require a repository selection.");
+      return;
+    }
+    if (!socket) {
+      toast.error("Socket is not connected yet. Please try again momentarily.");
+      return;
+    }
+
+    setIsCreatingWorkspace(true);
+    try {
+      const option = projectOptionMap.get(selection);
+      const readableLabel = option?.label ?? selection;
+      if (selectedProject !== selection) {
+        writeStoredProjectSelection(selection);
+      }
+      const repoUrl = `https://github.com/${selection}.git`;
+
+      socket.emit(
+        "create-local-workspace",
+        {
+          teamSlugOrId,
+          projectFullName: selection,
+          repoUrl,
+        },
+        (response: CreateLocalWorkspaceResponse) => {
+          if (!response?.success) {
+            const message =
+              response?.error ??
+              `Unable to create workspace for ${readableLabel}`;
+            toast.error("Failed to create workspace", {
+              description: message,
+            });
+            setIsCreatingWorkspace(false);
+            return;
+          }
+
+          if (response.taskId) {
+            addTaskToExpand(response.taskId);
+          }
+
+          toast.success(
+            `Workspace ${response.workspaceName ?? readableLabel} ready`
+          );
+          setIsCreatingWorkspace(false);
+        }
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error ?? "Unknown");
+      toast.error("Failed to create workspace", {
+        description: message,
+      });
+      setIsCreatingWorkspace(false);
+    }
+  }, [
+    addTaskToExpand,
+    effectiveSelection,
+    isCreatingWorkspace,
+    projectOptionMap,
+    selectedProject,
+    socket,
+    teamSlugOrId,
+  ]);
+
+  const dropdownDisabled = projectOptionMap.size === 0;
+  const newWorkspaceTooltip = effectiveSelection
+    ? `New workspace for ${selectedOption?.label ?? effectiveSelection}`
+    : "Select a project to create a workspace";
+  const dropdownTooltip = dropdownDisabled
+    ? "No projects available"
+    : selectedOption
+      ? `Project: ${selectedOption.label}`
+      : "Choose project";
 
   const onMouseMove = useCallback((e: MouseEvent) => {
     // Batch width updates to once per animation frame to reduce layout thrash
@@ -282,13 +596,71 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           </div>
 
           <div className="mt-2 flex flex-col gap-0.5">
-            <SidebarSectionLink
-              to="/$teamSlugOrId/workspaces"
-              params={{ teamSlugOrId }}
-              exact
-            >
-              Workspaces
-            </SidebarSectionLink>
+            <div className="flex items-center gap-2 pr-2">
+              <SidebarSectionLink
+                to="/$teamSlugOrId/workspaces"
+                params={{ teamSlugOrId }}
+                exact
+                className="flex-1"
+              >
+                Workspaces
+              </SidebarSectionLink>
+              <div className="flex items-center">
+                <div className="flex items-stretch overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+                  <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={handleCreateWorkspace}
+                        disabled={
+                          isCreatingWorkspace || !effectiveSelection || !socket
+                        }
+                        className="h-[22px] w-[24px] flex items-center justify-center text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/60 focus-visible:ring-offset-1 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent dark:text-neutral-300 dark:hover:bg-neutral-900 dark:focus-visible:ring-neutral-600/60 dark:focus-visible:ring-offset-neutral-950"
+                      >
+                        <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span className="sr-only">Create workspace</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="center">
+                      {newWorkspaceTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                  <span
+                    aria-hidden="true"
+                    className="w-px bg-neutral-200 dark:bg-neutral-800"
+                  />
+                  <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <div className="h-[22px] flex items-stretch">
+                        <SearchableSelect
+                          options={projectOptions}
+                          value={effectiveSelection ? [effectiveSelection] : []}
+                          onChange={handleProjectChange}
+                          placeholder="Select project"
+                          singleSelect
+                          loading={isLoadingProjects}
+                          disabled={dropdownDisabled}
+                          showSearch
+                          className="h-[22px]"
+                          classNames={{
+                            root: "h-[22px]",
+                            trigger:
+                              "!border-0 !rounded-none h-[22px] w-[24px] px-0 justify-center text-transparent !bg-transparent hover:bg-neutral-100 dark:hover:bg-neutral-900 focus-visible:ring-0 focus-visible:ring-offset-0",
+                            popover: "w-[320px]",
+                          }}
+                          popoverSide="right"
+                          popoverAlign="center"
+                          popoverSideOffset={8}
+                        />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="center">
+                      {dropdownTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="ml-2 pt-px">

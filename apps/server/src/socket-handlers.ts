@@ -11,6 +11,8 @@ import {
   OpenInEditorSchema,
   SpawnFromCommentSchema,
   StartTaskSchema,
+  CreateLocalWorkspaceSchema,
+  type CreateLocalWorkspaceResponse,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -568,6 +570,192 @@ export function setupSocketHandlers(
         });
       }
     });
+
+    socket.on(
+      "create-local-workspace",
+      async (
+        rawData,
+        callback: (response: CreateLocalWorkspaceResponse) => void,
+      ) => {
+        const parsed = CreateLocalWorkspaceSchema.safeParse(rawData);
+        if (!parsed.success) {
+          serverLogger.error(
+            "Invalid create-local-workspace payload:",
+            parsed.error,
+          );
+          callback({
+            success: false,
+            error: "Invalid workspace request",
+          });
+          return;
+        }
+
+        const {
+          teamSlugOrId: requestedTeamSlugOrId,
+          projectFullName,
+          repoUrl: explicitRepoUrl,
+        } = parsed.data;
+        const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+
+        if (projectFullName && projectFullName.startsWith("env:")) {
+          callback({
+            success: false,
+            error: "Local workspaces cannot be created from environments.",
+          });
+          return;
+        }
+
+        if (
+          projectFullName &&
+          !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(projectFullName)
+        ) {
+          callback({
+            success: false,
+            error: "Invalid repository name.",
+          });
+          return;
+        }
+
+        const repoUrl =
+          explicitRepoUrl ??
+          (projectFullName
+            ? `https://github.com/${projectFullName}.git`
+            : undefined);
+
+        try {
+          const { name: workspaceName } = await getConvex().mutation(
+            api.localWorkspaces.reserve,
+            {
+              teamSlugOrId,
+            },
+          );
+
+          const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
+            ? path.resolve(process.env.CMUX_WORKSPACE_DIR)
+            : path.join(os.homedir(), "cmux", "local-workspaces");
+          const workspaceDirName = `workspace-${workspaceName}`;
+          const workspacePath = path.join(workspaceRoot, workspaceDirName);
+
+          await fs.mkdir(workspaceRoot, { recursive: true });
+          try {
+            await fs.mkdir(workspacePath, { recursive: false });
+          } catch (error) {
+            if (
+              error &&
+              typeof error === "object" &&
+              "code" in error &&
+              (error as NodeJS.ErrnoException).code === "EEXIST"
+            ) {
+              throw new Error(
+                `Workspace directory already exists: ${workspacePath}`,
+              );
+            }
+            throw error;
+          }
+
+          await execAsync("git init", { cwd: workspacePath });
+          if (repoUrl) {
+            await execAsync(`git remote add origin "${repoUrl}"`, {
+              cwd: workspacePath,
+            }).catch((error) => {
+              serverLogger.warn(
+                `Failed to set git remote for ${workspacePath}:`,
+                error,
+              );
+            });
+          }
+
+          const descriptor = projectFullName
+            ? `Local workspace ${workspaceName} (${projectFullName})`
+            : `Local workspace ${workspaceName}`;
+
+          const taskId = await getConvex().mutation(api.tasks.create, {
+            teamSlugOrId,
+            text: descriptor,
+            description: descriptor,
+            projectFullName: projectFullName ?? undefined,
+            worktreePath: workspacePath,
+          });
+
+          const { taskRunId } = await getConvex().mutation(
+            api.taskRuns.create,
+            {
+              teamSlugOrId,
+              taskId,
+              prompt: descriptor,
+              agentName: "local-workspace",
+            },
+          );
+
+          await getConvex().mutation(api.taskRuns.updateWorktreePath, {
+            teamSlugOrId,
+            id: taskRunId,
+            worktreePath: workspacePath,
+          });
+
+          await getConvex().mutation(api.taskRuns.updateStatusPublic, {
+            teamSlugOrId,
+            id: taskRunId,
+            status: "running",
+          });
+
+          const folderParam = process.env.CMUX_WORKSPACE_DIR
+            ? `/$CMUX_WORKSPACE_DIR/${workspaceDirName}`
+            : workspacePath;
+          const folderForUrl = folderParam.replace(/\\/g, "/");
+          const workspaceUrl = `http://localhost:39384/?folder=${encodeURIComponent(
+            folderForUrl,
+          )}`;
+
+          await getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
+            teamSlugOrId,
+            id: taskRunId,
+            vscode: {
+              provider: "other",
+              status: "running",
+              url: "http://localhost:39384",
+              workspaceUrl,
+              startedAt: Date.now(),
+            },
+          });
+
+          try {
+            void gitDiffManager.watchWorkspace(
+              workspacePath,
+              (changedPath: string) => {
+                rt.emit("git-file-changed", {
+                  workspacePath,
+                  filePath: changedPath,
+                });
+              },
+            );
+          } catch (error) {
+            serverLogger.warn(
+              "Could not set up file watching for workspace:",
+              error,
+            );
+          }
+
+          callback({
+            success: true,
+            taskId,
+            taskRunId,
+            workspaceName,
+            workspacePath,
+            workspaceUrl,
+          });
+        } catch (error) {
+          serverLogger.error("Error creating local workspace:", error);
+          callback({
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to create local workspace",
+          });
+        }
+      },
+    );
 
     // Sync PR state (non-destructive): query GitHub and update Convex
     socket.on("github-sync-pr-state", async (data, callback) => {

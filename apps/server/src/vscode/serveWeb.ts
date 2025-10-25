@@ -15,6 +15,7 @@ type Logger = {
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 39384;
 let resolvedVSCodeExecutable: string | null = null;
+const unavailableServeWebPorts = new Set<number>();
 
 export type VSCodeServeWebHandle = {
   process: ChildProcess;
@@ -37,7 +38,12 @@ export async function ensureVSCodeServeWeb(
   const port = options?.port ?? DEFAULT_PORT;
   const portAvailable = await isPortAvailable(port, logger);
   if (!portAvailable) {
-    logger.warn(`VS Code serve-web skipped because port ${port} is not available.`);
+    if (!unavailableServeWebPorts.has(port)) {
+      unavailableServeWebPorts.add(port);
+      logger.warn(`VS Code serve-web skipped because port ${port} is not available.`);
+    } else {
+      logger.debug?.(`VS Code serve-web still unavailable on port ${port}; skipping launch.`);
+    }
     return null;
   }
 

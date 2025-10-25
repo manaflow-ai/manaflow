@@ -58,6 +58,10 @@
       "import": "./src/utils/reserved-cmux-ports.ts",
       "types": "./src/utils/reserved-cmux-ports.ts"
     },
+    "./utils/generate-workspace-name": {
+      "import": "./src/utils/generate-workspace-name.ts",
+      "types": "./src/utils/generate-workspace-name.ts"
+    },
     "./utils/validate-exposed-ports": {
       "import": "./src/utils/validate-exposed-ports.ts",
       "types": "./src/utils/validate-exposed-ports.ts"
