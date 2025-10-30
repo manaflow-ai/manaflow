@@ -18,6 +18,7 @@ import type {
   ChangeEvent,
 } from "react";
 import {
+  ArrowUpRight,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
   Copy,
   Check,
   Loader2,
+  Github,
 } from "lucide-react";
 import {
   Decoration,
@@ -60,6 +62,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import CmuxLogo from "@/components/logo/cmux-logo";
 import { refractor } from "refractor/all";
 
 import {
@@ -1680,6 +1683,43 @@ function ReviewProgressIndicator({
           aria-valuemax={totalFileCount}
           aria-valuenow={processedFileCount ?? 0}
         />
+      </div>
+      <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 shadow-sm transition hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700">
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-md bg-white shadow-sm ring-1 ring-neutral-100 dark:bg-neutral-950 dark:ring-neutral-800">
+              <CmuxLogo aria-hidden height={28} showWordmark={false} />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                Help cmux grow automated reviews
+              </p>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                Visit cmux.dev and star the GitHub repo to support richer review automation.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <a
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 transition hover:border-neutral-400 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
+              href="https://cmux.dev"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              <span>Visit cmux.dev</span>
+              <ArrowUpRight className="h-4 w-4" aria-hidden />
+            </a>
+            <a
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-black/80 dark:bg-white dark:text-neutral-900 dark:hover:bg-white/90"
+              href="https://github.com/manaflow-ai/cmux"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              <Github className="h-4 w-4" aria-hidden />
+              <span>Star on GitHub</span>
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );
