@@ -1,4 +1,5 @@
 import { waitUntil } from "@vercel/functions";
+import { unstable_cache as cache } from "next/cache";
 
 import { DirectDownloadRedirector } from "@/app/direct-download-macos/redirector";
 import {
@@ -66,10 +67,18 @@ const loadReleaseInfo = async (): Promise<ReleaseInfo> => {
   }
 };
 
+const getCachedReleaseInfo = cache(
+  async () => loadReleaseInfo(),
+  ["direct-download-release-info"],
+  {
+    revalidate: 60 * 60, // 1 hour, aligns with GitHub release cadence
+  }
+);
+
 export default async function DirectDownloadPage({
   searchParams,
 }: DirectDownloadPageProps) {
-  const releaseInfo = await loadReleaseInfo();
+  const releaseInfo = await getCachedReleaseInfo();
   const queryArchitecture = normalizeMacArchitecture(
     searchParamValue(searchParams, "arch")
   );
