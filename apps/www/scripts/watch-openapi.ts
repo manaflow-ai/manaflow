@@ -47,7 +47,9 @@ console.timeEnd("generate client");
 
 try {
   fs.unlinkSync(tmpFile);
-} catch {
+} catch (error) {
+  console.error("[apps/www/scripts/watch-openapi.ts] Caught error", error);
+
   // ignore if already removed by concurrent runs
 }
 

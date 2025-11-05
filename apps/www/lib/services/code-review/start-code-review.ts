@@ -143,6 +143,10 @@ export async function startCodeReviewJob({
         });
       }
     } catch (error) {
+      console.error("[code-review] Failed to verify team access", {
+        teamSlugOrId: payload.teamSlugOrId,
+        error,
+      });
       console.warn("[code-review] Failed to verify team access", {
         teamSlugOrId: payload.teamSlugOrId,
         error,

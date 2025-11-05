@@ -256,6 +256,8 @@ async function mapWithConcurrency<T, R>(
         const value = await worker(items[currentIndex] as T, currentIndex);
         results[currentIndex] = { status: "fulfilled", value };
       } catch (error) {
+        console.error("[apps/www/scripts/pr-review-heatmap.ts] Caught error", error);
+
         results[currentIndex] = { status: "rejected", reason: error };
       }
     }
@@ -733,6 +735,8 @@ function parseGithubPrUrl(value: string): ParsedPrIdentifier {
   try {
     url = new URL(value);
   } catch (_error) {
+    console.error("[apps/www/scripts/pr-review-heatmap.ts] Caught error", _error);
+
     throw new Error(`Invalid PR URL: ${value}`);
   }
   const parts = url.pathname.split("/").filter(Boolean);
@@ -751,7 +755,9 @@ function parseGithubPrUrl(value: string): ParsedPrIdentifier {
 function tryParseGithubPrUrl(value: string): ParsedPrIdentifier | null {
   try {
     return parseGithubPrUrl(value);
-  } catch {
+  } catch (error) {
+    console.error("[apps/www/scripts/pr-review-heatmap.ts] Caught error", error);
+
     return null;
   }
 }
@@ -1114,6 +1120,8 @@ async function main(): Promise<void> {
           githubApiBaseUrl: options.githubApiBaseUrl ?? undefined,
         });
       } catch (error) {
+        console.error("[apps/www/scripts/pr-review-heatmap.ts] Caught error", error);
+
         if (!allowGhCliFallback) {
           throw error;
         }

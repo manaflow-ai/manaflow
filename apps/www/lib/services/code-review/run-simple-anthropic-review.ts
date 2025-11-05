@@ -146,7 +146,11 @@ function parseRepoSlug(prIdentifier: string): RepoSlug | null {
       }
       return null;
     }
-  } catch {
+  } catch (error) {
+    console.error("[simple-review] Failed to parse repo slug URL", {
+      prIdentifier,
+      error,
+    });
     // Not a URL, fall through to pattern checks.
   }
 
@@ -247,6 +251,10 @@ async function collectDiffsWithFallback({
         });
       }
     } catch (error) {
+      console.error(
+        "[simple-review] GitHub App check/fetch failed, will try gh CLI",
+        { owner: slug.owner, repo: slug.repo, error },
+      );
       console.warn(
         "[simple-review] GitHub App check/fetch failed, will try gh CLI",
         { owner: slug.owner, repo: slug.repo, error: error instanceof Error ? error.message : String(error) }
@@ -271,6 +279,10 @@ async function collectDiffsWithFallback({
       githubToken: normalizedToken ?? undefined,
     });
   } catch (error) {
+    console.error("[simple-review] Failed to collect PR diffs with provided token", {
+      prIdentifier,
+      error,
+    });
     throw error;
   }
 }
@@ -446,6 +458,13 @@ export async function runSimpleAnthropicReviewStream(
 
           // Don't log abort errors - client disconnected
           const isAbortError = message.includes("Stream aborted") || message.includes("aborted");
+          console.error("[simple-review] File stream encountered error", {
+            prIdentifier,
+            filePath: file.filePath,
+            message,
+            aborted: isAbortError,
+            error,
+          });
           if (!isAbortError) {
             console.error("[simple-review] File stream failed", {
               prIdentifier,

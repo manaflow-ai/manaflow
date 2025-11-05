@@ -72,7 +72,11 @@ export function DirectDownloadRedirector({
         }
 
         followUrl(null, "async-detection-null");
-      } catch (_error) {
+      } catch (error) {
+        console.error(
+          "[DirectDownloadRedirector] Failed to detect architecture",
+          error,
+        );
         followUrl(null, "async-detection-error");
       }
     };

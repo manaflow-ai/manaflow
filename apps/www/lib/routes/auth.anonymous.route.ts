@@ -65,7 +65,9 @@ authAnonymousRouter.openapi(
         let errorData: { code?: string; message?: string } = {};
         try {
           errorData = JSON.parse(responseText);
-        } catch {
+        } catch (error) {
+          console.error("[apps/www/lib/routes/auth.anonymous.route.ts] Caught error", error);
+
           errorData = { message: responseText };
         }
 

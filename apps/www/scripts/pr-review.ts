@@ -122,6 +122,8 @@ async function resolveCommitRef(
     }
     return commitRef;
   } catch (error) {
+    console.error("[apps/www/scripts/pr-review.ts] Caught error", error);
+
     const baseMessage = `Failed to fetch head commit for ${prIdentifier} via gh`;
     if (error instanceof Error) {
       throw new Error(`${baseMessage}: ${error.message}`, { cause: error });

@@ -140,7 +140,9 @@ sandboxesRouter.openapi(
         repoUrl: body.repoUrl,
         branch: body.branch,
       });
-    } catch {
+    } catch (error) {
+      console.error("[apps/www/lib/routes/sandboxes.route.ts] Caught error", error);
+
       /* noop */
     }
 
@@ -624,7 +626,9 @@ sandboxesRouter.openapi(
             },
           });
           environmentPorts = envDoc?.exposedPorts ?? undefined;
-        } catch {
+        } catch (error) {
+          console.error("[apps/www/lib/routes/sandboxes.route.ts] Caught error", error);
+
           // ignore lookup errors; fall back to devcontainer ports
         }
       }

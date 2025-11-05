@@ -9,7 +9,8 @@ export async function getAccessTokenFromRequest(
       const { accessToken } = await user.getAuthJson();
       if (accessToken) return accessToken;
     }
-  } catch (_e) {
+  } catch (error) {
+    console.error("[auth] Failed to resolve access token from request", error);
     return null;
   }
 

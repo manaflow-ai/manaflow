@@ -32,7 +32,9 @@ async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path, fsConstants.F_OK);
     return true;
-  } catch {
+  } catch (error) {
+    console.error("[apps/www/lib/routes/sandboxes/devAndMaintenanceOrchestratorScript.ts] Caught error", error);
+
     return false;
   }
 }
@@ -41,6 +43,8 @@ async function removeFile(path: string): Promise<void> {
   try {
     await unlink(path);
   } catch (error) {
+    console.error("[apps/www/lib/routes/sandboxes/devAndMaintenanceOrchestratorScript.ts] Caught error", error);
+
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
     }

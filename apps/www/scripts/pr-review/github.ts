@@ -40,6 +40,8 @@ export function parsePrUrl(prUrl: string): ParsedPrUrl {
   try {
     url = new URL(prUrl);
   } catch (_error) {
+    console.error("[apps/www/scripts/pr-review/github.ts] Caught error", _error);
+
     throw new Error(`Invalid PR URL: ${prUrl}`);
   }
 
@@ -80,6 +82,8 @@ export async function fetchPrMetadata(
     });
     data = response.data;
   } catch (error) {
+    console.error("[apps/www/scripts/pr-review/github.ts] Caught error", error);
+
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
     throw new Error(

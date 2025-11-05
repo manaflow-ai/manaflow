@@ -46,6 +46,10 @@ export async function verifyTeamAccess({
 
     return team;
   } catch (error) {
+    console.error("[team-verification] Failed to verify team access", {
+      teamSlugOrId,
+      error,
+    });
     if (error instanceof HTTPException) {
       throw error;
     }

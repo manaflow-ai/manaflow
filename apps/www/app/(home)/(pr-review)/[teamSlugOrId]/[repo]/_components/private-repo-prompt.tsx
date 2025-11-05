@@ -28,6 +28,10 @@ export function PrivateRepoPrompt({
       try {
         sessionStorage.setItem("pr_review_return_url", currentUrl);
       } catch (storageError) {
+        console.error(
+          "[PrivateRepoPrompt] Failed to persist return URL",
+          storageError,
+        );
         console.warn(
           "[PrivateRepoPrompt] Failed to persist return URL",
           storageError,

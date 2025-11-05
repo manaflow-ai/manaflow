@@ -59,6 +59,8 @@ describe("githubReposRouter via SDK", () => {
       console.log("conns", conns);
       installationId = conns.find((c) => c.isActive !== false)?.installationId;
     } catch (error) {
+      console.error("[apps/www/lib/routes/github.repos.route.test.ts] Caught error", error);
+
       // If convex is unreachable in this test env, skip the test
       console.log("Skipping test - Convex unreachable:", error);
       return;

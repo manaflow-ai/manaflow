@@ -32,9 +32,13 @@ export function TeamOnboardingPrompt({
       });
 
       if (!response.ok) {
-        const data = await response
-          .json()
-          .catch(() => ({ message: "Unknown error" }));
+        const data = await response.json().catch((jsonError) => {
+          console.error(
+            "[TeamOnboardingPrompt] Failed to parse error response",
+            jsonError,
+          );
+          return { message: "Unknown error" };
+        });
         setError(data.message ?? "Failed to create team");
         setIsCreating(false);
         return;

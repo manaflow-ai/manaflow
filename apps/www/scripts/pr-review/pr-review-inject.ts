@@ -237,6 +237,8 @@ function parseRepoUrl(repoUrl: string): RepoIdentifier {
   try {
     url = new URL(repoUrl);
   } catch (error) {
+    console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", error);
+
     throw new Error(
       `Unable to parse repository URL (${repoUrl}): ${String(
         error instanceof Error ? error.message : error
@@ -775,7 +777,9 @@ function extractOpenAiResponseText(
   }
   try {
     return JSON.stringify(responseBody, null, 2);
-  } catch {
+  } catch (error) {
+    console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", error);
+
     return fallback;
   }
 }
@@ -818,6 +822,8 @@ async function runOpenAiResponsesInvocation({
   try {
     parsedResponse = rawResponseText ? JSON.parse(rawResponseText) : {};
   } catch (parseError) {
+    console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", parseError);
+
     const message =
       parseError instanceof Error ? parseError.message : String(parseError);
     throw new Error(
@@ -944,6 +950,8 @@ async function main(): Promise<void> {
       console.log(`[inject] Saved ${label} to ${path}`);
       return true;
     } catch (error) {
+      console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", error);
+
       const message =
         error instanceof Error
           ? error.message
@@ -969,6 +977,8 @@ async function main(): Promise<void> {
         `[inject] Linked ${symlinkPath} -> ${targetPath} for ${label}`
       );
     } catch (error) {
+      console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", error);
+
       const message =
         error instanceof Error
           ? error.message
@@ -1005,6 +1015,8 @@ async function main(): Promise<void> {
     try {
       await configureGitCredentials(githubToken);
     } catch (error) {
+      console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", error);
+
       const message =
         error instanceof Error
           ? error.message
@@ -1048,6 +1060,8 @@ async function main(): Promise<void> {
           `[inject] Linked ${logSymlinkPath} -> ${logFilePath} for log access`
         );
       } catch (error) {
+        console.error("[apps/www/scripts/pr-review/pr-review-inject.ts] Caught error", error);
+
         const message =
           error instanceof Error
             ? error.message

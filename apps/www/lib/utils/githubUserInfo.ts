@@ -47,7 +47,11 @@ export async function fetchGithubUserInfoForRequest(
         canReadEmails = true;
       }
     }
-  } catch {
+  } catch (error) {
+    console.error(
+      "[githubUserInfo] Failed to fetch user emails",
+      error,
+    );
     // Ignore; token may lack scope
   }
 

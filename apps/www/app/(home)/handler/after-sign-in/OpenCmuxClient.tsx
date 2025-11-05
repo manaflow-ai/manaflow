@@ -9,8 +9,8 @@ export function OpenCmuxClient({ href }: { href: string }) {
   useEffect(() => {
     try {
       window.location.href = href;
-    } catch {
-      console.error("Failed to open cmux", href);
+    } catch (error) {
+      console.error("Failed to open cmux", href, error);
     }
   }, [href]);
 

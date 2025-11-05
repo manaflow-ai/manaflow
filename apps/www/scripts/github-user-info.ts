@@ -70,6 +70,8 @@ async function main() {
       canReadEmails = true;
     }
   } catch (_err) {
+    console.error("[apps/www/scripts/github-user-info.ts] Caught error", _err);
+
     // Token might not have user:email; ignore
   }
 

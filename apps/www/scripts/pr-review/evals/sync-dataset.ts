@@ -21,7 +21,9 @@ async function syncDataset(): Promise<void> {
         process.env.GITHUB_TOKEN = token;
         console.log("✓ Using GitHub token from gh CLI\n");
       }
-    } catch {
+    } catch (error) {
+      console.error("[apps/www/scripts/pr-review/evals/sync-dataset.ts] Caught error", error);
+
       // gh CLI not available or not authenticated
     }
   }

@@ -153,7 +153,9 @@ async function prepare(
 function parseModelResponse(rawText: string): ModelResponseShape | null {
   try {
     return JSON.parse(rawText) as ModelResponseShape;
-  } catch {
+  } catch (error) {
+    console.error("[apps/www/scripts/pr-review/strategies/openai-responses.ts] Caught error", error);
+
     return null;
   }
 }

@@ -63,6 +63,10 @@ export async function GET(request: NextRequest) {
         githubToken = tokenResult.accessToken ?? null;
       }
     } catch (error) {
+      console.error(
+        "[simple-review][api] Failed to resolve GitHub account",
+        { error },
+      );
       console.warn("[simple-review][api] Failed to resolve GitHub account", {
         error,
       });
@@ -101,7 +105,11 @@ export async function GET(request: NextRequest) {
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
             );
-          } catch {
+          } catch (enqueueError) {
+            console.error(
+              "[simple-review][api] Failed to enqueue stream payload",
+              enqueueError,
+            );
             // Mark as closed if enqueue fails
             isClosed = true;
           }
@@ -190,11 +198,21 @@ export async function GET(request: NextRequest) {
           const isAbortError = message.includes("Stream aborted") || message.includes("aborted");
 
           if (isAuthError) {
+            console.error("[simple-review][api] Auth failed during stream", {
+              prIdentifier,
+              message,
+              error,
+            });
             console.info("[simple-review][api] Auth failed, fallback should handle", {
               prIdentifier,
               message,
             });
           } else if (isAbortError) {
+            console.error("[simple-review][api] Stream aborted", {
+              prIdentifier,
+              message,
+              error,
+            });
             // Client disconnected - this is expected, don't log as error
             console.info("[simple-review][api] Stream aborted by client", {
               prIdentifier,

@@ -810,6 +810,8 @@ export function PullRequestDiffViewer({
                     console.info("[simple-review][frontend][event]", payload);
                 }
               } catch (error) {
+                console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
                 console.warn(
                   "[simple-review][frontend] Failed to parse SSE data",
                   { data, error }
@@ -1094,7 +1096,9 @@ export function PullRequestDiffViewer({
           window.focus();
           notification.close();
         };
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
         // Ignore notification errors (for example, blocked constructors)
       } finally {
         setShouldNotifyOnCompletion(false);
@@ -1134,7 +1138,9 @@ export function PullRequestDiffViewer({
       if (permission === "granted") {
         setShouldNotifyOnCompletion(true);
       }
-    } catch {
+    } catch (error) {
+      console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
       // Ignore errors while requesting permission
     } finally {
       setIsRequestingNotification(false);
@@ -1209,6 +1215,8 @@ export function PullRequestDiffViewer({
           diff: diff ?? null,
         };
       } catch (error) {
+        console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
         const message =
           error instanceof Error
             ? error.message
@@ -1635,7 +1643,9 @@ export function PullRequestDiffViewer({
 
       try {
         handleElement.focus({ preventScroll: true });
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
         handleElement.focus();
       }
 
@@ -1656,7 +1666,9 @@ export function PullRequestDiffViewer({
         if (handleElement.hasPointerCapture?.(pointerId)) {
           try {
             handleElement.releasePointerCapture(pointerId);
-          } catch {
+          } catch (error) {
+            console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
             // Ignore release failures.
           }
         }
@@ -1690,7 +1702,9 @@ export function PullRequestDiffViewer({
 
       try {
         handleElement.setPointerCapture(pointerId);
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
         // Ignore pointer capture failures (e.g., Safari).
       }
     },
@@ -2745,7 +2759,9 @@ function FileDiffCard({
           refractor: refractorAdapter,
           ...(enhancers ? { enhancers } : {}),
         });
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
         // Ignore highlight errors; fall back to default tokenization.
       }
     }
@@ -3165,7 +3181,9 @@ function _extractAutomatedReviewText(value: unknown): string | null {
 
     try {
       return JSON.stringify(value, null, 2);
-    } catch {
+    } catch (error) {
+      console.error("[apps/www/components/pr/pull-request-diff-viewer.tsx] Caught error", error);
+
       return String(value);
     }
   }

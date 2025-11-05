@@ -78,6 +78,8 @@ function parsePrUrl(prUrl: string): ParsedPrUrl {
   try {
     parsedUrl = new URL(prUrl);
   } catch (_error) {
+    console.error("[apps/www/scripts/start-code-review.ts] Caught error", _error);
+
     throw new Error(`Invalid PR URL: ${prUrl}`);
   }
 
@@ -139,6 +141,8 @@ async function fetchCommitRefs(pr: ParsedPrUrl): Promise<{
       base: baseSha && baseSha.length > 0 ? baseSha : undefined,
     };
   } catch (error) {
+    console.error("[apps/www/scripts/start-code-review.ts] Caught error", error);
+
     console.warn("[cli] Failed to fetch PR metadata for commit refs", {
       owner: pr.owner,
       repo: pr.repo,

@@ -824,7 +824,9 @@ function unwrapCodexPayload(value: unknown): unknown {
 
     try {
       return unwrapCodexPayload(JSON.parse(trimmed));
-    } catch {
+    } catch (error) {
+      console.error("[apps/www/components/pr/heatmap.ts] Caught error", error);
+
       return null;
     }
   }

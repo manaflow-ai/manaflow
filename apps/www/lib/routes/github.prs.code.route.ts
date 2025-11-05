@@ -241,6 +241,8 @@ githubPrsCodeRouter.openapi(
             if (size !== undefined) entry.size = size;
           }
         } catch (_e) {
+          console.error("[apps/www/lib/routes/github.prs.code.route.ts] Caught error", _e);
+
           entry.truncated = true;
         }
       }
@@ -285,6 +287,8 @@ githubPrsCodeRouter.openapi(
             if (size !== undefined) entry.sizeBase = size;
           }
         } catch (_e) {
+          console.error("[apps/www/lib/routes/github.prs.code.route.ts] Caught error", _e);
+
           entry.truncatedBase = true;
         }
       }

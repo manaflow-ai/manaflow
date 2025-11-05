@@ -16,6 +16,10 @@ function GitHubInstallCompleteContent() {
     try {
       storedUrl = sessionStorage.getItem("pr_review_return_url");
     } catch (error) {
+      console.error(
+        "[GitHubInstallComplete] Failed to read return URL from storage",
+        error,
+      );
       console.warn(
         "[GitHubInstallComplete] Failed to read return URL from storage",
         error,
@@ -40,6 +44,10 @@ function GitHubInstallCompleteContent() {
         try {
           sessionStorage.removeItem("pr_review_return_url");
         } catch (error) {
+          console.error(
+            "[GitHubInstallComplete] Failed to clear return URL",
+            error,
+          );
           console.warn(
             "[GitHubInstallComplete] Failed to clear return URL",
             error,

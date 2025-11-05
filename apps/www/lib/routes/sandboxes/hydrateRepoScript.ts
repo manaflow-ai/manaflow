@@ -46,6 +46,8 @@ function exec(command: string, options?: { cwd?: string; throwOnError?: boolean 
     });
     return { stdout, stderr: "", exitCode: 0 };
   } catch (error) {
+    console.error("[apps/www/lib/routes/sandboxes/hydrateRepoScript.ts] Caught error", error);
+
     const errorObj = error as { status?: number; stderr?: Buffer; stdout?: Buffer };
     const exitCode = errorObj.status || 1;
     const stderr = errorObj.stderr?.toString() || "";
@@ -236,6 +238,8 @@ function hydrateSubdirectories(workspacePath: string) {
       }
     }
   } catch (error) {
+    console.error("[apps/www/lib/routes/sandboxes/hydrateRepoScript.ts] Caught error", error);
+
     log(`Error checking subdirectories: ${error}`, "debug");
   }
 }

@@ -148,7 +148,11 @@ const detectArchitectureViaWebGL = async (): Promise<MacArchitecture | null> => 
       const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
 
       return typeof renderer === "string" ? renderer : null;
-    } catch {
+    } catch (error) {
+      console.error(
+        "[mac-architecture] Failed to read WebGL renderer",
+        error,
+      );
       return null;
     }
   };
@@ -303,7 +307,13 @@ export const detectClientMacArchitecture = async (): Promise<MacArchitecture | n
 
   const details = await uaData
     .getHighEntropyValues(["architecture"])
-    .catch(() => null);
+    .catch((error) => {
+      console.error(
+        "[mac-architecture] Failed to get high entropy user agent data",
+        error,
+      );
+      return null;
+    });
 
   if (details && typeof details === "object") {
     const maybeValue = (details as Record<string, unknown>).architecture;

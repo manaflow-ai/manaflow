@@ -102,6 +102,10 @@ export async function generateMetadata({
       description,
     };
   } catch (error) {
+    console.error(
+      "[ComparisonPage] Failed to fetch comparison metadata",
+      error,
+    );
     if (isGithubApiError(error) && error.status === 404) {
       return {
         title: `${githubOwner}/${repo} · ${refs.base}…${refs.head}`,
@@ -220,6 +224,10 @@ function ComparisonHeader({
       />
     );
   } catch (error) {
+    console.error(
+      "[ComparisonHeader] Failed to render comparison header",
+      error,
+    );
     if (isGithubApiError(error)) {
       const message =
         error.status === 404
@@ -384,6 +392,10 @@ function ComparisonDiffSection({
       />
     );
   } catch (error) {
+    console.error(
+      "[ComparisonDiffSection] Failed to render diff section",
+      error,
+    );
     if (isGithubApiError(error)) {
       const message =
         error.status === 404

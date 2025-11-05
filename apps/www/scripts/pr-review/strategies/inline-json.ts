@@ -75,7 +75,9 @@ function parseJsonAnnotation(line: string): ParsedJsonAnnotation | null {
       phrase,
       comment,
     };
-  } catch {
+  } catch (error) {
+    console.error("[apps/www/scripts/pr-review/strategies/inline-json.ts] Caught error", error);
+
     return null;
   }
 }

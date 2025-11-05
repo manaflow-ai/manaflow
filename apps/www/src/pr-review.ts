@@ -70,6 +70,10 @@ async function getInjectScriptSource(productionMode: boolean): Promise<string> {
       try {
         return await readFile(injectScriptBundlePath, "utf8");
       } catch (error) {
+        console.error(
+          "[pr-review] Failed to read inject script bundle",
+          error,
+        );
         const maybeCode =
           typeof error === "object" &&
             error !== null &&
@@ -85,6 +89,7 @@ async function getInjectScriptSource(productionMode: boolean): Promise<string> {
         throw error;
       }
     })().catch((error) => {
+      console.error("[pr-review] Inject script preparation failed", error);
       cachedInjectScriptPromise = null;
       throw error;
     });
@@ -253,6 +258,10 @@ function getOpenVscodeBaseUrl(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
+    console.error(
+      `[pr-review] Unable to format OpenVSCode URL for port ${OPEN_VSCODE_PORT}`,
+      error,
+    );
     console.warn(
       `Warning: unable to format OpenVSCode URL for port ${OPEN_VSCODE_PORT}: ${message}`
     );
@@ -424,6 +433,10 @@ export async function startAutomatedPrReview(
         metadataError instanceof Error
           ? metadataError.message
           : String(metadataError ?? "unknown error");
+      console.error(
+        `[pr-review] Failed to set metadata for instance ${startedInstance.id}`,
+        metadataError,
+      );
       console.warn(
         `[pr-review] Warning: failed to set metadata for instance ${startedInstance.id}: ${message}`
       );
@@ -593,6 +606,10 @@ export async function startAutomatedPrReview(
           pauseError instanceof Error
             ? pauseError.message
             : String(pauseError ?? "Unknown pause error");
+        console.error(
+          `[pr-review] Failed to pause instance ${instance.id}`,
+          pauseError,
+        );
         console.warn(
           `[pr-review] Warning: failed to pause instance ${instance.id}: ${pauseMessage}`
         );

@@ -55,7 +55,8 @@ function DirectDownloadContent() {
         if (isMounted) {
           setReleaseInfo(info);
         }
-      } catch {
+      } catch (error) {
+        console.error("[DirectDownloadPage] Failed to load release info", error);
         if (isMounted) {
           setReleaseInfo(FALLBACK_RELEASE_INFO);
         }

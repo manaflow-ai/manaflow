@@ -118,6 +118,13 @@ export async function fetchPullRequest(
         });
         return response.data;
       } catch (error) {
+        console.error("[fetchPullRequest] Attempt failed", {
+          owner,
+          repo,
+          pullNumber,
+          usedAuthToken: Boolean(candidate),
+          error,
+        });
         lastError = error;
         if (shouldRetryWithAlternateAuth(error)) {
           continue;
@@ -151,6 +158,12 @@ export async function fetchPullRequest(
           });
           return response.data;
         } catch (appError) {
+          console.error("[fetchPullRequest] GitHub App token attempt failed", {
+            owner,
+            repo,
+            pullNumber,
+            error: appError,
+          });
           throw toGithubApiError(appError);
         }
       }
@@ -164,6 +177,12 @@ export async function fetchPullRequest(
       status: 500,
     });
   } catch (error) {
+    console.error("[fetchPullRequest] Failed to retrieve pull request", {
+      owner,
+      repo,
+      pullNumber,
+      error,
+    });
     throw toGithubApiError(error);
   }
 }
@@ -189,6 +208,13 @@ export async function fetchPullRequestFiles(
         });
         return files;
       } catch (error) {
+        console.error("[fetchPullRequestFiles] Attempt failed", {
+          owner,
+          repo,
+          pullNumber,
+          usedAuthToken: Boolean(candidate),
+          error,
+        });
         lastError = error;
         if (shouldRetryWithAlternateAuth(error)) {
           continue;
@@ -223,6 +249,15 @@ export async function fetchPullRequestFiles(
           });
           return files;
         } catch (appError) {
+          console.error(
+            "[fetchPullRequestFiles] GitHub App token attempt failed",
+            {
+              owner,
+              repo,
+              pullNumber,
+              error: appError,
+            }
+          );
           throw toGithubApiError(appError);
         }
       }
@@ -236,6 +271,12 @@ export async function fetchPullRequestFiles(
       status: 500,
     });
   } catch (error) {
+    console.error("[fetchPullRequestFiles] Failed to retrieve pull request files", {
+      owner,
+      repo,
+      pullNumber,
+      error,
+    });
     throw toGithubApiError(error);
   }
 }
@@ -282,6 +323,13 @@ export async function fetchComparison(
     });
     return response.data;
   } catch (error) {
+    console.error("[fetchComparison] Failed to retrieve comparison", {
+      owner,
+      repo,
+      baseRef,
+      headRef,
+      error,
+    });
     throw toGithubApiError(error);
   }
 }

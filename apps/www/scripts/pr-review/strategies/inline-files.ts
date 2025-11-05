@@ -169,6 +169,8 @@ async function process(
   try {
     fileContent = await readFile(workspaceAbsolutePath, "utf8");
   } catch (error) {
+    console.error("[apps/www/scripts/pr-review/strategies/inline-files.ts] Caught error", error);
+
     const reason =
       error instanceof Error ? error.message : String(error ?? "unknown error");
     throw new Error(

@@ -114,6 +114,8 @@ async function attemptResumeIfNeeded(
       instanceId: instanceInfo.instanceId,
     });
   } catch (error) {
+    console.error("[apps/www/lib/routes/iframe-preflight.route.ts] Caught error", error);
+
     if (isNotFoundError(error)) {
       await sendPhase("instance_not_found", {
         instanceId: instanceInfo.instanceId,
@@ -140,6 +142,8 @@ async function attemptResumeIfNeeded(
         return "forbidden";
       }
     } catch (error) {
+      console.error("[apps/www/lib/routes/iframe-preflight.route.ts] Caught error", error);
+
       await sendPhase("resume_failed", {
         instanceId: instanceInfo.instanceId,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -170,6 +174,8 @@ async function attemptResumeIfNeeded(
       });
       return "resumed";
     } catch (error) {
+      console.error("[apps/www/lib/routes/iframe-preflight.route.ts] Caught error", error);
+
       if (attempt >= MAX_RESUME_ATTEMPTS) {
         await sendPhase("resume_failed", {
           instanceId: instanceInfo.instanceId,
@@ -241,6 +247,8 @@ async function performPreflight(target: URL): Promise<IframePreflightResult> {
       error: `Request failed with status ${headResponse.status}.`,
     };
   } catch (error) {
+    console.error("[apps/www/lib/routes/iframe-preflight.route.ts] Caught error", error);
+
     return {
       ok: false,
       status: null,
@@ -501,6 +509,8 @@ iframePreflightRouter.openapi(
 
         await sendResult(preflightResult);
       } catch (error) {
+        console.error("[apps/www/lib/routes/iframe-preflight.route.ts] Caught error", error);
+
         const message =
           error instanceof Error
             ? error.message

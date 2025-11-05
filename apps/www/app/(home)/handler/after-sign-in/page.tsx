@@ -63,7 +63,8 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
     url.searchParams.set("stack_refresh", stackRefreshToken);
     url.searchParams.set("stack_access", stackAccessToken);
     return url.toString();
-  } catch {
+  } catch (error) {
+    console.error("[After Sign In] Failed to build cmux href", error);
     return `${CMUX_SCHEME}auth-callback?stack_refresh=${encodeURIComponent(stackRefreshToken)}&stack_access=${encodeURIComponent(stackAccessToken)}`;
   }
 }

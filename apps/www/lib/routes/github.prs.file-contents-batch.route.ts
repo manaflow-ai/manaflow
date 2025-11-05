@@ -108,7 +108,9 @@ githubPrsFileContentsBatchRouter.openapi(
             map.set(e.path, { sha: e.sha, size: e.size });
           }
         }
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/lib/routes/github.prs.file-contents-batch.route.ts] Caught error", error);
+
         // ignore
       }
     }
@@ -127,7 +129,9 @@ githubPrsFileContentsBatchRouter.openapi(
           return { encoding: "base64", content: obj.content, size: obj.size };
         }
         return null;
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/lib/routes/github.prs.file-contents-batch.route.ts] Caught error", error);
+
         return null;
       }
     }

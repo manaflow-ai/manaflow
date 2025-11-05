@@ -331,6 +331,8 @@ githubPrsOpenRouter.openapi(
 
           return toPullRequestActionResult(repoFullName, detail);
         } catch (error) {
+          console.error("[apps/www/lib/routes/github.prs.open.route.ts] Caught error", error);
+
           const message =
             error instanceof Error ? error.message : String(error);
           return {
@@ -366,6 +368,8 @@ githubPrsOpenRouter.openapi(
         error: errors.length > 0 ? errors.join("; ") : undefined,
       });
     } catch (error) {
+      console.error("[apps/www/lib/routes/github.prs.open.route.ts] Caught error", error);
+
       const message = error instanceof Error ? error.message : String(error);
       return c.json(
         {
@@ -619,6 +623,8 @@ githubPrsOpenRouter.openapi(
               mergedDetail.merged_at ?? new Date().toISOString(),
           });
         } catch (error) {
+          console.error("[apps/www/lib/routes/github.prs.open.route.ts] Caught error", error);
+
           const message =
             error instanceof Error ? error.message : String(error);
           return {
@@ -654,6 +660,8 @@ githubPrsOpenRouter.openapi(
         error: errors.length > 0 ? errors.join("; ") : undefined,
       });
     } catch (error) {
+      console.error("[apps/www/lib/routes/github.prs.open.route.ts] Caught error", error);
+
       const message = error instanceof Error ? error.message : String(error);
       return c.json(
         {
@@ -1050,6 +1058,8 @@ async function loadPullRequestDetail({
         number,
       });
     } catch (error) {
+      console.error("[apps/www/lib/routes/github.prs.open.route.ts] Caught error", error);
+
       console.warn(
         `[github-open-pr] Failed to fetch PR detail for ${repoFullName}#${number}: ${String(error)}`,
       );
@@ -1074,6 +1084,8 @@ async function loadPullRequestDetail({
       number: pr.number,
     });
   } catch (error) {
+    console.error("[apps/www/lib/routes/github.prs.open.route.ts] Caught error", error);
+
     console.warn(
       `[github-open-pr] Failed to locate PR by branch for ${repoFullName}: ${String(error)}`,
     );

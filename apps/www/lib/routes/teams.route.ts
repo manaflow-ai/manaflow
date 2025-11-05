@@ -167,6 +167,8 @@ teamsRouter.openapi(
     try {
       validateSlug(normalizedSlug);
     } catch (error) {
+      console.error("[apps/www/lib/routes/teams.route.ts] Caught error", error);
+
       const message = error instanceof Error ? error.message : "Invalid slug";
       return c.json({ code: 400, message }, 400);
     }
@@ -232,6 +234,8 @@ teamsRouter.openapi(
           slugSet = true;
           break;
         } catch (error) {
+          console.error("[apps/www/lib/routes/teams.route.ts] Caught error", error);
+
           lastError = error;
           if (error instanceof Error && error.message.includes("Slug is already taken")) {
             return c.json({ code: 409, message: error.message }, 409);

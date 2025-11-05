@@ -21,6 +21,8 @@ describe(
         });
         await inst.stop();
       } catch (e) {
+        console.error("[apps/www/lib/routes/morph.route.test.ts] Caught error", e);
+
         console.warn("Morph cleanup failed:", e);
       }
     });

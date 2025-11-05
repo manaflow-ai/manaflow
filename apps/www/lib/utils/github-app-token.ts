@@ -153,6 +153,10 @@ export async function getInstallationForRepo(
 
     return data.id;
   } catch (error) {
+    console.error(
+      `[GitHub App] Failed to resolve installation for ${repository}`,
+      error,
+    );
     // 404 is expected when the app is not installed - not an error
     if (error && typeof error === 'object' && 'status' in error && error.status === 404) {
       console.log(`[GitHub App] No installation found for ${repository} (app not installed or no access)`);

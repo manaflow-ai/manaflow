@@ -45,6 +45,11 @@ export async function checkRepoVisibility(
 
     return visibility;
   } catch (error: unknown) {
+    console.error("[checkRepoVisibility] Failed to fetch repo visibility", {
+      owner,
+      repo,
+      error,
+    });
     // If we get a 404, the repo either doesn't exist or is private
     if (
       error &&

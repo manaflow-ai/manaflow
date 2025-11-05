@@ -100,7 +100,9 @@ githubPrsFileContentsRouter.openapi(
           return { truncated: true, size } as const;
         }
         return { truncated: true, size } as const;
-      } catch {
+      } catch (error) {
+        console.error("[apps/www/lib/routes/github.prs.file-contents.route.ts] Caught error", error);
+
         return { truncated: true } as const;
       }
     };

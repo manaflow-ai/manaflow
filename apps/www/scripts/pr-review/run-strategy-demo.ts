@@ -21,7 +21,9 @@ async function ensureTempDiff(): Promise<string> {
   try {
     await readFile(TEMP_DIFF_PATH);
     return TEMP_DIFF_PATH;
-  } catch {
+  } catch (error) {
+    console.error("[apps/www/scripts/pr-review/run-strategy-demo.ts] Caught error", error);
+
     const res = await fetch(DIFF_URL);
     if (!res.ok) {
       throw new Error(`Failed to fetch diff: ${res.status} ${res.statusText}`);

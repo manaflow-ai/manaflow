@@ -128,6 +128,10 @@ export async function generateMetadata({
       description: pullRequest.body?.slice(0, 160),
     };
   } catch (error) {
+    console.error(
+      "[PullRequestPage] Failed to fetch pull request metadata",
+      error,
+    );
     if (isGithubApiError(error) && error.status === 404) {
       return {
         title: `${githubOwner}/${repo} · #${pullNumber}`,
@@ -200,6 +204,11 @@ export default async function PullRequestPage({ params }: PageProps) {
       authToken: githubAccessToken,
     });
   } catch (error) {
+    console.error(
+      "[PullRequestPage] Failed to fetch pull request",
+      { githubOwner, repo, pullNumber },
+      error,
+    );
     if (isGithubApiError(error) && error.status === 404) {
       // For private repos, check if app is installed
       if (!repoIsPublic && selectedTeam) {
@@ -381,6 +390,10 @@ function scheduleCodeReviewStart({
             }
           }
         } catch (error) {
+          console.error(
+            "[code-review] Failed to get user auth info; skipping callback",
+            error,
+          );
           console.warn(
             "[code-review] Failed to get user auth info; skipping callback",
             error
@@ -472,6 +485,16 @@ function scheduleCodeReviewStart({
           await Promise.all(followUpTasks);
         }
       } catch (error) {
+        console.error(
+          "[code-review] Error while scheduling automated review",
+          {
+            teamSlugOrId,
+            githubOwner,
+            repo,
+            pullNumber,
+          },
+          error,
+        );
         const context = {
           teamSlugOrId,
           githubOwner,
@@ -514,6 +537,10 @@ function PullRequestHeader({
       />
     );
   } catch (error) {
+    console.error(
+      "[PullRequestHeader] Failed to render pull request header",
+      error,
+    );
     if (isGithubApiError(error)) {
       const message =
         error.status === 404
@@ -743,6 +770,10 @@ function PullRequestDiffSection({
       />
     );
   } catch (error) {
+    console.error(
+      "[PullRequestDiffSection] Failed to render diff section",
+      error,
+    );
     if (isGithubApiError(error)) {
       const message =
         error.status === 404
