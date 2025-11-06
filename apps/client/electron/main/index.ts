@@ -425,6 +425,30 @@ function registerAutoUpdateIpcHandlers(): void {
       throw err;
     }
   });
+
+  ipcMain.handle("cmux:auto-update:set-include-draft-releases", async (_event, includeDraftReleases: boolean) => {
+    if (!app.isPackaged) {
+      mainLog(
+        "Set include draft releases requested while app is not packaged; ignoring request"
+      );
+      return { ok: false, reason: "not-packaged" as const };
+    }
+
+    try {
+      mainLog("Setting allowPrerelease", { includeDraftReleases });
+      autoUpdater.allowPrerelease = includeDraftReleases;
+
+      // Trigger an update check to immediately apply the new setting
+      mainLog("Triggering update check after setting change");
+      await autoUpdater.checkForUpdates();
+
+      return { ok: true } as const;
+    } catch (error) {
+      mainWarn("Failed to set allowPrerelease", error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw err;
+    }
+  });
 }
 
 // Write critical errors to a file to aid debugging packaged crashes

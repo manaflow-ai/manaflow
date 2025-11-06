@@ -56,6 +56,7 @@ function SettingsComponent() {
     autoCleanupEnabled: boolean;
     stopImmediatelyOnCompletion: boolean;
     minContainersToKeep: number;
+    includeDraftReleases: boolean;
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
@@ -148,6 +149,19 @@ function SettingsComponent() {
     }
   }, [workspaceSettings]);
 
+  // Initialize electron auto-update setting when container settings are loaded
+  useEffect(() => {
+    if (containerSettingsData?.includeDraftReleases !== undefined) {
+      if (window.cmux?.autoUpdate?.setIncludeDraftReleases) {
+        window.cmux.autoUpdate.setIncludeDraftReleases(
+          containerSettingsData.includeDraftReleases
+        ).catch((error) => {
+          console.error("Failed to initialize includeDraftReleases in electron", error);
+        });
+      }
+    }
+  }, [containerSettingsData?.includeDraftReleases]);
+
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
 
@@ -213,6 +227,7 @@ function SettingsComponent() {
       autoCleanupEnabled: boolean;
       stopImmediatelyOnCompletion: boolean;
       minContainersToKeep: number;
+      includeDraftReleases: boolean;
     }) => {
       setContainerSettingsData(data);
       if (!originalContainerSettingsData) {
@@ -285,6 +300,22 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+
+        // If includeDraftReleases changed, notify electron main process
+        if (
+          containerSettingsData.includeDraftReleases !==
+          originalContainerSettingsData.includeDraftReleases
+        ) {
+          if (window.cmux?.autoUpdate?.setIncludeDraftReleases) {
+            try {
+              await window.cmux.autoUpdate.setIncludeDraftReleases(
+                containerSettingsData.includeDraftReleases
+              );
+            } catch (error) {
+              console.error("Failed to set includeDraftReleases in electron", error);
+            }
+          }
+        }
       }
 
       for (const key of apiKeys) {

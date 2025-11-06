@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   autoCleanupEnabled: true,
   stopImmediatelyOnCompletion: false,
   minContainersToKeep: 0,
+  includeDraftReleases: false,
 };
 
 // Get container settings
@@ -49,6 +50,7 @@ export const update = authMutation({
     autoCleanupEnabled: v.optional(v.boolean()),
     stopImmediatelyOnCompletion: v.optional(v.boolean()),
     minContainersToKeep: v.optional(v.number()),
+    includeDraftReleases: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -104,6 +106,8 @@ export const getEffective = authQuery({
         DEFAULT_SETTINGS.stopImmediatelyOnCompletion,
       minContainersToKeep:
         settings?.minContainersToKeep ?? DEFAULT_SETTINGS.minContainersToKeep,
+      includeDraftReleases:
+        settings?.includeDraftReleases ?? DEFAULT_SETTINGS.includeDraftReleases,
     };
   },
 });
@@ -130,6 +134,8 @@ export const getContainerSettingsInternal = internalQuery({
         DEFAULT_SETTINGS.stopImmediatelyOnCompletion,
       minContainersToKeep:
         settings?.minContainersToKeep ?? DEFAULT_SETTINGS.minContainersToKeep,
+      includeDraftReleases:
+        settings?.includeDraftReleases ?? DEFAULT_SETTINGS.includeDraftReleases,
     };
   },
 });

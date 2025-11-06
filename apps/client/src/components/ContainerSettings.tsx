@@ -11,6 +11,7 @@ interface ContainerSettingsProps {
     autoCleanupEnabled: boolean;
     stopImmediatelyOnCompletion: boolean;
     minContainersToKeep: number;
+    includeDraftReleases: boolean;
   }) => void;
   teamSlugOrId: string;
 }
@@ -30,6 +31,7 @@ export function ContainerSettings({
     autoCleanupEnabled: true,
     stopImmediatelyOnCompletion: false,
     minContainersToKeep: 0,
+    includeDraftReleases: false,
   });
 
   useEffect(() => {
@@ -41,6 +43,7 @@ export function ContainerSettings({
         stopImmediatelyOnCompletion:
           settings.stopImmediatelyOnCompletion ?? false,
         minContainersToKeep: settings.minContainersToKeep ?? 0,
+        includeDraftReleases: settings.includeDraftReleases ?? false,
       };
       setFormData(newData);
       onDataChange?.(newData);
@@ -196,6 +199,30 @@ export function ContainerSettings({
               ? "Review period is disabled when stopping immediately"
               : "Keep containers running for this many minutes after task completion to allow code review"}
           </p>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <label htmlFor="include-draft-releases" className="text-sm font-medium">
+              Auto-update to Draft Releases
+            </label>
+            <p className="text-sm text-muted-foreground">
+              Automatically update to the latest draft releases on GitHub (even if not officially released yet)
+            </p>
+          </div>
+          <Switch
+            id="include-draft-releases"
+            size="sm"
+            color="primary"
+            aria-label="Auto-update to Draft Releases"
+            isSelected={formData.includeDraftReleases}
+            onValueChange={(v) =>
+              updateFormData({
+                ...formData,
+                includeDraftReleases: v,
+              })
+            }
+          />
         </div>
       </div>
     </div>

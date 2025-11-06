@@ -540,6 +540,7 @@ const convexSchema = defineSchema({
     autoCleanupEnabled: v.optional(v.boolean()), // Enable automatic cleanup (default: true)
     stopImmediatelyOnCompletion: v.optional(v.boolean()), // Stop containers immediately when tasks complete (default: false)
     minContainersToKeep: v.optional(v.number()), // Minimum containers to always keep alive (default: 0)
+    includeDraftReleases: v.optional(v.boolean()), // Auto-update to draft releases (default: false)
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
