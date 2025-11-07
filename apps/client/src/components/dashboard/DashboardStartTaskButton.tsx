@@ -17,7 +17,7 @@ export function DashboardStartTaskButton({
   const isDisabled = !canSubmit || !!disabledReason;
 
   return (
-    <Tooltip>
+    <Tooltip delayDuration={0}>
       {/* Wrap disabled button in a span so tooltip still shows */}
       <TooltipTrigger asChild>
         <span
