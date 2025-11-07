@@ -26,6 +26,7 @@ import type * as github_check_runs from "../github_check_runs.js";
 import type * as github_commit_statuses from "../github_commit_statuses.js";
 import type * as github_deployments from "../github_deployments.js";
 import type * as github_pr_comments from "../github_pr_comments.js";
+import type * as github_pr_reactions from "../github_pr_reactions.js";
 import type * as github_prs from "../github_prs.js";
 import type * as github_setup from "../github_setup.js";
 import type * as github_webhook from "../github_webhook.js";
@@ -82,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   github_commit_statuses: typeof github_commit_statuses;
   github_deployments: typeof github_deployments;
   github_pr_comments: typeof github_pr_comments;
+  github_pr_reactions: typeof github_pr_reactions;
   github_prs: typeof github_prs;
   github_setup: typeof github_setup;
   github_webhook: typeof github_webhook;

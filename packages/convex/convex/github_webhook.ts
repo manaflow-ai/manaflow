@@ -4,7 +4,9 @@ import type {
   DeploymentStatusEvent,
   InstallationEvent,
   InstallationRepositoriesEvent,
+  IssueCommentEvent,
   PullRequestEvent,
+  PullRequestReviewCommentEvent,
   PushEvent,
   StatusEvent,
   WebhookEvent,
@@ -24,6 +26,34 @@ const DEBUG_FLAGS = {
 const FEATURE_FLAGS = {
   githubEyesReactionOnPrOpen: false,
 };
+
+type GithubReactionContent =
+  | "+1"
+  | "-1"
+  | "laugh"
+  | "confused"
+  | "heart"
+  | "hooray"
+  | "rocket"
+  | "eyes";
+
+const REACTION_CONTENT_SET = new Set<GithubReactionContent>([
+  "+1",
+  "-1",
+  "laugh",
+  "confused",
+  "heart",
+  "hooray",
+  "rocket",
+  "eyes",
+]);
+
+function isSupportedReactionContent(
+  value: string | null | undefined,
+): value is GithubReactionContent {
+  if (!value) return false;
+  return REACTION_CONTENT_SET.has(value as GithubReactionContent);
+}
 
 async function verifySignature(
   secret: string,
@@ -214,9 +244,161 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
       case "repository":
       case "create":
       case "delete":
-      case "pull_request_review":
-      case "pull_request_review_comment":
+      case "pull_request_review": {
+        break;
+      }
+      case "pull_request_review_comment": {
+        try {
+          const reviewCommentPayload = body as PullRequestReviewCommentEvent;
+          const repoFullName = String(
+            reviewCommentPayload.repository?.full_name ?? "",
+          );
+          const installation = Number(
+            reviewCommentPayload.installation?.id ?? 0,
+          );
+          const prNumber = Number(
+            reviewCommentPayload.pull_request?.number ?? 0,
+          );
+          const comment = reviewCommentPayload.comment;
+          if (!repoFullName || !installation || !prNumber || !comment) {
+            break;
+          }
+
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) {
+            break;
+          }
+
+          await _ctx.runMutation(
+            internal.github_pr_comments.upsertCommentFromWebhook,
+            {
+              teamId,
+              installationId: installation,
+              repoFullName,
+              repositoryId: Number(
+                reviewCommentPayload.repository?.id ?? 0,
+              ) || undefined,
+              prNumber,
+              source: "review",
+              action: reviewCommentPayload.action ?? "",
+              comment,
+            },
+          );
+        } catch (error) {
+          console.error(
+            "[github_webhook] pull_request_review_comment handler failed",
+            {
+              error,
+              delivery,
+            },
+          );
+        }
+        break;
+      }
       case "issue_comment": {
+        try {
+          const issueCommentPayload = body as IssueCommentEvent;
+          const repoFullName = String(
+            issueCommentPayload.repository?.full_name ?? "",
+          );
+          const installation = Number(
+            issueCommentPayload.installation?.id ?? 0,
+          );
+          const prNumber = Number(issueCommentPayload.issue?.number ?? 0);
+          const comment = issueCommentPayload.comment;
+          const isPullRequestComment = Boolean(
+            issueCommentPayload.issue?.pull_request,
+          );
+          if (
+            !repoFullName ||
+            !installation ||
+            !prNumber ||
+            !comment ||
+            !isPullRequestComment
+          ) {
+            break;
+          }
+
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) {
+            break;
+          }
+
+          await _ctx.runMutation(
+            internal.github_pr_comments.upsertCommentFromWebhook,
+            {
+              teamId,
+              installationId: installation,
+              repoFullName,
+              repositoryId: Number(
+                issueCommentPayload.repository?.id ?? 0,
+              ) || undefined,
+              prNumber,
+              source: "issue",
+              action: issueCommentPayload.action ?? "",
+              comment,
+            },
+          );
+        } catch (error) {
+          console.error(
+            "[github_webhook] issue_comment handler failed",
+            {
+              error,
+              delivery,
+            },
+          );
+        }
+        break;
+      }
+      case "reaction": {
+        try {
+          const reactionPayload = body as WebhookEvent & {
+            action?: string;
+            reaction?: { content?: string | null };
+            comment?: { id?: number; pull_request_url?: string | null };
+            issue?: { pull_request?: unknown };
+            pull_request?: unknown;
+          };
+          const comment = reactionPayload.comment;
+          const commentId = Number(comment?.id ?? 0);
+          if (!comment || !commentId) {
+            break;
+          }
+          const hasPrContext = Boolean(
+            comment.pull_request_url ||
+              reactionPayload.pull_request ||
+              reactionPayload.issue?.pull_request,
+          );
+          if (!hasPrContext) {
+            break;
+          }
+          const contentRaw = reactionPayload.reaction?.content ?? null;
+          if (!isSupportedReactionContent(contentRaw)) {
+            break;
+          }
+          const delta = reactionPayload.action === "deleted" ? -1 : 1;
+          await _ctx.runMutation(
+            internal.github_pr_comments.applyReactionDelta,
+            {
+              providerCommentId: commentId,
+              content: contentRaw,
+              delta,
+            },
+          );
+        } catch (error) {
+          console.error("[github_webhook] reaction handler failed", {
+            error,
+            delivery,
+          });
+        }
         break;
       }
       case "workflow_run": {
@@ -506,7 +688,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           ) {
             const prNumber = Number(prPayload.pull_request?.number ?? 0);
             if (prNumber) {
-              await _ctx.runAction(internal.github_pr_comments.addPrReaction, {
+              await _ctx.runAction(internal.github_pr_reactions.addPrReaction, {
                 installationId: installation,
                 repoFullName,
                 prNumber,

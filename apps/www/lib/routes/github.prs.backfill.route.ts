@@ -1,3 +1,4 @@
+import { syncPullRequestComments } from "@/lib/github/sync-pr-comments";
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
@@ -136,6 +137,17 @@ githubPrsBackfillRouter.openapi(
         deletions: pr.deletions,
         changedFiles: pr.changed_files,
       },
+    });
+
+    await syncPullRequestComments({
+      convex,
+      octokit,
+      teamSlugOrId: team,
+      installationId: target.installationId,
+      owner,
+      repo,
+      prNumber: number,
+      repositoryId: pr.base?.repo?.id,
     });
 
     return c.json({ ok: true });

@@ -40,4 +40,12 @@ export async function preloadPullRequestDetail({
         );
       }
     });
+
+  await queryClient.ensureQueryData(
+    convexQuery(api.github_pr_comments.listForPullRequest, {
+      teamSlugOrId,
+      repoFullName: `${owner}/${repo}`,
+      number: Number(number),
+    })
+  );
 }

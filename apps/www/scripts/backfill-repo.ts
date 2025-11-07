@@ -1,3 +1,4 @@
+import { syncPullRequestComments } from "@/lib/github/sync-pr-comments";
 import { githubPrivateKey } from "@/lib/utils/githubPrivateKey";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
@@ -106,6 +107,16 @@ async function main() {
           changedFiles: pr.changed_files,
         },
       });
+      await syncPullRequestComments({
+        convex,
+        octokit,
+        teamSlugOrId: TEAM,
+        installationId: target.installationId,
+        owner,
+        repo,
+        prNumber: pr.number,
+        repositoryId: pr.base?.repo?.id,
+      });
       count++;
     }
     if (items.length < 100) break;
@@ -115,4 +126,3 @@ async function main() {
 }
 
 void main();
-

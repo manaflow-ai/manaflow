@@ -14,6 +14,7 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import { PullRequestCommentsSection } from "@/components/prs/PullRequestCommentsSection";
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
@@ -135,6 +136,12 @@ export function PullRequestDetailView({
   const clipboard = useClipboard({ timeout: 2000 });
 
   const currentPR = useConvexQuery(api.github_prs.getPullRequest, {
+    teamSlugOrId,
+    repoFullName: `${owner}/${repo}`,
+    number: Number(number),
+  });
+
+  const prComments = useConvexQuery(api.github_pr_comments.listForPullRequest, {
     teamSlugOrId,
     repoFullName: `${owner}/${repo}`,
     number: Number(number),
@@ -525,6 +532,10 @@ export function PullRequestDetailView({
                 </div>
               )}
             </Suspense>
+            <PullRequestCommentsSection
+              comments={prComments}
+              isLoading={!prComments}
+            />
           </div>
         </div>
       </div>

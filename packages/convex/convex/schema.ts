@@ -726,6 +726,64 @@ const convexSchema = defineSchema({
     .index("by_installation", ["installationId", "updatedAt"]) // debug/ops
     .index("by_repo", ["repoFullName", "updatedAt"]),
 
+  pullRequestComments: defineTable({
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    providerCommentId: v.number(),
+    providerNodeId: v.optional(v.string()),
+    type: v.union(v.literal("issue"), v.literal("review")),
+    body: v.optional(v.string()),
+    bodyHtml: v.optional(v.string()),
+    bodyText: v.optional(v.string()),
+    authorLogin: v.optional(v.string()),
+    authorId: v.optional(v.number()),
+    authorAvatarUrl: v.optional(v.string()),
+    authorAssociation: v.optional(v.string()),
+    url: v.optional(v.string()),
+    htmlUrl: v.optional(v.string()),
+    inReplyToId: v.optional(v.number()),
+    reviewId: v.optional(v.number()),
+    path: v.optional(v.string()),
+    position: v.optional(v.number()),
+    originalPosition: v.optional(v.number()),
+    commitId: v.optional(v.string()),
+    originalCommitId: v.optional(v.string()),
+    diffHunk: v.optional(v.string()),
+    line: v.optional(v.number()),
+    originalLine: v.optional(v.number()),
+    side: v.optional(v.string()),
+    startLine: v.optional(v.number()),
+    startSide: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+    submittedAt: v.optional(v.number()),
+    reactions: v.optional(
+      v.object({
+        totalCount: v.optional(v.number()),
+        plusOne: v.optional(v.number()),
+        minusOne: v.optional(v.number()),
+        laugh: v.optional(v.number()),
+        confused: v.optional(v.number()),
+        heart: v.optional(v.number()),
+        hooray: v.optional(v.number()),
+        rocket: v.optional(v.number()),
+        eyes: v.optional(v.number()),
+      }),
+    ),
+    isDeleted: v.optional(v.boolean()),
+    teamId: v.string(),
+  })
+    .index("by_team_repo_pr_created", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "createdAt",
+    ])
+    .index("by_comment_id", ["providerCommentId"]),
+
   // GitHub Actions workflow runs
   githubWorkflowRuns: defineTable({
     // Identity within provider and repo context

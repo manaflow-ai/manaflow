@@ -1,3 +1,4 @@
+import { syncPullRequestComments } from "@/lib/github/sync-pr-comments";
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
@@ -158,6 +159,16 @@ githubPrsBackfillRepoRouter.openapi(
             changedFiles: pr.changed_files,
           },
         });
+        await syncPullRequestComments({
+          convex,
+          octokit,
+          teamSlugOrId: team,
+          installationId: target.installationId,
+          owner,
+          repo,
+          prNumber: pr.number,
+          repositoryId: pr.base?.repo?.id,
+        });
         total += 1;
       }
       if (items.length < per_page) break;
@@ -166,4 +177,3 @@ githubPrsBackfillRepoRouter.openapi(
     return c.json({ ok: true, count: total, pages: page - 1 });
   }
 );
-
