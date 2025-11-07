@@ -86,7 +86,7 @@ export function FileDiffHeader({
       </div>
       <div className="flex-1 min-w-0 flex items-start justify-between gap-3">
         <div className="min-w-0 flex flex-col">
-          <span className="font-mono text-xs text-neutral-700 dark:text-neutral-300 truncate select-none">
+          <span className="font-sans font-semibold text-xs text-neutral-700 dark:text-neutral-300 truncate select-none">
             {filePath}
           </span>
           {status === "renamed" && oldPath ? (
