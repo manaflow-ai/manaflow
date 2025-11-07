@@ -2,6 +2,8 @@ import { FloatingPane } from "@/components/floating-pane";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { stackClientApp } from "@/lib/stack";
 import { createFileRoute } from "@tanstack/react-router";
+import { useMutation } from "convex/react";
+import { api } from "@cmux/convex/api";
 
 export const Route = createFileRoute("/_layout/debug")({
   component: DebugComponent,
@@ -9,10 +11,33 @@ export const Route = createFileRoute("/_layout/debug")({
 
 function DebugComponent() {
   const { socket } = useSocket();
+  const resetOnboarding = useMutation(api.onboarding.resetOnboarding);
 
   return (
     <FloatingPane>
       <div className="p-4">
+        <button
+          onClick={async () => {
+            await resetOnboarding({});
+            alert("Onboarding reset! Reloading...");
+            window.location.reload();
+          }}
+          style={{
+            background: "#ef4444",
+            color: "white",
+            padding: "8px 16px",
+            borderRadius: "4px",
+            border: "none",
+            cursor: "pointer",
+            fontWeight: "600",
+            marginBottom: "8px",
+          }}
+        >
+          🔄 Reset Onboarding
+        </button>
+
+        <br />
+
         <button
           onClick={async () => {
             const user = await stackClientApp.getUser();

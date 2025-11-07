@@ -40,6 +40,26 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
     if (!teamMembership) {
       throw redirect({ to: "/team-picker" });
     }
+
+    // Check if user needs to complete onboarding
+    // Skip check if already on onboarding page or specific exempted pages
+    const isOnboardingPage = location.pathname.includes("/onboarding");
+    const isConnectCompletePage = location.pathname.includes("/connect-complete");
+    const isEnvironmentNewPage = location.pathname.includes("/environments/new");
+
+    if (!isOnboardingPage && !isConnectCompletePage && !isEnvironmentNewPage) {
+      const onboardingState = await convexQueryClient.convexClient.query(
+        api.onboarding.getOnboardingState,
+        {}
+      );
+
+      if (!onboardingState?.hasCompletedOnboarding) {
+        throw redirect({
+          to: "/$teamSlugOrId/onboarding",
+          params: { teamSlugOrId },
+        });
+      }
+    }
   },
   loader: async ({ params }) => {
     void convexQueryClient.queryClient.ensureQueryData(

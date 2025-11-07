@@ -33,6 +33,7 @@ import type * as github_workflows from "../github_workflows.js";
 import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
+import type * as onboarding from "../onboarding.js";
 import type * as screenshots_http from "../screenshots_http.js";
 import type * as stack from "../stack.js";
 import type * as stack_webhook from "../stack_webhook.js";
@@ -89,6 +90,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
+  onboarding: typeof onboarding;
   screenshots_http: typeof screenshots_http;
   stack: typeof stack;
   stack_webhook: typeof stack_webhook;
