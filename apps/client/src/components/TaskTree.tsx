@@ -643,6 +643,28 @@ function TaskTreeInner({
                 secondary={taskSecondary || undefined}
                 meta={taskLeadingIcon || undefined}
                 className={clsx(isRenaming && "pr-2")}
+                trailing={
+                  taskLeadingIcon ? (
+                    <Tooltip delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <button
+                          className="opacity-0 group-hover:opacity-100 flex items-center justify-center w-3 h-3 hover:bg-neutral-300 dark:hover:bg-neutral-700 rounded-sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            archiveWithUndo(task);
+                          }}
+                          type="button"
+                        >
+                          <ArchiveIcon className="w-2.5 h-2.5 text-neutral-600 dark:text-neutral-400" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" sideOffset={6}>
+                        Archive task
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null
+                }
               />
             </Link>
           </ContextMenu.Trigger>
@@ -1243,6 +1265,28 @@ function TaskRunTreeInner({
               titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
               titleSuffix={runNumberSuffix ?? undefined}
               meta={leadingContent}
+              trailing={
+                leadingContent ? (
+                  <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="opacity-0 group-hover:opacity-100 flex items-center justify-center w-3 h-3 hover:bg-neutral-300 dark:hover:bg-neutral-700 rounded-sm"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleArchiveRun();
+                        }}
+                        type="button"
+                      >
+                        <ArchiveIcon className="w-2.5 h-2.5 text-neutral-600 dark:text-neutral-400" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={6}>
+                      Archive task run
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null
+              }
             />
           </Link>
         </ContextMenu.Trigger>
