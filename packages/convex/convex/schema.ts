@@ -287,6 +287,8 @@ const convexSchema = defineSchema({
     .index("by_status", ["status"])
     .index("by_vscode_status", ["vscode.status"])
     .index("by_vscode_container_name", ["vscode.containerName"])
+    .index("by_team_pullRequestNumber", ["teamId", "pullRequestNumber"])
+    .index("by_team_branch", ["teamId", "newBranch"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"]),
   taskRunScreenshotSets: defineTable({

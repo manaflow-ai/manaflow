@@ -10,6 +10,7 @@ import type {
   WebhookEvent,
   WorkflowRunEvent,
 } from "@octokit/webhooks-types";
+import type { RunPullRequestState } from "@cmux/shared/pull-request-state";
 import { env } from "../_shared/convex-env";
 import { hmacSha256, safeEqualHex, sha256Hex } from "../_shared/crypto";
 import { bytesToHex } from "../_shared/encoding";
@@ -24,6 +25,34 @@ const DEBUG_FLAGS = {
 const FEATURE_FLAGS = {
   githubEyesReactionOnPrOpen: false,
 };
+
+const PULL_REQUEST_STATE_ACTIONS = new Set([
+  "opened",
+  "closed",
+  "reopened",
+  "converted_to_draft",
+  "ready_for_review",
+]);
+
+function deriveRunPullRequestState(
+  pr?: PullRequestEvent["pull_request"],
+): RunPullRequestState {
+  if (!pr) return "unknown";
+  if (pr.merged) {
+    return "merged";
+  }
+  if (pr.draft) {
+    return "draft";
+  }
+  const normalizedState = typeof pr.state === "string" ? pr.state.toLowerCase() : "";
+  if (normalizedState === "open") {
+    return "open";
+  }
+  if (normalizedState === "closed") {
+    return "closed";
+  }
+  return "unknown";
+}
 
 async function verifySignature(
   secret: string,
@@ -492,6 +521,9 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           );
           const teamId = conn?.teamId;
           if (!teamId) break;
+          const prNumber = Number(
+            prPayload.pull_request?.number ?? prPayload.number ?? 0,
+          );
           await _ctx.runMutation(internal.github_prs.upsertFromWebhookPayload, {
             installationId: installation,
             repoFullName,
@@ -499,12 +531,39 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             payload: prPayload,
           });
 
+          const pr = prPayload.pull_request;
+          const action = (prPayload.action ?? "").toLowerCase();
+          if (
+            pr &&
+            prNumber > 0 &&
+            PULL_REQUEST_STATE_ACTIONS.has(action)
+          ) {
+            const rawBranch =
+              typeof pr.head?.ref === "string" ? pr.head.ref.trim() : "";
+            const branchName = rawBranch ? rawBranch : undefined;
+            const htmlUrl =
+              typeof pr.html_url === "string" ? pr.html_url : undefined;
+            const runState = deriveRunPullRequestState(pr);
+            await _ctx.runMutation(
+              internal.taskRuns.syncPullRequestStateFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                pullRequestNumber: prNumber,
+                state: runState,
+                isDraft:
+                  typeof pr.draft === "boolean" ? pr.draft : undefined,
+                url: htmlUrl,
+                branchName,
+              },
+            );
+          }
+
           // Add eyes emoji reaction when a new PR is opened
           if (
             FEATURE_FLAGS.githubEyesReactionOnPrOpen &&
             prPayload.action === "opened"
           ) {
-            const prNumber = Number(prPayload.pull_request?.number ?? 0);
             if (prNumber) {
               await _ctx.runAction(internal.github_pr_comments.addPrReaction, {
                 installationId: installation,
