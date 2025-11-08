@@ -22,6 +22,7 @@ import {
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
 } from "@cmux/shared";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import {
   type PullRequestActionResult,
   type StoredPullRequestInfo,
@@ -73,6 +74,8 @@ import {
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
+const WORKSPACE_FOLDER_QUERY = `/?folder=${CONTAINER_WORKSPACE_PATH}`;
 
 const GitSocketDiffRequestSchema = z.object({
   headRef: z.string(),
@@ -552,7 +555,7 @@ export function setupSocketHandlers(
               rt.emit("vscode-spawned", {
                 instanceId: primaryAgent.terminalId,
                 url: primaryAgent.vscodeUrl.replace(
-                  "/?folder=/root/workspace",
+                  WORKSPACE_FOLDER_QUERY,
                   ""
                 ),
                 workspaceUrl: primaryAgent.vscodeUrl,
@@ -1062,7 +1065,7 @@ export function setupSocketHandlers(
 
           const sandboxId = data.instanceId;
           const vscodeBaseUrl = data.vscodeUrl;
-          const workspaceUrl = `${vscodeBaseUrl}?folder=/root/workspace`;
+          const workspaceUrl = `${vscodeBaseUrl}?folder=${CONTAINER_WORKSPACE_PATH}`;
 
           serverLogger.info(
             `[create-cloud-workspace] Sandbox started: ${sandboxId}, VSCode URL: ${workspaceUrl}`
@@ -1895,7 +1898,7 @@ Please address the issue mentioned in the comment above.`;
         if (primaryAgent.vscodeUrl) {
           rt.emit("vscode-spawned", {
             instanceId: primaryAgent.terminalId,
-            url: primaryAgent.vscodeUrl.replace("/?folder=/root/workspace", ""),
+            url: primaryAgent.vscodeUrl.replace(WORKSPACE_FOLDER_QUERY, ""),
             workspaceUrl: primaryAgent.vscodeUrl,
             provider: "morph", // Since isCloudMode is true
           });

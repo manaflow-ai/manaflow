@@ -22,6 +22,10 @@
       "import": "./src/node/socket-server.ts",
       "types": "./src/node/socket-server.ts"
     },
+    "./node/workspace-path": {
+      "import": "./src/node/workspace-path.ts",
+      "types": "./src/node/workspace-path.ts"
+    },
     "./src/providers/amp/start-amp-proxy.ts": {
       "import": "./src/providers/amp/start-amp-proxy.ts",
       "types": "./src/providers/amp/start-amp-proxy.ts"

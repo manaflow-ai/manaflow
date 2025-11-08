@@ -1,6 +1,7 @@
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import type { AgentConfig } from "@cmux/shared";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import { buildAutoCommitPushCommand } from "./utils/autoCommitPushCommand";
 import { generateCommitMessageFromDiff } from "./utils/commitMessageGenerator";
 import { getConvex } from "./utils/convexClient";
@@ -8,6 +9,8 @@ import { serverLogger } from "./utils/fileLogger";
 import { parseRepoFromUrl } from "./utils/githubPr";
 import { workerExec } from "./utils/workerExec";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
+
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
 
 /**
  * Automatically commit and push changes when a task completes
@@ -109,7 +112,7 @@ exit $EXIT_CODE
         workerSocket,
         command: "bash",
         args: ["-c", combinedCommand],
-        cwd: "/root/workspace",
+        cwd: CONTAINER_WORKSPACE_PATH,
         env: {
           CMUX_COMMIT_MESSAGE: commitMessage,
           CMUX_BRANCH_NAME: branchName,
@@ -224,7 +227,7 @@ ${taskRun.crownReason || "This implementation was selected as the best solution.
               workerSocket,
               command: "/bin/bash",
               args: ["-c", prScript],
-              cwd: "/root/workspace",
+              cwd: CONTAINER_WORKSPACE_PATH,
               env: {},
               timeout: 30000,
             });

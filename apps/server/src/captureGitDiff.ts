@@ -1,7 +1,10 @@
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import { serverLogger } from "./utils/fileLogger";
 import { resolveWorkerRepoPath } from "./utils/resolveWorkerRepoPath";
 import { workerExec } from "./utils/workerExec";
 import type { VSCodeInstance } from "./vscode/VSCodeInstance";
+
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
 
 export async function captureGitDiff(
   vscodeInstance: VSCodeInstance,
@@ -24,8 +27,8 @@ export async function captureGitDiff(
 
     const repoCwd = await resolveWorkerRepoPath({
       workerSocket,
-      initialCwd: "/root/workspace",
-      fallbackCwd: "/root/workspace",
+      initialCwd: CONTAINER_WORKSPACE_PATH,
+      fallbackCwd: CONTAINER_WORKSPACE_PATH,
     });
     serverLogger.info(`[AgentSpawner] Running diff script from ${repoCwd}`);
 

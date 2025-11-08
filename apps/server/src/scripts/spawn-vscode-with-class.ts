@@ -1,6 +1,9 @@
 import { Id } from "@cmux/convex/dataModel";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import fs from "node:fs";
 import { DockerVSCodeInstance } from "../vscode/DockerVSCodeInstance";
+
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
 
 async function main() {
   const prompt = process.argv[2];
@@ -62,7 +65,7 @@ async function main() {
     );
     const claudeJson = JSON.parse(claudeJsonRaw);
     claudeJson["projects"] = {};
-    claudeJson["projects"]["/root/workspace"] = {
+    claudeJson["projects"][CONTAINER_WORKSPACE_PATH] = {
       allowedTools: [],
       history: [],
       mcpContextUris: [],

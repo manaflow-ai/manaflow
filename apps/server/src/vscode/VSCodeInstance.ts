@@ -1,7 +1,10 @@
 import type { Id } from "@cmux/convex/dataModel";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
 import { dockerLogger } from "../utils/fileLogger";
+
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
 
 export interface VSCodeInstanceConfig {
   workspacePath?: string;
@@ -193,13 +196,12 @@ export abstract class VSCodeInstance extends EventEmitter {
   startFileWatch(worktreePath: string): void {
     if (this.workerSocket && this.workerConnected) {
       // Always watch the container workspace path; host paths are not valid inside the container
-      const containerWorkspace = "/root/workspace";
       dockerLogger.info(
-        `[VSCodeInstance ${this.instanceId}] Starting file watch for ${worktreePath} -> ${containerWorkspace}`
+        `[VSCodeInstance ${this.instanceId}] Starting file watch for ${worktreePath} -> ${CONTAINER_WORKSPACE_PATH}`
       );
       this.workerSocket.emit("worker:start-file-watch", {
         taskRunId: this.taskRunId,
-        worktreePath: containerWorkspace,
+        worktreePath: CONTAINER_WORKSPACE_PATH,
       });
     } else {
       dockerLogger.warn(
@@ -230,7 +232,7 @@ export abstract class VSCodeInstance extends EventEmitter {
   abstract getName(): string;
 
   protected getWorkspaceUrl(baseUrl: string): string {
-    return `${baseUrl}/?folder=/root/workspace`;
+    return `${baseUrl}/?folder=${CONTAINER_WORKSPACE_PATH}`;
   }
 
   protected async disconnectFromWorker(): Promise<void> {

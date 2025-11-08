@@ -90,7 +90,6 @@ export async function handleWorkerTaskCompletion(
     taskRunId,
     workspacePath: WORKSPACE_ROOT,
     gitRepoPath: detectedGitPath,
-    envWorkspacePath: process.env.CMUX_WORKSPACE_PATH,
     agentModel,
     elapsedMs,
     exitCode,

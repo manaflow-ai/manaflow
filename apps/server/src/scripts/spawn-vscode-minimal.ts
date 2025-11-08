@@ -1,4 +1,5 @@
 import type { ServerToWorkerEvents, WorkerToServerEvents } from "@cmux/shared";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import Docker from "dockerode";
 import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 
@@ -11,6 +12,8 @@ interface ContainerInfo {
   cdpPort: string;
   vscodeUrl: string;
 }
+
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
 
 async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
   const containerName = `cmux-vscode-minimal-${Date.now()}`;
@@ -31,7 +34,11 @@ async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
   const container = await docker.createContainer({
     name: containerName,
     Image: imageName,
-    Env: ["NODE_ENV=production", "WORKER_PORT=39377"],
+    Env: [
+      "NODE_ENV=production",
+      "WORKER_PORT=39377",
+      `CMUX_WORKSPACE_PATH=${CONTAINER_WORKSPACE_PATH}`,
+    ],
     HostConfig: {
       AutoRemove: true,
       Privileged: true,
@@ -102,7 +109,7 @@ async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
     }
   }
 
-  const vscodeUrl = `http://localhost:${vscodePort}/?folder=/root/workspace`;
+  const vscodeUrl = `http://localhost:${vscodePort}/?folder=${CONTAINER_WORKSPACE_PATH}`;
 
   return {
     containerId: container.id,

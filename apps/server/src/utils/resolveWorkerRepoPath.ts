@@ -1,9 +1,10 @@
 import type { ServerToWorkerEvents, WorkerToServerEvents } from "@cmux/shared";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import type { Socket } from "@cmux/shared/socket";
 import { serverLogger } from "./fileLogger";
 import { workerExec } from "./workerExec";
 
-const DEFAULT_WORKER_CWD = "/root/workspace";
+const DEFAULT_WORKER_CWD = getContainerWorkspacePath();
 
 interface ResolveWorkerRepoPathParams {
   workerSocket: Socket<WorkerToServerEvents, ServerToWorkerEvents>;

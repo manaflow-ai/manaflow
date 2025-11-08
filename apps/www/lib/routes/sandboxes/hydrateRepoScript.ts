@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -63,7 +64,7 @@ function exec(command: string, options?: { cwd?: string; throwOnError?: boolean 
 }
 
 function getConfig(): HydrateConfig {
-  const workspacePath = process.env.CMUX_WORKSPACE_PATH || "/root/workspace";
+  const workspacePath = getContainerWorkspacePath();
   const depth = parseInt(process.env.CMUX_DEPTH || "1", 10);
 
   // Check if we have repo config

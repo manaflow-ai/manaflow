@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { $ } from "bun";
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -165,35 +166,35 @@ async function main() {
 
   console.error("[cmux auto-commit] detecting repositories");
 
-  // Always scan from /root/workspace regardless of current directory
-  const workspaceDir = "/root/workspace";
+  // Always scan from the container workspace root regardless of current directory
+  const workspaceDir = getContainerWorkspacePath();
   console.error(`[cmux auto-commit] scanning repos from ${workspaceDir}`);
 
   const repoPaths: string[] = [];
 
   if (existsSync(workspaceDir)) {
-    // First check if /root/workspace itself is a git repo
+    // First check if the workspace directory itself is a git repo
     const workspaceGitPath = join(workspaceDir, ".git");
 
     if (existsSync(workspaceGitPath)) {
-      // /root/workspace is itself a git repo
+      // Workspace directory is itself a git repo
       try {
         await $`git -C ${workspaceDir} rev-parse --is-inside-work-tree`.quiet();
         const repoPath = resolve(workspaceDir);
 
         console.error(
-          `[cmux auto-commit] /root/workspace is a git repo: ${repoPath}`
+          `[cmux auto-commit] ${workspaceDir} is a git repo: ${repoPath}`
         );
         repoPaths.push(repoPath);
       } catch {
         console.error(
-          "[cmux auto-commit] /root/workspace has .git but is not a valid repo"
+          `[cmux auto-commit] ${workspaceDir} has .git but is not a valid repo`
         );
       }
     } else {
-      // /root/workspace is not a git repo, check for sub-repos
+      // Workspace directory is not a git repo, check for sub-repos
       console.error(
-        "[cmux auto-commit] /root/workspace is not a git repo, checking for sub-repos"
+        `[cmux auto-commit] ${workspaceDir} is not a git repo, checking for sub-repos`
       );
 
       const dirEntries = await readdir(workspaceDir, {

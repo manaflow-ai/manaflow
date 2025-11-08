@@ -1,8 +1,11 @@
+import { getContainerWorkspacePath } from "@cmux/shared/node/workspace-path";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createServer } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runWithAuth } from "../utils/requestContext";
 import { CmuxVSCodeInstance } from "./CmuxVSCodeInstance";
+
+const CONTAINER_WORKSPACE_PATH = getContainerWorkspacePath();
 
 describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
   let server: ReturnType<typeof createServer> | null = null;
@@ -84,9 +87,9 @@ describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
         expect(info.instanceId).toBe(taskRunId);
         expect(info.provider).toBe("morph");
         expect(info.url).toBe("http://127.0.0.1:39999");
-        expect(info.workspaceUrl.includes("/?folder=/root/workspace")).toBe(
-          true
-        );
+        expect(
+          info.workspaceUrl.includes(`/?folder=${CONTAINER_WORKSPACE_PATH}`)
+        ).toBe(true);
 
         const st = await inst.getStatus();
         expect(st.running).toBe(true);
