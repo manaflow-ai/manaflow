@@ -5,7 +5,8 @@ import { postApiMorphSetupInstance } from "@cmux/www-openapi-client";
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
-describe(
+// TODO: Re-enable when Morph stops being flay
+describe.skip(
   "morphRouter - live",
   {
     timeout: 120_000,
