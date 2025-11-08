@@ -31,14 +31,14 @@ const DEFAULT_LAYOUT_PANELS: LayoutPanels = {
 };
 
 export const DEFAULT_PANEL_CONFIG: PanelConfig = {
-  layoutMode: "four-panel",
+  layoutMode: "three-top",
   layouts: {
     "four-panel": { ...DEFAULT_LAYOUT_PANELS },
     "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
     "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
     "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "terminal" },
     "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
-    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "chat", bottomRight: "terminal" },
+    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "browser", bottomRight: "gitDiff" },
     "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "terminal" },
   },
 };
