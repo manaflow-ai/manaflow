@@ -90,6 +90,10 @@ export async function ensureVSCodeServeWeb(
       {
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          VSCODE_IPC_HOOK_CLI: undefined,
+        },
       }
     );
 
