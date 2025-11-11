@@ -37,7 +37,6 @@ import {
   Monitor,
   Plus,
   Settings,
-  SquareSplitHorizontal,
 } from "lucide-react";
 import {
   useCallback,
@@ -201,6 +200,7 @@ export function EnvironmentConfiguration({
   });
   const splitContainerRef = useRef<HTMLDivElement | null>(null);
   const splitDragRafRef = useRef<number | null>(null);
+  const [expandedPanelInSplit, setExpandedPanelInSplit] = useState<EnvPanelPosition | null>(null);
   const [panelLayout, setPanelLayout] = useState<
     Record<EnvPanelPosition, EnvPanelType>
   >({
@@ -292,30 +292,14 @@ export function EnvironmentConfiguration({
       if (!isEnvPanelPosition(position)) {
         return;
       }
-      setPreviewMode((prev) => {
-        const targetType = panelLayout[position];
-        if (!targetType) {
-          return prev;
+      setExpandedPanelInSplit((prev) => {
+        if (prev === position) {
+          return null;
         }
-        const currentlyExpanded =
-          prev === "vscode"
-            ? workspacePosition
-            : prev === "browser"
-              ? browserPosition
-              : null;
-        if (currentlyExpanded === position) {
-          return "split";
-        }
-        if (targetType === "workspace") {
-          return "vscode";
-        }
-        if (targetType === "browser") {
-          return "browser";
-        }
-        return prev;
+        return position;
       });
     },
-    [browserPosition, panelLayout, workspacePosition]
+    []
   );
 
   const clampSplitRatio = useCallback(
@@ -672,12 +656,14 @@ export function EnvironmentConfiguration({
 
   const renderEnvPanel = (position: EnvPanelPosition) => {
     const type = panelLayout[position];
+    const isPanelExpanded = previewMode === "split" ? expandedPanelInSplit === position : expandedPanelPosition === position;
+    const isAnyExpanded = previewMode === "split" ? expandedPanelInSplit !== null : expandedPanelPosition !== null;
     const commonPanelProps = {
       position,
       onSwap: handlePanelSwap,
       onToggleExpand: handlePanelToggleExpand,
-      isExpanded: expandedPanelPosition === position,
-      isAnyPanelExpanded: expandedPanelPosition !== null,
+      isExpanded: isPanelExpanded,
+      isAnyPanelExpanded: isAnyExpanded,
     };
 
     if (type === "workspace") {
@@ -723,11 +709,72 @@ export function EnvironmentConfiguration({
     );
   };
 
-  const activeSinglePosition: EnvPanelPosition = isEnvPanelPosition(
-    expandedPanelPosition
-  )
-    ? expandedPanelPosition
-    : "topLeft";
+  const renderSingleContent = () => {
+    if (previewMode === "vscode") {
+      return vscodeUrl ? (
+        <PersistentWebView
+          key={vscodePersistKey}
+          persistKey={vscodePersistKey}
+          src={vscodeUrl}
+          className="flex h-full"
+          iframeClassName="select-none"
+          allow={TASK_RUN_IFRAME_ALLOW}
+          sandbox={TASK_RUN_IFRAME_SANDBOX}
+          preflight
+          retainOnUnmount
+          fallback={<WorkspaceLoadingIndicator variant="vscode" status="loading" />}
+          fallbackClassName="bg-neutral-50 dark:bg-black"
+          errorFallback={<WorkspaceLoadingIndicator variant="vscode" status="error" />}
+          errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+          loadTimeoutMs={60_000}
+        />
+      ) : workspacePlaceholder ? (
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+          <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+            {workspacePlaceholder.title}
+          </div>
+          {workspacePlaceholder.description ? (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {workspacePlaceholder.description}
+            </p>
+          ) : null}
+        </div>
+      ) : null;
+    }
+
+    if (previewMode === "browser") {
+      return browserUrl && browserPersistKey ? (
+        <PersistentWebView
+          key={browserPersistKey}
+          persistKey={browserPersistKey}
+          src={browserUrl}
+          className="flex h-full"
+          iframeClassName="select-none"
+          allow={TASK_RUN_IFRAME_ALLOW}
+          sandbox={TASK_RUN_IFRAME_SANDBOX}
+          retainOnUnmount
+          fallback={<WorkspaceLoadingIndicator variant="browser" status="loading" />}
+          fallbackClassName="bg-neutral-50 dark:bg-black"
+          errorFallback={<WorkspaceLoadingIndicator variant="browser" status="error" />}
+          errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+          loadTimeoutMs={45_000}
+        />
+      ) : browserPlaceholder ? (
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+          <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+            {browserPlaceholder.title}
+          </div>
+          {browserPlaceholder.description ? (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {browserPlaceholder.description}
+            </p>
+          ) : null}
+        </div>
+      ) : null;
+    }
+
+    return null;
+  };
 
   const previewContent =
     previewMode === "split" ? (
@@ -735,38 +782,46 @@ export function EnvironmentConfiguration({
         ref={splitContainerRef}
         className="grid h-full min-h-0"
         style={{
-          gridTemplateRows: `minmax(160px, ${splitRatio}fr) 12px minmax(160px, ${
-            1 - splitRatio
-          }fr)`,
-          gap: "8px",
+          gridTemplateRows: expandedPanelInSplit === "topLeft"
+            ? "1fr 8px 0fr"
+            : expandedPanelInSplit === "bottomLeft"
+              ? "0fr 8px 1fr"
+              : `minmax(160px, ${splitRatio}fr) 8px minmax(160px, ${1 - splitRatio}fr)`,
+          gap: "0",
         }}
       >
         <div className="min-h-0 h-full">{renderEnvPanel("topLeft")}</div>
-        <div
-          role="separator"
-          aria-label="Resize preview panels"
-          aria-orientation="horizontal"
-          onMouseDown={startSplitDragging}
-          className="group flex items-center justify-center rounded-full cursor-row-resize select-none bg-transparent"
-        >
-          <div className="h-1.5 w-16 rounded-full bg-neutral-200 transition-colors group-hover:bg-neutral-400 dark:bg-neutral-800 dark:group-hover:bg-neutral-500" />
-        </div>
+        {!expandedPanelInSplit && (
+          <div
+            role="separator"
+            aria-label="Resize preview panels"
+            aria-orientation="horizontal"
+            onMouseDown={startSplitDragging}
+            className="group relative cursor-row-resize select-none bg-transparent transition-colors z-10"
+            style={{
+              height: "8px",
+            }}
+            title="Resize panels"
+          >
+            <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "calc(50% + 2px)" }} />
+          </div>
+        )}
+        {expandedPanelInSplit && <div className="h-0" />}
         <div className="min-h-0 h-full">{renderEnvPanel("bottomLeft")}</div>
       </div>
     ) : (
-      <div className="h-full min-h-0">{renderEnvPanel(activeSinglePosition)}</div>
+      <div className="h-full min-h-0">{renderSingleContent()}</div>
     );
 
   const previewButtonClass = useCallback(
     (view: PreviewMode, disabled: boolean) =>
       clsx(
-        "inline-flex h-7 w-7 items-center justify-center rounded focus:outline-none text-neutral-500 transition-colors dark:text-neutral-400",
+        "inline-flex h-7 w-7 items-center justify-center rounded focus:outline-none transition-colors",
         disabled
-          ? "opacity-40 cursor-not-allowed"
-          : "cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100",
-        previewMode === view && !disabled
-          ? "text-neutral-900 dark:text-neutral-100"
-          : undefined
+          ? "opacity-40 cursor-not-allowed text-neutral-500 dark:text-neutral-400"
+          : previewMode === view
+            ? "text-neutral-900 dark:text-white bg-neutral-100 dark:bg-neutral-800"
+            : "text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900"
       ),
     [previewMode]
   );
@@ -796,7 +851,18 @@ export function EnvironmentConfiguration({
           aria-label="Split VS Code and browser"
           title="Split VS Code and browser"
         >
-          <SquareSplitHorizontal className="h-3.5 w-3.5" />
+          <svg
+            className="h-3.5 w-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="3" width="18" height="7" rx="1" />
+            <rect x="3" y="14" width="18" height="7" rx="1" />
+          </svg>
         </button>
         <button
           type="button"
