@@ -15,6 +15,8 @@ const WorkspaceConfigResponse = z
     projectFullName: z.string(),
     maintenanceScript: z.string().optional(),
     envVarsContent: z.string(),
+    envVarsLoadError: z.boolean().default(false),
+    hasEnvVars: z.boolean().default(false),
     updatedAt: z.number().optional(),
   })
   .openapi("WorkspaceConfigResponse");
@@ -31,19 +33,36 @@ const WorkspaceConfigBody = z
     teamSlugOrId: z.string(),
     projectFullName: z.string(),
     maintenanceScript: z.string().optional(),
-    envVarsContent: z.string().default(""),
+    envVarsContent: z.string().optional(),
   })
   .openapi("WorkspaceConfigBody");
 
+type EnvVarsLoadResult = {
+  content: string;
+  loadError: boolean;
+};
+
 async function loadEnvVarsContent(
   dataVaultKey: string | undefined,
-): Promise<string> {
-  if (!dataVaultKey) return "";
-  const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
-  const value = await store.getValue(dataVaultKey, {
-    secret: env.STACK_DATA_VAULT_SECRET,
-  });
-  return value ?? "";
+): Promise<EnvVarsLoadResult> {
+  if (!dataVaultKey) {
+    return { content: "", loadError: false };
+  }
+  try {
+    const store = await stackServerAppJs.getDataVaultStore(
+      "cmux-snapshot-envs",
+    );
+    const value = await store.getValue(dataVaultKey, {
+      secret: env.STACK_DATA_VAULT_SECRET,
+    });
+    return { content: value ?? "", loadError: false };
+  } catch (error) {
+    console.error(
+      "[workspace-configs] Failed to load env vars from Stack",
+      error,
+    );
+    return { content: "", loadError: true };
+  }
 }
 
 workspaceConfigsRouter.openapi(
@@ -88,12 +107,15 @@ workspaceConfigsRouter.openapi(
       return c.json(null);
     }
 
-    const envVarsContent = await loadEnvVarsContent(config.dataVaultKey);
+    const { content: envVarsContent, loadError: envVarsLoadError } =
+      await loadEnvVarsContent(config.dataVaultKey);
 
     return c.json({
       projectFullName: config.projectFullName,
       maintenanceScript: config.maintenanceScript ?? undefined,
       envVarsContent,
+      envVarsLoadError,
+      hasEnvVars: Boolean(config.dataVaultKey),
       updatedAt: config.updatedAt,
     });
   },
@@ -148,21 +170,30 @@ workspaceConfigsRouter.openapi(
     const store = await stackServerAppJs.getDataVaultStore(
       "cmux-snapshot-envs",
     );
-    const envVarsContent = body.envVarsContent ?? "";
     let dataVaultKey = existing?.dataVaultKey;
-    if (!dataVaultKey) {
-      dataVaultKey = `workspace_${randomBytes(16).toString("hex")}`;
-    }
+    const hasEnvVarsUpdate = typeof body.envVarsContent === "string";
+    let envVarsContentResponse = "";
+    let envVarsLoadErrorResponse = false;
 
-    try {
-      await store.setValue(dataVaultKey, envVarsContent, {
-        secret: env.STACK_DATA_VAULT_SECRET,
-      });
-    } catch (error) {
-      throw new HTTPException(500, {
-        message: "Failed to persist environment variables",
-        cause: error,
-      });
+    if (hasEnvVarsUpdate) {
+      const envVarsContent = body.envVarsContent ?? "";
+      envVarsContentResponse = envVarsContent;
+      if (!dataVaultKey) {
+        dataVaultKey = `workspace_${randomBytes(16).toString("hex")}`;
+      }
+
+      try {
+        await store.setValue(dataVaultKey, envVarsContent, {
+          secret: env.STACK_DATA_VAULT_SECRET,
+        });
+      } catch (error) {
+        throw new HTTPException(500, {
+          message: "Failed to persist environment variables",
+          cause: error,
+        });
+      }
+    } else if (existing?.dataVaultKey) {
+      envVarsLoadErrorResponse = true;
     }
 
     await convex.mutation(api.workspaceConfigs.upsert, {
@@ -175,7 +206,12 @@ workspaceConfigsRouter.openapi(
     return c.json({
       projectFullName: body.projectFullName,
       maintenanceScript: body.maintenanceScript,
-      envVarsContent,
+      envVarsContent: envVarsContentResponse,
+      envVarsLoadError: envVarsLoadErrorResponse,
+      hasEnvVars:
+        hasEnvVarsUpdate
+          ? Boolean(envVarsContentResponse?.trim().length)
+          : Boolean(existing?.dataVaultKey),
       updatedAt: Date.now(),
     });
   },

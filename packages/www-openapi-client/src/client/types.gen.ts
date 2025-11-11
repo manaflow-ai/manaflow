@@ -400,6 +400,8 @@ export type ListEnvironmentsResponse = Array<GetEnvironmentResponse>;
 
 export type GetEnvironmentVarsResponse = {
     envVarsContent: string;
+    envVarsLoadError?: boolean;
+    hasEnvVars?: boolean;
 };
 
 export type UpdateEnvironmentBody = {
@@ -613,6 +615,8 @@ export type WorkspaceConfigResponse = {
     projectFullName: string;
     maintenanceScript?: string;
     envVarsContent: string;
+    envVarsLoadError?: boolean;
+    hasEnvVars?: boolean;
     updatedAt?: number;
 } | null;
 

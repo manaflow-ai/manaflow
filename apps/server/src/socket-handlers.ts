@@ -783,6 +783,17 @@ export function setupSocketHandlers(
               return {};
             }
 
+            if (workspaceConfig.envVarsLoadError) {
+              serverLogger.warn(
+                "[create-local-workspace] Workspace env vars unavailable; skipping injection to avoid overwrites",
+                {
+                  projectFullName,
+                  hasEnvVars: workspaceConfig.hasEnvVars,
+                }
+              );
+              return {};
+            }
+
             const envVarsContent = workspaceConfig.envVarsContent ?? "";
             const trimmedEnvVars = envVarsContent.trim();
             let parsedEnvVars: Record<string, string> = {};

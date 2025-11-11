@@ -231,25 +231,33 @@ export async function spawnAgent(
           path: { id: String(options.environmentId) },
           query: { teamSlugOrId },
         });
-        const envContent = envRes.data?.envVarsContent;
-        if (envContent && envContent.trim().length > 0) {
-          const parsed = parseDotenv(envContent);
-          if (Object.keys(parsed).length > 0) {
-            const preserved = {
-              CMUX_PROMPT: envVars.CMUX_PROMPT,
-              CMUX_TASK_RUN_ID: envVars.CMUX_TASK_RUN_ID,
-              PROMPT: envVars.PROMPT,
-            };
-            envVars = {
-              ...envVars,
-              ...parsed,
-              ...preserved,
-            };
-            serverLogger.info(
-              `[AgentSpawner] Injected ${Object.keys(parsed).length} env vars from environment ${String(
-                options.environmentId
-              )}`
-            );
+        if (envRes.data?.envVarsLoadError) {
+          serverLogger.warn(
+            `[AgentSpawner] Environment env vars unavailable (Stack offline?) for ${String(
+              options.environmentId
+            )}; continuing without them`
+          );
+        } else {
+          const envContent = envRes.data?.envVarsContent;
+          if (envContent && envContent.trim().length > 0) {
+            const parsed = parseDotenv(envContent);
+            if (Object.keys(parsed).length > 0) {
+              const preserved = {
+                CMUX_PROMPT: envVars.CMUX_PROMPT,
+                CMUX_TASK_RUN_ID: envVars.CMUX_TASK_RUN_ID,
+                PROMPT: envVars.PROMPT,
+              };
+              envVars = {
+                ...envVars,
+                ...parsed,
+                ...preserved,
+              };
+              serverLogger.info(
+                `[AgentSpawner] Injected ${Object.keys(parsed).length} env vars from environment ${String(
+                  options.environmentId
+                )}`
+              );
+            }
           }
         }
       } catch (error) {

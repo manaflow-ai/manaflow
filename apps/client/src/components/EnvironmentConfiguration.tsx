@@ -29,6 +29,7 @@ import type { Id } from "@cmux/convex/dataModel";
 import clsx from "clsx";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import {
+  AlertTriangle,
   ArrowLeft,
   Code2,
   Loader2,
@@ -63,6 +64,7 @@ export function EnvironmentConfiguration({
   initialDevScript = "",
   initialExposedPorts = "",
   initialEnvVars,
+  initialEnvVarsLoadError,
   onHeaderControlsChange,
   persistedState = null,
   onPersistStateChange,
@@ -82,6 +84,7 @@ export function EnvironmentConfiguration({
   initialDevScript?: string;
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
+  initialEnvVarsLoadError?: boolean;
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
   persistedState?: EnvironmentConfigDraft | null;
   onPersistStateChange?: (partial: Partial<EnvironmentConfigDraft>) => void;
@@ -106,6 +109,7 @@ export function EnvironmentConfiguration({
   const [envName, setEnvName] = useState(
     () => persistedState?.envName ?? initialEnvName
   );
+  const envVarsLoadError = Boolean(initialEnvVarsLoadError);
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(persistedState?.envVars ?? initialEnvVars)
   );
@@ -272,7 +276,7 @@ export function EnvironmentConfiguration({
   }, [instanceId]);
 
   useEffect(() => {
-    if (!instanceId) {
+    if (!instanceId || envVarsLoadError) {
       return;
     }
 
@@ -313,7 +317,7 @@ export function EnvironmentConfiguration({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [applySandboxEnv, envVars, instanceId, teamSlugOrId]);
+  }, [applySandboxEnv, envVars, envVarsLoadError, instanceId, teamSlugOrId]);
 
   const onSnapshot = async (): Promise<void> => {
     if (!instanceId) {
@@ -808,6 +812,16 @@ export function EnvironmentConfiguration({
                 }
               }}
             >
+              {envVarsLoadError ? (
+                <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    We couldn’t load this environment’s saved variables from
+                    Stack Auth. They remain stored securely and won’t be changed
+                    if you create a snapshot right now.
+                  </span>
+                </div>
+              ) : null}
               <div
                 className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center pb-1"
                 style={{
@@ -819,7 +833,12 @@ export function EnvironmentConfiguration({
                 <span className="w-[44px]" />
               </div>
 
-              <div className="space-y-2">
+              <div
+                className={clsx(
+                  "space-y-2",
+                  envVarsLoadError && "opacity-60 pointer-events-none select-none"
+                )}
+              >
                 {envVars.map((row, idx) => (
                   <div
                     key={idx}
@@ -882,7 +901,12 @@ export function EnvironmentConfiguration({
                 ))}
               </div>
 
-              <div className="pt-2">
+              <div
+                className={clsx(
+                  "pt-2",
+                  envVarsLoadError && "opacity-60 pointer-events-none select-none"
+                )}
+              >
                 <button
                   type="button"
                   onClick={() =>

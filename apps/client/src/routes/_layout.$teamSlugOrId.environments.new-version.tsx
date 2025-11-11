@@ -120,7 +120,11 @@ function NewSnapshotVersionPage() {
     throw new Error("Environment not found");
   }
 
+  const envVarsLoadError = Boolean(environmentVarsQuery.data?.envVarsLoadError);
   const initialEnvVars = useMemo(() => {
+    if (envVarsLoadError) {
+      return [];
+    }
     const content = environmentVarsQuery.data?.envVarsContent;
     if (!content) {
       return [];
@@ -130,7 +134,7 @@ function NewSnapshotVersionPage() {
       value: entry.value,
       isSecret: true,
     }));
-  }, [environmentVarsQuery.data?.envVarsContent]);
+  }, [envVarsLoadError, environmentVarsQuery.data?.envVarsContent]);
 
   const activeSnapshotScripts = useMemo(() => {
     const snapshots = snapshotVersionsQuery.data ?? [];
@@ -181,6 +185,7 @@ function NewSnapshotVersionPage() {
                 : ""
             }
             initialEnvVars={initialEnvVars}
+            initialEnvVarsLoadError={envVarsLoadError}
             onHeaderControlsChange={setHeaderActions}
             onEnvironmentSaved={handleEnvironmentSaved}
           />

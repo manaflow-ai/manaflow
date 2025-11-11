@@ -5,6 +5,7 @@ import {
   getApiWorkspaceConfigsOptions,
   postApiWorkspaceConfigsMutation,
 } from "@cmux/www-openapi-client/react-query";
+import type { PostApiWorkspaceConfigsData } from "@cmux/www-openapi-client";
 import { useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, ChevronRight, Loader2, Minus, Plus } from "lucide-react";
 import {
@@ -77,31 +78,41 @@ export function WorkspaceSetupPanel({
     if (configQuery.isPending) return;
     if (configQuery.error) return;
     if (configQuery.data === undefined) return;
+
     const data = configQuery.data;
     const nextScript = (data?.maintenanceScript ?? "").toString();
-    const envContent = data?.envVarsContent ?? "";
-    const parsedEnvVars =
-      envContent.trim().length > 0
-        ? parseEnvBlock(envContent).map((row) => ({
-          name: row.name,
-          value: row.value,
-          isSecret: true,
-        }))
-        : [];
-    const normalizedEnvContent = formatEnvVarsContent(
-      parsedEnvVars
-        .filter(
-          (row) => row.name.trim().length > 0 || row.value.trim().length > 0,
-        )
-        .map((row) => ({ name: row.name, value: row.value })),
-    );
-
     setMaintenanceScript(nextScript);
-    setEnvVars(ensureInitialEnvVars(parsedEnvVars));
-    originalConfigRef.current = {
-      script: nextScript.trim(),
-      envContent: normalizedEnvContent,
-    };
+
+    if (!data || data.envVarsLoadError) {
+      setEnvVars(ensureInitialEnvVars());
+      originalConfigRef.current = {
+        script: nextScript.trim(),
+        envContent: "",
+      };
+    } else {
+      const envContent = data.envVarsContent ?? "";
+      const parsedEnvVars =
+        envContent.trim().length > 0
+          ? parseEnvBlock(envContent).map((row) => ({
+            name: row.name,
+            value: row.value,
+            isSecret: true,
+          }))
+          : [];
+      const normalizedEnvContent = formatEnvVarsContent(
+        parsedEnvVars
+          .filter(
+            (row) => row.name.trim().length > 0 || row.value.trim().length > 0,
+          )
+          .map((row) => ({ name: row.name, value: row.value })),
+      );
+
+      setEnvVars(ensureInitialEnvVars(parsedEnvVars));
+      originalConfigRef.current = {
+        script: nextScript.trim(),
+        envContent: normalizedEnvContent,
+      };
+    }
 
     if (!hasInitializedFromServerRef.current) {
       hasInitializedFromServerRef.current = true;
@@ -141,9 +152,13 @@ export function WorkspaceSetupPanel({
     normalizedScript !== originalConfigRef.current.script ||
     currentEnvContent !== originalConfigRef.current.envContent;
 
+  const envVarsLoadError = Boolean(configQuery.data?.envVarsLoadError);
+  const hasStoredEnvVars = Boolean(configQuery.data?.hasEnvVars);
+
   const isConfigured =
     originalConfigRef.current.script.length > 0 ||
-    originalConfigRef.current.envContent.length > 0;
+    originalConfigRef.current.envContent.length > 0 ||
+    hasStoredEnvVars;
   const shouldShowSetupWarning = !configQuery.isPending && !isConfigured;
 
   const handleSave = useCallback(() => {
@@ -153,20 +168,25 @@ export function WorkspaceSetupPanel({
       ? normalizedScript
       : undefined;
 
+    const body: PostApiWorkspaceConfigsData["body"] = {
+      teamSlugOrId,
+      projectFullName,
+      maintenanceScript: scriptToSave,
+    };
+
+    if (!envVarsLoadError) {
+      body.envVarsContent = currentEnvContent;
+    }
+
     saveMutation.mutate(
       {
-        body: {
-          teamSlugOrId,
-          projectFullName,
-          maintenanceScript: scriptToSave,
-          envVarsContent: currentEnvContent,
-        },
+        body,
       },
       {
         onSuccess: () => {
           originalConfigRef.current = {
             script: normalizedScript,
-            envContent: currentEnvContent,
+            envContent: envVarsLoadError ? "" : currentEnvContent,
           };
           toast.success("Workspace setup saved");
         },
@@ -178,6 +198,7 @@ export function WorkspaceSetupPanel({
     );
   }, [
     currentEnvContent,
+    envVarsLoadError,
     normalizedScript,
     projectFullName,
     saveMutation,
@@ -323,6 +344,15 @@ export function WorkspaceSetupPanel({
 
                 {/* Environment Variables Section */}
                 <div className="space-y-1 pt-1" onPasteCapture={handleEnvPaste}>
+                  {envVarsLoadError ? (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                      <span>
+                        We couldn’t reach Stack Auth to load your saved environment variables.
+                        They are still stored securely and will remain unchanged if you save updates now.
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="flex flex-col gap-0.5">
                     <p className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
                       Environment variables
@@ -333,7 +363,9 @@ export function WorkspaceSetupPanel({
                     </p>
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div
+                    className={`space-y-1.5 ${envVarsLoadError ? "opacity-60 pointer-events-none select-none" : ""}`}
+                  >
                     <div
                       className="grid gap-2 text-[11px] font-medium text-neutral-600 dark:text-neutral-400 items-center"
                       style={{ gridTemplateColumns: "3fr 7fr 36px" }}

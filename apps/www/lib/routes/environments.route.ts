@@ -75,6 +75,8 @@ const ListEnvironmentsResponse = z
 const GetEnvironmentVarsResponse = z
   .object({
     envVarsContent: z.string(),
+    envVarsLoadError: z.boolean().default(false),
+    hasEnvVars: z.boolean().default(false),
   })
   .openapi("GetEnvironmentVarsResponse");
 
@@ -465,17 +467,28 @@ environmentsRouter.openapi(
       }
 
       // Retrieve environment variables from StackAuth DataBook
-      const store =
-        await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
-      const envVarsContent = await store.getValue(environment.dataVaultKey, {
-        secret: env.STACK_DATA_VAULT_SECRET,
-      });
-
-      if (!envVarsContent) {
-        return c.json({ envVarsContent: "" });
+      let envVarsContent = "";
+      let envVarsLoadError = false;
+      try {
+        const store =
+          await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
+        envVarsContent =
+          (await store.getValue(environment.dataVaultKey, {
+            secret: env.STACK_DATA_VAULT_SECRET,
+          })) ?? "";
+      } catch (error) {
+        envVarsLoadError = true;
+        console.error(
+          "[environments.getEnvVars] Failed to load env vars from Stack",
+          error,
+        );
       }
 
-      return c.json({ envVarsContent });
+      return c.json({
+        envVarsContent,
+        envVarsLoadError,
+        hasEnvVars: Boolean(environment.dataVaultKey),
+      });
     } catch (error) {
       console.error("Failed to get environment variables:", error);
       return c.text("Failed to get environment variables", 500);
