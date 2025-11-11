@@ -184,6 +184,16 @@ export const TaskItem = memo(function TaskItem({
     [unarchive, task._id]
   );
 
+  const repoName = task.projectFullName?.split("/")[1];
+  const branchName =
+    task.baseBranch && task.baseBranch !== "main"
+      ? task.baseBranch
+      : undefined;
+  const projectSummary =
+    repoName && branchName
+      ? `${repoName}/${branchName}`
+      : repoName ?? branchName ?? null;
+
   return (
     <div className="relative group w-full">
       <ContextMenu.Root>
@@ -265,26 +275,20 @@ export const TaskItem = memo(function TaskItem({
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2">
+            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2 min-w-0 overflow-hidden">
               {task.environmentId && (
                 <EnvironmentName
                   environmentId={task.environmentId}
                   teamSlugOrId={teamSlugOrId}
+                  className="ml-auto text-right"
                 />
               )}
-              {(task.projectFullName ||
-                (task.baseBranch && task.baseBranch !== "main")) && (
-                <span>
-                  {task.projectFullName && (
-                    <span>{task.projectFullName.split("/")[1]}</span>
-                  )}
-                  {task.projectFullName &&
-                    task.baseBranch &&
-                    task.baseBranch !== "main" &&
-                    "/"}
-                  {task.baseBranch && task.baseBranch !== "main" && (
-                    <span>{task.baseBranch}</span>
-                  )}
+              {projectSummary && (
+                <span
+                  className="shrink truncate whitespace-nowrap text-right"
+                  title={projectSummary}
+                >
+                  {projectSummary}
                 </span>
               )}
             </div>
