@@ -62,6 +62,7 @@ import {
   useSuggestionHistory,
 } from "./command-bar/useSuggestionHistory";
 import clsx from "clsx";
+import { NewTaskDialog } from "@/components/dashboard/NewTaskDialog";
 
 interface CommandBarProps {
   teamSlugOrId: string;
@@ -300,6 +301,7 @@ export function CommandBar({
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
   );
+  const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
   const [commandListMaxHeight, setCommandListMaxHeight] = useState(
     COMMAND_PANEL_MAX_HEIGHT_PX
   );
@@ -1307,10 +1309,7 @@ export function CommandBar({
         setActivePage("teams");
         return;
       } else if (value === "new-task") {
-        navigate({
-          to: "/$teamSlugOrId/dashboard",
-          params: { teamSlugOrId },
-        });
+        setIsNewTaskDialogOpen(true);
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
         return;
@@ -1512,6 +1511,7 @@ export function CommandBar({
       stackUser,
       stackTeams,
       closeCommand,
+      setIsNewTaskDialogOpen,
     ]
   );
 
@@ -2713,6 +2713,13 @@ export function CommandBar({
           </Command>
         </div>
       </div>
+      {isNewTaskDialogOpen ? (
+        <NewTaskDialog
+          teamSlugOrId={teamSlugOrId}
+          open={isNewTaskDialogOpen}
+          onOpenChange={setIsNewTaskDialogOpen}
+        />
+      ) : null}
     </>
   );
 }
