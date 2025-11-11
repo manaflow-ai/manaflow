@@ -46,6 +46,21 @@ async function loadEnvVarsContent(
   return value ?? "";
 }
 
+function createWorkspaceHTTPException(
+  status: number,
+  action: string,
+  params: { teamSlugOrId: string; projectFullName: string },
+  cause: unknown,
+) {
+  const identifier = `${params.teamSlugOrId}/${params.projectFullName}`;
+  const message = `${action} for workspace ${identifier} failed`;
+  console.error(`[workspace-configs] ${message}`, cause);
+  return new HTTPException(status, {
+    message,
+    cause,
+  });
+}
+
 workspaceConfigsRouter.openapi(
   createRoute({
     method: "get",
@@ -79,16 +94,41 @@ workspaceConfigsRouter.openapi(
     });
 
     const convex = getConvex({ accessToken });
-    const config = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: query.teamSlugOrId,
-      projectFullName: query.projectFullName,
-    });
+    const config = await (async () => {
+      try {
+        return await convex.query(api.workspaceConfigs.get, {
+          teamSlugOrId: query.teamSlugOrId,
+          projectFullName: query.projectFullName,
+        });
+      } catch (error) {
+        throw createWorkspaceHTTPException(
+          502,
+          "Fetching workspace configuration",
+          query,
+          error,
+        );
+      }
+    })();
 
     if (!config) {
       return c.json(null);
     }
 
-    const envVarsContent = await loadEnvVarsContent(config.dataVaultKey);
+    const envVarsContent = await (async () => {
+      try {
+        return await loadEnvVarsContent(config.dataVaultKey);
+      } catch (error) {
+        throw createWorkspaceHTTPException(
+          502,
+          "Loading workspace environment variables",
+          {
+            teamSlugOrId: query.teamSlugOrId,
+            projectFullName: config.projectFullName,
+          },
+          error,
+        );
+      }
+    })();
 
     return c.json({
       projectFullName: config.projectFullName,
@@ -140,14 +180,35 @@ workspaceConfigsRouter.openapi(
     });
 
     const convex = getConvex({ accessToken });
-    const existing = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-    });
+    const existing = await (async () => {
+      try {
+        return await convex.query(api.workspaceConfigs.get, {
+          teamSlugOrId: body.teamSlugOrId,
+          projectFullName: body.projectFullName,
+        });
+      } catch (error) {
+        throw createWorkspaceHTTPException(
+          502,
+          "Fetching workspace configuration",
+          body,
+          error,
+        );
+      }
+    })();
 
-    const store = await stackServerAppJs.getDataVaultStore(
-      "cmux-snapshot-envs",
-    );
+    const store = await (async () => {
+      try {
+        return await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
+      } catch (error) {
+        throw createWorkspaceHTTPException(
+          502,
+          "Connecting to workspace environment storage",
+          body,
+          error,
+        );
+      }
+    })();
+
     const envVarsContent = body.envVarsContent ?? "";
     let dataVaultKey = existing?.dataVaultKey;
     if (!dataVaultKey) {
@@ -159,18 +220,29 @@ workspaceConfigsRouter.openapi(
         secret: env.STACK_DATA_VAULT_SECRET,
       });
     } catch (error) {
-      throw new HTTPException(500, {
-        message: "Failed to persist environment variables",
-        cause: error,
-      });
+      throw createWorkspaceHTTPException(
+        502,
+        "Saving workspace environment variables",
+        body,
+        error,
+      );
     }
 
-    await convex.mutation(api.workspaceConfigs.upsert, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-      maintenanceScript: body.maintenanceScript,
-      dataVaultKey,
-    });
+    try {
+      await convex.mutation(api.workspaceConfigs.upsert, {
+        teamSlugOrId: body.teamSlugOrId,
+        projectFullName: body.projectFullName,
+        maintenanceScript: body.maintenanceScript,
+        dataVaultKey,
+      });
+    } catch (error) {
+      throw createWorkspaceHTTPException(
+        502,
+        "Persisting workspace configuration metadata",
+        body,
+        error,
+      );
+    }
 
     return c.json({
       projectFullName: body.projectFullName,

@@ -19,6 +19,46 @@ import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
+type ApiErrorShape = {
+  status?: number;
+  response?: { status?: number };
+  message?: string;
+};
+
+function getWorkspaceConfigLoadErrorMessage(
+  error: unknown,
+  projectFullName: string | null,
+) {
+  const workspaceLabel = projectFullName
+    ? `workspace "${projectFullName}"`
+    : "workspace";
+
+  if (!error) {
+    return `Unable to load the saved configuration for ${workspaceLabel}.`;
+  }
+
+  const maybeError = error as ApiErrorShape | undefined;
+  const status = maybeError?.status ?? maybeError?.response?.status;
+
+  if (status === 401 || status === 403) {
+    return `You do not have access to the configuration for ${workspaceLabel}.`;
+  }
+
+  if (status && status >= 500) {
+    return `Workspace configuration service is unavailable (HTTP ${status}). We'll keep your local edits available so you can try again shortly.`;
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return `Unable to load the saved configuration for ${workspaceLabel}.`;
+}
+
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
   projectFullName: string | null;
@@ -127,6 +167,14 @@ export function WorkspaceSetupPanel({
     [],
   );
 
+  useEffect(() => {
+    if (!configQuery.error) return;
+    console.error(
+      `[WorkspaceSetupPanel] Failed to load workspace config for ${projectFullName ?? "unknown project"} in team ${teamSlugOrId}`,
+      configQuery.error,
+    );
+  }, [configQuery.error, projectFullName, teamSlugOrId]);
+
   const currentEnvContent = useMemo(() => {
     const filtered = envVars
       .filter(
@@ -218,13 +266,13 @@ export function WorkspaceSetupPanel({
     [updateEnvVars],
   );
 
-  if (configQuery.error) {
-    throw configQuery.error;
-  }
-
   if (!projectFullName) {
     return null;
   }
+
+  const loadErrorMessage = configQuery.error
+    ? getWorkspaceConfigLoadErrorMessage(configQuery.error, projectFullName)
+    : null;
 
   return (
     <div className={`mt-2 rounded-lg relative ${isExpanded ? "" : ""}`}>
@@ -293,6 +341,26 @@ export function WorkspaceSetupPanel({
               Set up maintenance scripts and environment variables for{" "}
               <span className="font-semibold">{projectFullName}</span>.
             </p>
+
+            {loadErrorMessage ? (
+              <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100">
+                <p>{loadErrorMessage}</p>
+                <div className="mt-1 inline-flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 border-red-200 text-red-800 hover:bg-red-100 dark:border-red-900 dark:text-red-100 dark:hover:bg-red-900/40"
+                    onClick={() => configQuery.refetch()}
+                    disabled={configQuery.isRefetching}
+                  >
+                    {configQuery.isRefetching ? "Retrying…" : "Retry"}
+                  </Button>
+                  <span className="text-[10px] text-red-700 dark:text-red-200">
+                    Your unsaved edits remain available.
+                  </span>
+                </div>
+              </div>
+            ) : null}
 
             {configQuery.isPending ? (
               <p className="mt-3 text-[11px] text-neutral-500 dark:text-neutral-400">
