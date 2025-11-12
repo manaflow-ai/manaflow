@@ -11,6 +11,8 @@ import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import type { RunEnvironmentSummary } from "@/types/task";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { useClipboard } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
@@ -168,6 +170,16 @@ export const TaskItem = memo(function TaskItem({
     }
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+  const normalizedWorkspaceUrl = useMemo(() => {
+    if (!vscodeUrl) {
+      return null;
+    }
+    return rewriteLocalWorkspaceUrlIfNeeded(vscodeUrl, localServeWebOrigin);
+  }, [localServeWebOrigin, vscodeUrl]);
+  const shouldOpenWorkspaceDirectly =
+    Boolean(task.isLocalWorkspace) && Boolean(normalizedWorkspaceUrl);
 
   const handleLinkClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -250,140 +262,157 @@ export const TaskItem = memo(function TaskItem({
       id: task._id,
     });
   }, [unpinTask, teamSlugOrId, task._id]);
+  const taskRowClassName = clsx(
+    "relative grid w-full items-center py-2 pr-3 cursor-default select-none group",
+    "grid-cols-[24px_36px_1fr_minmax(120px,auto)_58px]",
+    isOptimisticUpdate
+      ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
+      : "bg-white dark:bg-neutral-900/50 group-hover:bg-neutral-50/90 dark:group-hover:bg-neutral-600/60",
+    isRenaming && "pr-2"
+  );
+  const taskRowContent = (
+    <>
+      <div className="flex items-center justify-center pl-1 -mr-2 relative">
+        <input
+          type="checkbox"
+          className="peer w-3 h-3 cursor-pointer border border-neutral-400 dark:border-neutral-500 rounded bg-white dark:bg-neutral-900 appearance-none checked:bg-neutral-500 checked:border-neutral-500 dark:checked:bg-neutral-400 dark:checked:border-neutral-400 invisible"
+          onClick={(e) => e.stopPropagation()}
+          onChange={() => {
+            // TODO: Implement checkbox functionality
+          }}
+        />
+        <Check
+          className="absolute w-2.5 h-2.5 text-white pointer-events-none transition-opacity peer-checked:opacity-100 opacity-0"
+          style={{
+            left: "57%",
+            top: "50%",
+            transform: "translate(-50%, -50%)",
+          }}
+        />
+      </div>
+      <div className="flex items-center justify-center">
+        {task.mergeStatus === "pr_merged" ? (
+          <GitMerge className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400 flex-shrink-0" />
+        ) : task.isCloudWorkspace || task.isLocalWorkspace ? (
+          <Box className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 flex-shrink-0" />
+        ) : (
+          <div
+            className={clsx(
+              "rounded-full flex-shrink-0",
+              hasCrown
+                ? "w-[8px] h-[8px] border border-transparent bg-green-500"
+                : "w-[9.5px] h-[9.5px] border border-neutral-400 dark:border-neutral-500 bg-transparent"
+            )}
+          />
+        )}
+      </div>
+      <div className="min-w-0 flex items-center">
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            type="text"
+            value={renameValue}
+            onChange={handleRenameChange}
+            onKeyDown={handleRenameKeyDown}
+            onBlur={handleRenameBlur}
+            disabled={isRenamePending}
+            autoFocus
+            onFocus={handleRenameFocus}
+            placeholder="Task name"
+            aria-label="Task name"
+            aria-invalid={renameError ? true : undefined}
+            autoComplete="off"
+            spellCheck={false}
+            className={clsx(
+              "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200 pr-1",
+              "px-0 py-0 align-middle",
+              "placeholder:text-neutral-400 outline-none border-none focus-visible:outline-none focus-visible:ring-0 appearance-none",
+              "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500",
+              isRenamePending &&
+                "text-neutral-400/70 dark:text-neutral-500/70 cursor-wait"
+            )}
+          />
+        ) : (
+          <span className="text-[13px] font-medium truncate min-w-0 pr-1">
+            {task.text}
+          </span>
+        )}
+      </div>
+      <div className="text-[11px] text-neutral-400 dark:text-neutral-500 min-w-0 text-right flex items-center justify-end gap-2">
+        {task.environmentId && (
+          <EnvironmentName
+            environmentId={task.environmentId}
+            teamSlugOrId={teamSlugOrId}
+          />
+        )}
+        {(task.projectFullName ||
+          (task.baseBranch && task.baseBranch !== "main")) && (
+          <span>
+            {task.projectFullName && (
+              <span>{task.projectFullName.split("/")[1]}</span>
+            )}
+            {task.projectFullName &&
+              task.baseBranch &&
+              task.baseBranch !== "main" &&
+              "/"}
+            {task.baseBranch && task.baseBranch !== "main" && (
+              <span>{task.baseBranch}</span>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 tabular-nums text-right">
+        {task.updatedAt &&
+          (() => {
+            const date = new Date(task.updatedAt);
+            const today = new Date();
+            const isToday =
+              date.getDate() === today.getDate() &&
+              date.getMonth() === today.getMonth() &&
+              date.getFullYear() === today.getFullYear();
+
+            return (
+              <span>
+                {isToday
+                  ? date.toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })
+                  : date.toLocaleDateString([], {
+                      month: "short",
+                      day: "numeric",
+                    })}
+              </span>
+            );
+          })()}
+      </div>
+    </>
+  );
+  const taskLinkElement = shouldOpenWorkspaceDirectly ? (
+    <a
+      href={normalizedWorkspaceUrl ?? undefined}
+      onClick={handleLinkClick}
+      className={taskRowClassName}
+    >
+      {taskRowContent}
+    </a>
+  ) : (
+    <Link
+      to="/$teamSlugOrId/task/$taskId"
+      params={{ teamSlugOrId, taskId: task._id }}
+      search={{ runId: undefined }}
+      onClick={handleLinkClick}
+      className={taskRowClassName}
+    >
+      {taskRowContent}
+    </Link>
+  );
 
   return (
     <div className="relative group w-full">
       <ContextMenu.Root>
         <ContextMenu.Trigger>
-          <Link
-            to="/$teamSlugOrId/task/$taskId"
-            params={{ teamSlugOrId, taskId: task._id }}
-            search={{ runId: undefined }}
-            onClick={handleLinkClick}
-            className={clsx(
-              "relative grid w-full items-center py-2 pr-3 cursor-default select-none group",
-              "grid-cols-[24px_36px_1fr_minmax(120px,auto)_58px]",
-              isOptimisticUpdate
-                ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
-                : "bg-white dark:bg-neutral-900/50 group-hover:bg-neutral-50/90 dark:group-hover:bg-neutral-600/60",
-              isRenaming && "pr-2"
-            )}
-          >
-            <div className="flex items-center justify-center pl-1 -mr-2 relative">
-              <input
-                type="checkbox"
-                className="peer w-3 h-3 cursor-pointer border border-neutral-400 dark:border-neutral-500 rounded bg-white dark:bg-neutral-900 appearance-none checked:bg-neutral-500 checked:border-neutral-500 dark:checked:bg-neutral-400 dark:checked:border-neutral-400 invisible"
-                onClick={(e) => e.stopPropagation()}
-                onChange={() => {
-                  // TODO: Implement checkbox functionality
-                }}
-              />
-              <Check
-                className="absolute w-2.5 h-2.5 text-white pointer-events-none transition-opacity peer-checked:opacity-100 opacity-0"
-                style={{
-                  left: "57%",
-                  top: "50%",
-                  transform: "translate(-50%, -50%)",
-                }}
-              />
-            </div>
-            <div className="flex items-center justify-center">
-              {task.mergeStatus === "pr_merged" ? (
-                <GitMerge className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400 flex-shrink-0" />
-              ) : task.isCloudWorkspace || task.isLocalWorkspace ? (
-                <Box className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 flex-shrink-0" />
-              ) : (
-                <div
-                  className={clsx(
-                    "rounded-full flex-shrink-0",
-                    hasCrown
-                      ? "w-[8px] h-[8px] border border-transparent bg-green-500"
-                      : "w-[9.5px] h-[9.5px] border border-neutral-400 dark:border-neutral-500 bg-transparent"
-                  )}
-                />
-              )}
-            </div>
-            <div className="min-w-0 flex items-center">
-              {isRenaming ? (
-                <input
-                  ref={renameInputRef}
-                  type="text"
-                  value={renameValue}
-                  onChange={handleRenameChange}
-                  onKeyDown={handleRenameKeyDown}
-                  onBlur={handleRenameBlur}
-                  disabled={isRenamePending}
-                  autoFocus
-                  onFocus={handleRenameFocus}
-                  placeholder="Task name"
-                  aria-label="Task name"
-                  aria-invalid={renameError ? true : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={clsx(
-                    "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200 pr-1",
-                    "px-0 py-0 align-middle",
-                    "placeholder:text-neutral-400 outline-none border-none focus-visible:outline-none focus-visible:ring-0 appearance-none",
-                    "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500",
-                    isRenamePending &&
-                      "text-neutral-400/70 dark:text-neutral-500/70 cursor-wait"
-                  )}
-                />
-              ) : (
-                <span className="text-[13px] font-medium truncate min-w-0 pr-1">
-                  {task.text}
-                </span>
-              )}
-            </div>
-            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 min-w-0 text-right flex items-center justify-end gap-2">
-              {task.environmentId && (
-                <EnvironmentName
-                  environmentId={task.environmentId}
-                  teamSlugOrId={teamSlugOrId}
-                />
-              )}
-              {(task.projectFullName ||
-                (task.baseBranch && task.baseBranch !== "main")) && (
-                <span>
-                  {task.projectFullName && (
-                    <span>{task.projectFullName.split("/")[1]}</span>
-                  )}
-                  {task.projectFullName &&
-                    task.baseBranch &&
-                    task.baseBranch !== "main" &&
-                    "/"}
-                  {task.baseBranch && task.baseBranch !== "main" && (
-                    <span>{task.baseBranch}</span>
-                  )}
-                </span>
-              )}
-            </div>
-            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 tabular-nums text-right">
-              {task.updatedAt &&
-                (() => {
-                  const date = new Date(task.updatedAt);
-                  const today = new Date();
-                  const isToday =
-                    date.getDate() === today.getDate() &&
-                    date.getMonth() === today.getMonth() &&
-                    date.getFullYear() === today.getFullYear();
-
-                  return (
-                    <span>
-                      {isToday
-                        ? date.toLocaleTimeString([], {
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })
-                        : date.toLocaleDateString([], {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                    </span>
-                  );
-                })()}
-            </div>
-          </Link>
+          {taskLinkElement}
         </ContextMenu.Trigger>
         {renameError && (
           <div className="mt-1 pl-[76px] pr-3 text-[11px] text-red-500 dark:text-red-400">

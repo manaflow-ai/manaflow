@@ -10,6 +10,8 @@ import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -351,6 +353,41 @@ function TaskTreeInner({
       : { teamSlugOrId, taskId: task._id, includeArchived: true }
   );
   const runsLoading = !isOptimisticTask && taskRuns === undefined;
+  const latestLocalWorkspaceRun = useMemo(() => {
+    if (!task.isLocalWorkspace || !taskRuns) {
+      return null;
+    }
+    const flattened = flattenRuns(taskRuns);
+    return (
+      flattened
+        .filter(
+          (run) =>
+            run.vscode &&
+            (run.vscode.status === "running" ||
+              run.vscode.status === "starting")
+        )
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0] ?? null
+    );
+  }, [task.isLocalWorkspace, taskRuns]);
+  const hasActiveLocalWorkspace =
+    latestLocalWorkspaceRun?.vscode?.status === "running";
+  const rawLocalWorkspaceUrl =
+    hasActiveLocalWorkspace && latestLocalWorkspaceRun?.vscode?.workspaceUrl
+      ? latestLocalWorkspaceRun.vscode.workspaceUrl
+      : null;
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+  const normalizedLocalWorkspaceUrl = useMemo(() => {
+    if (!rawLocalWorkspaceUrl) {
+      return null;
+    }
+    return rewriteLocalWorkspaceUrlIfNeeded(
+      rawLocalWorkspaceUrl,
+      localServeWebOrigin
+    );
+  }, [localServeWebOrigin, rawLocalWorkspaceUrl]);
+  const shouldOpenLocalWorkspaceDirectly =
+    Boolean(task.isLocalWorkspace) && Boolean(normalizedLocalWorkspaceUrl);
   const flattenedRuns = useMemo(() => flattenRuns(taskRuns), [taskRuns]);
   const activeRunsFlat = useMemo(
     () => flattenedRuns.filter((run) => !run.isArchived),
@@ -778,6 +815,13 @@ function TaskTreeInner({
                 }
                 if (isRenaming) {
                   event.preventDefault();
+                  return;
+                }
+                if (shouldOpenLocalWorkspaceDirectly) {
+                  event.preventDefault();
+                  if (normalizedLocalWorkspaceUrl) {
+                    window.location.assign(normalizedLocalWorkspaceUrl);
+                  }
                   return;
                 }
                 handleToggle(event);
