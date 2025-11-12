@@ -13,7 +13,11 @@ export const env = createEnv({
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),
     NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1),
     NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().optional(),
-    NEXT_PUBLIC_WWW_ORIGIN: z.string().min(1),
+    NEXT_PUBLIC_WWW_ORIGIN: z.string().min(1).default(
+      import.meta.env.VITE_VERCEL_URL
+        ? `https://${import.meta.env.VITE_VERCEL_URL}`
+        : ""
+    ),
     NEXT_PUBLIC_SERVER_ORIGIN: z.string().optional(),
   },
 
