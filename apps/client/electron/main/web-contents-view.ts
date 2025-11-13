@@ -21,7 +21,7 @@ import {
   configurePreviewProxyForView,
   getPreviewPartitionForPersistKey,
   isTaskRunPreviewPersistKey,
-} from "./task-run-preview-proxy";
+} from "./rust-preview-proxy";
 import { normalizeBrowserUrl } from "@cmux/shared";
 
 interface RegisterOptions {
@@ -94,6 +94,9 @@ let previewWebContentsChangeHandler:
   | ((payload: { webContentsId: number; present: boolean }) => void)
   | null = null;
 
+const ERROR_PAGE_PATHNAME = "/electron-error";
+const MAX_ERROR_URL_DEPTH = 10;
+
 const validDevToolsModes: ReadonlySet<ElectronDevToolsMode> = new Set([
   "bottom",
   "right",
@@ -130,7 +133,7 @@ function buildErrorUrl(params: {
   statusCode?: number;
   statusText?: string;
 }): string {
-  const url = new URL("/electron-error", rendererBaseUrl);
+  const url = new URL(ERROR_PAGE_PATHNAME, rendererBaseUrl);
   url.searchParams.set("type", params.type);
   if (params.url) url.searchParams.set("url", params.url);
   if (params.type === "navigation") {
@@ -145,6 +148,141 @@ function buildErrorUrl(params: {
       url.searchParams.set("statusText", params.statusText);
   }
   return url.toString();
+}
+
+function isErrorPageUrl(target: string | undefined | null): boolean {
+  if (!target) return false;
+  try {
+    const parsed = new URL(target);
+    return parsed.pathname === ERROR_PAGE_PATHNAME;
+  } catch {
+    return false;
+  }
+}
+
+function resolveNestedErrorSourceUrl(
+  target: string,
+  depth = 0
+): string | undefined {
+  if (!isErrorPageUrl(target) || depth > MAX_ERROR_URL_DEPTH) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(target);
+    const nested = parsed.searchParams.get("url");
+    if (!nested) {
+      return undefined;
+    }
+    if (nested === target) {
+      return undefined;
+    }
+    if (isErrorPageUrl(nested)) {
+      return resolveNestedErrorSourceUrl(nested, depth + 1);
+    }
+    return nested;
+  } catch {
+    return undefined;
+  }
+}
+
+function escapeHtml(raw: string): string {
+  return raw.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+}
+
+function buildInlineErrorPageDataUrl(options: {
+  title: string;
+  message: string;
+  details: Array<{ label: string; value: string }>;
+}): string {
+  const detailMarkup = options.details
+    .map(
+      (detail) => `
+        <div class="detail">
+          <span>${escapeHtml(detail.label)}</span>
+          <code>${escapeHtml(detail.value)}</code>
+        </div>`
+    )
+    .join("");
+
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(options.title)}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        background: #0f172a;
+        color: #f8fafc;
+      }
+      .card {
+        width: min(640px, 100%);
+        border-radius: 16px;
+        padding: 32px;
+        background: rgba(15, 23, 42, 0.75);
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+        backdrop-filter: blur(10px);
+      }
+      h1 { margin: 0 0 12px; font-size: 24px; }
+      p { margin: 0 0 18px; line-height: 1.5; }
+      .detail {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 12px;
+      }
+      .detail span {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        opacity: 0.7;
+      }
+      code {
+        margin-top: 4px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #f8fafc; color: #0f172a; }
+        .card { background: #ffffff; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18); }
+        code { background: rgba(15, 23, 42, 0.06); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>${escapeHtml(options.title)}</h1>
+      <p>${escapeHtml(options.message)}</p>
+      ${detailMarkup}
+    </div>
+  </body>
+</html>`;
+
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 function sendEventToOwner(
@@ -236,6 +374,35 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     // Check for HTTP errors (4xx, 5xx)
     if (httpResponseCode >= 400) {
       const statusText = httpStatusText || STATUS_CODES[httpResponseCode];
+
+      if (isErrorPageUrl(url)) {
+        const originalUrl =
+          resolveNestedErrorSourceUrl(url) || url || "unknown";
+        logger.warn("Renderer error page returned HTTP error", {
+          id: entry.id,
+          statusCode: httpResponseCode,
+          url,
+        });
+        const fallbackUrl = buildInlineErrorPageDataUrl({
+          title: "Unable to display error UI",
+          message:
+            "cmux could not load the renderer error page because it responded with an HTTP error.",
+          details: [
+            {
+              label: "Status",
+              value: `${httpResponseCode} ${statusText ?? ""}`.trimEnd() ||
+                String(httpResponseCode),
+            },
+            {
+              label: "Original URL",
+              value: originalUrl,
+            },
+          ],
+        });
+        void entry.view.webContents.loadURL(fallbackUrl);
+        return;
+      }
+
       const errorUrl = buildErrorUrl({
         type: "http",
         url,
@@ -297,6 +464,37 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     isMainFrame: boolean
   ) => {
     if (isMainFrame) {
+      if (isErrorPageUrl(validatedURL)) {
+        const originalUrl =
+          resolveNestedErrorSourceUrl(validatedURL) ||
+          validatedURL ||
+          "unknown";
+        logger.warn("Renderer error page failed to load", {
+          id: entry.id,
+          errorCode,
+          validatedURL,
+        });
+        const fallbackUrl = buildInlineErrorPageDataUrl({
+          title: "Unable to display error UI",
+          message:
+            "cmux could not reach the renderer dev server to render the error page.",
+          details: [
+            {
+              label: "Navigation error",
+              value:
+                `${errorCode} ${errorDescription ?? ""}`.trimEnd() ||
+                String(errorCode),
+            },
+            {
+              label: "Original URL",
+              value: originalUrl,
+            },
+          ],
+        });
+        void entry.view.webContents.loadURL(fallbackUrl);
+        return;
+      }
+
       const errorUrl = buildErrorUrl({
         type: "navigation",
         url: validatedURL,

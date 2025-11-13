@@ -6,9 +6,11 @@ edition = "2021"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-# HTTP server/client
-hyper = { version = "0.14", features = ["full"] }
-http = "0.2"
+# HTTP/2 server/client
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "client-legacy"] }
+http = "1"
+http-body-util = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"

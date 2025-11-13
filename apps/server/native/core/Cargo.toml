@@ -18,9 +18,28 @@ rayon = "1.10"
 dirs-next = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
 gix = { version = "0.66", default-features = true, features = ["status", "revision"] }
 similar = "2"
+
+# HTTP/2 proxy dependencies
+hyper = { version = "1", features = ["http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "client-legacy", "tokio"] }
+h2 = "0.4"
+http-body = "1"
+http-body-util = "0.1"
+http = "1"
+bytes = "1"
+futures-util = "0.3"
+tracing = "0.1"
+base64 = "0.22"
+rand = "0.8"
+parking_lot = "0.12"
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "logging", "tls12", "aws-lc-rs", "native-tokio", "webpki-tokio"] }
+tokio-rustls = { version = "0.26", features = ["tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "log", "aws_lc_rs"] }
+rustls-pki-types = "1"
+webpki-roots = "0.26"
 
 [dev-dependencies]
 tempfile = "3"
