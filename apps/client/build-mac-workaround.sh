@@ -93,7 +93,7 @@ fi
 echo "Creating app structure at $APP_DIR..."
 
 # Download Electron binary if not cached
-ELECTRON_VERSION="37.2.4"
+ELECTRON_VERSION="39.2.0"
 ELECTRON_CACHE="${HOME}/.cache/electron"
 ARCH=$(uname -m)
 

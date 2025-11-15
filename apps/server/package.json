@@ -70,7 +70,7 @@
     "convex": "1.27.1",
     "dockerode": "^4.0.2",
     "dotenv": "^16.6.1",
-    "electron": "^38.2.2",
+    "electron": "^39.2.0",
     "express": "^4.21.2",
     "fuzzysort": "^3.1.0",
     "http-proxy": "^1.18.1",

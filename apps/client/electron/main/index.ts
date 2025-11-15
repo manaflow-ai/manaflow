@@ -1,3 +1,4 @@
+import os from "node:os";
 import path, { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -53,6 +54,7 @@ import { normalizeBrowserUrl } from "@cmux/shared";
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
 const APP_HOST = "cmux.local";
+const APP_DISPLAY_NAME = "cmux";
 
 function resolveMaxSuspendedWebContents(): number | undefined {
   const raw =
@@ -71,6 +73,35 @@ type AutoUpdateToastPayload = {
 };
 
 let queuedAutoUpdateToast: AutoUpdateToastPayload | null = null;
+
+function formatAboutDialogDetail(): string {
+  const entries: Array<[string, string | undefined]> = [
+    ["Electron", process.versions.electron],
+    ["Chromium", process.versions.chrome],
+    ["Node.js", process.versions.node],
+    ["V8", process.versions.v8],
+  ];
+  const osDetails = `${os.type()} ${os.arch()} ${os.release()}`.trim();
+  entries.push(["OS", osDetails]);
+  return entries
+    .map(([label, value]) => `${label}: ${value ?? "unknown"}`)
+    .join("\n");
+}
+
+async function showAboutDialog(): Promise<void> {
+  try {
+    await dialog.showMessageBox({
+      type: "info",
+      title: `About ${APP_DISPLAY_NAME}`,
+      message: `${APP_DISPLAY_NAME} ${app.getVersion()}`,
+      detail: formatAboutDialogDetail(),
+      buttons: ["OK"],
+      defaultId: 0,
+    });
+  } catch (error) {
+    mainWarn("Failed to show About dialog", error);
+  }
+}
 
 // Persistent log files
 let logsDir: string | null = null;
@@ -888,8 +919,8 @@ app.whenReady().then(async () => {
   // Ensure macOS menu and About panel use "cmux" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("cmux");
-      app.setAboutPanelOptions({ applicationName: "cmux" });
+      app.setName(APP_DISPLAY_NAME);
+      app.setAboutPanelOptions({ applicationName: APP_DISPLAY_NAME });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -978,8 +1009,27 @@ app.whenReady().then(async () => {
   // Application menu with Command Palette accelerator; keep Help items.
   try {
     const template: MenuItemConstructorOptions[] = [];
+    const createAboutMenuItem = (): MenuItemConstructorOptions => ({
+      label: `About ${APP_DISPLAY_NAME}`,
+      click: () => {
+        void showAboutDialog();
+      },
+    });
     if (process.platform === "darwin") {
-      template.push({ role: "appMenu" });
+      template.push({
+        label: APP_DISPLAY_NAME,
+        submenu: [
+          createAboutMenuItem(),
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" },
+        ],
+      });
     } else {
       template.push({ label: "File", submenu: [{ role: "quit" }] });
     }
@@ -1095,45 +1145,50 @@ app.whenReady().then(async () => {
       viewMenu,
       { role: "windowMenu" }
     );
-    template.push({
-      role: "help",
-      submenu: [
-        {
-          label: "Check for Updates…",
-          click: async () => {
-            if (!app.isPackaged) {
+    const helpSubmenu: MenuItemConstructorOptions[] = [];
+    if (process.platform !== "darwin") {
+      helpSubmenu.push(createAboutMenuItem(), { type: "separator" });
+    }
+    helpSubmenu.push(
+      {
+        label: "Check for Updates…",
+        click: async () => {
+          if (!app.isPackaged) {
+            await dialog.showMessageBox({
+              type: "info",
+              message: "Updates are only available in packaged builds.",
+            });
+            return;
+          }
+          try {
+            mainLog("Manual update check initiated");
+            const result = await autoUpdater.checkForUpdates();
+            if (!result?.updateInfo) {
               await dialog.showMessageBox({
                 type: "info",
-                message: "Updates are only available in packaged builds.",
-              });
-              return;
-            }
-            try {
-              mainLog("Manual update check initiated");
-              const result = await autoUpdater.checkForUpdates();
-              if (!result?.updateInfo) {
-                await dialog.showMessageBox({
-                  type: "info",
-                  message: "You’re up to date.",
-                });
-              }
-            } catch (e) {
-              mainWarn("Manual checkForUpdates failed", e);
-              await dialog.showMessageBox({
-                type: "error",
-                message: "Failed to check for updates.",
+                message: "You’re up to date.",
               });
             }
-          },
+          } catch (e) {
+            mainWarn("Manual checkForUpdates failed", e);
+            await dialog.showMessageBox({
+              type: "error",
+              message: "Failed to check for updates.",
+            });
+          }
         },
-        {
-          label: "Open Logs Folder",
-          click: async () => {
-            if (!logsDir) ensureLogFiles();
-            if (logsDir) await shell.openPath(logsDir);
-          },
+      },
+      {
+        label: "Open Logs Folder",
+        click: async () => {
+          if (!logsDir) ensureLogFiles();
+          if (logsDir) await shell.openPath(logsDir);
         },
-      ],
+      }
+    );
+    template.push({
+      role: "help",
+      submenu: helpSubmenu,
     });
     const menu = Menu.buildFromTemplate(template);
     previewReloadMenuItem =
