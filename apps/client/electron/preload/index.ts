@@ -23,6 +23,10 @@ type RectanglePayload = {
 type LogListener = (entry: ElectronMainLogMessage) => void;
 const mainLogListeners = new Set<LogListener>();
 
+type QuitPreferencesBridge = {
+  confirmOnQuit: boolean;
+};
+
 // Cmux IPC API for Electron server communication
 const cmuxAPI = {
   // Get the current webContents ID
@@ -159,6 +163,27 @@ const cmuxAPI = {
         ok: boolean;
         reason?: string;
       }>,
+  },
+  quit: {
+    getPreferences: () =>
+      ipcRenderer.invoke("cmux:quit:get-preferences") as Promise<{
+        ok: boolean;
+        preferences: QuitPreferencesBridge;
+      }>,
+    setPreferences: (preferences: QuitPreferencesBridge) =>
+      ipcRenderer.invoke(
+        "cmux:quit:set-preferences",
+        preferences
+      ) as Promise<{
+        ok: boolean;
+        preferences: QuitPreferencesBridge;
+      }>,
+    confirmQuit: () =>
+      ipcRenderer.invoke("cmux:quit:confirm") as Promise<{ ok: boolean }>,
+    cancelQuit: () =>
+      ipcRenderer.invoke("cmux:quit:cancel") as Promise<{ ok: boolean }>,
+    requestQuit: () =>
+      ipcRenderer.invoke("cmux:quit:request") as Promise<{ ok: boolean }>,
   },
   webContentsView: {
     create: (options: {

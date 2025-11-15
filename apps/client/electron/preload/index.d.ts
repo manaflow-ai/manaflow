@@ -42,6 +42,21 @@ declare global {
           }>;
         install: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      quit: {
+        getPreferences: () => Promise<{
+          ok: boolean;
+          preferences: { confirmOnQuit: boolean };
+        }>;
+        setPreferences: (preferences: {
+          confirmOnQuit: boolean;
+        }) => Promise<{
+          ok: boolean;
+          preferences: { confirmOnQuit: boolean };
+        }>;
+        confirmQuit: () => Promise<{ ok: boolean }>;
+        cancelQuit: () => Promise<{ ok: boolean }>;
+        requestQuit: () => Promise<{ ok: boolean }>;
+      };
     };
   }
 }

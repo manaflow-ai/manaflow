@@ -103,6 +103,122 @@ let historyForwardMenuItem: MenuItem | null = null;
 const previewWebContentsIds = new Set<number>();
 const altGrActivePreviewContents = new Set<number>();
 
+type QuitPreferences = {
+  confirmOnQuit: boolean;
+};
+
+type QuitPromptPayload = {
+  confirmOnQuit: boolean;
+};
+
+const DEFAULT_QUIT_PREFERENCES: QuitPreferences = {
+  confirmOnQuit: true,
+};
+
+let quitPreferences: QuitPreferences = { ...DEFAULT_QUIT_PREFERENCES };
+let quitPreferencesPath: string | null = null;
+let quitPromptInFlight = false;
+
+function getQuitPreferencesPath(): string {
+  if (!quitPreferencesPath) {
+    const base = app.getPath("userData");
+    quitPreferencesPath = path.join(
+      base,
+      "preferences",
+      "quit-confirmation.json"
+    );
+  }
+  return quitPreferencesPath;
+}
+
+async function loadQuitPreferences(): Promise<void> {
+  try {
+    const file = getQuitPreferencesPath();
+    const raw = await fs.readFile(file, { encoding: "utf8" });
+    const parsed = JSON.parse(raw) as Partial<QuitPreferences>;
+    if (typeof parsed.confirmOnQuit === "boolean") {
+      quitPreferences = { confirmOnQuit: parsed.confirmOnQuit };
+    }
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code !== "ENOENT") {
+      mainWarn("Failed to load quit preferences", err);
+    }
+    quitPreferences = { ...DEFAULT_QUIT_PREFERENCES };
+  }
+}
+
+async function saveQuitPreferences(): Promise<void> {
+  try {
+    const file = getQuitPreferencesPath();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify(quitPreferences, null, 2),
+      "utf8"
+    );
+  } catch (error) {
+    mainWarn("Failed to save quit preferences", error);
+  }
+}
+
+function shouldConfirmQuit(): boolean {
+  return quitPreferences.confirmOnQuit;
+}
+
+function requestQuit(source: string): void {
+  if (process.platform !== "darwin") {
+    performQuit();
+    return;
+  }
+
+  if (!shouldConfirmQuit()) {
+    performQuit();
+    return;
+  }
+
+  if (quitPromptInFlight) {
+    keyDebug("quit-prompt-already-open", { source });
+    return;
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererLoaded) {
+    keyDebug("quit-prompt-fallback-direct-quit", {
+      source,
+      hasWindow: Boolean(mainWindow && !mainWindow.isDestroyed()),
+      rendererLoaded,
+    });
+    performQuit();
+    return;
+  }
+
+  quitPromptInFlight = true;
+  try {
+    mainWindow.focus();
+  } catch {
+    // ignore focus failures
+  }
+
+  const payload: QuitPromptPayload = { confirmOnQuit: shouldConfirmQuit() };
+  try {
+    mainWindow.webContents.send("cmux:event:quit:prompt", payload);
+    keyDebug("quit-prompt-requested", { source });
+  } catch (error) {
+    quitPromptInFlight = false;
+    mainWarn("Failed to send quit prompt to renderer", { error, source });
+    performQuit();
+  }
+}
+
+function performQuit(): void {
+  quitPromptInFlight = false;
+  try {
+    app.quit();
+  } catch (error) {
+    mainWarn("performQuit failed", error);
+  }
+}
+
 function getTimestamp(): string {
   return new Date().toISOString();
 }
@@ -485,6 +601,53 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+function registerQuitIpcHandlers(): void {
+  ipcMain.handle("cmux:quit:get-preferences", async () => {
+    return {
+      ok: true as const,
+      preferences: { ...quitPreferences },
+    };
+  });
+
+  ipcMain.handle("cmux:quit:set-preferences", async (_event, payload) => {
+    const next =
+      payload &&
+      typeof payload === "object" &&
+      "confirmOnQuit" in payload &&
+      typeof (payload as { confirmOnQuit?: unknown }).confirmOnQuit === "boolean"
+        ? Boolean((payload as { confirmOnQuit: boolean }).confirmOnQuit)
+        : quitPreferences.confirmOnQuit;
+
+    if (next !== quitPreferences.confirmOnQuit) {
+      quitPreferences = { confirmOnQuit: next };
+      await saveQuitPreferences();
+      keyDebug("quit-preferences-updated", { confirmOnQuit: next });
+    }
+
+    return {
+      ok: true as const,
+      preferences: { ...quitPreferences },
+    };
+  });
+
+  ipcMain.handle("cmux:quit:confirm", async () => {
+    keyDebug("quit-dialog-confirmed", {});
+    performQuit();
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("cmux:quit:cancel", async () => {
+    quitPromptInFlight = false;
+    keyDebug("quit-dialog-cancelled", {});
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("cmux:quit:request", async () => {
+    requestQuit("renderer");
+    return { ok: true as const };
+  });
+}
+
 // Write critical errors to a file to aid debugging packaged crashes
 async function writeFatalLog(...args: unknown[]) {
   try {
@@ -777,6 +940,9 @@ app.on("open-url", (_event, url) => {
 app.whenReady().then(async () => {
   ensureLogFiles();
   setupConsoleFileMirrors();
+  await loadQuitPreferences().catch((error) => {
+    mainWarn("Failed to initialize quit preferences", error);
+  });
   const disposeContextMenu = registerGlobalContextMenu();
   app.once("will-quit", () => {
     try {
@@ -787,6 +953,7 @@ app.whenReady().then(async () => {
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerQuitIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
@@ -979,7 +1146,27 @@ app.whenReady().then(async () => {
   try {
     const template: MenuItemConstructorOptions[] = [];
     if (process.platform === "darwin") {
-      template.push({ role: "appMenu" });
+      template.push({
+        label: app.name,
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          {
+            id: "cmux-quit",
+            label: "Quit cmux",
+            accelerator: "Command+Q",
+            click: () => {
+              requestQuit("menu");
+            },
+          },
+        ],
+      });
     } else {
       template.push({ label: "File", submenu: [{ role: "quit" }] });
     }

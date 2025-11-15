@@ -10,6 +10,7 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { useEffect, useState } from "react";
 import { toast, Toaster } from "sonner";
+import { QuitConfirmationDialog } from "@/components/QuitConfirmationDialog";
 
 const AUTO_UPDATE_TOAST_ID = "auto-update-toast";
 
@@ -140,6 +141,7 @@ function RootComponent() {
     <>
       <Outlet />
       <DevTools />
+      <QuitConfirmationDialog />
       <ToasterWithTheme />
     </>
   );
