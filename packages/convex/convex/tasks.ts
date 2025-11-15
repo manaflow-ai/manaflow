@@ -824,3 +824,23 @@ export const getByIdInternal = internalQuery({
     return await ctx.db.get(args.id);
   },
 });
+
+export const updateOrder = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskOrders: v.array(v.object({ id: v.id("tasks"), order: v.number() })),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Update each task's order
+    for (const { id, order } of args.taskOrders) {
+      const task = await ctx.db.get(id);
+      if (task === null || task.teamId !== teamId || task.userId !== userId) {
+        throw new Error("Task not found or unauthorized");
+      }
+      await ctx.db.patch(id, { order, updatedAt: Date.now() });
+    }
+  },
+});

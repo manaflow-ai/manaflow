@@ -4,7 +4,7 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
@@ -13,6 +13,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useMemo,
   type ComponentType,
   type CSSProperties,
 } from "react";
@@ -20,6 +21,20 @@ import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface SidebarProps {
   tasks: Doc<"tasks">[] | undefined;
@@ -33,6 +48,43 @@ interface SidebarNavItem {
   search?: LinkProps["search"];
   exact?: boolean;
 }
+
+// Sortable wrapper for TaskTree
+function SortableTaskTree({
+  task,
+  defaultExpanded,
+  teamSlugOrId,
+}: {
+  task: Doc<"tasks">;
+  defaultExpanded: boolean;
+  teamSlugOrId: string;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task._id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <TaskTree
+        task={task}
+        defaultExpanded={defaultExpanded}
+        teamSlugOrId={teamSlugOrId}
+      />
+    </div>
+  );
+}
+
 const navItems: SidebarNavItem[] = [
   {
     label: "Home",
@@ -85,6 +137,57 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   // Fetch pinned items
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+
+  // Mutation to update task order
+  const updateOrder = useMutation(api.tasks.updateOrder);
+
+  // Sort tasks by order field
+  const sortedTasks = useMemo(() => {
+    if (!tasks) return [];
+    const nonPinned = tasks.filter((task) => !task.pinned);
+    return [...nonPinned].sort((a, b) => {
+      const orderA = a.order ?? a.createdAt ?? 0;
+      const orderB = b.order ?? b.createdAt ?? 0;
+      return orderA - orderB;
+    });
+  }, [tasks]);
+
+  // Setup drag sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px movement required to start drag
+      },
+    })
+  );
+
+  // Handle drag end
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+
+      if (!over || active.id === over.id) return;
+
+      const oldIndex = sortedTasks.findIndex((t) => t._id === active.id);
+      const newIndex = sortedTasks.findIndex((t) => t._id === over.id);
+
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      // Reorder locally for immediate feedback
+      const reordered = [...sortedTasks];
+      const [moved] = reordered.splice(oldIndex, 1);
+      reordered.splice(newIndex, 0, moved);
+
+      // Update order in database
+      const taskOrders = reordered.map((task, index) => ({
+        id: task._id,
+        order: index,
+      }));
+
+      updateOrder({ teamSlugOrId, taskOrders });
+    },
+    [sortedTasks, teamSlugOrId, updateOrder]
+  );
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -317,20 +420,26 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                       <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
                     </>
                   )}
-                  {/* Regular (non-pinned) tasks */}
-                  {tasks
-                    .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
-                    })
-                    .map((task) => (
-                      <TaskTree
-                        key={task._id}
-                        task={task}
-                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                        teamSlugOrId={teamSlugOrId}
-                      />
-                    ))}
+                  {/* Regular (non-pinned) tasks with drag and drop */}
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={sortedTasks.map((t) => t._id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {sortedTasks.map((task) => (
+                        <SortableTaskTree
+                          key={task._id}
+                          task={task}
+                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                          teamSlugOrId={teamSlugOrId}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
                 </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
