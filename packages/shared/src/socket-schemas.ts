@@ -374,6 +374,12 @@ export const SpawnFromCommentSchema = z.object({
   devicePixelRatio: z.number().optional(),
 });
 
+// Auth token update schema
+export const UpdateAuthSchema = z.object({
+  authToken: z.string(),
+  authJson: z.string().optional(),
+});
+
 // Provider status schemas
 export const ProviderStatusSchema = z.object({
   name: z.string(),
@@ -476,6 +482,7 @@ export type GitHubSyncPrState = z.infer<typeof GitHubSyncPrStateSchema>;
 export type GitHubMergeBranch = z.infer<typeof GitHubMergeBranchSchema>;
 export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
+export type UpdateAuth = z.infer<typeof UpdateAuthSchema>;
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export type DockerStatus = z.infer<typeof DockerStatusSchema>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
@@ -590,6 +597,7 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+  "update-auth": (data: UpdateAuth) => void;
 }
 
 export interface ServerToClientEvents {

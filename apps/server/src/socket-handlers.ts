@@ -17,6 +17,7 @@ import {
   type CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceSchema,
   type CreateCloudWorkspaceResponse,
+  UpdateAuthSchema,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -200,13 +201,13 @@ export function setupSocketHandlers(
   rt.onConnection((socket) => {
     // Ensure every packet runs within the auth context associated with this socket
     const q = socket.handshake.query?.auth;
-    const token = Array.isArray(q)
+    let token = Array.isArray(q)
       ? q[0]
       : typeof q === "string"
         ? q
         : undefined;
     const qJson = socket.handshake.query?.auth_json;
-    const tokenJson = Array.isArray(qJson)
+    let tokenJson = Array.isArray(qJson)
       ? qJson[0]
       : typeof qJson === "string"
         ? qJson
@@ -223,6 +224,18 @@ export function setupSocketHandlers(
       runWithAuth(token, tokenJson, () => next());
     });
     serverLogger.info("Client connected:", socket.id);
+
+    // Handle auth token updates (e.g., when token refreshes every 9 minutes)
+    socket.on("update-auth", (data) => {
+      try {
+        const { authToken, authJson } = UpdateAuthSchema.parse(data);
+        token = authToken;
+        tokenJson = authJson;
+        serverLogger.info("Auth token updated for socket:", socket.id);
+      } catch (error) {
+        serverLogger.error("Error updating auth token:", error);
+      }
+    });
 
     // Rust N-API test endpoint
     socket.on("rust-get-time", async (callback) => {

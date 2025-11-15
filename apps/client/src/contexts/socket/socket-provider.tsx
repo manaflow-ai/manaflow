@@ -115,6 +115,24 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     };
   }, [url, authToken, teamSlugOrId]);
 
+  // Send updated auth token to server whenever authJson changes (e.g., token refresh every 9 minutes)
+  useEffect(() => {
+    if (!socket || !isConnected || !authJsonQuery.data) {
+      return;
+    }
+
+    const authJson = authJsonQuery.data;
+    if (!authJson?.accessToken) {
+      return;
+    }
+
+    console.log("[Socket] Sending updated auth token to server");
+    socket.emit("update-auth", {
+      authToken: authJson.accessToken,
+      authJson: JSON.stringify(authJson),
+    });
+  }, [socket, isConnected, authJsonQuery.data]);
+
   const contextValue: SocketContextType = useMemo(
     () => ({
       socket,
