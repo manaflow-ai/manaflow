@@ -103,6 +103,8 @@ githubPrsBackfillRouter.openapi(
       additions?: number;
       deletions?: number;
       changed_files?: number;
+      mergeable?: boolean | null;
+      mergeable_state?: string;
     };
 
     const ts = (s?: string | null) => (s ? Date.parse(s) : undefined);
@@ -135,6 +137,8 @@ githubPrsBackfillRouter.openapi(
         additions: pr.additions,
         deletions: pr.deletions,
         changedFiles: pr.changed_files,
+        mergeable: pr.mergeable ?? undefined,
+        mergeableState: pr.mergeable_state ?? undefined,
       },
     });
 

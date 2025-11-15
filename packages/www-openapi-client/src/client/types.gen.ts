@@ -1370,10 +1370,19 @@ export type PostApiIntegrationsGithubPrsMergeSimpleErrors = {
      */
     403: unknown;
     /**
+     * Merge conflict or mergeability check in progress
+     */
+    409: {
+        success: boolean;
+        message: string;
+    };
+    /**
      * Failed to merge PR
      */
     500: unknown;
 };
+
+export type PostApiIntegrationsGithubPrsMergeSimpleError = PostApiIntegrationsGithubPrsMergeSimpleErrors[keyof PostApiIntegrationsGithubPrsMergeSimpleErrors];
 
 export type PostApiIntegrationsGithubPrsMergeSimpleResponses = {
     /**

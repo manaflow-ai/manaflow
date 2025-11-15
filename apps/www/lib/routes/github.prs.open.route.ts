@@ -27,6 +27,8 @@ type GitHubPrBasic = {
 type GitHubPrDetail = GitHubPrBasic & {
   merged_at: string | null;
   node_id: string;
+  mergeable: boolean | null;
+  mergeable_state: string;
 };
 
 type ConvexClient = ReturnType<typeof getConvex>;
@@ -803,6 +805,8 @@ githubPrsOpenRouter.openapi(
           closedAt: Date.now(),
           mergedAt: closedPR.merged_at ? new Date(closedPR.merged_at).getTime() : undefined,
           repositoryId: existingPR.repositoryId,
+          mergeable: closedPR.mergeable,
+          mergeableState: closedPR.mergeable_state,
         },
       });
 
@@ -855,6 +859,17 @@ githubPrsOpenRouter.openapi(
       400: { description: "Invalid request" },
       401: { description: "Unauthorized" },
       403: { description: "Forbidden" },
+      409: {
+        description: "Merge conflict or mergeability check in progress",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.boolean(),
+              message: z.string(),
+            }),
+          },
+        },
+      },
       500: { description: "Failed to merge PR" },
     },
   }),
@@ -921,6 +936,37 @@ githubPrsOpenRouter.openapi(
     const octokit = createOctokit(githubAccessToken);
 
     try {
+      // Fetch PR details to check mergeability
+      const prDetails = await fetchPullRequestDetail({
+        octokit,
+        owner,
+        repo,
+        number,
+      });
+
+      // Check for merge conflicts
+      if (prDetails.mergeable === false) {
+        return c.json(
+          {
+            success: false,
+            message: `PR #${number} has merge conflicts that must be resolved before merging`,
+          },
+          409,
+        );
+      }
+
+      // If mergeable is null, GitHub is still computing mergeability
+      // We could poll or just let the merge attempt fail with GitHub's error
+      if (prDetails.mergeable === null) {
+        return c.json(
+          {
+            success: false,
+            message: `PR #${number} mergeability status is still being computed. Please try again in a moment.`,
+          },
+          409,
+        );
+      }
+
       await mergePullRequest({
         octokit,
         owner,
@@ -962,6 +1008,8 @@ githubPrsOpenRouter.openapi(
           closedAt: existingPR.closedAt,
           mergedAt: mergedPR.merged_at ? new Date(mergedPR.merged_at).getTime() : undefined,
           repositoryId: existingPR.repositoryId,
+          mergeable: mergedPR.mergeable,
+          mergeableState: mergedPR.mergeable_state,
         },
       });
 
@@ -1139,6 +1187,8 @@ async function fetchPullRequestDetail({
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable: data.mergeable ?? null,
+    mergeable_state: data.mergeable_state ?? "unknown",
   };
 }
 
