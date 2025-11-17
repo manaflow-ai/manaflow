@@ -10,6 +10,16 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
+  if (hostname === "github3.com") {
+    const segments = pathname.split("/").filter(Boolean);
+    if (segments.length >= 2) {
+      const [org, repo] = segments;
+      const rewriteUrl = request.nextUrl.clone();
+      rewriteUrl.pathname = `/cliweb/${org}/${repo}`;
+      return NextResponse.rewrite(rewriteUrl);
+    }
+  }
+
   // Check if this is a PR review page that requires authentication
   const isPRReviewPage =
     /^\/[^/]+\/[^/]+\/pull\/\d+$/.test(pathname) ||

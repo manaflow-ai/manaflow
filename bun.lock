@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "cmux",
@@ -25,7 +26,7 @@
     },
     "apps/client": {
       "name": "@cmux/client",
-      "version": "1.0.167",
+      "version": "1.0.170",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-beta.2",
         "@cmux/convex": "workspace:*",
@@ -313,6 +314,13 @@
         "@t3-oss/env-core": "^0.13.8",
         "@tanstack/react-query": "^5.86.2",
         "@vercel/functions": "^1.4.0",
+        "@xterm/addon-attach": "^0.11.0",
+        "@xterm/addon-fit": "^0.10.0",
+        "@xterm/addon-search": "^0.15.0",
+        "@xterm/addon-unicode11": "^0.8.0",
+        "@xterm/addon-web-links": "^0.11.0",
+        "@xterm/addon-webgl": "^0.18.0",
+        "@xterm/xterm": "^5.5.0",
         "ai": "^5.0.82",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
