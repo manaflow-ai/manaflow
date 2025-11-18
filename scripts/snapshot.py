@@ -411,11 +411,11 @@ async def _await_instance_ready(instance: Instance, *, console: Console) -> None
 
 def _stop_instance(instance: Instance, console: Console) -> None:
     try:
-        console.info(f"Stopping instance {instance.id}...")
-        instance.stop()
-        console.info(f"Instance {instance.id} stopped")
+        console.info(f"Pausing instance {instance.id}...")
+        instance.pause()
+        console.info(f"Instance {instance.id} paused")
     except Exception as exc:  # noqa: BLE001
-        console.always(f"Failed to stop instance {instance.id}: {exc}")
+        console.always(f"Failed to pause instance {instance.id}: {exc}")
 
 
 def _shell_command(command: Command) -> list[str]:
@@ -1308,10 +1308,29 @@ async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
           local version="$3"
           local destination="$4"
           local tmpfile="${destination}.download"
+          local curl_stderr="${tmpfile}.stderr"
           local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage"
-          if ! curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}"; then
-            echo "Failed to download ${publisher}.${name}@${version}" >&2
+          local attempt=1
+          local max_attempts=3
+          while [ "${attempt}" -le "${max_attempts}" ]; do
+            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}" 2>"${curl_stderr}"; then
+              rm -f "${curl_stderr}"
+              break
+            fi
+            echo "Download attempt ${attempt}/${max_attempts} failed for ${publisher}.${name}@${version}; retrying..." >&2
+            if [ -s "${curl_stderr}" ]; then
+              cat "${curl_stderr}" >&2
+            fi
             rm -f "${tmpfile}"
+            attempt=$((attempt + 1))
+            sleep $((attempt * 2))
+          done
+          if [ "${attempt}" -gt "${max_attempts}" ]; then
+            echo "Failed to download ${publisher}.${name}@${version} after ${max_attempts} attempts" >&2
+            if [ -s "${curl_stderr}" ]; then
+              cat "${curl_stderr}" >&2
+            fi
+            rm -f "${curl_stderr}"
             return 1
           fi
           if gzip -t "${tmpfile}" >/dev/null 2>&1; then

@@ -3,7 +3,7 @@ use std::{
     convert::Infallible,
     future::Future,
     io,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener as StdTcpListener},
+    net::{SocketAddr, TcpListener as StdTcpListener},
     pin::Pin,
     str::FromStr,
     task::{Context, Poll},
@@ -733,58 +733,6 @@ fn parse_workspace_port_from_host(headers: &HeaderMap) -> Option<(String, u16)> 
     Some((ws_part.to_string(), port))
 }
 
-fn host_without_port(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    if trimmed.starts_with('[') {
-        if let Some(end_idx) = trimmed.find(']') {
-            return trimmed[1..end_idx].to_string();
-        }
-        return trimmed.to_string();
-    }
-
-    let colon_count = trimmed.chars().filter(|c| *c == ':').count();
-    if colon_count == 1 {
-        if let Some((host, _port)) = trimmed.rsplit_once(':') {
-            return host.to_string();
-        }
-    }
-
-    trimmed.to_string()
-}
-
-fn host_is_local_allowed(host: &str) -> bool {
-    if host.is_empty() {
-        return true;
-    }
-    let host_only = host_without_port(host);
-    if host_only.is_empty() {
-        return true;
-    }
-    let host_lc = host_only.to_ascii_lowercase();
-
-    if host_lc == "localhost" || host_lc.ends_with(".localhost") {
-        return true;
-    }
-
-    if let Ok(ipv4) = host_lc.parse::<Ipv4Addr>() {
-        if ipv4.is_loopback() {
-            return true;
-        }
-    }
-
-    if let Ok(ipv6) = host_lc.parse::<Ipv6Addr>() {
-        if ipv6.is_loopback() {
-            return true;
-        }
-    }
-
-    false
-}
-
 #[allow(clippy::result_large_err)]
 fn enforce_local_host_header(
     headers: &HeaderMap,
@@ -795,18 +743,12 @@ fn enforce_local_host_header(
     }
 
     if let Some(value) = headers.get(HOST) {
-        let host = value.to_str().map_err(|_| {
+        value.to_str().map_err(|_| {
             response_with(
                 StatusCode::BAD_REQUEST,
                 "invalid Host header (not UTF-8)".to_string(),
             )
         })?;
-        if !host_is_local_allowed(host) {
-            return Err(response_with(
-                StatusCode::BAD_GATEWAY,
-                "Host header requires X-Cmux-Host-Override".to_string(),
-            ));
-        }
     }
 
     Ok(())

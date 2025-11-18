@@ -229,6 +229,10 @@ function setupConsoleFileMirrors(): void {
   };
 }
 
+function setupPreviewProxyCertificateTrust(): void {
+  // Certificate trust setup removed
+}
+
 function resolveResourcePath(rel: string) {
   // Prod: packaged resources directory; Dev: look under client/assets
   if (app.isPackaged) return path.join(process.resourcesPath, rel);
@@ -775,6 +779,7 @@ app.on("open-url", (_event, url) => {
 });
 
 app.whenReady().then(async () => {
+  setupPreviewProxyCertificateTrust();
   ensureLogFiles();
   setupConsoleFileMirrors();
   const disposeContextMenu = registerGlobalContextMenu();
@@ -1136,10 +1141,8 @@ app.whenReady().then(async () => {
       ],
     });
     const menu = Menu.buildFromTemplate(template);
-    previewReloadMenuItem =
-      menu.getMenuItemById("cmux-preview-reload") ?? null;
-    previewBackMenuItem =
-      menu.getMenuItemById("cmux-preview-back") ?? null;
+    previewReloadMenuItem = menu.getMenuItemById("cmux-preview-reload") ?? null;
+    previewBackMenuItem = menu.getMenuItemById("cmux-preview-back") ?? null;
     previewForwardMenuItem =
       menu.getMenuItemById("cmux-preview-forward") ?? null;
     previewFocusAddressMenuItem =

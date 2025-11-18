@@ -319,7 +319,7 @@ async fn test_http_proxy_routes_by_header() {
     let s = String::from_utf8(body.to_vec()).unwrap();
     assert!(s.contains("ok:GET:/hello"), "unexpected body: {}", s);
 
-    // Same request but with a custom host should fail without override
+    // Same request but with a custom host should still succeed without override
     let url_custom = format!("http://{}:{}/hello", proxy_addr.ip(), proxy_addr.port());
     let req_custom = Request::builder()
         .method("GET")
@@ -332,7 +332,19 @@ async fn test_http_proxy_routes_by_header() {
         .await
         .expect("resp custom timeout")
         .unwrap();
-    assert_eq!(resp_custom.status(), StatusCode::BAD_GATEWAY);
+    assert_eq!(resp_custom.status(), StatusCode::OK);
+    let body_custom = resp_custom
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let s_custom = String::from_utf8(body_custom.to_vec()).unwrap();
+    assert!(
+        s_custom.contains("ok:GET:/hello"),
+        "unexpected body: {}",
+        s_custom
+    );
 
     // Missing header -> 400
     let url2 = format!("http://{}:{}/missing", proxy_addr.ip(), proxy_addr.port());
@@ -724,6 +736,43 @@ async fn test_host_override_header_sets_host() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let host_seen = String::from_utf8(body.to_vec()).unwrap();
     assert_eq!(host_seen, "localhost:3006");
+
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_missing_host_override_keeps_host_header() {
+    let upstream_addr = start_upstream_host_echo().await;
+    let (proxy_addr, shutdown, handle) = start_proxy(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        "127.0.0.1",
+        true,
+    )
+    .await;
+
+    let client: Client<HttpConnector, TestRequestBody> = new_test_client();
+    let url = format!(
+        "http://{}:{}/no-override",
+        proxy_addr.ip(),
+        proxy_addr.port()
+    );
+    let req = Request::builder()
+        .method("GET")
+        .uri(url)
+        .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
+        .header("Host", "example.test")
+        .body(Empty::new())
+        .unwrap();
+
+    let resp = timeout(Duration::from_secs(5), client.request(req))
+        .await
+        .expect("resp timeout")
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let host_seen = String::from_utf8(body.to_vec()).unwrap();
+    assert_eq!(host_seen, "example.test");
 
     let _ = shutdown.send(());
     let _ = handle.await;
