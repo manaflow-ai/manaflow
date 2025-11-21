@@ -16,13 +16,11 @@ import { isElectron } from "@/lib/electron";
 import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
-import { parseGithubRepoUrl } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useAction, useMutation } from "convex/react";
-import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
+import { useMutation } from "convex/react";
+import { GitBranch, Image, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
 
 interface DashboardInputControlsProps {
@@ -74,7 +72,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const router = useRouter();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
-  const addManualRepo = useAction(api.github_http.addManualRepo);
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -226,12 +223,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const pillboxScrollRef = useRef<HTMLDivElement | null>(null);
   const [showPillboxFade, setShowPillboxFade] = useState(false);
 
-  // Custom repo URL state
-  const [showCustomRepoInput, setShowCustomRepoInput] = useState(false);
-  const [customRepoUrl, setCustomRepoUrl] = useState("");
-  const [customRepoError, setCustomRepoError] = useState<string | null>(null);
-  const [isAddingRepo, setIsAddingRepo] = useState(false);
-
   useEffect(() => {
     const node = pillboxScrollRef.current;
     if (!node) {
@@ -296,56 +287,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
 
   const handleFocusAgentOption = useCallback((agent: string) => {
     agentSelectRef.current?.open({ focusValue: agent });
-  }, []);
-
-  const handleCustomRepoSubmit = useCallback(async () => {
-    const trimmedUrl = customRepoUrl.trim();
-
-    // Validate URL format before sending to backend
-    if (!trimmedUrl) {
-      setCustomRepoError("Please enter a GitHub repository URL");
-      return;
-    }
-
-    const parsed = parseGithubRepoUrl(trimmedUrl);
-    if (!parsed) {
-      setCustomRepoError("Invalid GitHub repository URL. Use format: owner/repo or https://github.com/owner/repo");
-      return;
-    }
-
-    setIsAddingRepo(true);
-    setCustomRepoError(null);
-
-    try {
-      const result = await addManualRepo({
-        teamSlugOrId,
-        repoUrl: trimmedUrl,
-      });
-
-      if (result.success) {
-        // Set the repo as selected
-        onProjectChange([result.fullName]);
-
-        // Clear the custom input
-        setCustomRepoUrl("");
-        setCustomRepoError(null);
-        setShowCustomRepoInput(false);
-
-        toast.success(`Added ${result.fullName} to repositories`);
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to add repository";
-      setCustomRepoError(errorMessage);
-      toast.error(errorMessage);
-    } finally {
-      setIsAddingRepo(false);
-    }
-  }, [customRepoUrl, addManualRepo, teamSlugOrId, onProjectChange]);
-
-  const handleCustomRepoInputChange = useCallback((value: string) => {
-    setCustomRepoUrl(value);
-    setCustomRepoError(null);
   }, []);
 
   const agentSelectionFooter = selectedAgents.length ? (
@@ -549,80 +490,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                   <span className="select-none">Add repos from GitHub</span>
                 </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  setShowCustomRepoInput((prev) => !prev);
-                  setCustomRepoError(null);
-                }}
-                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
-              >
-                <Link2 className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                <span className="select-none">
-                  {showCustomRepoInput ? "Hide repo link menu" : "Import repos from link"}
-                </span>
-              </button>
-              {showCustomRepoInput ? (
-                <div className="px-2 pb-2 pt-1">
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      value={customRepoUrl}
-                      onChange={(e) => handleCustomRepoInputChange(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void handleCustomRepoSubmit();
-                        } else if (e.key === "Escape") {
-                          setShowCustomRepoInput(false);
-                          setCustomRepoUrl("");
-                          setCustomRepoError(null);
-                        }
-                      }}
-                      placeholder="github.com/owner/repo"
-                      className={clsx(
-                        "flex-1 px-2 h-7 text-[13px] rounded border",
-                        "bg-white dark:bg-neutral-800",
-                        "border-neutral-300 dark:border-neutral-600",
-                        "text-neutral-900 dark:text-neutral-100",
-                        "placeholder:text-neutral-400 dark:placeholder:text-neutral-500",
-                        "focus:outline-none focus:ring-1 focus:ring-blue-500",
-                        customRepoError ? "border-red-500 dark:border-red-500" : ""
-                      )}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCustomRepoSubmit}
-                      disabled={isAddingRepo}
-                      className={clsx(
-                        "px-2 h-7 flex items-center justify-center rounded",
-                        "bg-blue-500 hover:bg-blue-600",
-                        "text-white text-[12px] font-medium",
-                        "transition-colors",
-                        "disabled:opacity-50 disabled:cursor-not-allowed"
-                      )}
-                      title="Add repository"
-                    >
-                      {isAddingRepo ? (
-                        <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Check className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  </div>
-                  {customRepoError ? (
-                    <p className="text-[11px] text-red-500 dark:text-red-400 mt-1 px-1">
-                      {customRepoError}
-                    </p>
-                  ) : (
-                    <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 px-1">
-                      Enter any GitHub repository link
-                    </p>
-                  )}
-                </div>
               ) : null}
             </div>
           }
