@@ -1,7 +1,7 @@
 import { waitUntil } from "@vercel/functions";
 import { unstable_cache as cache } from "next/cache";
 
-import { DirectDownloadRedirector } from "@/app/direct-download-macos/redirector";
+import { DirectDownloadRedirector } from "@/app/(main)/direct-download-macos/redirector";
 import {
   fetchLatestRelease,
   type ReleaseInfo,

@@ -8,6 +8,7 @@ import { AntdProvider } from "./components/antd-provider";
 import { isElectron } from "./lib/electron";
 import { stackClientApp } from "./lib/stack";
 import { queryClient } from "./query-client";
+import { SentryScope } from "./components/sentry-scope";
 
 interface ProvidersProps {
   children: ReactNode;
@@ -29,6 +30,7 @@ export function Providers({ children }: ProvidersProps) {
               <TooltipProvider delayDuration={700} skipDelayDuration={300}>
                 <HeroUIProvider>
                   <RootErrorBoundary>
+                    <SentryScope />
                     <AntdProvider>{children}</AntdProvider>
                   </RootErrorBoundary>
                 </HeroUIProvider>
