@@ -239,6 +239,11 @@ const cmuxAPI = {
       ipcRenderer.invoke("cmux:webcontents:update-style", options) as Promise<{
         ok: boolean;
       }>,
+    isFocused: (id: number) =>
+      ipcRenderer.invoke("cmux:webcontents:is-focused", id) as Promise<{
+        ok: boolean;
+        focused: boolean;
+      }>,
     goBack: (id: number) =>
       ipcRenderer.invoke("cmux:webcontents:go-back", id) as Promise<{
         ok: boolean;

@@ -81,6 +81,9 @@ interface CmuxWebContentsViewAPI {
     options?: { mode?: ElectronDevToolsMode }
   ) => Promise<{ ok: boolean }>;
   closeDevTools: (id: number) => Promise<{ ok: boolean }>;
+  isFocused: (
+    id: number
+  ) => Promise<{ ok: boolean; focused: boolean }>;
 }
 
 interface CmuxAPI {

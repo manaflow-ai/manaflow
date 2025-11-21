@@ -7,6 +7,11 @@ import {
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
+import {
+  registerWebviewActions,
+  unregisterWebviewActions,
+  type WebviewActions,
+} from "@/lib/webview-actions";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 
@@ -158,6 +163,7 @@ export function ElectronWebContentsView({
 }: ElectronWebContentsViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewIdRef = useRef<number | null>(null);
+  const webContentsIdRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const continuousSyncRef = useRef<number | null>(null);
   const continuousActiveRef = useRef(false);
@@ -175,6 +181,7 @@ export function ElectronWebContentsView({
     borderRadius,
   });
   const hasStableAttachmentRef = useRef(false);
+  const registeredActionsRef = useRef<WebviewActions | null>(null);
   const isIntersectingRef = useRef(true);
   const scrollCleanupsRef = useRef<Array<() => void>>([]);
   const lastTransformStateRef = useRef(false);
@@ -310,6 +317,77 @@ export function ElectronWebContentsView({
 
   persistKeyRef.current = persistKey;
 
+  const unregisterActions = useCallback(() => {
+    if (!persistKeyRef.current || !registeredActionsRef.current) {
+      return;
+    }
+    unregisterWebviewActions(persistKeyRef.current, registeredActionsRef.current);
+    registeredActionsRef.current = null;
+  }, []);
+
+  const registerActions = useCallback(
+    (webContentsId: number) => {
+      const key = persistKeyRef.current;
+      if (!key) return;
+      webContentsIdRef.current = webContentsId;
+      const actions: WebviewActions = {
+        focus: async () => {
+          if (typeof window === "undefined") return false;
+
+          const targetId = webContentsIdRef.current;
+          if (targetId === null) return false;
+
+          try {
+            const restore = window.cmux?.ui?.restoreLastFocusInWebContents;
+            if (restore) {
+              const result = await restore(targetId);
+              if (result?.ok) {
+                return true;
+              }
+            }
+
+            const focus = window.cmux?.ui?.focusWebContents;
+            if (focus) {
+              const result = await focus(targetId);
+              return result?.ok ?? false;
+            }
+          } catch (error) {
+            console.error("Failed to focus WebContentsView", error);
+            return false;
+          }
+
+          return false;
+        },
+        isFocused: async () => {
+          if (typeof window === "undefined") return false;
+
+          const viewId = viewIdRef.current;
+          if (viewId === null) return false;
+
+          try {
+            const checkFocus = window.cmux?.webContentsView?.isFocused;
+            if (!checkFocus) return false;
+            const result = await checkFocus(viewId);
+            return result?.ok === true && result.focused === true;
+          } catch (error) {
+            console.error("Failed to check WebContentsView focus", error);
+            return false;
+          }
+        },
+      };
+      registeredActionsRef.current = actions;
+      registerWebviewActions(key, actions);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      unregisterActions();
+      webContentsIdRef.current = null;
+    };
+  }, [unregisterActions]);
+
   const releaseNativeView = useCallback(
     (id: number, key: string | undefined) => {
       const bridge = getWebContentsBridge();
@@ -369,6 +447,8 @@ export function ElectronWebContentsView({
   const releaseView = useCallback(() => {
     cancelScheduledSync();
     stopContinuousSync();
+    unregisterActions();
+    webContentsIdRef.current = null;
     const id = viewIdRef.current;
     if (id === null) return;
     viewIdRef.current = null;
@@ -380,6 +460,7 @@ export function ElectronWebContentsView({
     onNativeViewDestroyed?.();
   }, [
     cancelScheduledSync,
+    unregisterActions,
     onNativeViewDestroyed,
     releaseNativeView,
     stopContinuousSync,
@@ -456,6 +537,7 @@ export function ElectronWebContentsView({
             restored: result.restored,
           });
           viewIdRef.current = result.id;
+          registerActions(result.webContentsId);
           hasStableAttachmentRef.current = true;
           onNativeViewReady?.(result);
           const targetUrl = latestSrcRef.current;
@@ -512,6 +594,7 @@ export function ElectronWebContentsView({
     releaseNativeView,
     releaseView,
     scheduleBoundsSync,
+    registerActions,
     onNativeViewDestroyed,
     onNativeViewReady,
   ]);

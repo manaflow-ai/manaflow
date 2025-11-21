@@ -14,7 +14,6 @@ import {
   net,
   session,
   shell,
-  webFrameMain,
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
 } from "electron";
@@ -48,6 +47,10 @@ import {
   startPreviewProxy,
 } from "./task-run-preview-proxy";
 import { normalizeBrowserUrl } from "@cmux/shared";
+import {
+  ELECTRON_WINDOW_FOCUS_EVENT,
+  type ElectronRendererEventMap,
+} from "../../src/types/electron-events";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -681,25 +684,6 @@ function createWindow(): void {
     }
   );
 
-  mainWindow.webContents.on(
-    "did-frame-finish-load",
-    (_event, isMainFrame, frameProcessId, frameRoutingId) => {
-      let frameUrl: string | null = null;
-      try {
-        frameUrl =
-          webFrameMain.fromId(frameProcessId, frameRoutingId)?.url ?? null;
-      } catch (error) {
-        frameUrl = `lookup-failed:${String(error)}`;
-      }
-      mainLog("did-frame-finish-load", {
-        isMainFrame,
-        frameProcessId,
-        frameRoutingId,
-        frameUrl,
-      });
-    }
-  );
-
   mainWindow.webContents.on("did-navigate", (_e, url) => {
     mainLog("did-navigate", { url });
   });
@@ -733,6 +717,16 @@ app.on("browser-window-created", (_event, window) => {
 
 app.on("browser-window-focus", (_event, window) => {
   updateHistoryMenuState(window);
+  try {
+    const payload: ElectronRendererEventMap[typeof ELECTRON_WINDOW_FOCUS_EVENT] =
+      { windowId: window.id };
+    window.webContents.send(
+      `cmux:event:${ELECTRON_WINDOW_FOCUS_EVENT}`,
+      payload
+    );
+  } catch (error) {
+    mainWarn("Failed to emit window focus event to renderer", error);
+  }
 });
 
 app.on("login", (event, webContents, _request, authInfo, callback) => {

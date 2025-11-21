@@ -1,3 +1,5 @@
+import { ensureIframeFocusGuard } from "./iframeFocusGuard";
+
 // Extend the Element interface to include moveBefore
 declare global {
   interface Element {
@@ -100,6 +102,8 @@ class PersistentIframeManager {
 
   private initializeContainer() {
     if (typeof document === "undefined") return;
+
+    ensureIframeFocusGuard();
 
     const init = () => {
       this.container = document.createElement("div");
@@ -561,6 +565,39 @@ class PersistentIframeManager {
     entry.wrapper.style.width = `${viewportWidth}px`;
     entry.wrapper.style.height = `${viewportHeight}px`;
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
+  }
+
+  isIframeFocused(key: string): boolean {
+    if (typeof document === "undefined") {
+      return false;
+    }
+
+    const entry = this.iframes.get(key);
+    if (!entry || !entry.isVisible) return false;
+
+    return document.activeElement === entry.iframe;
+  }
+
+  focusIframe(key: string): boolean {
+    const entry = this.iframes.get(key);
+    if (!entry) return false;
+
+    const isHidden =
+      entry.wrapper.style.visibility === "hidden" ||
+      entry.wrapper.style.pointerEvents === "none";
+
+    if (isHidden) {
+      return false;
+    }
+
+    try {
+      entry.iframe.focus();
+      entry.iframe.contentWindow?.focus();
+      return true;
+    } catch (error) {
+      console.error(`Failed to focus iframe "${key}"`, error);
+      return false;
+    }
   }
 }
 

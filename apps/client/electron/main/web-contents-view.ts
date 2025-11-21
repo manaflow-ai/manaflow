@@ -1354,6 +1354,28 @@ export function registerWebContentsViewHandlers({
     }
   );
 
+  ipcMain.handle("cmux:webcontents:is-focused", (event, id: number) => {
+    if (typeof id !== "number") return { ok: false, focused: false };
+    const entry = viewEntries.get(id);
+    if (!entry) return { ok: false, focused: false };
+    if (event.sender.id !== entry.ownerWebContentsId) {
+      return { ok: false, focused: false };
+    }
+    entry.ownerSender = event.sender;
+    try {
+      const ownerWindow = BrowserWindow.fromId(entry.ownerWindowId);
+      const focused =
+        Boolean(ownerWindow?.isFocused()) && entry.view.webContents.isFocused();
+      return { ok: true, focused };
+    } catch (error) {
+      logger.warn("Failed to check WebContentsView focus", {
+        id,
+        error,
+      });
+      return { ok: false, focused: false };
+    }
+  });
+
   ipcMain.handle("cmux:webcontents:get-state", (event, id: number) => {
     if (typeof id !== "number") return { ok: false };
     const entry = viewEntries.get(id);
