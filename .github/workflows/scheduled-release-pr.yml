@@ -1,0 +1,150 @@
+name: Scheduled Release PR
+
+on:
+  schedule:
+    - cron: "30 12 * * *" # 4:30 AM PST
+    - cron: "0 3 * * *"   # 7:00 PM PST
+  workflow_dispatch:
+
+concurrency:
+  group: scheduled-release-pr
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  prepare-release-pr:
+    name: Prepare release pull request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check for changes since last release
+        id: release_changes
+        run: |
+          last_tag=$(git describe --tags --match "v[0-9]*" --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$last_tag" ]; then
+            echo "No release tags found. Proceeding with release." >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git diff --quiet "$last_tag"..HEAD; then
+            echo "No changes since last release ($last_tag)." >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changes detected since last release ($last_tag)." >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.release_changes.outputs.proceed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Resolve next version
+        if: steps.release_changes.outputs.proceed == 'true'
+        id: version
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          import { execSync } from "node:child_process";
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          function isSemver(value: string): boolean {
+            return /^\d+\.\d+\.\d+$/.test(value);
+          }
+
+          function compareSemver(left: string, right: string): number {
+            const [lMaj, lMin, lPatch] = left.split(".").map(Number);
+            const [rMaj, rMin, rPatch] = right.split(".").map(Number);
+
+            if (lMaj !== rMaj) return lMaj > rMaj ? 1 : -1;
+            if (lMin !== rMin) return lMin > rMin ? 1 : -1;
+            if (lPatch !== rPatch) return lPatch > rPatch ? 1 : -1;
+            return 0;
+          }
+
+          const packageJsonPath = "./apps/client/package.json";
+          const packageVersion = JSON.parse(readFileSync(packageJsonPath, "utf8")).version;
+
+          if (!packageVersion || !isSemver(packageVersion)) {
+            throw new Error(`Invalid package version: ${packageVersion}`);
+          }
+
+          const tagOutput = execSync("git tag --list 'v[0-9]*'", { encoding: "utf8" }).trim();
+          const tagVersions = tagOutput
+            .split(/\r?\n/)
+            .map((tag) => tag.trim())
+            .filter(Boolean)
+            .map((tag) => (tag.startsWith("v") ? tag.slice(1) : tag))
+            .filter(isSemver)
+            .sort((a, b) => compareSemver(a, b));
+
+          const highestTag = tagVersions.at(-1) ?? "";
+          let base = packageVersion;
+          if (highestTag && compareSemver(highestTag, base) > 0) {
+            base = highestTag;
+          }
+
+          const [major, minor, patch] = base.split(".").map(Number);
+          const nextVersion = `${major}.${minor}.${patch + 1}`;
+
+          console.log(`Base version: ${base}`);
+          console.log(`Next version: ${nextVersion}`);
+
+          writeFileSync(
+            packageJsonPath,
+            `${JSON.stringify({ ...JSON.parse(readFileSync(packageJsonPath, "utf8")), version: nextVersion }, null, 2)}\n`
+          );
+
+          console.log(`next_version=${nextVersion}`);
+          NODE
+
+          printf 'next_version=%s\n' "$(node -p "JSON.parse(require('node:fs').readFileSync('apps/client/package.json')).version")" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git user
+        if: steps.release_changes.outputs.proceed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit version bump
+        if: steps.release_changes.outputs.proceed == 'true'
+        run: |
+          git add apps/client/package.json
+          git commit -m "chore: release v${{ steps.version.outputs.next_version }}"
+
+      - name: Create release PR
+        if: steps.release_changes.outputs.proceed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: automation/release-v${{ steps.version.outputs.next_version }}
+          title: chore: release v${{ steps.version.outputs.next_version }}
+          body: |
+            Automated release preparation.
+
+            - Base version bump from scheduled workflow.
+            - Please review and merge to publish.
+          draft: true
+          commit-message: chore: release v${{ steps.version.outputs.next_version }}
+          base: main
+          add-paths: |
+            apps/client/package.json
+
+      - name: Skip release (no changes)
+        if: steps.release_changes.outputs.proceed == 'false'
+        run: echo "Skipping release because no changes were detected since the last tag."
