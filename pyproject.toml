@@ -4,7 +4,26 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11.0"
-dependencies = ["cdp-use>=1.4.1", "morphcloud>=0.1.91", "requests>=2.32.4"]
+dependencies = [
+    "cdp-use>=1.4.1",
+    "freestyle-client",
+    "morphcloud>=0.1.91",
+    "requests>=2.32.4",
+]
 
 [tool.basedpyright]
 reportUnusedCallResult = false
+extraPaths = ["scripts/freestyle-client-pkg"]
+
+[tool.uv.workspace]
+members = [
+    "scripts/freestyle-client-pkg",
+]
+
+[tool.uv.sources]
+freestyle-client = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.34.0",
+]
