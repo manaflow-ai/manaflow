@@ -143,8 +143,9 @@ export function WorkspaceSetupPanel({
   }, [envVars]);
 
   const normalizedScript = maintenanceScript.trim();
+  const scriptHasChanges = normalizedScript !== originalConfigRef.current.script;
   const hasChanges =
-    normalizedScript !== originalConfigRef.current.script ||
+    scriptHasChanges ||
     currentEnvContent !== originalConfigRef.current.envContent;
 
   const isConfigured =
@@ -325,6 +326,14 @@ export function WorkspaceSetupPanel({
                     rows={3}
                     className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 resize-none dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600"
                   />
+                  {scriptHasChanges ? (
+                    <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-300">
+                      <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>
+                        Unsaved setup script changes — use Save setup below to keep them.
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* Environment Variables Section */}
