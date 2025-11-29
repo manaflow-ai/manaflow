@@ -67,6 +67,112 @@ export const dispatchPreviewJob = httpAction(async (ctx, req) => {
 });
 
 /**
+ * Mark a preview task run and task as completed once screenshots finish.
+ */
+export const completePreviewTask = httpAction(async (ctx, req) => {
+  const workerAuth = await getWorkerAuth(req, { loggerPrefix: "[preview-jobs-http]" });
+  if (!workerAuth) {
+    console.error("[preview-jobs-http] Unauthorized preview task completion request");
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  if (!body || typeof body !== "object" || !("taskRunId" in body)) {
+    return jsonResponse({ error: "Missing taskRunId" }, 400);
+  }
+
+  const { taskRunId } = body as { taskRunId?: string };
+  const logContext = { taskRunId };
+
+  if (!taskRunId) {
+    return jsonResponse({ error: "taskRunId is required" }, 400);
+  }
+
+  const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+    id: taskRunId as Id<"taskRuns">,
+  });
+
+  if (!taskRun) {
+    console.error("[preview-jobs-http] Task run not found for preview completion", logContext);
+    return jsonResponse({ error: "Task run not found" }, 404);
+  }
+
+  if (
+    taskRun.teamId !== workerAuth.payload.teamId ||
+    taskRun.userId !== workerAuth.payload.userId
+  ) {
+    console.error("[preview-jobs-http] Unauthorized preview task completion attempt", {
+      ...logContext,
+      workerTeamId: workerAuth.payload.teamId,
+      taskRunTeamId: taskRun.teamId,
+    });
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+    id: taskRun.taskId,
+  });
+
+  if (!task) {
+    console.error("[preview-jobs-http] Task not found for preview completion", {
+      ...logContext,
+      taskId: taskRun.taskId,
+    });
+    return jsonResponse({ error: "Task not found" }, 404);
+  }
+
+  if (
+    task.teamId !== workerAuth.payload.teamId ||
+    task.userId !== workerAuth.payload.userId
+  ) {
+    console.error("[preview-jobs-http] Unauthorized preview task completion attempt (task)", {
+      ...logContext,
+      workerTeamId: workerAuth.payload.teamId,
+      taskTeamId: task.teamId,
+    });
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const runAlreadyTerminal =
+    taskRun.status === "completed" ||
+    taskRun.status === "failed" ||
+    taskRun.status === "skipped";
+
+  if (!runAlreadyTerminal) {
+    await ctx.runMutation(internal.taskRuns.updateStatus, {
+      id: taskRun._id,
+      status: "completed",
+    });
+  }
+
+  const taskAlreadyCompleted = task.isCompleted === true;
+  if (!taskAlreadyCompleted) {
+    await ctx.runMutation(internal.tasks.markCompletedInternal, {
+      taskId: task._id,
+    });
+  }
+
+  console.log("[preview-jobs-http] Preview task marked complete", {
+    ...logContext,
+    runStatusUpdated: !runAlreadyTerminal,
+    taskAlreadyCompleted,
+  });
+
+  return jsonResponse({
+    ok: true,
+    runStatusUpdated: !runAlreadyTerminal,
+    taskCompleted: true,
+    alreadyCompleted: taskAlreadyCompleted,
+  });
+});
+
+/**
  * HTTP action for www API to update preview run status
  */
 export const updatePreviewStatus = httpAction(async (ctx, req) => {

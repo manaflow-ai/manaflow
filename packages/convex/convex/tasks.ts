@@ -219,6 +219,16 @@ export const setCompleted = authMutation({
   },
 });
 
+export const markCompletedInternal = internalMutation({
+  args: { taskId: v.id("tasks") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskId, {
+      isCompleted: true,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const update = authMutation({
   args: { teamSlugOrId: v.string(), id: v.id("tasks"), text: v.string() },
   handler: async (ctx, args) => {

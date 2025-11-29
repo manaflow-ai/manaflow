@@ -173,6 +173,25 @@ async function runPreviewJobScreenshots({
   log("INFO", `${logPrefix} Preview job completed successfully`, {
     result,
   });
+
+  try {
+    const completionResult = await convexRequest(
+      "/api/preview/task-complete",
+      token,
+      { taskRunId },
+      convexUrl
+    );
+
+    log("INFO", `${logPrefix} Preview task completion recorded`, {
+      taskRunId,
+      completionResult,
+    });
+  } catch (error) {
+    log("ERROR", `${logPrefix} Failed to mark preview task complete`, {
+      taskRunId,
+      error,
+    });
+  }
 }
 
 const Terminal = xtermHeadless.Terminal;
