@@ -651,6 +651,7 @@ export function PreviewConfigureClient({
   const lastSubmittedEnvContent = useRef<string | null>(null);
   const frameworkSelectRef = useRef<HTMLDivElement | null>(null);
   const copyResetTimeoutRef = useRef<number | null>(null);
+  const envSectionCollapsedOnEnterRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -712,6 +713,15 @@ export function PreviewConfigureClient({
   const envDone = envNone || hasEnvValues;
   const maintenanceDone = maintenanceNone || maintenanceScriptValue.length > 0;
   const devDone = devNone || devScriptValue.length > 0;
+
+  // Collapse env section when entering configure step if it's already satisfied
+  useEffect(() => {
+    if (!hasCompletedSetup || !envDone || envSectionCollapsedOnEnterRef.current) {
+      return;
+    }
+    setIsEnvSectionOpen(false);
+    envSectionCollapsedOnEnterRef.current = true;
+  }, [envDone, hasCompletedSetup]);
 
   // Auto-enter configuration once VS Code is available when resuming an existing environment
   useEffect(() => {
