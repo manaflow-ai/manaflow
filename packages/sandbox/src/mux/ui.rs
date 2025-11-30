@@ -6,12 +6,29 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
     Frame,
 };
+use std::io::Write;
 
 use crate::mux::commands::MuxCommand;
 use crate::mux::layout::LayoutNode;
 use crate::mux::palette::PaletteItem;
 use crate::mux::sidebar::Sidebar;
 use crate::mux::state::{FocusArea, MuxApp};
+
+// Debug logging helper for UI rendering debugging
+fn ui_debug_log(msg: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/dmux-ui.log")
+    {
+        let _ = writeln!(
+            file,
+            "[{}] {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
+    }
+}
 
 /// Main UI rendering function.
 pub fn ui(f: &mut Frame, app: &mut MuxApp) {
@@ -313,6 +330,25 @@ fn render_pane(
             // Track if we have a fresh view (vs using stale cache)
             let have_fresh_view = view.is_some();
 
+            // Debug: Log when force_current is true (alt screen switch)
+            if force_current {
+                if let Some(ref v) = view {
+                    ui_debug_log(&format!(
+                        "FORCE_CURRENT: cursor={:?}, is_alt={}, lines={}",
+                        v.cursor,
+                        v.is_alt_screen,
+                        v.lines.len()
+                    ));
+                    for (i, line) in v.lines.iter().take(5).enumerate() {
+                        let content: String =
+                            line.spans.iter().map(|s| s.content.as_ref()).collect();
+                        if !content.trim().is_empty() {
+                            ui_debug_log(&format!("  render line {}: {:?}", i, content.trim_end()));
+                        }
+                    }
+                }
+            }
+
             let render_view = match (&view, &previous) {
                 // If we have a current view, always render it (avoids stale cached frames)
                 (Some(v), _) => Some(v.clone()),
@@ -322,6 +358,7 @@ fn render_pane(
                 // Stale alt screen view detected - clear area to prevent artifacts
                 // This happens when try_lock fails after a TUI exits alternate screen
                 (None, Some(_stale_alt_screen_view)) => {
+                    ui_debug_log("STALE_ALT_SCREEN: clearing area");
                     let buf = f.buffer_mut();
                     for y in inner_area.y..inner_area.y + inner_area.height {
                         for x in inner_area.x..inner_area.x + inner_area.width {

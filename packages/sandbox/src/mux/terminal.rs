@@ -1,11 +1,28 @@
 use futures::{SinkExt, StreamExt};
 use ratatui::style::{Color, Modifier, Style};
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use vte::{Params, Parser, Perform};
+
+// Debug logging helper for alt screen debugging
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/dmux-altscreen.log")
+    {
+        let _ = writeln!(
+            file,
+            "[{}] {}",
+            chrono::Utc::now().format("%H:%M:%S%.3f"),
+            msg
+        );
+    }
+}
 
 use crate::models::{MuxClientMessage, MuxServerMessage, PtySessionId};
 use crate::mux::character::{CharacterStyles, Row, TerminalCharacter};
@@ -302,8 +319,6 @@ struct AlternateScreen {
     charset_index: usize,
     g0_charset_line_drawing: bool,
     g1_charset_line_drawing: bool,
-    // Each screen has its own saved cursor (DECSC/DECRC)
-    saved_cursor: Option<SavedCursor>,
 }
 
 impl VirtualTerminal {
@@ -498,6 +513,10 @@ impl VirtualTerminal {
 
     /// Save cursor position and attributes (DECSC)
     fn save_cursor(&mut self) {
+        debug_log(&format!(
+            "SAVE_CURSOR: ({}, {})",
+            self.internal_grid.cursor_row, self.internal_grid.cursor_col
+        ));
         self.saved_cursor = Some(SavedCursor {
             row: self.internal_grid.cursor_row,
             col: self.internal_grid.cursor_col,
@@ -513,6 +532,10 @@ impl VirtualTerminal {
     /// Restore cursor position and attributes (DECRC)
     fn restore_cursor(&mut self) {
         if let Some(saved) = &self.saved_cursor {
+            debug_log(&format!(
+                "RESTORE_CURSOR: ({}, {}) -> ({}, {})",
+                self.internal_grid.cursor_row, self.internal_grid.cursor_col, saved.row, saved.col
+            ));
             self.internal_grid.cursor_row =
                 saved.row.min(self.internal_grid.rows.saturating_sub(1));
             self.internal_grid.cursor_col =
@@ -523,6 +546,8 @@ impl VirtualTerminal {
             self.charset_index = saved.charset_index;
             self.g0_charset_line_drawing = saved.g0_charset_line_drawing;
             self.g1_charset_line_drawing = saved.g1_charset_line_drawing;
+        } else {
+            debug_log("RESTORE_CURSOR: no saved cursor!");
         }
         self.pending_wrap = false;
     }
@@ -1077,12 +1102,22 @@ impl Perform for VirtualTerminal {
             'H' | 'f' => {
                 let row = params_vec.first().copied().unwrap_or(1).max(1) as usize;
                 let col = params_vec.get(1).copied().unwrap_or(1).max(1) as usize;
+                let old_row = self.internal_grid.cursor_row;
+                let old_col = self.internal_grid.cursor_col;
                 self.internal_grid.cursor_row = (row - 1).min(self.internal_grid.rows - 1);
                 self.internal_grid.cursor_col = (col - 1).min(self.internal_grid.cols - 1);
+                debug_log(&format!(
+                    "CUP: ({}, {}) -> ({}, {})",
+                    old_row, old_col, self.internal_grid.cursor_row, self.internal_grid.cursor_col
+                ));
             }
             // Erase in Display
             'J' => {
                 let mode = params_vec.first().copied().unwrap_or(0);
+                debug_log(&format!(
+                    "ED mode={}: cursor=({}, {})",
+                    mode, self.internal_grid.cursor_row, self.internal_grid.cursor_col
+                ));
                 match mode {
                     0 => self.clear_to_end_of_screen(),
                     1 => self.clear_to_start_of_screen(),
@@ -1273,6 +1308,27 @@ impl Perform for VirtualTerminal {
                                     // Only enter if not already in alternate screen
                                     // (prevents losing main screen if app sends 1049h twice)
                                     if self.alternate_screen.is_none() {
+                                        // Debug: Log what we're saving
+                                        debug_log(&format!(
+                                            "ALT_SCREEN ENTER: saving cursor=({}, {}), scrollback_len={}, viewport_lines={}",
+                                            self.internal_grid.cursor_row,
+                                            self.internal_grid.cursor_col,
+                                            self.internal_grid.lines_above.len(),
+                                            self.internal_grid.viewport.len()
+                                        ));
+                                        // Log first few lines of content being saved
+                                        for (i, line) in
+                                            self.internal_grid.viewport.iter().take(5).enumerate()
+                                        {
+                                            let content = line.as_string();
+                                            if !content.trim().is_empty() {
+                                                debug_log(&format!(
+                                                    "  saved line {}: {:?}",
+                                                    i,
+                                                    content.trim_end()
+                                                ));
+                                            }
+                                        }
                                         self.alternate_screen = Some(Box::new(AlternateScreen {
                                             grid: self.internal_grid.clone(),
                                             cursor_row: self.internal_grid.cursor_row,
@@ -1289,20 +1345,47 @@ impl Perform for VirtualTerminal {
                                             charset_index: self.charset_index,
                                             g0_charset_line_drawing: self.g0_charset_line_drawing,
                                             g1_charset_line_drawing: self.g1_charset_line_drawing,
-                                            // Save the screen's saved_cursor (each screen has its own)
-                                            saved_cursor: self.saved_cursor.take(),
                                         }));
+                                        // Clear any saved cursor from before alt screen - it's now stale
+                                        self.saved_cursor = None;
                                         let rows = self.internal_grid.rows;
                                         let cols = self.internal_grid.cols;
                                         self.internal_grid = Grid::new(rows, cols);
                                         self.alt_screen_toggled = true;
+                                    } else {
+                                        debug_log(
+                                            "ALT_SCREEN ENTER: already in alt screen, ignoring",
+                                        );
                                     }
                                 } else if let Some(saved) = self.alternate_screen.take() {
+                                    // Debug: Log what we're restoring
+                                    debug_log(&format!(
+                                        "ALT_SCREEN EXIT: restoring cursor=({}, {}), scrollback_len={}, viewport_lines={}",
+                                        saved.cursor_row,
+                                        saved.cursor_col,
+                                        saved.grid.lines_above.len(),
+                                        saved.grid.viewport.len()
+                                    ));
+                                    // Log first few lines of content being restored
+                                    for (i, line) in saved.grid.viewport.iter().take(5).enumerate()
+                                    {
+                                        let content = line.as_string();
+                                        if !content.trim().is_empty() {
+                                            debug_log(&format!(
+                                                "  restored line {}: {:?}",
+                                                i,
+                                                content.trim_end()
+                                            ));
+                                        }
+                                    }
                                     // Resize saved grid to current dimensions if needed
                                     let mut restored = saved.grid;
                                     restored
                                         .resize(self.internal_grid.rows, self.internal_grid.cols);
                                     self.internal_grid = restored;
+                                    // Mark all lines as changed to force full redraw
+                                    // (resize only marks changed if dimensions actually change)
+                                    self.internal_grid.mark_all_changed();
                                     self.internal_grid.cursor_row = saved
                                         .cursor_row
                                         .min(self.internal_grid.rows.saturating_sub(1));
@@ -1321,9 +1404,15 @@ impl Perform for VirtualTerminal {
                                     self.charset_index = saved.charset_index;
                                     self.g0_charset_line_drawing = saved.g0_charset_line_drawing;
                                     self.g1_charset_line_drawing = saved.g1_charset_line_drawing;
-                                    // Restore the screen's saved_cursor
-                                    self.saved_cursor = saved.saved_cursor;
+                                    // Clear saved_cursor instead of restoring stale state
+                                    // When a TUI exits, any cursor position it saved before entering
+                                    // alt screen is no longer relevant. If we restore it, subsequent
+                                    // commands that call RESTORE_CURSOR (like codex) would jump to
+                                    // that stale position.
+                                    self.saved_cursor = None;
                                     self.alt_screen_toggled = true;
+                                } else {
+                                    debug_log("ALT_SCREEN EXIT: not in alt screen, ignoring");
                                 }
                             }
                             47 | 1047 => {
@@ -1346,8 +1435,9 @@ impl Perform for VirtualTerminal {
                                             charset_index: self.charset_index,
                                             g0_charset_line_drawing: self.g0_charset_line_drawing,
                                             g1_charset_line_drawing: self.g1_charset_line_drawing,
-                                            saved_cursor: self.saved_cursor.take(),
                                         }));
+                                        // Clear any saved cursor from before alt screen - it's now stale
+                                        self.saved_cursor = None;
                                         let rows = self.internal_grid.rows;
                                         let cols = self.internal_grid.cols;
                                         self.internal_grid = Grid::new(rows, cols);
@@ -1358,12 +1448,16 @@ impl Perform for VirtualTerminal {
                                     restored
                                         .resize(self.internal_grid.rows, self.internal_grid.cols);
                                     self.internal_grid = restored;
+                                    // Mark all lines as changed to force full redraw
+                                    // (resize only marks changed if dimensions actually change)
+                                    self.internal_grid.mark_all_changed();
                                     // Note: modes 47/1047 don't restore cursor position or terminal modes
                                     // Only the grid content is restored
-                                    // But we do restore cursor visibility and saved_cursor
+                                    // But we do restore cursor visibility
                                     self.cursor_visible = saved.cursor_visible;
                                     self.cursor_blink = saved.cursor_blink;
-                                    self.saved_cursor = saved.saved_cursor;
+                                    // Clear saved_cursor instead of restoring stale state
+                                    self.saved_cursor = None;
                                     self.alt_screen_toggled = true;
                                 }
                             }
@@ -2985,6 +3079,8 @@ mod tests {
 
     #[test]
     fn alternate_screen_preserves_saved_cursor() {
+        // Test that saved_cursor is cleared on alt screen transitions to prevent
+        // stale cursor positions from affecting subsequent commands (e.g., codex after opencode)
         let mut term = VirtualTerminal::new(24, 80);
 
         // Save cursor at specific position (DECSC = ESC 7)
@@ -2992,11 +3088,8 @@ mod tests {
         term.process(b"\x1b7"); // Save cursor
         assert!(term.saved_cursor.is_some());
 
-        // Enter alternate screen
+        // Enter alternate screen - saved_cursor should be cleared
         term.process(b"\x1b[?1049h");
-
-        // Main screen's saved cursor should be preserved (moved to alternate screen state)
-        // and current saved_cursor should be None for the new alternate screen
         assert!(term.saved_cursor.is_none());
 
         // Save a different cursor position in alternate screen
@@ -3004,16 +3097,19 @@ mod tests {
         term.process(b"\x1b7");
         assert!(term.saved_cursor.is_some());
 
-        // Exit alternate screen
+        // Exit alternate screen - saved_cursor should be cleared again
+        // This prevents stale cursor positions from the TUI (or before it)
+        // from affecting subsequent commands
         term.process(b"\x1b[?1049l");
+        assert!(term.saved_cursor.is_none());
 
-        // Main screen's saved cursor should be restored
-        assert!(term.saved_cursor.is_some());
-
-        // Restore cursor (DECRC = ESC 8) - should go to original saved position
+        // Restore cursor (DECRC = ESC 8) - with no saved cursor, position unchanged
+        let row_before = term.cursor_row();
+        let col_before = term.cursor_col();
         term.process(b"\x1b8");
-        assert_eq!(term.cursor_row(), 14); // Row 15 (0-indexed)
-        assert_eq!(term.cursor_col(), 29); // Col 30 (0-indexed)
+        // Cursor should stay at current position when no saved cursor exists
+        assert_eq!(term.cursor_row(), row_before);
+        assert_eq!(term.cursor_col(), col_before);
     }
 
     #[test]
@@ -3191,5 +3287,553 @@ mod tests {
 
         term.process(b"<-After\n");
         dump_state(&term, "After post-alt content");
+    }
+
+    /// Test that simulates the exact opentui/opencode startup and shutdown sequence.
+    /// This reproduces the sequence that causes cursor position issues.
+    #[test]
+    fn test_opentui_full_sequence() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Simulate shell prompt and command
+        term.process(b"$ opencode\r\n");
+        let pre_alt_cursor_row = term.cursor_row();
+        let pre_alt_cursor_col = term.cursor_col();
+
+        // Verify initial state
+        assert_eq!(
+            term.cursor_row(),
+            1,
+            "cursor should be on line 2 after command"
+        );
+        assert_eq!(term.cursor_col(), 0, "cursor should be at column 0");
+        assert!(term.cursor_visible, "cursor should be visible");
+        assert!(
+            term.alternate_screen.is_none(),
+            "should not be in alt screen"
+        );
+
+        // === OpenTUI queryTerminalSend sequence ===
+        // hideCursor + saveCursorState
+        term.process(b"\x1b[?25l\x1b[s");
+        assert!(!term.cursor_visible, "cursor should be hidden");
+
+        // DECRPM queries (silently ignored - no response generated for unsupported queries)
+        term.process(b"\x1b[?2026$p"); // SGR pixels
+        term.process(b"\x1b[?2027$p"); // Unicode
+        term.process(b"\x1b[?2031$p"); // Color scheme
+        term.process(b"\x1b[?1004$p"); // Focus
+        term.process(b"\x1b[?2004$p"); // Bracketed paste
+        term.process(b"\x1b[?2026$p"); // Sync
+
+        // home + explicitWidthQuery + cursorPositionRequest
+        term.process(b"\x1b[H");
+        assert_eq!(term.cursor_row(), 0, "cursor should be at home row");
+        assert_eq!(term.cursor_col(), 0, "cursor should be at home col");
+        term.process(b"\x1b]66;w=1; \x1b\\"); // OSC 66 (ignored)
+        term.process(b"\x1b[6n"); // DSR - cursor position query
+
+        // home + scaledTextQuery + cursorPositionRequest
+        term.process(b"\x1b[H");
+        term.process(b"\x1b]66;s=2; \x1b\\"); // OSC 66 scaled (ignored)
+        term.process(b"\x1b[6n"); // DSR
+
+        // xtversion, csiUQuery
+        term.process(b"\x1b[>q"); // XTVERSION (likely ignored)
+        term.process(b"\x1b[?u"); // CSI u query (likely ignored)
+
+        // restoreCursorState - should restore to pre-alt position
+        term.process(b"\x1b[u");
+        assert_eq!(
+            term.cursor_row(),
+            pre_alt_cursor_row,
+            "cursor row should be restored after query sequence"
+        );
+        assert_eq!(
+            term.cursor_col(),
+            pre_alt_cursor_col,
+            "cursor col should be restored after query sequence"
+        );
+
+        // === OpenTUI setupTerminalWithoutDetection ===
+        // saveCursorState again
+        term.process(b"\x1b[s");
+
+        // Enter alternate screen (mode 1049)
+        term.process(b"\x1b[?1049h");
+        assert!(
+            term.alternate_screen.is_some(),
+            "should be in alt screen now"
+        );
+        // Cursor should be at origin in fresh alt screen
+        assert_eq!(
+            term.cursor_row(),
+            0,
+            "alt screen cursor should start at row 0"
+        );
+        assert_eq!(
+            term.cursor_col(),
+            0,
+            "alt screen cursor should start at col 0"
+        );
+
+        // setCursorPosition(1, 1) - move to home in alt screen
+        term.process(b"\x1b[1;1H");
+
+        // enableDetectedFeatures - enable bracketed paste, mouse, etc.
+        term.process(b"\x1b[?2004h"); // Bracketed paste
+        term.process(b"\x1b[?1003h"); // Mouse tracking
+
+        // === Simulate TUI rendering ===
+        term.process(b"\x1b[H\x1b[2J"); // Clear and home
+        term.process(b"OpenCode TUI Content Here");
+        term.process(b"\x1b[10;5HCursor at row 10");
+
+        // Verify alt screen state
+        assert_eq!(
+            term.cursor_row(),
+            9,
+            "cursor should be at row 9 (0-indexed)"
+        );
+        assert_eq!(
+            term.cursor_col(),
+            20,
+            "cursor should be after 'Cursor at row 10'"
+        );
+
+        // === OpenTUI performShutdownSequence (via resetState) ===
+        // showCursor + reset
+        term.process(b"\x1b[?25h\x1b[0m");
+        assert!(term.cursor_visible, "cursor should be visible");
+
+        // Disable features
+        term.process(b"\x1b[?2004l"); // Disable bracketed paste
+        term.process(b"\x1b[?1003l"); // Disable mouse tracking
+
+        // Exit alternate screen (mode 1049)
+        term.process(b"\x1b[?1049l");
+        assert!(
+            term.alternate_screen.is_none(),
+            "should no longer be in alt screen"
+        );
+
+        // === Verify cursor restoration ===
+        // The cursor should be restored to where it was when we entered alt screen
+        assert_eq!(
+            term.cursor_row(),
+            pre_alt_cursor_row,
+            "cursor row should be restored to pre-alt position"
+        );
+        assert_eq!(
+            term.cursor_col(),
+            pre_alt_cursor_col,
+            "cursor col should be restored to pre-alt position"
+        );
+
+        // Additional cleanup sequences from shutdown
+        term.process(b"\x1b]112\x07"); // OSC 112 - reset cursor color (ignored)
+        term.process(b"\x1b]12;default\x07"); // OSC 12 - set cursor color to default (ignored)
+        term.process(b"\x1b[0 q"); // DECSCUSR - default cursor style (ignored)
+        term.process(b"\x1b[?25h"); // Show cursor again
+
+        // Final verification - cursor should still be at restored position
+        assert_eq!(
+            term.cursor_row(),
+            pre_alt_cursor_row,
+            "cursor row should remain at restored position after cleanup"
+        );
+        assert_eq!(
+            term.cursor_col(),
+            pre_alt_cursor_col,
+            "cursor col should remain at restored position after cleanup"
+        );
+        assert!(
+            term.cursor_visible,
+            "cursor should be visible after cleanup"
+        );
+
+        // Verify the main screen content was preserved
+        let line0 = term.internal_grid.viewport[0].as_string();
+        assert!(
+            line0.starts_with("$ opencode"),
+            "first line should have original content: '{}'",
+            line0
+        );
+    }
+
+    /// Test the bug: after exiting alt screen, pressing Enter, then entering
+    /// alt screen again and exiting - the Enter presses should be preserved.
+    #[test]
+    fn test_multiple_alt_screen_sessions_preserve_content() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // Step 1: Initial shell prompt and command
+        term.process(b"$ opencode\r\n");
+        assert_eq!(term.cursor_row(), 1);
+        assert_eq!(term.cursor_col(), 0);
+
+        // Step 2: First TUI enters alt screen
+        term.process(b"\x1b[?1049h");
+        assert!(term.alternate_screen.is_some());
+
+        // TUI does stuff in alt screen
+        term.process(b"\x1b[H\x1b[2JOpenCode TUI");
+
+        // Step 3: First TUI exits alt screen
+        term.process(b"\x1b[?1049l");
+        assert!(term.alternate_screen.is_none());
+        assert_eq!(term.cursor_row(), 1, "cursor should be restored to row 1");
+
+        // Step 4: User presses Enter a few times (new content after first TUI)
+        term.process(b"\r\n\r\n\r\n");
+        assert_eq!(
+            term.cursor_row(),
+            4,
+            "cursor should be at row 4 after 3 Enters"
+        );
+
+        // Verify line 1 (where we were after opencode) is now empty (from Enter)
+        let line1 = term.internal_grid.viewport[1].as_string();
+        let line2 = term.internal_grid.viewport[2].as_string();
+        let line3 = term.internal_grid.viewport[3].as_string();
+        assert!(
+            line1.trim().is_empty(),
+            "line 1 should be empty after Enter"
+        );
+        assert!(
+            line2.trim().is_empty(),
+            "line 2 should be empty after Enter"
+        );
+        assert!(
+            line3.trim().is_empty(),
+            "line 3 should be empty after Enter"
+        );
+
+        // Step 5: User types new command
+        term.process(b"$ codex\r\n");
+        assert_eq!(
+            term.cursor_row(),
+            5,
+            "cursor should be at row 5 after codex command"
+        );
+
+        // Verify "codex" is on line 4
+        let line4 = term.internal_grid.viewport[4].as_string();
+        assert!(
+            line4.contains("codex"),
+            "line 4 should have codex command: '{}'",
+            line4
+        );
+
+        // Step 6: Second TUI enters alt screen
+        term.process(b"\x1b[?1049h");
+        assert!(term.alternate_screen.is_some());
+
+        // TUI does stuff
+        term.process(b"\x1b[H\x1b[2JCodex TUI");
+
+        // Step 7: Second TUI exits alt screen
+        term.process(b"\x1b[?1049l");
+        assert!(term.alternate_screen.is_none());
+
+        // Step 8: Verify the content is preserved - this is the critical check!
+        // Cursor should be at row 5 (after "codex" command), not row 1
+        assert_eq!(
+            term.cursor_row(),
+            5,
+            "cursor should be at row 5, NOT row 1 (the bug was cursor returning to first TUI exit position)"
+        );
+
+        // Verify the grid content includes the Enter presses AND the codex command
+        let line0 = term.internal_grid.viewport[0].as_string();
+        let line4_after = term.internal_grid.viewport[4].as_string();
+
+        assert!(
+            line0.contains("opencode"),
+            "line 0 should still have opencode: '{}'",
+            line0
+        );
+        assert!(
+            line4_after.contains("codex"),
+            "line 4 should still have codex (Enter presses preserved): '{}'",
+            line4_after
+        );
+    }
+
+    /// Test with chunked data processing (simulates real WebSocket data flow)
+    /// This specifically tests the bug where content between alt screen sessions disappears
+    #[test]
+    fn test_chunked_alt_screen_sessions() {
+        let mut buffer = TerminalBuffer::with_size(24, 80);
+
+        // Step 1: Shell prompt (might come in chunks)
+        buffer.process(b"$ open");
+        buffer.process(b"code");
+        buffer.process(b"\r\n");
+
+        // Step 2: opencode enters alt screen
+        buffer.process(b"\x1b[?1049h");
+        assert!(buffer.terminal.alternate_screen.is_some());
+
+        // opencode does TUI stuff
+        buffer.process(b"\x1b[H");
+        buffer.process(b"\x1b[2J");
+        buffer.process(b"OpenCode Content");
+
+        // Step 3: opencode exits alt screen
+        buffer.process(b"\x1b[?1049l");
+        assert!(buffer.terminal.alternate_screen.is_none());
+
+        // Verify we're back to main screen
+        let view_after_first = buffer.render_view(24);
+        assert_eq!(view_after_first.cursor, Some((1, 0)));
+        let line0: String = view_after_first.lines[0]
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .collect();
+        assert!(
+            line0.contains("opencode"),
+            "should have opencode: {}",
+            line0
+        );
+
+        // Step 4: User presses Enter multiple times (shell echoes or shows prompts)
+        // In reality, each Enter produces output from the shell
+        buffer.process(b"\r\n");
+        let v1 = buffer.render_view(24);
+        assert_eq!(v1.cursor, Some((2, 0)), "cursor should be at row 2");
+
+        buffer.process(b"\r\n");
+        let v2 = buffer.render_view(24);
+        assert_eq!(v2.cursor, Some((3, 0)), "cursor should be at row 3");
+
+        buffer.process(b"\r\n");
+        let v3 = buffer.render_view(24);
+        assert_eq!(v3.cursor, Some((4, 0)), "cursor should be at row 4");
+
+        // Step 5: User types codex command
+        buffer.process(b"$ codex");
+        buffer.process(b"\r\n");
+        let v4 = buffer.render_view(24);
+        assert_eq!(v4.cursor, Some((5, 0)), "cursor should be at row 5");
+
+        // Verify "codex" is on line 4
+        let line4: String = v4.lines[4]
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .collect();
+        assert!(
+            line4.contains("codex"),
+            "line 4 should have codex: {}",
+            line4
+        );
+
+        // CRITICAL: Save what we expect the grid to contain
+        let expected_line0 = buffer.terminal.internal_grid.viewport[0].as_string();
+        let expected_line4 = buffer.terminal.internal_grid.viewport[4].as_string();
+        let expected_cursor_row = buffer.terminal.cursor_row();
+
+        // Step 6: codex enters alt screen - THIS IS WHERE THE BUG MIGHT BE
+        buffer.process(b"\x1b[?1049h");
+        assert!(buffer.terminal.alternate_screen.is_some());
+
+        // Verify the saved grid (in alternate_screen) contains the Enter lines
+        let saved = buffer.terminal.alternate_screen.as_ref().unwrap();
+        let saved_line4 = saved.grid.viewport[4].as_string();
+        assert!(
+            saved_line4.contains("codex"),
+            "SAVED grid should have codex on line 4: {}",
+            saved_line4
+        );
+        assert_eq!(
+            saved.cursor_row, expected_cursor_row,
+            "saved cursor row should be {}",
+            expected_cursor_row
+        );
+
+        // codex does TUI stuff
+        buffer.process(b"\x1b[H\x1b[2JCodex Content");
+
+        // Step 7: codex exits alt screen
+        buffer.process(b"\x1b[?1049l");
+        assert!(buffer.terminal.alternate_screen.is_none());
+
+        // CRITICAL CHECK: Content should be preserved
+        let final_view = buffer.render_view(24);
+        assert_eq!(
+            final_view.cursor,
+            Some((5, 0)),
+            "cursor should be at (5, 0), NOT (1, 0)"
+        );
+
+        let final_line0: String = final_view.lines[0]
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .collect();
+        let final_line4: String = final_view.lines[4]
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .collect();
+
+        assert!(
+            final_line0.contains("opencode"),
+            "final line 0 should have opencode: {}",
+            final_line0
+        );
+        assert!(
+            final_line4.contains("codex"),
+            "final line 4 should have codex (Enter lines preserved): {}",
+            final_line4
+        );
+    }
+
+    /// Test the same scenario but using TerminalBuffer to verify the buffer layer
+    #[test]
+    fn test_terminal_buffer_multiple_alt_screen_sessions() {
+        let mut buffer = TerminalBuffer::with_size(24, 80);
+
+        // Step 1: Initial shell prompt and command
+        buffer.process(b"$ opencode\r\n");
+        let view1 = buffer.render_view(24);
+        assert_eq!(view1.cursor, Some((1, 0)), "cursor should be at (1, 0)");
+
+        // Step 2: First TUI enters alt screen
+        buffer.process(b"\x1b[?1049h");
+        let view2 = buffer.render_view(24);
+        assert!(view2.is_alt_screen, "should be in alt screen");
+
+        // TUI does stuff
+        buffer.process(b"\x1b[H\x1b[2JOpenCode TUI");
+
+        // Step 3: First TUI exits alt screen
+        buffer.process(b"\x1b[?1049l");
+        let view3 = buffer.render_view(24);
+        assert!(!view3.is_alt_screen, "should not be in alt screen");
+        assert_eq!(
+            view3.cursor,
+            Some((1, 0)),
+            "cursor should be restored to (1, 0)"
+        );
+
+        // Step 4: User presses Enter a few times
+        buffer.process(b"\r\n\r\n\r\n");
+        let view4 = buffer.render_view(24);
+        assert_eq!(
+            view4.cursor,
+            Some((4, 0)),
+            "cursor should be at (4, 0) after Enters"
+        );
+
+        // Step 5: User types codex command
+        buffer.process(b"$ codex\r\n");
+        let view5 = buffer.render_view(24);
+        assert_eq!(view5.cursor, Some((5, 0)), "cursor should be at (5, 0)");
+
+        // Step 6: Second TUI enters alt screen
+        buffer.process(b"\x1b[?1049h");
+        let view6 = buffer.render_view(24);
+        assert!(view6.is_alt_screen, "should be in alt screen");
+
+        // TUI does stuff
+        buffer.process(b"\x1b[H\x1b[2JCodex TUI");
+
+        // Step 7: Second TUI exits alt screen
+        buffer.process(b"\x1b[?1049l");
+        let view7 = buffer.render_view(24);
+
+        // THE CRITICAL CHECK - cursor should be at (5, 0) not (1, 0)
+        assert!(!view7.is_alt_screen, "should not be in alt screen");
+        assert_eq!(
+            view7.cursor,
+            Some((5, 0)),
+            "cursor should be at (5, 0) after second alt screen exit, NOT (1, 0)"
+        );
+
+        // Verify content
+        let line0: String = view7.lines[0]
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .collect();
+        let line4: String = view7.lines[4]
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .collect();
+        assert!(
+            line0.contains("opencode"),
+            "line 0 should have opencode: '{}'",
+            line0
+        );
+        assert!(
+            line4.contains("codex"),
+            "line 4 should have codex: '{}'",
+            line4
+        );
+    }
+
+    /// Test that TerminalBuffer's render_view correctly reports cursor position
+    /// after alt screen exit. This verifies the full render pipeline.
+    #[test]
+    fn test_terminal_buffer_cursor_after_alt_screen() {
+        let mut buffer = TerminalBuffer::with_size(24, 80);
+
+        // Simulate shell prompt and command
+        buffer.process(b"$ opencode\r\n");
+
+        // Get initial render view
+        let view1 = buffer.render_view(24);
+        assert_eq!(
+            view1.cursor,
+            Some((1, 0)),
+            "cursor should be at (1, 0) after command"
+        );
+        assert!(view1.cursor_visible, "cursor should be visible");
+        assert!(!view1.is_alt_screen, "should not be in alt screen");
+
+        // Enter alt screen
+        buffer.process(b"\x1b[?1049h");
+
+        let view2 = buffer.render_view(24);
+        assert_eq!(
+            view2.cursor,
+            Some((0, 0)),
+            "cursor should be at origin in alt screen"
+        );
+        assert!(view2.is_alt_screen, "should be in alt screen");
+
+        // Move cursor and add content in alt screen
+        buffer.process(b"\x1b[10;20HTUI Content");
+
+        // Exit alt screen
+        buffer.process(b"\x1b[?1049l");
+
+        // Verify render view after alt screen exit
+        let view3 = buffer.render_view(24);
+        assert_eq!(
+            view3.cursor,
+            Some((1, 0)),
+            "cursor should be restored to (1, 0) after alt screen exit"
+        );
+        assert!(view3.cursor_visible, "cursor should be visible after exit");
+        assert!(
+            !view3.is_alt_screen,
+            "should not be in alt screen after exit"
+        );
+
+        // Verify needs_full_clear was set
+        // (Note: we've already called render_view which might have consumed it via the cache)
+        // So we check that the content is preserved
+        let line0 = &view3.lines[0];
+        let line0_str: String = line0.spans.iter().flat_map(|s| s.content.chars()).collect();
+        assert!(
+            line0_str.starts_with("$ opencode"),
+            "first line should show original content: '{}'",
+            line0_str
+        );
     }
 }
