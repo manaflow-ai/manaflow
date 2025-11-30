@@ -117,6 +117,7 @@ export async function getGeminiEnvironment(
         : {};
     settings.telemetry = {
       ...telemetrySettings,
+      enabled: true,
       outfile: telemetryOutfile,
       target: "local",
       otlpEndpoint: "",
