@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Provision Morph instances from an existing base snapshot, perform parallelized
-environment setup that mirrors the Dockerfile, validate critical tooling, and
-snapshot the configured system for multiple presets (standard + boosted by default).
+Provision VM instances from existing base snapshots for multiple providers (Morph, Freestyle),
+perform parallelized environment setup, validate critical tooling, and snapshot the
+configured systems.
+
+Supported providers:
+- Morph: Full-featured sandbox with multiple port exposures and resource configuration
+- Freestyle: Cloud sandbox with default port 3000 exposure
 
 The flow:
-1. Boot an instance per preset from the provided base snapshot (default snapshot_i7l4i12s)
-2. Expose the standard cmux HTTP services
-3. Execute dependency graph tasks concurrently using Morph's async APIs
+1. Boot an instance per preset from the provided base snapshot for each provider
+2. Expose the standard cmux HTTP services (where supported)
+3. Execute dependency graph tasks concurrently using async APIs
 4. Run in-instance sanity checks (cargo/node/bun/uv/envd/envctl + service curls)
 5. Snapshot the configured instance, optionally prompt for manual verification, and
-   record the snapshot in packages/shared/src/morph-snapshots.json
+   record the snapshot in packages/shared/src/vm-snapshots.json
 
 Examples:
 uv run --env-file .env ./scripts/snapshot.py
@@ -54,6 +58,21 @@ from morphcloud.api import (
     Snapshot,
 )
 
+# Support both `python -m scripts.snapshot` and `./scripts/snapshot.py`
+try:
+    from .providers import FreestyleProvider, FreestyleInstance
+    from .providers.base import BaseInstance, ExecResponse as ProviderExecResponse, ProviderType
+except ImportError:
+    from providers import FreestyleProvider, FreestyleInstance  # type: ignore[import-not-found]
+    from providers.base import BaseInstance, ExecResponse as ProviderExecResponse, ProviderType  # type: ignore[import-not-found]
+
+
+# Union type for instances from different providers
+# Both Morph Instance and FreestyleInstance implement the same core interface
+ProviderInstance = t.Union[Instance, FreestyleInstance]
+
+# Union type for exec responses from different providers
+ExecResponseUnion = t.Union[InstanceExecResponse, ProviderExecResponse]
 
 Command = t.Union[str, t.Sequence[str]]
 TaskFunc = t.Callable[["TaskContext"], t.Awaitable[None]]
@@ -72,73 +91,79 @@ CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
-MORPH_SNAPSHOT_MANIFEST_PATH = (
-    Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
+VM_SNAPSHOT_MANIFEST_PATH = (
+    Path(__file__).resolve().parent.parent / "packages/shared/src/vm-snapshots.json"
 )
 
 
-class MorphSnapshotVersionEntry(t.TypedDict):
+VMProviderType = t.Literal["morph", "freestyle"]
+
+
+class VMSnapshotVersionEntry(t.TypedDict):
     version: int
     snapshotId: str
     capturedAt: str
 
 
-class MorphSnapshotPresetEntry(t.TypedDict):
+class VMSnapshotPresetEntry(t.TypedDict):
     presetId: str
+    provider: VMProviderType
     label: str
     cpu: str
     memory: str
     disk: str
-    versions: list[MorphSnapshotVersionEntry]
+    versions: list[VMSnapshotVersionEntry]
     description: t.NotRequired[str]
 
 
-class MorphSnapshotManifestEntry(t.TypedDict):
+class VMSnapshotManifestEntry(t.TypedDict):
     schemaVersion: int
     updatedAt: str
-    presets: list[MorphSnapshotPresetEntry]
+    presets: list[VMSnapshotPresetEntry]
 
 
 @dataclass(slots=True, frozen=True)
 class SnapshotPresetPlan:
     preset_id: str
+    provider: VMProviderType
     label: str
     cpu_display: str
     memory_display: str
     disk_display: str
-    vcpus: int
-    memory_mib: int
-    disk_size_mib: int
+    vcpus: int | None
+    memory_mib: int | None
+    disk_size_mib: int | None
+    base_snapshot_id: str | None = None
 
 
 @dataclass(slots=True)
 class SnapshotRunResult:
     preset: SnapshotPresetPlan
-    snapshot: Snapshot
+    snapshot_id: str
     captured_at: str
-    vscode_url: str
-    vnc_url: str
+    vscode_url: str | None
+    vnc_url: str | None
     instance_id: str
 
     def __init__(
         self,
         *,
         preset: SnapshotPresetPlan,
-        snapshot: Snapshot,
+        snapshot_id: str,
         captured_at: str,
-        vscode_url: str,
-        vnc_url: str,
+        vscode_url: str | None,
+        vnc_url: str | None,
         instance_id: str,
     ) -> None:
         self.preset = preset
-        self.snapshot = snapshot
+        self.snapshot_id = snapshot_id
         self.captured_at = captured_at
         self.vscode_url = vscode_url
         self.vnc_url = vnc_url
         self.instance_id = instance_id
 
 
-CURRENT_MANIFEST_SCHEMA_VERSION = 1
+CURRENT_MANIFEST_SCHEMA_VERSION = 2
 
 
 def _iso_timestamp() -> str:
@@ -167,24 +192,27 @@ def _coalesce_int(value: t.Any, default: int) -> int:
     return parsed
 
 
-def _normalize_manifest(manifest: MorphSnapshotManifestEntry) -> MorphSnapshotManifestEntry:
-    presets: list[MorphSnapshotPresetEntry] = []
+def _normalize_manifest(manifest: VMSnapshotManifestEntry) -> VMSnapshotManifestEntry:
+    presets: list[VMSnapshotPresetEntry] = []
     for preset in manifest.get("presets", []):
         if not isinstance(preset, dict):
             continue
-        versions: list[MorphSnapshotVersionEntry] = []
+        versions: list[VMSnapshotVersionEntry] = []
         for version in preset.get("versions", []):
             if not isinstance(version, dict):
                 continue
-            version_entry: MorphSnapshotVersionEntry = {
+            version_entry: VMSnapshotVersionEntry = {
                 "version": _coalesce_int(version.get("version"), 0),
                 "snapshotId": _coalesce_str(version.get("snapshotId"), ""),
                 "capturedAt": _coalesce_str(version.get("capturedAt"), _iso_timestamp()),
             }
             versions.append(version_entry)
         versions.sort(key=lambda entry: entry["version"])
-        preset_entry: MorphSnapshotPresetEntry = {
+        raw_provider = preset.get("provider", "morph")
+        provider: VMProviderType = raw_provider if raw_provider in ("morph", "freestyle") else "morph"
+        preset_entry: VMSnapshotPresetEntry = {
             "presetId": _coalesce_str(preset.get("presetId"), ""),
+            "provider": provider,
             "label": _coalesce_str(preset.get("label"), ""),
             "cpu": _coalesce_str(preset.get("cpu"), ""),
             "memory": _coalesce_str(preset.get("memory"), ""),
@@ -205,18 +233,18 @@ def _normalize_manifest(manifest: MorphSnapshotManifestEntry) -> MorphSnapshotMa
     }
 
 
-def _load_manifest(console: Console) -> MorphSnapshotManifestEntry:
-    if not MORPH_SNAPSHOT_MANIFEST_PATH.exists():
+def _load_manifest(console: Console) -> VMSnapshotManifestEntry:
+    if not VM_SNAPSHOT_MANIFEST_PATH.exists():
         return {
             "schemaVersion": CURRENT_MANIFEST_SCHEMA_VERSION,
             "updatedAt": _iso_timestamp(),
             "presets": [],
         }
     try:
-        raw_manifest = json.loads(MORPH_SNAPSHOT_MANIFEST_PATH.read_text())
+        raw_manifest = json.loads(VM_SNAPSHOT_MANIFEST_PATH.read_text())
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
-            f"Failed to read morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}: {exc}"
+            f"Failed to read VM snapshot manifest at {VM_SNAPSHOT_MANIFEST_PATH}: {exc}"
         ) from exc
     manifest = _normalize_manifest(raw_manifest)
     if manifest["schemaVersion"] != CURRENT_MANIFEST_SCHEMA_VERSION:
@@ -227,21 +255,21 @@ def _load_manifest(console: Console) -> MorphSnapshotManifestEntry:
     return manifest
 
 
-def _write_manifest(manifest: MorphSnapshotManifestEntry) -> None:
+def _write_manifest(manifest: VMSnapshotManifestEntry) -> None:
     manifest_to_write = _normalize_manifest(manifest)
-    MORPH_SNAPSHOT_MANIFEST_PATH.write_text(
+    VM_SNAPSHOT_MANIFEST_PATH.write_text(
         json.dumps(manifest_to_write, indent=2, sort_keys=False)
     )
 
 
 def _update_manifest_with_snapshot(
-    manifest: MorphSnapshotManifestEntry,
+    manifest: VMSnapshotManifestEntry,
     preset: SnapshotPresetPlan,
     snapshot_id: str,
     captured_at: str,
-) -> MorphSnapshotManifestEntry:
+) -> VMSnapshotManifestEntry:
     updated_manifest = _normalize_manifest(manifest)
-    preset_entry: MorphSnapshotPresetEntry | None = None
+    preset_entry: VMSnapshotPresetEntry | None = None
     for candidate in updated_manifest["presets"]:
         if candidate.get("presetId") == preset.preset_id:
             preset_entry = candidate
@@ -250,6 +278,7 @@ def _update_manifest_with_snapshot(
     if preset_entry is None:
         preset_entry = {
             "presetId": preset.preset_id,
+            "provider": preset.provider,
             "label": preset.label,
             "cpu": preset.cpu_display,
             "memory": preset.memory_display,
@@ -258,6 +287,7 @@ def _update_manifest_with_snapshot(
         }
         updated_manifest["presets"].append(preset_entry)
     else:
+        preset_entry["provider"] = preset.provider
         preset_entry["label"] = preset.label
         preset_entry["cpu"] = preset.cpu_display
         preset_entry["memory"] = preset.memory_display
@@ -289,6 +319,7 @@ def _render_verification_table(
         return
     headers = (
         "Preset",
+        "Provider",
         "CPU",
         "Memory",
         "Disk",
@@ -300,11 +331,12 @@ def _render_verification_table(
         rows.append(
             (
                 result.preset.preset_id,
+                result.preset.provider,
                 result.preset.cpu_display,
                 result.preset.memory_display,
                 result.preset.disk_display,
-                result.vscode_url,
-                result.vnc_url,
+                result.vscode_url or "N/A",
+                result.vnc_url or "N/A",
             )
         )
     col_widths = [max(len(row[idx]) for row in rows) for idx in range(len(headers))]
@@ -345,41 +377,70 @@ def _format_disk_display(disk_size_mib: int) -> str:
 
 
 def _preset_id_from_resources(
+    provider: VMProviderType,
     vcpus: int,
     memory_mib: int,
     disk_size_mib: int,
 ) -> str:
     memory_gb = max(memory_mib // 1024, 1)
     disk_gb = max(disk_size_mib // 1024, 1)
-    return f"{vcpus}vcpu_{memory_gb}gb_{disk_gb}gb"
+    return f"{provider}_{vcpus}vcpu_{memory_gb}gb_{disk_gb}gb"
 
 
 def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, ...]:
-    standard_plan = SnapshotPresetPlan(
-        preset_id=_preset_id_from_resources(
-            args.standard_vcpus, args.standard_memory, args.standard_disk_size
-        ),
-        label="Standard workspace",
-        cpu_display=_format_cpu_display(args.standard_vcpus),
-        memory_display=_format_memory_display(args.standard_memory),
-        disk_display=_format_disk_display(args.standard_disk_size),
-        vcpus=args.standard_vcpus,
-        memory_mib=args.standard_memory,
-        disk_size_mib=args.standard_disk_size,
-    )
-    boosted_plan = SnapshotPresetPlan(
-        preset_id=_preset_id_from_resources(
-            args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
-        ),
-        label="Performance workspace",
-        cpu_display=_format_cpu_display(args.boosted_vcpus),
-        memory_display=_format_memory_display(args.boosted_memory),
-        disk_display=_format_disk_display(args.boosted_disk_size),
-        vcpus=args.boosted_vcpus,
-        memory_mib=args.boosted_memory,
-        disk_size_mib=args.boosted_disk_size,
-    )
-    return (standard_plan, boosted_plan)
+    plans: list[SnapshotPresetPlan] = []
+
+    # Morph presets
+    if not getattr(args, "skip_morph", False):
+        morph_standard_plan = SnapshotPresetPlan(
+            preset_id=_preset_id_from_resources(
+                "morph", args.standard_vcpus, args.standard_memory, args.standard_disk_size
+            ),
+            provider="morph",
+            label="Standard workspace",
+            cpu_display=_format_cpu_display(args.standard_vcpus),
+            memory_display=_format_memory_display(args.standard_memory),
+            disk_display=_format_disk_display(args.standard_disk_size),
+            vcpus=args.standard_vcpus,
+            memory_mib=args.standard_memory,
+            disk_size_mib=args.standard_disk_size,
+            base_snapshot_id=args.morph_snapshot_id,
+        )
+        plans.append(morph_standard_plan)
+
+        morph_boosted_plan = SnapshotPresetPlan(
+            preset_id=_preset_id_from_resources(
+                "morph", args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
+            ),
+            provider="morph",
+            label="Performance workspace",
+            cpu_display=_format_cpu_display(args.boosted_vcpus),
+            memory_display=_format_memory_display(args.boosted_memory),
+            disk_display=_format_disk_display(args.boosted_disk_size),
+            vcpus=args.boosted_vcpus,
+            memory_mib=args.boosted_memory,
+            disk_size_mib=args.boosted_disk_size,
+            base_snapshot_id=args.morph_snapshot_id,
+        )
+        plans.append(morph_boosted_plan)
+
+    # Freestyle preset - always create fresh VMs, no base snapshot needed
+    if not getattr(args, "skip_freestyle", False):
+        freestyle_plan = SnapshotPresetPlan(
+            preset_id="freestyle_default",
+            provider="freestyle",
+            label="Freestyle sandbox",
+            cpu_display="Default",
+            memory_display="Default",
+            disk_display="Default",
+            vcpus=None,
+            memory_mib=None,
+            disk_size_mib=None,
+            base_snapshot_id=None,
+        )
+        plans.append(freestyle_plan)
+
+    return tuple(plans)
 
 @dataclass(slots=True)
 class ResourceProfile:
@@ -460,7 +521,7 @@ async def _run_command(
     command: Command,
     *,
     timeout: float | None = None,
-) -> InstanceExecResponse:
+) -> ExecResponseUnion:
     ctx.console.info(f"[{label}] running...")
     command_parts = _shell_command(command)
     attempts = 0
@@ -501,15 +562,17 @@ async def _run_command(
 
 @dataclass(slots=True)
 class TaskContext:
-    instance: Instance
+    instance: ProviderInstance
     repo_root: Path
     remote_repo_root: str
     remote_repo_tar: str
-    exec_service_url: str
     console: Console
     timings: TimingsCollector
+    provider_type: ProviderType  # morph or freestyle
+    exec_service_url: str | None = None  # None for Freestyle (uses direct exec)
     resource_profile: ResourceProfile | None = None
     cgroup_path: str | None = None
+    use_git_clone: bool = False  # If True, clone repo from GitHub instead of uploading
     exec_client: HttpExecClient | None = field(default=None, init=False)
     environment_prelude: str = field(default="", init=False)
 
@@ -533,7 +596,7 @@ class TaskContext:
         command: Command,
         *,
         timeout: float | None = None,
-    ) -> InstanceExecResponse:
+    ) -> ExecResponseUnion:
         command_with_env = self._apply_environment(command)
         command_to_run = (
             _wrap_command_with_cgroup(self.cgroup_path, command_with_env)
@@ -564,7 +627,7 @@ class TaskContext:
         *,
         timeout: float | None = None,
         use_cgroup: bool = True,
-    ) -> InstanceExecResponse:
+    ) -> ExecResponseUnion:
         command_with_env = self._apply_environment(command)
         command_to_run = (
             _wrap_command_with_cgroup(self.cgroup_path, command_with_env)
@@ -603,6 +666,7 @@ class TaskDefinition:
     func: TaskFunc
     dependencies: tuple[str, ...]
     description: str | None = None
+    providers: tuple[ProviderType, ...] | None = None  # None = all providers
 
 
 class TaskRegistry:
@@ -615,6 +679,7 @@ class TaskRegistry:
         name: str,
         deps: t.Iterable[str] = (),
         description: str | None = None,
+        providers: t.Iterable[ProviderType] | None = None,
     ) -> t.Callable[[TaskFunc], TaskFunc]:
         def decorator(func: TaskFunc) -> TaskFunc:
             if name in self._tasks:
@@ -624,6 +689,7 @@ class TaskRegistry:
                 func=func,
                 dependencies=tuple(deps),
                 description=description,
+                providers=tuple(providers) if providers is not None else None,
             )
             return func
 
@@ -632,6 +698,14 @@ class TaskRegistry:
     @property
     def tasks(self) -> dict[str, TaskDefinition]:
         return dict(self._tasks)
+
+    def tasks_for_provider(self, provider_type: ProviderType) -> dict[str, TaskDefinition]:
+        """Return tasks filtered by provider type."""
+        return {
+            name: task
+            for name, task in self._tasks.items()
+            if task.providers is None or provider_type in task.providers
+        }
 
 
 registry = TaskRegistry()
@@ -1084,6 +1158,7 @@ async def setup_exec_service(
 @registry.task(
     name="build-setup-exec-binary",
     description="Build and setup exec binary",
+    providers=(ProviderType.MORPH,),  # Freestyle uses its native exec API
 )
 async def build_exec_binary(ctx: TaskContext) -> None:
     repo_root = ctx.repo_root
@@ -1092,6 +1167,8 @@ async def build_exec_binary(ctx: TaskContext) -> None:
     exec_binary_path = await asyncio.to_thread(_build_exec_binary_sync, repo_root, console)
     ctx.console.info("Built exec binary")
 
+    if ctx.exec_service_url is None:
+        raise RuntimeError("exec_service_url is required for Morph provider")
     ctx.console.info(f"Setting up exec service at {ctx.exec_service_url}")
     await setup_exec_service(ctx, binary_path=exec_binary_path, service_url=ctx.exec_service_url)
     ctx.console.info("Exec service setup complete")
@@ -1834,23 +1911,30 @@ EOF
 @registry.task(
     name="upload-repo",
     deps=("apt-bootstrap",),
-    description="Upload repository to the instance",
+    description="Upload repository to the instance (or git clone if configured)",
 )
 async def task_upload_repo(ctx: TaskContext) -> None:
-    archive = await asyncio.to_thread(create_repo_archive, ctx.repo_root)
-    try:
-        await ctx.instance.aupload(str(archive), ctx.remote_repo_tar)
-        extract_cmd = textwrap.dedent(
-            f"""
-            rm -rf {shlex.quote(ctx.remote_repo_root)}
-            mkdir -p {shlex.quote(ctx.remote_repo_root)}
-            tar -xf {shlex.quote(ctx.remote_repo_tar)} -C {shlex.quote(ctx.remote_repo_root)}
-            rm -f {shlex.quote(ctx.remote_repo_tar)}
-            """
-        )
-        await ctx.run("extract-repo", extract_cmd)
-    finally:
-        archive.unlink(missing_ok=True)
+    if ctx.use_git_clone:
+        # Clone from GitHub instead of uploading (useful when put_file API has size limits)
+        ctx.console.info("Using git clone instead of upload...")
+        clone_cmd = f"git clone --depth 1 https://github.com/manaflow-ai/cmux.git {shlex.quote(ctx.remote_repo_root)}"
+        await ctx.run("git-clone-repo", clone_cmd)
+    else:
+        # Upload repository archive
+        archive = await asyncio.to_thread(create_repo_archive, ctx.repo_root)
+        try:
+            await ctx.instance.aupload(str(archive), ctx.remote_repo_tar)
+            extract_cmd = textwrap.dedent(
+                f"""
+                rm -rf {shlex.quote(ctx.remote_repo_root)}
+                mkdir -p {shlex.quote(ctx.remote_repo_root)}
+                tar -xf {shlex.quote(ctx.remote_repo_tar)} -C {shlex.quote(ctx.remote_repo_root)}
+                rm -f {shlex.quote(ctx.remote_repo_tar)}
+                """
+            )
+            await ctx.run("extract-repo", extract_cmd)
+        finally:
+            archive.unlink(missing_ok=True)
 
 
 @registry.task(
@@ -2020,6 +2104,7 @@ async def task_install_tmux_conf(ctx: TaskContext) -> None:
     name="configure-memory-protection",
     deps=("install-systemd-units",),
     description="Configure swapfile and systemd resource protections",
+    providers=(ProviderType.MORPH,),  # Freestyle doesn't need swap/zram config
 )
 async def task_configure_memory_protection(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -2251,8 +2336,18 @@ async def task_cleanup_build_artifacts(ctx: TaskContext) -> None:
 
 
 async def run_task_graph(registry: TaskRegistry, ctx: TaskContext) -> None:
-    remaining = registry.tasks
-    completed: set[str] = set()
+    # Filter tasks by provider type
+    all_tasks = registry.tasks
+    remaining = registry.tasks_for_provider(ctx.provider_type)
+
+    # Track skipped tasks (not applicable to this provider) as "completed"
+    # so dependent tasks can still run
+    skipped_tasks = set(all_tasks.keys()) - set(remaining.keys())
+    completed: set[str] = skipped_tasks.copy()
+
+    if skipped_tasks:
+        ctx.console.info(f"Skipping {len(skipped_tasks)} tasks not applicable to {ctx.provider_type.value}")
+
     while remaining:
         ready = [
             name
@@ -2727,8 +2822,14 @@ async def provision_and_snapshot_for_preset(
     )
     timings = TimingsCollector()
 
+    if preset.vcpus is None or preset.memory_mib is None or preset.disk_size_mib is None:
+        raise ValueError(
+            f"Morph preset {preset.preset_id} must have vcpus, memory_mib, and disk_size_mib"
+        )
+
+    base_snapshot = preset.base_snapshot_id or args.morph_snapshot_id
     instance = await client.instances.aboot(
-        args.snapshot_id,
+        base_snapshot,
         vcpus=preset.vcpus,
         memory=preset.memory_mib,
         disk_size=preset.disk_size_mib,
@@ -2754,8 +2855,9 @@ async def provision_and_snapshot_for_preset(
         remote_repo_tar="/tmp/cmux-repo.tar",
         console=console,
         timings=timings,
-        resource_profile=resource_profile,
+        provider_type=ProviderType.MORPH,
         exec_service_url=exec_service_url,
+        resource_profile=resource_profile,
     )
 
     await run_task_graph(registry, ctx)
@@ -2811,7 +2913,7 @@ async def provision_and_snapshot_for_preset(
 
     return SnapshotRunResult(
         preset=preset,
-        snapshot=snapshot,
+        snapshot_id=snapshot.id,
         captured_at=captured_at,
         vscode_url=vscode_url,
         vnc_url=vnc_url,
@@ -2819,9 +2921,121 @@ async def provision_and_snapshot_for_preset(
     )
 
 
+async def provision_and_snapshot_for_freestyle_preset(
+    args: argparse.Namespace,
+    *,
+    preset: SnapshotPresetPlan,
+    console: Console,
+    repo_root: Path,
+    require_verify: bool,
+    show_dependency_graph: bool = False,
+) -> SnapshotRunResult:
+    """Provision and snapshot a Freestyle VM instance using the task graph.
+
+    Freestyle VMs run the same task graph as Morph, but with provider-specific
+    tasks filtered out (e.g., no exec service setup, simplified port exposure).
+    """
+    console.always(
+        f"\n=== Provisioning Freestyle preset {preset.preset_id} ({preset.label}) ==="
+    )
+
+    provider = FreestyleProvider()
+    timings = TimingsCollector()
+
+    try:
+        # Freestyle creates fresh VMs - no base snapshot needed
+        # Map cmux-proxy port (39379) to external port 443
+        instance = await provider.create_fresh_instance(
+            ttl_seconds=args.ttl_seconds,
+            ports=[{"port": 443, "targetPort": 39379}],
+        )
+
+        console.always(f"[{preset.preset_id}] Freestyle VM started: {instance.id}")
+        domain = instance.domains[0] if hasattr(instance, "domains") and instance.domains else None
+        if domain:
+            console.always(f"[{preset.preset_id}] Domain: https://{domain}")
+            # Freestyle console URL format
+            console.always(f"[{preset.preset_id}] Console: https://{domain}/__console/")
+
+        # Wait for instance to be ready
+        await instance.await_until_ready()
+        console.always(f"[{preset.preset_id}] Instance ready")
+
+        # Create TaskContext for Freestyle
+        use_git_clone = getattr(args, "use_git_clone", False)
+        ctx = TaskContext(
+            instance=instance,
+            repo_root=repo_root,
+            remote_repo_root="/cmux",
+            remote_repo_tar="/tmp/cmux-repo.tar",
+            console=console,
+            timings=timings,
+            provider_type=ProviderType.FREESTYLE,
+            exec_service_url=None,  # Freestyle uses native exec API
+            resource_profile=None,  # No resource limits on Freestyle
+            use_git_clone=use_git_clone,
+        )
+
+        # Run the task graph (filtered for Freestyle provider)
+        await run_task_graph(registry, ctx)
+
+        if show_dependency_graph:
+            graph = format_dependency_graph(registry)
+            if graph:
+                console.always("\nDependency Graph")
+                for line in graph.splitlines():
+                    console.always(line)
+
+        summary = timings.summary()
+        if summary:
+            console.always("\nTiming Summary")
+            for line in summary:
+                console.always(line)
+
+        await report_disk_usage(ctx)
+
+        # Build verification URLs
+        console_url = f"https://{domain}/__console/" if domain else None
+        vscode_url = f"https://{domain}" if domain else None  # Freestyle serves VS Code on root
+
+        console.always(f"[{preset.preset_id}] Console: {console_url or 'N/A'}")
+
+        send_macos_notification(
+            console,
+            f"Verify cmux workspace – {preset.label}",
+            f"Console: {console_url or 'N/A'}",
+        )
+
+        # Verification step
+        if require_verify:
+            console.always(
+                f"\n[{preset.preset_id}] Verification required. "
+                f"Console: {console_url or 'N/A'}"
+            )
+            input(f"[{preset.preset_id}] Press Enter to continue with snapshot...")
+
+        await cleanup_instance_disk(ctx)
+        snapshot = await instance.asnapshot()
+        captured_at = _iso_timestamp()
+
+        console.always(f"[{preset.preset_id}] Snapshot created: {snapshot.id}")
+        console.always(f"[{preset.preset_id}] Provisioning complete")
+
+        return SnapshotRunResult(
+            preset=preset,
+            snapshot_id=snapshot.id,
+            captured_at=captured_at,
+            vscode_url=console_url,  # Use console URL for Freestyle
+            vnc_url=None,
+            instance_id=instance.id,
+        )
+    finally:
+        provider.close()
+
+
 async def provision_and_snapshot(args: argparse.Namespace) -> None:
     console = Console()
-    client = MorphCloudClient()
+    morph_client = MorphCloudClient()
     started_instances: list[Instance] = []
     manifest = _load_manifest(console)
     results: list[SnapshotRunResult] = []
@@ -2840,32 +3054,57 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     preset_plans = _build_preset_plans(args)
 
+    # Group presets by provider
+    morph_presets = [p for p in preset_plans if p.provider == "morph"]
+    freestyle_presets = [p for p in preset_plans if p.provider == "freestyle"]
+
     console.always(
         "Starting snapshot runs for presets "
-        f"{', '.join(plan.preset_id for plan in preset_plans)} "
-        f"from base snapshot {args.snapshot_id}"
+        + f"{', '.join(plan.preset_id for plan in preset_plans)}"
     )
+    if morph_presets:
+        console.always(f"  Morph base snapshot: {args.morph_snapshot_id}")
+    if freestyle_presets:
+        console.always("  Freestyle: will create fresh VMs")
 
     preset_order: dict[str, int] = {
         plan.preset_id: index for index, plan in enumerate(preset_plans)
     }
-    tasks = [
+
+    # Create tasks for Morph presets
+    morph_tasks = [
         asyncio.create_task(
             provision_and_snapshot_for_preset(
                 args,
                 preset=preset_plan,
                 console=console,
-                client=client,
+                client=morph_client,
                 repo_root=repo_root,
                 started_instances=started_instances,
                 require_verify=args.require_verify,
                 show_dependency_graph=index == 0,
             )
         )
-        for index, preset_plan in enumerate(preset_plans)
+        for index, preset_plan in enumerate(morph_presets)
     ]
 
-    results = await asyncio.gather(*tasks)
+    # Create tasks for Freestyle presets
+    freestyle_tasks = [
+        asyncio.create_task(
+            provision_and_snapshot_for_freestyle_preset(
+                args,
+                preset=preset_plan,
+                console=console,
+                repo_root=repo_root,
+                require_verify=args.require_verify,
+                show_dependency_graph=(index == 0 and not morph_presets),  # Show graph only if no Morph presets
+            )
+        )
+        for index, preset_plan in enumerate(freestyle_presets)
+    ]
+
+    all_tasks = morph_tasks + freestyle_tasks
+    results = await asyncio.gather(*all_tasks)
     ordered_results = sorted(
         results,
         key=lambda item: preset_order.get(item.preset.preset_id, 0),
@@ -2873,33 +3112,35 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     if not args.require_verify:
         for result in ordered_results:
-            try:
-                inst = client.instances.get(instance_id=result.instance_id)
-                inst.set_ttl(ttl_seconds=600, ttl_action="pause")
-                console.always(
-                    f"[{result.preset.preset_id}] Instance {result.instance_id} "
-                    "will pause in ~10 minutes (TTL set)."
-                )
-            except Exception as exc:  # noqa: BLE001
-                console.always(
-                    f"[{result.preset.preset_id}] Failed to set TTL on instance "
-                    f"{result.instance_id}: {exc}"
-                )
+            if result.preset.provider == "morph":
+                try:
+                    inst = morph_client.instances.get(instance_id=result.instance_id)
+                    inst.set_ttl(ttl_seconds=600, ttl_action="pause")
+                    console.always(
+                        f"[{result.preset.preset_id}] Instance {result.instance_id} "
+                        "will pause in ~10 minutes (TTL set)."
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    console.always(
+                        f"[{result.preset.preset_id}] Failed to set TTL on instance "
+                        f"{result.instance_id}: {exc}"
+                    )
+            # Freestyle instances have idle_timeout set during fork
 
     for result in ordered_results:
         manifest = _update_manifest_with_snapshot(
-            manifest, result.preset, result.snapshot.id, result.captured_at
+            manifest, result.preset, result.snapshot_id, result.captured_at
         )
     _write_manifest(manifest)
 
     _render_verification_table(ordered_results, console)
 
     console.always(
-        f"\nUpdated morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}"
+        f"\nUpdated VM snapshot manifest at {VM_SNAPSHOT_MANIFEST_PATH}"
     )
     for result in ordered_results:
         console.always(
-            f"[{result.preset.preset_id}] Snapshot {result.snapshot.id} captured at {result.captured_at}"
+            f"[{result.preset.preset_id}] Snapshot {result.snapshot_id} captured at {result.captured_at}"
         )
 
 
@@ -2965,12 +3206,12 @@ def format_dependency_graph(registry: TaskRegistry) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Provision Morph instance with parallel setup"
+        description="Provision VM instances with parallel setup for multiple providers"
     )
     parser.add_argument(
-        "--snapshot-id",
+        "--morph-snapshot-id",
         default="snapshot_3fjuvxbs",
-        help="Base snapshot id to boot from",
+        help="Base Morph snapshot id to boot from",
     )
     parser.add_argument(
         "--repo-root",
@@ -3041,6 +3282,22 @@ def parse_args() -> argparse.Namespace:
         "--require-verify",
         action="store_true",
         help="Require manual verification (VS Code/VNC) before snapshotting each preset",
+    )
+    parser.add_argument(
+        "--skip-freestyle",
+        action="store_true",
+        help="Skip Freestyle preset (useful when Freestyle API has issues)",
+    )
+    parser.add_argument(
+        "--skip-morph",
+        action="store_true",
+        help="Skip Morph presets (useful for testing Freestyle only)",
+    )
+    parser.add_argument(
+        "--use-git-clone",
+        action="store_true",
+        default=False,
+        help="Use git clone instead of uploading repo archive (useful when put_file API has size limits)",
     )
     return parser.parse_args()
 

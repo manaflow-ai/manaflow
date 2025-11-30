@@ -25,5 +25,5 @@ export * from "./vscode-schemas";
 export * from "./worker-schemas";
 export * from "./pull-request-state";
 export * from "./iframe-preflight";
-export * from "./morph-snapshots";
+export * from "./vm-snapshots";
 export * from "./screenshots/types";

@@ -1,9 +1,10 @@
 {
-  "schemaVersion": 1,
-  "updatedAt": "2025-11-23T09:44:10Z",
+  "schemaVersion": 2,
+  "updatedAt": "2025-11-30T06:30:27Z",
   "presets": [
     {
-      "presetId": "4vcpu_16gb_48gb",
+      "presetId": "morph_4vcpu_16gb_48gb",
+      "provider": "morph",
       "label": "Standard workspace",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
@@ -28,12 +29,18 @@
           "version": 4,
           "snapshotId": "snapshot_svdf7qmg",
           "capturedAt": "2025-11-23T09:45:47Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_o8r69mzg",
+          "capturedAt": "2025-11-30T00:53:26Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
     },
     {
-      "presetId": "8vcpu_32gb_48gb",
+      "presetId": "morph_8vcpu_32gb_48gb",
+      "provider": "morph",
       "label": "Performance workspace",
       "cpu": "8 vCPU",
       "memory": "32 GB RAM",
@@ -58,9 +65,30 @@
           "version": 4,
           "snapshotId": "snapshot_i57mwbv2",
           "capturedAt": "2025-11-23T09:44:10Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_eafaewe0",
+          "capturedAt": "2025-11-30T00:52:41Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
+    },
+    {
+      "presetId": "freestyle_default",
+      "provider": "freestyle",
+      "label": "Freestyle sandbox",
+      "cpu": "Default",
+      "memory": "Default",
+      "disk": "Default",
+      "versions": [
+        {
+          "version": 4,
+          "snapshotId": "jnvqx",
+          "capturedAt": "2025-11-30T06:30:27Z"
+        }
+      ],
+      "description": "Freestyle cloud sandbox environment."
     }
   ]
 }

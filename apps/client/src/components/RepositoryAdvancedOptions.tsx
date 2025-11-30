@@ -1,11 +1,13 @@
 import {
   DEFAULT_MORPH_SNAPSHOT_ID,
-  MORPH_SNAPSHOT_PRESETS,
+  getPresetsWithVersions,
   type MorphSnapshotId,
 } from "@cmux/shared";
 import { Accordion, AccordionItem } from "@heroui/react";
 import { Check } from "lucide-react";
 import { Label, Radio, RadioGroup } from "react-aria-components";
+
+const MORPH_PRESETS_WITH_VERSIONS = getPresetsWithVersions("morph");
 
 export interface RepositoryAdvancedOptionsProps {
   selectedSnapshotId?: MorphSnapshotId;
@@ -45,7 +47,7 @@ export function RepositoryAdvancedOptions({
                 Machine size
               </Label>
               <div className="grid gap-3 sm:grid-cols-2 pt-1.5">
-                {MORPH_SNAPSHOT_PRESETS.map((preset) => (
+                {MORPH_PRESETS_WITH_VERSIONS.map((preset) => (
                   <Radio
                     key={preset.id}
                     value={preset.id}
