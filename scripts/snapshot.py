@@ -1823,6 +1823,13 @@ export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
 export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$PATH"
 EOF
+        # Also add to /etc/environment for non-interactive sessions
+        if ! grep -q 'RUSTUP_HOME=' /etc/environment 2>/dev/null; then
+          echo 'RUSTUP_HOME=/usr/local/rustup' >> /etc/environment
+        fi
+        if ! grep -q 'CARGO_HOME=' /etc/environment 2>/dev/null; then
+          echo 'CARGO_HOME=/usr/local/cargo' >> /etc/environment
+        fi
         if ! grep -q "alias g='git'" /root/.bashrc 2>/dev/null; then
           echo "alias g='git'" >> /root/.bashrc
         fi
@@ -2229,6 +2236,9 @@ PROFILE
         fi
         if ! grep -q 'XDG_RUNTIME_DIR=/run/user/0' /root/.zshrc 2>/dev/null; then
           echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.zshrc
+        fi
+        if ! grep -q 'cmux-paths.sh' /root/.zshrc 2>/dev/null; then
+          echo '[ -f /etc/profile.d/cmux-paths.sh ] && . /etc/profile.d/cmux-paths.sh' >> /root/.zshrc
         fi
         """
     )
