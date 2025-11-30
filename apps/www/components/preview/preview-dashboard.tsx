@@ -575,7 +575,7 @@ export function PreviewDashboard({
         </div>
         {!isAuthenticated && (
           <p className="text-xs text-neutral-500 mt-2">
-            Sign in to connect private repos.
+            You&apos;ll be asked to sign in to continue.
           </p>
         )}
         {errorMessage && (
