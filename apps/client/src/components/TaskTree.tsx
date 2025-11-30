@@ -1,3 +1,4 @@
+import { AlertDialog } from "@/components/ui/alert-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
 import {
   Tooltip,
@@ -1742,6 +1743,14 @@ function TaskRunDetails({
   const location = useLocation();
   const navigate = useNavigate();
 
+  // State for delete confirmation dialog
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    open: boolean;
+    index: number;
+    url: string;
+    currentPreviewId?: string;
+  }>({ open: false, index: -1, url: "" });
+
   // Extract current previewId from URL if on preview route
   const currentPreviewId = location.pathname.includes("/preview/")
     ? location.pathname.split("/preview/")[1]?.split("/")[0]
@@ -1821,19 +1830,34 @@ function TaskRunDetails({
     [addCustomPreview, run._id, teamSlugOrId]
   );
 
-  const handleRemovePreview = useCallback(
-    (index: number, currentPreviewId?: string) => {
-      void removeCustomPreview({
-        teamSlugOrId,
-        runId: run._id,
+  const handleRemovePreviewClick = useCallback(
+    (index: number, url: string, currentPreviewId?: string) => {
+      setDeleteConfirmation({
+        open: true,
         index,
-      }).catch((error) => {
-        console.error("Failed to remove preview", error);
+        url,
+        currentPreviewId,
       });
+    },
+    []
+  );
 
-      // If we're currently viewing the tab being closed, navigate to another tab
-      if (currentPreviewId === String(index)) {
-        const remainingPreviews = customPreviews.filter((_, i) => i !== index);
+  const handleConfirmRemovePreview = useCallback(() => {
+    const { index, currentPreviewId } = deleteConfirmation;
+
+    void removeCustomPreview({
+      teamSlugOrId,
+      runId: run._id,
+      index,
+    }).catch((error) => {
+      console.error("Failed to remove preview", error);
+    });
+
+    setDeleteConfirmation({ open: false, index: -1, url: "" });
+
+    // If we're currently viewing the tab being closed, navigate to another tab
+    if (currentPreviewId === String(index)) {
+      const remainingPreviews = customPreviews.filter((_, i) => i !== index);
 
         if (remainingPreviews.length > 0) {
           // Navigate to previous tab (or next if it was the first)
@@ -1873,6 +1897,7 @@ function TaskRunDetails({
       }
     },
     [
+      deleteConfirmation,
       removeCustomPreview,
       run._id,
       teamSlugOrId,
@@ -2086,7 +2111,7 @@ function TaskRunDetails({
                     Open in new tab
                   </Dropdown.Item>
                   <Dropdown.Item
-                    onClick={() => handleRemovePreview(index, currentPreviewId)}
+                    onClick={() => handleRemovePreviewClick(index, preview.url, currentPreviewId)}
                     className="flex items-center gap-2 text-red-600 dark:text-red-400"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -2123,6 +2148,30 @@ function TaskRunDetails({
           ))}
         </div>
       ) : null}
+
+      <AlertDialog
+        open={deleteConfirmation.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteConfirmation({ open: false, index: -1, url: "" });
+          }
+        }}
+        title="Delete preview configuration?"
+        description={
+          <>
+            Are you sure you want to delete this preview?
+            {deleteConfirmation.url && (
+              <span className="mt-2 block truncate text-xs text-neutral-500 dark:text-neutral-400">
+                {deleteConfirmation.url}
+              </span>
+            )}
+          </>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleConfirmRemovePreview}
+        variant="destructive"
+      />
     </Fragment>
   );
 }
