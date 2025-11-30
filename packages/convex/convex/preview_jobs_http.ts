@@ -37,6 +37,7 @@ async function markPreviewTaskCompleted(
     await ctx.runMutation(internal.tasks.setCompletedInternal, {
       taskId: task._id,
       isCompleted: true,
+      crownEvaluationStatus: "succeeded",
     });
   }
 

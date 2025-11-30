@@ -861,11 +861,22 @@ export const setCompletedInternal = internalMutation({
   args: {
     taskId: v.id("tasks"),
     isCompleted: v.boolean(),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.taskId, {
       isCompleted: args.isCompleted,
       updatedAt: Date.now(),
+      ...(args.crownEvaluationStatus && {
+        crownEvaluationStatus: args.crownEvaluationStatus,
+      }),
     });
   },
 });
