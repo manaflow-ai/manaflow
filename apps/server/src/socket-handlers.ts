@@ -50,6 +50,7 @@ import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
+import { getEditorSettingsUpload } from "./utils/editorSettings";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
@@ -1326,6 +1327,17 @@ export function setupSocketHandlers(
               : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
           );
 
+          const editorSettingsUpload = await getEditorSettingsUpload();
+          if (editorSettingsUpload) {
+            serverLogger.info(
+              `[create-cloud-workspace] Attaching ${editorSettingsUpload.sourceEditor} settings to sandbox`
+            );
+          } else {
+            serverLogger.info(
+              "[create-cloud-workspace] No editor settings available to attach"
+            );
+          }
+
           const startRes = await postApiSandboxesStart({
             client: getWwwClient(),
             body: {
@@ -1341,6 +1353,9 @@ export function setupSocketHandlers(
               ...(environmentId
                 ? { environmentId }
                 : { projectFullName, repoUrl }),
+              ...(editorSettingsUpload
+                ? { editorSettings: editorSettingsUpload }
+                : {}),
             },
           });
 
