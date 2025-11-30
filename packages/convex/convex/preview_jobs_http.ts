@@ -285,6 +285,12 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         stateReason: "No screenshots available",
       });
 
+      // Mark the taskRun as completed
+      await ctx.runMutation(internal.taskRuns.workerComplete, {
+        taskRunId: taskRunId as Id<"taskRuns">,
+        exitCode: 0,
+      });
+
       // Mark the task as complete since preview job is done
       await ctx.runMutation(internal.tasks.setCompletedInternal, {
         taskId: taskRun.taskId,
@@ -341,6 +347,12 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           commentUrl: commentResult.commentUrl,
         });
 
+        // Mark the taskRun as completed
+        await ctx.runMutation(internal.taskRuns.workerComplete, {
+          taskRunId: taskRunId as Id<"taskRuns">,
+          exitCode: 0,
+        });
+
         // Mark the task as complete since preview job is done
         await ctx.runMutation(internal.tasks.setCompletedInternal, {
           taskId: taskRun.taskId,
@@ -372,6 +384,12 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
+      });
+
+      // Mark the taskRun as completed
+      await ctx.runMutation(internal.taskRuns.workerComplete, {
+        taskRunId: taskRunId as Id<"taskRuns">,
+        exitCode: 0,
       });
 
       // Mark the task as complete since preview job is done
