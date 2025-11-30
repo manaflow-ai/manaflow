@@ -11,7 +11,7 @@ export const GEMINI_3_PRO_PREVIEW_CONFIG: AgentConfig = {
   args: [
     "@google/gemini-cli@latest",
     "--model",
-    "gemini-3-pro-preview",
+    "gemini-3.0-pro-preview",
     "--yolo",
     "--telemetry",
     "--telemetry-target=local",
