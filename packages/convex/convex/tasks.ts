@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
 
@@ -35,6 +35,98 @@ export const get = authQuery({
     // Note: order by createdAt desc, fallback to insertion order if not present
     const results = await q.collect();
     return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  },
+});
+
+export const getPreviewTasks = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    archived: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const includeArchived = args.archived === true;
+
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      )
+      .filter((q) => q.eq(q.field("isPreviewJob"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    if (runs.length === 0) {
+      return [] as const;
+    }
+
+    const runsByTask = runs.reduce<Map<Id<"tasks">, Doc<"taskRuns">[]>>(
+      (acc, run) => {
+        const existing = acc.get(run.taskId) ?? [];
+        existing.push(run);
+        acc.set(run.taskId, existing);
+        return acc;
+      },
+      new Map(),
+    );
+
+    const tasks = await Promise.all(
+      Array.from(runsByTask.keys()).map((taskId) => ctx.db.get(taskId)),
+    );
+
+    const previewTasks: {
+      task: Doc<"tasks">;
+      latestPreviewRun: Doc<"taskRuns"> | null;
+    }[] = [];
+
+    for (const task of tasks) {
+      if (!task || task.teamId !== teamId || task.userId !== userId) {
+        continue;
+      }
+
+      const isArchived = task.isArchived === true;
+      if (includeArchived ? !isArchived : isArchived) {
+        continue;
+      }
+
+      const taskRuns = runsByTask.get(task._id) ?? [];
+      let latestPreviewRun: Doc<"taskRuns"> | null = null;
+
+      for (const run of taskRuns) {
+        if (!latestPreviewRun) {
+          latestPreviewRun = run;
+          continue;
+        }
+
+        const latestTime =
+          latestPreviewRun.updatedAt ?? latestPreviewRun.createdAt ?? 0;
+        const runTime = run.updatedAt ?? run.createdAt ?? 0;
+
+        if (runTime > latestTime) {
+          latestPreviewRun = run;
+        }
+      }
+
+      previewTasks.push({
+        task,
+        latestPreviewRun,
+      });
+    }
+
+    return previewTasks.sort((a, b) => {
+      const aTime =
+        a.latestPreviewRun?.updatedAt ??
+        a.task.updatedAt ??
+        a.task.createdAt ??
+        0;
+      const bTime =
+        b.latestPreviewRun?.updatedAt ??
+        b.task.updatedAt ??
+        b.task.createdAt ??
+        0;
+      return bTime - aTime;
+    });
   },
 });
 

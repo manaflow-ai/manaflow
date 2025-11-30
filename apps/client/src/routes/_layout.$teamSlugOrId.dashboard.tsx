@@ -60,6 +60,10 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
       query: api.tasks.get,
       args: { teamSlugOrId },
     });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.getPreviewTasks,
+      args: { teamSlugOrId },
+    });
   },
 });
 
