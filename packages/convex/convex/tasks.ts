@@ -856,3 +856,16 @@ export const createForPreview = internalMutation({
     return taskId;
   },
 });
+
+export const setCompletedInternal = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    isCompleted: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskId, {
+      isCompleted: args.isCompleted,
+      updatedAt: Date.now(),
+    });
+  },
+});

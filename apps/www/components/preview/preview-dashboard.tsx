@@ -327,7 +327,7 @@ export function PreviewDashboard({
   };
 
   const fetchRepos = useCallback(
-    async (searchTerm: string) => {
+    async (searchTerm: string, signal?: AbortSignal) => {
       if (!canSearchRepos || selectedInstallationId === null) {
         setRepos([]);
         return;
@@ -343,17 +343,23 @@ export function PreviewDashboard({
         if (trimmed) {
           params.set("search", trimmed);
         }
-        const response = await fetch(`/api/integrations/github/repos?${params.toString()}`);
+        const response = await fetch(`/api/integrations/github/repos?${params.toString()}`, {
+          signal,
+        });
         if (!response.ok) {
           throw new Error(await response.text());
         }
         const payload = (await response.json()) as { repos: RepoSearchResult[] };
         setRepos(trimmed ? payload.repos : payload.repos.slice(0, 5));
+        setIsLoadingRepos(false);
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          // Request was cancelled, don't update any state
+          return;
+        }
         const message = err instanceof Error ? err.message : "Failed to load repositories";
         console.error("[PreviewDashboard] Failed to load repositories", err);
         setErrorMessage(message);
-      } finally {
         setIsLoadingRepos(false);
       }
     },
@@ -361,15 +367,22 @@ export function PreviewDashboard({
   );
 
 
-  // Debounced search effect
+  // Debounced search effect with abort controller
   useEffect(() => {
-    if (!canSearchRepos || selectedInstallationId === null) return;
+    if (!canSearchRepos || selectedInstallationId === null) {
+      setRepos([]);
+      return;
+    }
 
+    const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
-      void fetchRepos(repoSearch);
+      void fetchRepos(repoSearch, abortController.signal);
     }, 300);
 
-    return () => clearTimeout(timeoutId);
+    return () => {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    };
   }, [repoSearch, canSearchRepos, selectedInstallationId, fetchRepos]);
 
   const handleContinue = useCallback((repoName: string) => {
@@ -385,7 +398,11 @@ export function PreviewDashboard({
 
   useEffect(() => {
     if (selectedInstallationId !== null) {
-      void fetchRepos("");
+      const abortController = new AbortController();
+      void fetchRepos("", abortController.signal);
+      return () => {
+        abortController.abort();
+      };
     } else {
       setRepos([]);
     }
@@ -447,6 +464,9 @@ export function PreviewDashboard({
                 void handleInstallGithubApp();
                 return;
               }
+              // Clear repos and show loading state immediately when switching accounts
+              setRepos([]);
+              setIsLoadingRepos(true);
               setSelectedInstallationId(Number(value));
             }}
             className="h-10 appearance-none bg-transparent py-2 pl-11 pr-8 text-sm text-white focus:outline-none"
