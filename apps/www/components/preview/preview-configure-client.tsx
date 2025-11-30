@@ -38,7 +38,13 @@ export type FrameworkPreset =
   | "sveltekit"
   | "angular"
   | "cra"
-  | "vue";
+  | "vue"
+  | "astro"
+  | "gatsby"
+  | "solid"
+  | "qwik"
+  | "redwood"
+  | "expo";
 
 type FrameworkIconKey =
   | "other"
@@ -49,7 +55,13 @@ type FrameworkIconKey =
   | "svelte"
   | "angular"
   | "react"
-  | "vue";
+  | "vue"
+  | "astro"
+  | "gatsby"
+  | "solid"
+  | "qwik"
+  | "redwood"
+  | "expo";
 
 type FrameworkPresetConfig = {
   name: string;
@@ -87,6 +99,42 @@ const FRAMEWORK_PRESETS: Record<FrameworkPreset, FrameworkPresetConfig> = {
     maintenanceScript: "npm install",
     devScript: "npm run dev",
     icon: "vue",
+  },
+  astro: {
+    name: "Astro",
+    maintenanceScript: "npm install",
+    devScript: "npm run dev",
+    icon: "astro",
+  },
+  gatsby: {
+    name: "Gatsby",
+    maintenanceScript: "npm install",
+    devScript: "npm run develop",
+    icon: "gatsby",
+  },
+  solid: {
+    name: "SolidJS",
+    maintenanceScript: "npm install",
+    devScript: "npm run dev",
+    icon: "solid",
+  },
+  qwik: {
+    name: "Qwik",
+    maintenanceScript: "npm install",
+    devScript: "npm run dev",
+    icon: "qwik",
+  },
+  redwood: {
+    name: "RedwoodJS",
+    maintenanceScript: "yarn install",
+    devScript: "yarn rw dev",
+    icon: "redwood",
+  },
+  expo: {
+    name: "Expo",
+    maintenanceScript: "npm install",
+    devScript: "npx expo start --web",
+    icon: "expo",
   },
 };
 
@@ -279,6 +327,78 @@ const FRAMEWORK_ICON_META: Record<
     icon: (
       <img
         src="/framework-logos/vue.svg"
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5"
+      />
+    ),
+    bgClass: "bg-neutral-100 dark:bg-neutral-800",
+    textClass: "",
+  },
+  astro: {
+    icon: (
+      <img
+        src="/framework-logos/astro.svg"
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5"
+      />
+    ),
+    bgClass: "bg-neutral-100 dark:bg-neutral-800",
+    textClass: "",
+  },
+  gatsby: {
+    icon: (
+      <img
+        src="/framework-logos/gatsby.svg"
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5"
+      />
+    ),
+    bgClass: "bg-neutral-100 dark:bg-neutral-800",
+    textClass: "",
+  },
+  solid: {
+    icon: (
+      <img
+        src="/framework-logos/solid.svg"
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5"
+      />
+    ),
+    bgClass: "bg-neutral-100 dark:bg-neutral-800",
+    textClass: "",
+  },
+  qwik: {
+    icon: (
+      <img
+        src="/framework-logos/qwik.svg"
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5"
+      />
+    ),
+    bgClass: "bg-neutral-100 dark:bg-neutral-800",
+    textClass: "",
+  },
+  redwood: {
+    icon: (
+      <img
+        src="/framework-logos/redwood.svg"
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5"
+      />
+    ),
+    bgClass: "bg-neutral-100 dark:bg-neutral-800",
+    textClass: "",
+  },
+  expo: {
+    icon: (
+      <img
+        src="/framework-logos/expo.svg"
         alt=""
         aria-hidden="true"
         className="h-5 w-5"
