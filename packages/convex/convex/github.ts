@@ -89,6 +89,18 @@ export const getRepoByFullName = authQuery({
   },
 });
 
+export const findRepoByTeamAndFullNameInternal = internalQuery({
+  args: { teamId: v.string(), repoFullName: v.string() },
+  handler: async (ctx, { teamId, repoFullName }) => {
+    return await ctx.db
+      .query("repos")
+      .withIndex("by_team_fullName", (q) =>
+        q.eq("teamId", teamId).eq("fullName", repoFullName)
+      )
+      .first();
+  },
+});
+
 // Queries
 export const getAllRepos = authQuery({
   args: { teamSlugOrId: v.string() },
@@ -211,18 +223,39 @@ export const assignProviderConnectionToTeam = authMutation({
   handler: async (ctx, { teamSlugOrId, installationId }) => {
     const teamId = await getTeamId(ctx, teamSlugOrId);
     const now = Date.now();
-    const row = await ctx.db
+    const connections = await ctx.db
       .query("providerConnections")
       .withIndex("by_installationId", (q) =>
         q.eq("installationId", installationId)
       )
-      .first();
-    if (!row) throw new Error("Installation not found");
-    await ctx.db.patch(row._id, {
+      .collect();
+    if (connections.length === 0) throw new Error("Installation not found");
+
+    const existingForTeam = connections.find(
+      (connection) => connection.teamId === teamId
+    );
+    if (existingForTeam) {
+      await ctx.db.patch(existingForTeam._id, {
+        teamId,
+        connectedByUserId: ctx.identity.subject,
+        updatedAt: now,
+        isActive: true,
+      });
+      return { ok: true as const };
+    }
+
+    const template = connections[0];
+    await ctx.db.insert("providerConnections", {
+      installationId,
+      accountLogin: template.accountLogin,
+      accountId: template.accountId,
+      accountType: template.accountType,
       teamId,
       connectedByUserId: ctx.identity.subject,
-      updatedAt: now,
+      type: template.type ?? "github_app",
       isActive: true,
+      createdAt: now,
+      updatedAt: now,
     });
     return { ok: true as const };
   },
@@ -233,13 +266,16 @@ export const removeProviderConnection = authMutation({
   args: { teamSlugOrId: v.string(), installationId: v.number() },
   handler: async (ctx, { teamSlugOrId, installationId }) => {
     const teamId = await getTeamId(ctx, teamSlugOrId);
-    const row = await ctx.db
+    const connections = await ctx.db
       .query("providerConnections")
       .withIndex("by_installationId", (q) =>
         q.eq("installationId", installationId)
       )
-      .first();
-    if (!row || row.teamId !== teamId) throw new Error("Not found");
+      .collect();
+    const row = connections.find(
+      (connection) => connection.teamId === teamId
+    );
+    if (!row) throw new Error("Not found");
     await ctx.db.patch(row._id, {
       teamId: undefined,
       isActive: false,

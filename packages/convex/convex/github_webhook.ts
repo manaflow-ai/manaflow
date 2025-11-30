@@ -15,6 +15,7 @@ import { hmacSha256, safeEqualHex, sha256Hex } from "../_shared/crypto";
 import { bytesToHex } from "../_shared/encoding";
 import { streamInstallationRepositories } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 
 const DEBUG_FLAGS = {
@@ -86,6 +87,48 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
   const installationId: number | undefined = (body as WithInstallation)
     .installation?.id;
 
+  const loadActiveConnections = async (
+    installation: number,
+  ): Promise<Doc<"providerConnections">[]> => {
+    const rows = await _ctx.runQuery(
+      internal.github_app.getProviderConnectionsByInstallationId,
+      { installationId: installation },
+    );
+
+    const seenTeams = new Set<string>();
+    const deduped: Doc<"providerConnections">[] = [];
+    for (const row of rows) {
+      if (row.teamId) {
+        if (seenTeams.has(row.teamId)) {
+          continue;
+        }
+        seenTeams.add(row.teamId);
+      }
+      deduped.push(row);
+    }
+
+    return deduped.filter((connection) => connection.isActive ?? true);
+  };
+
+  const loadConnectionsForRepo = async (
+    installation: number,
+    repoFullName: string,
+  ): Promise<Doc<"providerConnections">[]> => {
+    const activeConnections = await loadActiveConnections(installation);
+    const matches = await Promise.all(
+      activeConnections.map(async (connection) => {
+        if (!connection.teamId) return null;
+        const repo = await _ctx.runQuery(
+          internal.github.findRepoByTeamAndFullNameInternal,
+          { teamId: connection.teamId, repoFullName },
+        );
+        return repo ? connection : null;
+      }),
+    );
+
+    return matches.filter(Boolean) as Array<Doc<"providerConnections">>;
+  };
+
   // Record delivery for idempotency/auditing
   if (delivery) {
     const payloadHash = await sha256Hex(payload);
@@ -145,31 +188,17 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             break;
           }
 
-          const connection = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadActiveConnections(installation);
+          const scopedConnections = connections.filter(
+            (connection) => connection.teamId && connection.connectedByUserId
           );
-          if (!connection) {
+          if (scopedConnections.length === 0) {
             console.warn(
-              "[github_webhook] No provider connection found for installation during repo sync",
+              "[github_webhook] No scoped provider connections found for installation during repo sync",
               {
                 installation,
                 delivery,
-              },
-            );
-            break;
-          }
-
-          const teamId = connection.teamId;
-          const userId = connection.connectedByUserId;
-          if (!teamId || !userId) {
-            console.warn(
-              "[github_webhook] Missing team/user context for installation repo sync",
-              {
-                installation,
-                teamId,
-                userId,
-                delivery,
+                connectionCount: connections.length,
               },
             );
             break;
@@ -179,25 +208,38 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             installation,
             (repos, currentPageIndex) =>
               (async () => {
-                try {
-                  await _ctx.runMutation(internal.github.syncReposForInstallation, {
-                    teamId,
-                    userId,
-                    connectionId: connection._id,
-                    repos,
-                  });
-                } catch (error) {
-                  console.error(
-                    "[github_webhook] Failed to sync installation repositories from webhook",
-                    {
-                      installation,
-                      delivery,
-                      pageIndex: currentPageIndex,
-                      repoCount: repos.length,
-                      error,
-                    },
-                  );
-                }
+                await Promise.all(
+                  scopedConnections.map(async (connection) => {
+                    const teamId = connection.teamId;
+                    const userId = connection.connectedByUserId;
+                    if (!teamId || !userId) {
+                      return;
+                    }
+                    try {
+                      await _ctx.runMutation(
+                        internal.github.syncReposForInstallation,
+                        {
+                          teamId,
+                          userId,
+                          connectionId: connection._id,
+                          repos,
+                        },
+                      );
+                    } catch (error) {
+                      console.error(
+                        "[github_webhook] Failed to sync installation repositories from webhook",
+                        {
+                          installation,
+                          teamId,
+                          delivery,
+                          pageIndex: currentPageIndex,
+                          repoCount: repos.length,
+                          error,
+                        },
+                      );
+                    }
+                  })
+                );
               })(),
           );
         } catch (error) {
@@ -237,30 +279,34 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             break;
           }
 
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
 
-          if (!teamId) {
-            console.warn("[workflow_run] No teamId found for installation", {
+          if (connections.length === 0) {
+            console.warn("[workflow_run] No connections found for repo", {
               installation,
+              repoFullName,
               delivery,
-              connectionFound: !!conn,
             });
             break;
           }
 
-
-          await _ctx.runMutation(
-            internal.github_workflows.upsertWorkflowRunFromWebhook,
-            {
-              installationId: installation,
-              repoFullName,
-              teamId,
-              payload: workflowRunPayload,
-            },
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
+              await _ctx.runMutation(
+                internal.github_workflows.upsertWorkflowRunFromWebhook,
+                {
+                  installationId: installation,
+                  repoFullName,
+                  teamId,
+                  payload: workflowRunPayload,
+                },
+              );
+            })
           );
 
         } catch (err) {
@@ -294,28 +340,35 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             break;
           }
 
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
 
-          if (!teamId) {
-            console.warn("[check_run] No teamId found for installation", {
+          if (connections.length === 0) {
+            console.warn("[check_run] No connections found for repo", {
               installation,
+              repoFullName,
               delivery,
-              connectionFound: !!conn,
             });
             break;
           }
 
-
-          await _ctx.runMutation(internal.github_check_runs.upsertCheckRunFromWebhook, {
-            installationId: installation,
-            repoFullName,
-            teamId,
-            payload: checkRunPayload,
-          });
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
+              await _ctx.runMutation(
+                internal.github_check_runs.upsertCheckRunFromWebhook,
+                {
+                  installationId: installation,
+                  repoFullName,
+                  teamId,
+                  payload: checkRunPayload,
+                },
+              );
+            })
+          );
 
         } catch (err) {
           console.error("[check_run] Handler failed", {
@@ -346,29 +399,34 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             break;
           }
 
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
 
-          if (!teamId) {
-            console.warn("[deployment] No teamId found for installation", {
+          if (connections.length === 0) {
+            console.warn("[deployment] No connections found for repo", {
               installation,
+              repoFullName,
               delivery,
-              connectionFound: !!conn,
             });
             break;
           }
 
-          await _ctx.runMutation(
-            internal.github_deployments.upsertDeploymentFromWebhook,
-            {
-              installationId: installation,
-              repoFullName,
-              teamId,
-              payload: deploymentPayload,
-            },
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
+              await _ctx.runMutation(
+                internal.github_deployments.upsertDeploymentFromWebhook,
+                {
+                  installationId: installation,
+                  repoFullName,
+                  teamId,
+                  payload: deploymentPayload,
+                },
+              );
+            })
           );
 
         } catch (err) {
@@ -396,29 +454,34 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             break;
           }
 
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
 
-          if (!teamId) {
-            console.warn("[deployment_status] No teamId found for installation", {
+          if (connections.length === 0) {
+            console.warn("[deployment_status] No connections found for repo", {
               installation,
+              repoFullName,
               delivery,
-              connectionFound: !!conn,
             });
             break;
           }
 
-          await _ctx.runMutation(
-            internal.github_deployments.updateDeploymentStatusFromWebhook,
-            {
-              installationId: installation,
-              repoFullName,
-              teamId,
-              payload: deploymentStatusPayload,
-            },
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
+              await _ctx.runMutation(
+                internal.github_deployments.updateDeploymentStatusFromWebhook,
+                {
+                  installationId: installation,
+                  repoFullName,
+                  teamId,
+                  payload: deploymentStatusPayload,
+                },
+              );
+            })
           );
 
         } catch (err) {
@@ -446,29 +509,34 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             break;
           }
 
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
 
-          if (!teamId) {
-            console.warn("[status] No teamId found for installation", {
+          if (connections.length === 0) {
+            console.warn("[status] No connections found for repo", {
               installation,
+              repoFullName,
               delivery,
-              connectionFound: !!conn,
             });
             break;
           }
 
-          await _ctx.runMutation(
-            internal.github_commit_statuses.upsertCommitStatusFromWebhook,
-            {
-              installationId: installation,
-              repoFullName,
-              teamId,
-              payload: statusPayload,
-            },
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
+              await _ctx.runMutation(
+                internal.github_commit_statuses.upsertCommitStatusFromWebhook,
+                {
+                  installationId: installation,
+                  repoFullName,
+                  teamId,
+                  payload: statusPayload,
+                },
+              );
+            })
           );
 
         } catch (err) {
@@ -486,34 +554,26 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           const repoFullName = String(prPayload.repository?.full_name ?? "");
           const installation = Number(prPayload.installation?.id ?? 0);
           if (!repoFullName || !installation) break;
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
-          if (!teamId) break;
 
-          // Run both mutations in parallel for better performance
-          // These are independent operations that don't depend on each other
-          await Promise.all([
-            // Update PR record in database
-            _ctx.runMutation(internal.github_prs.upsertFromWebhookPayload, {
-              installationId: installation,
+          if (connections.length === 0) {
+            console.warn("[pull_request] No connections found for repo", {
               repoFullName,
-              teamId,
-              payload: prPayload,
-            }),
-            // Handle PR merge/close events to update taskRuns and tasks
-            _ctx.runMutation(internal.github_pr_merge_handler.processPullRequestWebhook, {
-              teamId,
-              payload: prPayload,
-            }),
-          ]);
+              installation,
+              delivery,
+            });
+            break;
+          }
 
-          // Add eyes emoji reaction when a new PR is opened
+          const action = prPayload.action ?? "";
+
           if (
             FEATURE_FLAGS.githubEyesReactionOnPrOpen &&
-            prPayload.action === "opened"
+            action === "opened"
           ) {
             const prNumber = Number(prPayload.pull_request?.number ?? 0);
             if (prNumber) {
@@ -526,150 +586,174 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             }
           }
 
-          const action = prPayload.action ?? "";
-          if (
-            ["opened", "reopened", "synchronize", "ready_for_review"].includes(
-              action,
-            )
-          ) {
-            const previewConfig = await _ctx.runQuery(
-              internal.previewConfigs.getByTeamAndRepo,
-              { teamId, repoFullName },
-            );
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
 
-            if (previewConfig) {
-              const prNumber = Number(prPayload.pull_request?.number ?? 0);
-              const prUrl = prPayload.pull_request?.html_url ?? null;
-              const headSha = prPayload.pull_request?.head?.sha ?? null;
-              const baseSha = prPayload.pull_request?.base?.sha ?? undefined;
-              const headRef = prPayload.pull_request?.head?.ref ?? undefined;
-              const headRepoFullName = prPayload.pull_request?.head?.repo?.full_name ?? undefined;
-              const headRepoCloneUrl = prPayload.pull_request?.head?.repo?.clone_url ?? undefined;
+              await Promise.all([
+                _ctx.runMutation(internal.github_prs.upsertFromWebhookPayload, {
+                  installationId: installation,
+                  repoFullName,
+                  teamId,
+                  payload: prPayload,
+                }),
+                _ctx.runMutation(internal.github_pr_merge_handler.processPullRequestWebhook, {
+                  teamId,
+                  payload: prPayload,
+                }),
+              ]);
 
-              console.log("[preview-jobs] Preview config found for PR", {
-                repoFullName,
-                prNumber,
-                prUrl,
-                headSha: headSha?.slice(0, 7),
-                headRef,
-                headRepoFullName,
-                isFromFork: headRepoFullName && headRepoFullName !== repoFullName,
-                previewConfigId: previewConfig._id,
-              });
+              if (
+                ["opened", "reopened", "synchronize", "ready_for_review"].includes(
+                  action,
+                )
+              ) {
+                const previewConfig = await _ctx.runQuery(
+                  internal.previewConfigs.getByTeamAndRepo,
+                  { teamId, repoFullName },
+                );
 
-              if (prNumber && prUrl && headSha) {
-                try {
-                  const runId = await _ctx.runMutation(
-                    internal.previewRuns.enqueueFromWebhook,
-                    {
-                      previewConfigId: previewConfig._id,
-                      teamId,
-                      repoFullName,
-                      repoInstallationId: installation,
-                      prNumber,
-                      prUrl,
-                      headSha,
-                      baseSha,
-                      headRef,
-                      headRepoFullName,
-                      headRepoCloneUrl,
-                    },
-                  );
+                if (previewConfig) {
+                  const prNumber = Number(prPayload.pull_request?.number ?? 0);
+                  const prUrl = prPayload.pull_request?.html_url ?? null;
+                  const headSha = prPayload.pull_request?.head?.sha ?? null;
+                  const baseSha = prPayload.pull_request?.base?.sha ?? undefined;
+                  const headRef = prPayload.pull_request?.head?.ref ?? undefined;
+                  const headRepoFullName = prPayload.pull_request?.head?.repo?.full_name ?? undefined;
+                  const headRepoCloneUrl = prPayload.pull_request?.head?.repo?.clone_url ?? undefined;
 
-                  const existingRun = await _ctx.runQuery(
-                    internal.previewRuns.getById,
-                    { id: runId },
-                  );
-
-                  console.log("[preview-jobs] Preview run enqueued", {
-                    runId,
+                  console.log("[preview-jobs] Preview config found for PR", {
                     repoFullName,
                     prNumber,
                     prUrl,
+                    headSha: headSha?.slice(0, 7),
+                    headRef,
+                    headRepoFullName,
+                    isFromFork: headRepoFullName && headRepoFullName !== repoFullName,
+                    previewConfigId: previewConfig._id,
+                    teamId,
                   });
 
-                  if (existingRun?.taskRunId) {
-                    console.log("[preview-jobs] Preview run already has taskRun; skipping duplicate creation", {
-                      runId,
-                      taskRunId: existingRun.taskRunId,
-                      status: existingRun.status,
-                    });
-                    if (existingRun.status === "pending") {
-                      await _ctx.scheduler.runAfter(
-                        0,
-                        internal.preview_jobs.requestDispatch,
-                        { previewRunId: runId },
+                  if (prNumber && prUrl && headSha) {
+                    try {
+                      const runId = await _ctx.runMutation(
+                        internal.previewRuns.enqueueFromWebhook,
+                        {
+                          previewConfigId: previewConfig._id,
+                          teamId,
+                          repoFullName,
+                          repoInstallationId: installation,
+                          prNumber,
+                          prUrl,
+                          headSha,
+                          baseSha,
+                          headRef,
+                          headRepoFullName,
+                          headRepoCloneUrl,
+                        },
                       );
-                    }
-                  } else {
-                    // Create task and taskRun for screenshot collection
-                    // The existing worker infrastructure will pick this up and process it
-                    const taskId = await _ctx.runMutation(
-                      internal.tasks.createForPreview,
-                      {
-                        teamId,
-                        userId: previewConfig.createdByUserId,
-                        previewRunId: runId,
+
+                      const existingRun = await _ctx.runQuery(
+                        internal.previewRuns.getById,
+                        { id: runId },
+                      );
+
+                      console.log("[preview-jobs] Preview run enqueued", {
+                        runId,
                         repoFullName,
                         prNumber,
                         prUrl,
-                        headSha,
-                        baseBranch: previewConfig.repoDefaultBranch,
-                      },
-                    );
-
-                    const { taskRunId } = await _ctx.runMutation(
-                      internal.taskRuns.createForPreview,
-                      {
-                        taskId,
                         teamId,
-                        userId: previewConfig.createdByUserId,
-                        prUrl,
-                        environmentId: previewConfig.environmentId,
-                        newBranch: headRef,
-                      },
-                    );
+                      });
 
-                    // Link the taskRun to the preview run
-                    await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
-                      previewRunId: runId,
-                      taskRunId,
-                    });
+                      if (existingRun?.taskRunId) {
+                        console.log("[preview-jobs] Preview run already has taskRun; skipping duplicate creation", {
+                          runId,
+                          taskRunId: existingRun.taskRunId,
+                          status: existingRun.status,
+                          teamId,
+                        });
+                        if (existingRun.status === "pending") {
+                          await _ctx.scheduler.runAfter(
+                            0,
+                            internal.preview_jobs.requestDispatch,
+                            { previewRunId: runId },
+                          );
+                        }
+                      } else {
+                        // Create task and taskRun for screenshot collection
+                        // The existing worker infrastructure will pick this up and process it
+                        const taskId = await _ctx.runMutation(
+                          internal.tasks.createForPreview,
+                          {
+                            teamId,
+                            userId: previewConfig.createdByUserId,
+                            previewRunId: runId,
+                            repoFullName,
+                            prNumber,
+                            prUrl,
+                            headSha,
+                            baseBranch: previewConfig.repoDefaultBranch,
+                          },
+                        );
 
-                    console.log("[preview-jobs] Task and taskRun created", {
-                      runId,
-                      taskId,
-                      taskRunId,
-                      repoFullName,
-                      prNumber,
-                    });
+                        const { taskRunId } = await _ctx.runMutation(
+                          internal.taskRuns.createForPreview,
+                          {
+                            taskId,
+                            teamId,
+                            userId: previewConfig.createdByUserId,
+                            prUrl,
+                            environmentId: previewConfig.environmentId,
+                            newBranch: headRef,
+                          },
+                        );
 
-                    // Trigger the preview job dispatch
-                    await _ctx.scheduler.runAfter(
-                      0,
-                      internal.preview_jobs.requestDispatch,
-                      { previewRunId: runId },
-                    );
+                        // Link the taskRun to the preview run
+                        await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
+                          previewRunId: runId,
+                          taskRunId,
+                        });
 
-                    console.log("[preview-jobs] Preview job dispatch scheduled", {
-                      runId,
-                    });
+                        console.log("[preview-jobs] Task and taskRun created", {
+                          runId,
+                          taskId,
+                          taskRunId,
+                          repoFullName,
+                          prNumber,
+                          teamId,
+                        });
+
+                        // Trigger the preview job dispatch
+                        await _ctx.scheduler.runAfter(
+                          0,
+                          internal.preview_jobs.requestDispatch,
+                          { previewRunId: runId },
+                        );
+
+                        console.log("[preview-jobs] Preview job dispatch scheduled", {
+                          runId,
+                        });
+                      }
+                    } catch (error) {
+                      console.error("[preview-jobs] Failed to enqueue preview run", {
+                        repoFullName,
+                        prNumber,
+                        error,
+                        teamId,
+                      });
+                    }
                   }
-                } catch (error) {
-                  console.error("[preview-jobs] Failed to enqueue preview run", {
+                } else {
+                  console.log("[preview-jobs] No preview config found for repo", {
                     repoFullName,
-                    prNumber,
-                    error,
+                    teamId,
                   });
                 }
               }
-            } else {
-              console.log("[preview-jobs] No preview config found for repo", {
-                repoFullName,
-                teamId,
-              });
-            }
-          }
+            })
+          );
         } catch (err) {
           console.error("github_webhook pull_request handler failed", {
             err,
@@ -684,12 +768,18 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           const repoFullName = String(pushPayload.repository?.full_name ?? "");
           const installation = Number(pushPayload.installation?.id ?? 0);
           if (!repoFullName || !installation) break;
-          const conn = await _ctx.runQuery(
-            internal.github_app.getProviderConnectionByInstallationId,
-            { installationId: installation },
+          const connections = await loadConnectionsForRepo(
+            installation,
+            repoFullName,
           );
-          const teamId = conn?.teamId;
-          if (!teamId) break;
+          if (connections.length === 0) {
+            console.warn("[push] No connections found for repo", {
+              repoFullName,
+              installation,
+              delivery,
+            });
+            break;
+          }
           const repoPushedAt = normalizeTimestamp(
             pushPayload.repository?.pushed_at,
           );
@@ -710,14 +800,20 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               providerRepoId,
             });
           }
-          await _ctx.runMutation(
-            internal.github.updateRepoActivityFromWebhook,
-            {
-              teamId,
-              repoFullName,
-              pushedAt: pushedAtMillis,
-              providerRepoId,
-            },
+          await Promise.all(
+            connections.map(async (connection) => {
+              const teamId = connection.teamId;
+              if (!teamId) return;
+              await _ctx.runMutation(
+                internal.github.updateRepoActivityFromWebhook,
+                {
+                  teamId,
+                  repoFullName,
+                  pushedAt: pushedAtMillis,
+                  providerRepoId,
+                },
+              );
+            })
           );
         } catch (err) {
           console.error("github_webhook push handler failed", {

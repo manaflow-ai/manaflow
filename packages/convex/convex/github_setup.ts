@@ -32,14 +32,18 @@ export const githubSetup = httpAction(async (ctx, req) => {
   // try to resolve the target team from an existing connection and redirect.
   if (!state) {
     const existing = await ctx.runQuery(
-      internal.github_app.getProviderConnectionByInstallationId,
+      internal.github_app.getProviderConnectionsByInstallationId,
       { installationId }
     );
-    if (existing && existing.teamId) {
+    const teams = existing
+      .filter((connection) => (connection.isActive ?? true) && connection.teamId)
+      .map((connection) => connection.teamId as string);
+    const uniqueTeams = Array.from(new Set(teams));
+    if (uniqueTeams.length === 1) {
       const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
-        teamId: existing.teamId,
+        teamId: uniqueTeams[0],
       });
-      const teamPath = team?.slug ?? existing.teamId;
+      const teamPath = team?.slug ?? uniqueTeams[0];
       // Prefer deep-linking back to the app to finish the flow
       return Response.redirect(toCmuxDeepLink(teamPath), 302);
     }

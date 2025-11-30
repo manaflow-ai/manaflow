@@ -58,24 +58,78 @@ export const upsertProviderConnectionFromInstallation = internalMutation({
     }
   ) => {
     const now = Date.now();
-    const existing = await ctx.db
+    const connections = await ctx.db
       .query("providerConnections")
       .withIndex("by_installationId", (q) =>
         q.eq("installationId", installationId)
       )
-      .first();
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        ...(accountLogin !== undefined ? { accountLogin } : {}),
-        ...(accountId !== undefined ? { accountId } : {}),
-        ...(accountType !== undefined ? { accountType } : {}),
-        teamId: teamId ?? existing.teamId,
-        connectedByUserId: connectedByUserId ?? existing.connectedByUserId,
+      .collect();
+
+    const patchFields = {
+      ...(accountLogin !== undefined ? { accountLogin } : {}),
+      ...(accountId !== undefined ? { accountId } : {}),
+      ...(accountType !== undefined ? { accountType } : {}),
+      updatedAt: now,
+      isActive: isActive ?? true,
+    };
+
+    if (teamId) {
+      const existingForTeam = connections.find(
+        (connection) => connection.teamId === teamId
+      );
+      if (existingForTeam) {
+        await ctx.db.patch(existingForTeam._id, {
+          ...patchFields,
+          teamId,
+          connectedByUserId:
+            connectedByUserId ?? existingForTeam.connectedByUserId,
+        });
+        return existingForTeam._id;
+      }
+
+      const unassigned = connections.find(
+        (connection) => connection.teamId === undefined
+      );
+      if (unassigned) {
+        await ctx.db.patch(unassigned._id, {
+          ...patchFields,
+          teamId,
+          connectedByUserId: connectedByUserId ?? unassigned.connectedByUserId,
+          type: unassigned.type ?? "github_app",
+        });
+        return unassigned._id;
+      }
+
+      const template = connections[0];
+      const id = await ctx.db.insert("providerConnections", {
+        installationId,
+        accountLogin: accountLogin ?? template?.accountLogin,
+        accountId: accountId ?? template?.accountId,
+        accountType: accountType ?? template?.accountType,
+        teamId,
+        connectedByUserId,
+        type: template?.type ?? "github_app",
         isActive: isActive ?? true,
+        createdAt: now,
         updatedAt: now,
       });
-      return existing._id;
+      return id;
     }
+
+    if (connections.length > 0) {
+      await Promise.all(
+        connections.map(async (connection) => {
+          await ctx.db.patch(connection._id, {
+            ...patchFields,
+            connectedByUserId:
+              connectedByUserId ?? connection.connectedByUserId,
+            type: connection.type ?? "github_app",
+          });
+        })
+      );
+      return connections[0]._id;
+    }
+
     const id = await ctx.db.insert("providerConnections", {
       installationId,
       accountLogin,
@@ -95,17 +149,22 @@ export const upsertProviderConnectionFromInstallation = internalMutation({
 export const deactivateProviderConnection = internalMutation({
   args: { installationId: v.number() },
   handler: async (ctx, { installationId }) => {
+    const now = Date.now();
     const existing = await ctx.db
       .query("providerConnections")
       .withIndex("by_installationId", (q) =>
         q.eq("installationId", installationId)
       )
-      .first();
-    if (!existing) return { ok: true } as const;
-    await ctx.db.patch(existing._id, {
-      isActive: false,
-      updatedAt: Date.now(),
-    });
+      .collect();
+    if (existing.length === 0) return { ok: true } as const;
+    await Promise.all(
+      existing.map(async (connection) => {
+        await ctx.db.patch(connection._id, {
+          isActive: false,
+          updatedAt: now,
+        });
+      })
+    );
     return { ok: true } as const;
   },
 });
@@ -207,8 +266,8 @@ export const consumeInstallState = internalMutation({
   },
 });
 
-// Internal helper: fetch provider connection by installation id
-export const getProviderConnectionByInstallationId = internalQuery({
+// Internal helper: fetch provider connections by installation id
+export const getProviderConnectionsByInstallationId = internalQuery({
   args: { installationId: v.number() },
   handler: async (ctx, { installationId }) => {
     return await ctx.db
@@ -216,6 +275,6 @@ export const getProviderConnectionByInstallationId = internalQuery({
       .withIndex("by_installationId", (q) =>
         q.eq("installationId", installationId)
       )
-      .first();
+      .collect();
   },
 });
