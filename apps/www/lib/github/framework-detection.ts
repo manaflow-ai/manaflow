@@ -14,7 +14,6 @@ function chooseFrameworkFromPackageJson(pkg: PackageJson): FrameworkPreset | nul
   if (hasAny("next")) return "next";
   if (hasAny("nuxt")) return "nuxt";
   if (hasAny("@remix-run/node", "@remix-run/serve", "remix")) return "remix";
-  if (hasAny("astro")) return "astro";
   if (hasAny("@sveltejs/kit")) return "sveltekit";
   if (hasAny("@angular/core")) return "angular";
   if (hasAny("react-scripts")) return "cra";
@@ -26,7 +25,6 @@ function chooseFrameworkFromPackageJson(pkg: PackageJson): FrameworkPreset | nul
   if (scriptValues.some((val) => val.includes("next"))) return "next";
   if (scriptValues.some((val) => val.includes("nuxt"))) return "nuxt";
   if (scriptValues.some((val) => val.includes("remix"))) return "remix";
-  if (scriptValues.some((val) => val.includes("astro"))) return "astro";
   if (scriptValues.some((val) => val.includes("svelte"))) return "sveltekit";
   if (scriptValues.some((val) => val.includes("ng "))) return "angular";
   if (scriptValues.some((val) => val.includes("vue"))) return "vue";
@@ -84,7 +82,6 @@ export async function detectFrameworkPreset(repoFullName: string): Promise<Frame
     ["next", ["next.config.js", "next.config.ts", "next.config.mjs"]],
     ["nuxt", ["nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs"]],
     ["remix", ["remix.config.js", "remix.config.ts"]],
-    ["astro", ["astro.config.mjs", "astro.config.ts", "astro.config.js"]],
     ["sveltekit", ["svelte.config.js", "svelte.config.ts"]],
     ["angular", ["angular.json"]],
     ["vite", ["vite.config.ts", "vite.config.js", "vite.config.mjs"]],
