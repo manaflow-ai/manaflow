@@ -12,15 +12,30 @@ import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
 
-const CLEANUP_COMMANDS = [
-  "tmux kill-session -t cmux 2>/dev/null || true",
-  "tmux kill-server 2>/dev/null || true",
-  "git config --global --unset user.name 2>/dev/null || true",
-  "git config --global --unset user.email 2>/dev/null || true",
-  "git config --global --unset credential.helper 2>/dev/null || true",
-  "git credential-cache exit 2>/dev/null || true",
-  "gh auth logout 2>/dev/null || true",
-].join(" && ");
+const DEFAULT_DEV_PORTS = [3000, 3001, 5173, 8000, 8080, 9000, 9779] as const;
+
+const buildCleanupCommands = (ports: readonly number[] = []): string => {
+  const portCommands = Array.from(new Set([...DEFAULT_DEV_PORTS, ...ports]))
+    .map(
+      (port) =>
+        `(pids=$(lsof -ti :${port} 2>/dev/null || true); if [ -n "$pids" ]; then kill -9 $pids 2>/dev/null || true; fi; true)`,
+    );
+
+  return [
+    "tmux kill-session -t cmux 2>/dev/null || true",
+    "tmux kill-server 2>/dev/null || true",
+    "pkill -f '/tmp/cmux-(devserver|maintenance)\\.sh' 2>/dev/null || true",
+    "pkill -f '/var/tmp/cmux-scripts/(dev|maintenance)\\.sh' 2>/dev/null || true",
+    ...portCommands,
+    "git config --global --unset user.name 2>/dev/null || true",
+    "git config --global --unset user.email 2>/dev/null || true",
+    "git config --global --unset credential.helper 2>/dev/null || true",
+    "git credential-cache exit 2>/dev/null || true",
+    "gh auth logout 2>/dev/null || true",
+  ]
+    .filter(Boolean)
+    .join(" && ");
+};
 
 export const environmentsRouter = new OpenAPIHono();
 
@@ -249,7 +264,7 @@ environmentsRouter.openapi(
         return { dataVaultKey };
       })();
 
-      await instance.exec(CLEANUP_COMMANDS);
+      await instance.exec(buildCleanupCommands(sanitizedPorts));
 
       const snapshot = await instance.snapshot();
 
@@ -855,6 +870,15 @@ environmentsRouter.openapi(
       });
 
       const convexClient = getConvex({ accessToken });
+      const environment = await convexClient.query(api.environments.get, {
+        teamSlugOrId: body.teamSlugOrId,
+        id: environmentId,
+      });
+
+      if (!environment) {
+        return c.text("Environment not found", 404);
+      }
+
       const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await morphClient.instances.get({
         instanceId: body.morphInstanceId,
@@ -873,7 +897,7 @@ environmentsRouter.openapi(
         );
       }
 
-      await instance.exec(CLEANUP_COMMANDS);
+      await instance.exec(buildCleanupCommands(environment.exposedPorts ?? []));
 
       const snapshot = await instance.snapshot();
 
