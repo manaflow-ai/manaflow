@@ -192,6 +192,8 @@ export const updateStatus = internalMutation({
         if (args.status === "completed" || args.status === "skipped") {
           await ctx.db.patch(taskRun.taskId, {
             isCompleted: true,
+            crownEvaluationStatus: "succeeded",
+            crownEvaluationError: undefined,
             updatedAt: now,
           });
         }
