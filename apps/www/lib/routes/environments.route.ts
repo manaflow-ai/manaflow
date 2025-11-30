@@ -18,7 +18,7 @@ const buildCleanupCommands = (): string => {
   // Be aggressive inside the isolated workspace: kill tmux windows and any process
   // tied to orchestrator scripts or files under the workspace, so dev servers can't linger.
   const killWorkspaceProcs =
-    `(pids=$(lsof -ti +D ${WORKSPACE_ROOT} 2>/dev/null || true); ` +
+    `(pids=$(pgrep -f '${WORKSPACE_ROOT}' 2>/dev/null || true); ` +
     `if [ -n "$pids" ]; then kill -9 $pids 2>/dev/null || true; fi; true)`;
 
   return [
