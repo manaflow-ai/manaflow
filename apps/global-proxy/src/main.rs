@@ -39,6 +39,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workspace_domain_suffix = std::env::var("GLOBAL_PROXY_WORKSPACE_DOMAIN_SUFFIX")
         .ok()
         .and_then(normalize_suffix);
+    let freestyle_domain_suffix = std::env::var("GLOBAL_PROXY_FREESTYLE_DOMAIN_SUFFIX")
+        .ok()
+        .and_then(normalize_suffix);
 
     let handle = spawn_proxy(ProxyConfig {
         bind_addr,
@@ -46,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         backend_scheme,
         morph_domain_suffix,
         workspace_domain_suffix,
+        freestyle_domain_suffix,
     })
     .await?;
 

@@ -50,6 +50,7 @@ pub struct ProxyConfig {
     pub backend_scheme: Scheme,
     pub morph_domain_suffix: Option<String>,
     pub workspace_domain_suffix: Option<String>,
+    pub freestyle_domain_suffix: Option<String>,
 }
 
 impl Default for ProxyConfig {
@@ -60,6 +61,7 @@ impl Default for ProxyConfig {
             backend_scheme: Scheme::HTTP,
             morph_domain_suffix: None,
             workspace_domain_suffix: None,
+            freestyle_domain_suffix: None,
         }
     }
 }
@@ -93,6 +95,7 @@ struct AppState {
     backend_scheme: Scheme,
     morph_domain_suffix: Option<String>,
     workspace_domain_suffix: Option<String>,
+    freestyle_domain_suffix: Option<String>,
 }
 
 pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError> {
@@ -113,6 +116,7 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
         backend_scheme: config.backend_scheme,
         morph_domain_suffix: config.morph_domain_suffix,
         workspace_domain_suffix: config.workspace_domain_suffix,
+        freestyle_domain_suffix: config.freestyle_domain_suffix,
     });
 
     let make_svc = make_service_fn(move |_conn: &AddrStream| {
@@ -303,6 +307,42 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         add_cors: false,
                         strip_cors_headers: false,
                         workspace_header: Some(route.workspace),
+                        port_header: Some(route.port.to_string()),
+                        frame_ancestors: None,
+                    },
+                )
+                .await;
+            }
+            Route::Freestyle(route) => {
+                if is_loop_header(&req) {
+                    return text_response(StatusCode::LOOP_DETECTED, "Loop detected in proxy");
+                }
+
+                if *req.method() == Method::OPTIONS {
+                    return cors_response(StatusCode::NO_CONTENT);
+                }
+
+                // Route to Freestyle VM: https://{vm_id}.vm.freestyle.sh/
+                let target = if let Some(suffix) = state.freestyle_domain_suffix.clone() {
+                    let host = format!("{}{}", route.vm_id, suffix);
+                    Target::Absolute {
+                        scheme: Scheme::HTTPS,
+                        host,
+                        port: None,
+                    }
+                } else {
+                    Target::BackendPort(route.port)
+                };
+
+                return forward_request(
+                    state,
+                    req,
+                    target,
+                    ProxyBehavior {
+                        skip_service_worker: true,
+                        add_cors: true,
+                        strip_cors_headers: false,
+                        workspace_header: None,
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
                     },
@@ -1133,6 +1173,47 @@ fn parse_route(subdomain: String) -> Route {
         });
     }
 
+    // Freestyle routes: cmuf-{vm_id}-base-{port}
+    if let Some(rest) = subdomain.strip_prefix("cmuf-") {
+        let segments: Vec<&str> = rest.split('-').collect();
+        // Expect at least: {vm_id}-base-{port} (3 segments minimum)
+        if segments.len() < 3 {
+            return Route::Invalid(text_response(
+                StatusCode::BAD_REQUEST,
+                "Invalid cmuf proxy subdomain",
+            ));
+        }
+        let vm_id = segments[0];
+        if vm_id.is_empty() {
+            return Route::Invalid(text_response(
+                StatusCode::BAD_REQUEST,
+                "Missing vm id in cmuf proxy subdomain",
+            ));
+        }
+        let port_segment = match segments.last() {
+            Some(seg) => *seg,
+            None => {
+                return Route::Invalid(text_response(
+                    StatusCode::BAD_REQUEST,
+                    "Invalid cmuf proxy subdomain",
+                ));
+            }
+        };
+        let port = match port_segment.parse::<u16>() {
+            Ok(port) => port,
+            Err(_) => {
+                return Route::Invalid(text_response(
+                    StatusCode::BAD_REQUEST,
+                    "Invalid port in cmuf proxy subdomain",
+                ));
+            }
+        };
+        return Route::Freestyle(FreestyleRoute {
+            vm_id: vm_id.to_string(),
+            port,
+        });
+    }
+
     let parts: Vec<&str> = subdomain.split('-').collect();
     if parts.len() < 3 {
         return Route::Invalid(text_response(
@@ -1196,10 +1277,16 @@ struct WorkspaceRoute {
     vm_slug: String,
 }
 
+struct FreestyleRoute {
+    vm_id: String,
+    port: u16,
+}
+
 enum Route {
     Port(PortRoute),
     Cmux(CmuxRoute),
     Workspace(WorkspaceRoute),
+    Freestyle(FreestyleRoute),
     Invalid(Response<Body>),
 }
 
