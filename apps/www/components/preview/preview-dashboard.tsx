@@ -351,15 +351,15 @@ export function PreviewDashboard({
         }
         const payload = (await response.json()) as { repos: RepoSearchResult[] };
         setRepos(trimmed ? payload.repos : payload.repos.slice(0, 5));
+        setIsLoadingRepos(false);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
-          // Request was cancelled, don't update state
+          // Request was cancelled, don't update any state
           return;
         }
         const message = err instanceof Error ? err.message : "Failed to load repositories";
         console.error("[PreviewDashboard] Failed to load repositories", err);
         setErrorMessage(message);
-      } finally {
         setIsLoadingRepos(false);
       }
     },
@@ -371,7 +371,6 @@ export function PreviewDashboard({
   useEffect(() => {
     if (!canSearchRepos || selectedInstallationId === null) {
       setRepos([]);
-      setIsLoadingRepos(false);
       return;
     }
 
@@ -406,7 +405,6 @@ export function PreviewDashboard({
       };
     } else {
       setRepos([]);
-      setIsLoadingRepos(false);
     }
   }, [selectedInstallationId, fetchRepos]);
 
