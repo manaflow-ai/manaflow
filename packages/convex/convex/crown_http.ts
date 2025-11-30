@@ -736,6 +736,104 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
       pullRequestDescription: validation.data.pullRequestDescription,
     });
 
+    // After successful crown evaluation, trigger preview job if there's a PR
+    const pullRequest = validation.data.pullRequest;
+    if (pullRequest?.url && pullRequest?.number && task.projectFullName) {
+      try {
+        // Get the winning taskRun to extract branch info
+        const winningTaskRun = await ctx.runQuery(internal.taskRuns.getById, {
+          id: winnerRunId,
+        });
+
+        const enqueueResult = await ctx.runMutation(
+          internal.previewRuns.enqueueFromCrown,
+          {
+            teamId: workerAuth.payload.teamId,
+            userId: workerAuth.payload.userId,
+            repoFullName: task.projectFullName,
+            prNumber: pullRequest.number,
+            prUrl: pullRequest.url,
+            headSha: winningTaskRun?.screenshotCommitSha,
+            headRef: winningTaskRun?.newBranch,
+          }
+        );
+
+        if (enqueueResult.created && enqueueResult.previewRunId && enqueueResult.previewConfigId) {
+          console.log("[convex.crown] Preview run created from crown worker", {
+            previewRunId: enqueueResult.previewRunId,
+            prNumber: pullRequest.number,
+            repoFullName: task.projectFullName,
+          });
+
+          // Get the preview config to access environmentId and createdByUserId
+          const previewConfig = await ctx.runQuery(
+            internal.previewConfigs.getByIdInternal,
+            { id: enqueueResult.previewConfigId }
+          );
+
+          if (previewConfig) {
+            // Create task and taskRun for the preview job
+            const previewTaskId = await ctx.runMutation(
+              internal.tasks.createForPreview,
+              {
+                teamId: workerAuth.payload.teamId,
+                userId: previewConfig.createdByUserId,
+                previewRunId: enqueueResult.previewRunId,
+                repoFullName: task.projectFullName,
+                prNumber: pullRequest.number,
+                prUrl: pullRequest.url,
+                headSha: enqueueResult.previewRunId.toString(), // Use previewRunId as placeholder if no SHA
+                baseBranch: previewConfig.repoDefaultBranch,
+              }
+            );
+
+            const { taskRunId: previewTaskRunId } = await ctx.runMutation(
+              internal.taskRuns.createForPreview,
+              {
+                taskId: previewTaskId,
+                teamId: workerAuth.payload.teamId,
+                userId: previewConfig.createdByUserId,
+                prUrl: pullRequest.url,
+                environmentId: previewConfig.environmentId,
+                newBranch: winningTaskRun?.newBranch,
+              }
+            );
+
+            // Link the taskRun to the preview run
+            await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+              previewRunId: enqueueResult.previewRunId,
+              taskRunId: previewTaskRunId,
+            });
+
+            // Dispatch the preview job
+            await ctx.scheduler.runAfter(
+              0,
+              internal.preview_jobs.requestDispatch,
+              { previewRunId: enqueueResult.previewRunId }
+            );
+
+            console.log("[convex.crown] Preview job dispatched from crown worker", {
+              previewRunId: enqueueResult.previewRunId,
+              taskId: previewTaskId,
+              taskRunId: previewTaskRunId,
+            });
+          }
+        } else {
+          console.log("[convex.crown] Preview run not created", {
+            reason: enqueueResult.reason,
+            existingPreviewRunId: enqueueResult.previewRunId,
+          });
+        }
+      } catch (previewError) {
+        // Log but don't fail the whole finalize operation
+        console.error("[convex.crown] Failed to create preview job", {
+          taskId,
+          prUrl: pullRequest.url,
+          error: previewError,
+        });
+      }
+    }
+
     return jsonResponse({ ok: true, winnerRunId: winningId });
   } catch (error) {
     console.error("[convex.crown] Worker finalize failed", error);

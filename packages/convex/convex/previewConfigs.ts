@@ -158,3 +158,12 @@ export const getByTeamAndRepo = internalQuery({
     return config ?? null;
   },
 });
+
+export const getByIdInternal = internalQuery({
+  args: {
+    id: v.id("previewConfigs"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});

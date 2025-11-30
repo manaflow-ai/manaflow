@@ -27,7 +27,8 @@ export const enqueueFromWebhook = internalMutation({
       ? normalizeRepoFullName(args.headRepoFullName)
       : undefined;
 
-    const existing = await ctx.db
+    // Check if a preview run already exists for this config + headSha combination
+    const existingBySha = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_head", (q) =>
         q.eq("previewConfigId", args.previewConfigId).eq("headSha", args.headSha),
@@ -35,8 +36,22 @@ export const enqueueFromWebhook = internalMutation({
       .order("desc")
       .first();
 
-    if (existing && (existing.status === "pending" || existing.status === "running")) {
-      return existing._id;
+    if (existingBySha && (existingBySha.status === "pending" || existingBySha.status === "running")) {
+      return existingBySha._id;
+    }
+
+    // Also check if there's already a pending/running preview for this PR
+    // This prevents duplicates when both webhook and crown worker try to create preview jobs
+    const existingByPr = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .first();
+
+    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
+      return existingByPr._id;
     }
 
     const now = Date.now();
@@ -85,6 +100,104 @@ export const linkTaskRun = internalMutation({
       taskRunId: args.taskRunId,
       updatedAt: Date.now(),
     });
+  },
+});
+
+/**
+ * Enqueue a preview run from the crown worker path.
+ * This is called after a task completes and creates a PR.
+ * Returns the existing previewRun ID if one already exists for this PR (pending/running),
+ * or null if no preview config exists for the repo.
+ */
+export const enqueueFromCrown = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    headSha: v.optional(v.string()),
+    headRef: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+
+    // Look up the preview config for this repo
+    const previewConfig = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_team_repo", (q) =>
+        q.eq("teamId", args.teamId).eq("repoFullName", repoFullName),
+      )
+      .first();
+
+    if (!previewConfig) {
+      // No preview config for this repo, nothing to do
+      return { created: false, previewRunId: null, reason: "no_config" } as const;
+    }
+
+    // Check if a preview run already exists for this config + headSha combination (if we have headSha)
+    const providedHeadSha = args.headSha;
+    if (providedHeadSha) {
+      const existingBySha = await ctx.db
+        .query("previewRuns")
+        .withIndex("by_config_head", (q) =>
+          q.eq("previewConfigId", previewConfig._id).eq("headSha", providedHeadSha),
+        )
+        .order("desc")
+        .first();
+
+      if (existingBySha && (existingBySha.status === "pending" || existingBySha.status === "running")) {
+        return { created: false, previewRunId: existingBySha._id, reason: "existing_by_sha" } as const;
+      }
+    }
+
+    // Also check if there's already a pending/running preview for this PR
+    const existingByPr = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", previewConfig._id).eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .first();
+
+    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
+      return { created: false, previewRunId: existingByPr._id, reason: "existing_by_pr" } as const;
+    }
+
+    // Generate a placeholder headSha if not provided (needed for the index)
+    // This will be a unique-ish value based on PR number and timestamp
+    const headSha = args.headSha ?? `crown-${args.prNumber}-${Date.now()}`;
+
+    // Create a new preview run
+    const now = Date.now();
+    const runId = await ctx.db.insert("previewRuns", {
+      previewConfigId: previewConfig._id,
+      teamId: args.teamId,
+      repoFullName,
+      repoInstallationId: previewConfig.repoInstallationId,
+      prNumber: args.prNumber,
+      prUrl: args.prUrl,
+      headSha,
+      baseSha: undefined,
+      headRef: args.headRef,
+      headRepoFullName: undefined,
+      headRepoCloneUrl: undefined,
+      status: "pending",
+      dispatchedAt: undefined,
+      startedAt: undefined,
+      completedAt: undefined,
+      screenshotSetId: undefined,
+      githubCommentUrl: undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.patch(previewConfig._id, {
+      lastRunAt: now,
+      updatedAt: now,
+    });
+
+    return { created: true, previewRunId: runId, previewConfigId: previewConfig._id, reason: "created" } as const;
   },
 });
 
@@ -176,6 +289,27 @@ export const getByTaskRunId = internalQuery({
       .filter((q) => q.eq(q.field("taskRunId"), args.taskRunId))
       .first();
     return run ?? null;
+  },
+});
+
+export const getExistingPendingOrRunningByPr = internalQuery({
+  args: {
+    previewConfigId: v.id("previewConfigs"),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .first();
+
+    if (existing && (existing.status === "pending" || existing.status === "running")) {
+      return existing;
+    }
+    return null;
   },
 });
 
