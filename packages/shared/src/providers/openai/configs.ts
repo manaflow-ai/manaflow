@@ -89,6 +89,25 @@ export const CODEX_GPT_5_1_CODEX_MAX_LOW_REASONING_CONFIG: AgentConfig = {
   completionDetector: startCodexCompletionDetector,
 };
 
+export const CODEX_GPT_5_1_CODEX_MAX_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.1-codex-max",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.1-codex-max",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
 export const CODEX_GPT_5_1_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1",
   command: "bunx",

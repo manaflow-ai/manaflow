@@ -190,26 +190,34 @@ export function PreviewDashboard({
   );
 
   const handleStartPreview = useCallback(async () => {
-    if (!selectedTeamSlugOrIdState) {
-      setErrorMessage("Select a team before continuing.");
-      return;
-    }
-
     const repoName = parseGithubUrl(repoUrlInput);
     if (!repoName) {
       setErrorMessage("Please enter a valid GitHub URL or owner/repo");
       return;
     }
-    const params = new URLSearchParams({ repo: repoName });
-    params.set("team", selectedTeamSlugOrIdState);
-    const configurePath = `/preview/configure?${params.toString()}`;
 
+    // For unauthenticated users, redirect to sign-in without requiring team selection
     if (!isAuthenticated) {
+      const params = new URLSearchParams({ repo: repoName });
+      // Include team if available, otherwise the configure page will handle it after sign-in
+      if (selectedTeamSlugOrIdState) {
+        params.set("team", selectedTeamSlugOrIdState);
+      }
+      const configurePath = `/preview/configure?${params.toString()}`;
       setErrorMessage(null);
       setNavigatingRepo("__url_input__");
       window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
       return;
     }
+
+    if (!selectedTeamSlugOrIdState) {
+      setErrorMessage("Select a team before continuing.");
+      return;
+    }
+
+    const params = new URLSearchParams({ repo: repoName });
+    params.set("team", selectedTeamSlugOrIdState);
+    const configurePath = `/preview/configure?${params.toString()}`;
 
     if (!hasGithubAppInstallation) {
       setErrorMessage(null);
@@ -327,7 +335,7 @@ export function PreviewDashboard({
   };
 
   const fetchRepos = useCallback(
-    async (searchTerm: string) => {
+    async (searchTerm: string, signal?: AbortSignal) => {
       if (!canSearchRepos || selectedInstallationId === null) {
         setRepos([]);
         return;
@@ -343,17 +351,23 @@ export function PreviewDashboard({
         if (trimmed) {
           params.set("search", trimmed);
         }
-        const response = await fetch(`/api/integrations/github/repos?${params.toString()}`);
+        const response = await fetch(`/api/integrations/github/repos?${params.toString()}`, {
+          signal,
+        });
         if (!response.ok) {
           throw new Error(await response.text());
         }
         const payload = (await response.json()) as { repos: RepoSearchResult[] };
         setRepos(trimmed ? payload.repos : payload.repos.slice(0, 5));
+        setIsLoadingRepos(false);
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          // Request was cancelled, don't update any state
+          return;
+        }
         const message = err instanceof Error ? err.message : "Failed to load repositories";
         console.error("[PreviewDashboard] Failed to load repositories", err);
         setErrorMessage(message);
-      } finally {
         setIsLoadingRepos(false);
       }
     },
@@ -361,15 +375,22 @@ export function PreviewDashboard({
   );
 
 
-  // Debounced search effect
+  // Debounced search effect with abort controller
   useEffect(() => {
-    if (!canSearchRepos || selectedInstallationId === null) return;
+    if (!canSearchRepos || selectedInstallationId === null) {
+      setRepos([]);
+      return;
+    }
 
+    const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
-      void fetchRepos(repoSearch);
+      void fetchRepos(repoSearch, abortController.signal);
     }, 300);
 
-    return () => clearTimeout(timeoutId);
+    return () => {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    };
   }, [repoSearch, canSearchRepos, selectedInstallationId, fetchRepos]);
 
   const handleContinue = useCallback((repoName: string) => {
@@ -385,7 +406,11 @@ export function PreviewDashboard({
 
   useEffect(() => {
     if (selectedInstallationId !== null) {
-      void fetchRepos("");
+      const abortController = new AbortController();
+      void fetchRepos("", abortController.signal);
+      return () => {
+        abortController.abort();
+      };
     } else {
       setRepos([]);
     }
@@ -447,6 +472,9 @@ export function PreviewDashboard({
                 void handleInstallGithubApp();
                 return;
               }
+              // Clear repos and show loading state immediately when switching accounts
+              setRepos([]);
+              setIsLoadingRepos(true);
               setSelectedInstallationId(Number(value));
             }}
             className="h-10 appearance-none bg-transparent py-2 pl-11 pr-8 text-sm text-white focus:outline-none"
@@ -539,7 +567,7 @@ export function PreviewDashboard({
         </Link>
 
         <h1 className="text-3xl font-semibold tracking-tight text-white mb-2">
-          Screenshot previews for your PRs
+          Screenshot previews for GitHub PRs
         </h1>
         <p className="text-base text-neutral-400 max-w-2xl">
           preview.new sets up a GitHub agent that takes screenshot previews of your dev server so you
@@ -563,7 +591,7 @@ export function PreviewDashboard({
           </div>
           <Button
             onClick={() => void handleStartPreview()}
-            disabled={!repoUrlInput.trim() || navigatingRepo !== null || !selectedTeamSlugOrIdState}
+            disabled={!repoUrlInput.trim() || navigatingRepo !== null || (isAuthenticated && !selectedTeamSlugOrIdState)}
             className="h-10 px-4 rounded-none bg-white text-black hover:bg-neutral-200 text-sm font-medium"
           >
             {navigatingRepo === "__url_input__" ? (
@@ -575,7 +603,7 @@ export function PreviewDashboard({
         </div>
         {!isAuthenticated && (
           <p className="text-xs text-neutral-500 mt-2">
-            Sign in to connect private repos.
+            You&apos;ll be asked to sign in to continue.
           </p>
         )}
         {errorMessage && (

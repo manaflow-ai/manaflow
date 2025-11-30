@@ -4,7 +4,6 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { GitDiffManager } from "./gitDiff";
 
-import { createProxyApp, setupWebSocketProxy } from "./proxyApp";
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
 import { getConvex } from "./utils/convexClient";
@@ -31,11 +30,9 @@ export type GitRepoInfo = {
 
 export async function startServer({
   port,
-  publicPath,
   defaultRepo,
 }: {
   port: number;
-  publicPath: string;
   defaultRepo?: GitRepoInfo | null;
 }) {
   // Check system limits and warn if too low
@@ -54,13 +51,11 @@ export async function startServer({
   // Git diff manager instance
   const gitDiffManager = new GitDiffManager();
 
-  // Create Express proxy app
-  const proxyApp = createProxyApp({ publicPath });
-
-  // Create HTTP server with Express app
-  const httpServer = createServer(proxyApp);
-
-  setupWebSocketProxy(httpServer);
+  // Create HTTP server for socket connections (no HTTP proxying)
+  const httpServer = createServer((_, res) => {
+    res.statusCode = 404;
+    res.end("Not found");
+  });
 
   // Create Socket.IO transport
   const rt = createSocketIOTransport(httpServer);
@@ -72,7 +67,6 @@ export async function startServer({
 
   const server = httpServer.listen(port, async () => {
     serverLogger.info(`Terminal server listening on port ${port}`);
-    serverLogger.info(`Visit http://localhost:${port} to see the app`);
 
     // Store default repo info if provided
     if (defaultRepo?.remoteName) {

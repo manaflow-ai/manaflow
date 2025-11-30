@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 
 export const createScreenshotSet = internalMutation({
   args: {
@@ -18,32 +19,65 @@ export const createScreenshotSet = internalMutation({
         mimeType: v.string(),
         fileName: v.optional(v.string()),
         commitSha: v.optional(v.string()),
-        width: v.optional(v.number()),
-        height: v.optional(v.number()),
       }),
     ),
   },
-  handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.previewRunId);
-    if (!run) {
+  handler: async (ctx, args): Promise<Id<"taskRunScreenshotSets">> => {
+    const previewRun = await ctx.db.get(args.previewRunId);
+    if (!previewRun) {
       throw new Error("Preview run not found");
     }
 
-    const now = Date.now();
-    const screenshotSetId = await ctx.db.insert("previewScreenshotSets", {
-      previewRunId: args.previewRunId,
-      status: args.status,
-      commitSha: args.commitSha,
-      capturedAt: now,
-      error: args.error,
-      images: args.images,
-      createdAt: now,
-      updatedAt: now,
-    });
+    if (!previewRun.taskRunId) {
+      throw new Error("Preview run is not linked to a task run");
+    }
+
+    const taskRun = await ctx.db.get(previewRun.taskRunId);
+    if (!taskRun) {
+      throw new Error("Task run not found for preview run");
+    }
+
+    if (args.status === "completed" && args.images.length === 0) {
+      throw new Error("At least one screenshot is required for completed status");
+    }
+
+    const screenshots = args.images.map((image) => ({
+      storageId: image.storageId,
+      mimeType: image.mimeType,
+      fileName: image.fileName,
+      commitSha: image.commitSha ?? args.commitSha,
+    }));
+
+    const screenshotSetId: Id<"taskRunScreenshotSets"> = await ctx.runMutation(
+      internal.tasks.recordScreenshotResult,
+      {
+        taskId: taskRun.taskId,
+        runId: taskRun._id,
+        status: args.status,
+        screenshots,
+        error: args.error,
+      },
+    );
+
+    const primaryScreenshot = screenshots[0];
+    if (primaryScreenshot) {
+      await ctx.runMutation(internal.taskRuns.updateScreenshotMetadata, {
+        id: taskRun._id,
+        storageId: primaryScreenshot.storageId,
+        mimeType: primaryScreenshot.mimeType,
+        fileName: primaryScreenshot.fileName,
+        commitSha: primaryScreenshot.commitSha,
+        screenshotSetId,
+      });
+    } else if (args.status !== "completed") {
+      await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
+        id: taskRun._id,
+      });
+    }
 
     await ctx.db.patch(args.previewRunId, {
       screenshotSetId,
-      updatedAt: now,
+      updatedAt: Date.now(),
     });
 
     return screenshotSetId;
@@ -52,7 +86,7 @@ export const createScreenshotSet = internalMutation({
 
 export const getScreenshotSet = internalQuery({
   args: {
-    screenshotSetId: v.id("previewScreenshotSets"),
+    screenshotSetId: v.id("taskRunScreenshotSets"),
   },
   handler: async (ctx, args) => {
     const set = await ctx.db.get(args.screenshotSetId);

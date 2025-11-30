@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { editorIcons } from "@/components/ui/dropdown-types";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { Menu } from "@base-ui-components/react/menu";
@@ -204,6 +205,11 @@ export function OpenEditorSplitButton({
     if (!selected) return;
     openEditor(selected.id);
   }, [openEditor, selected]);
+
+  // In web mode, opening local editors is not available
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    return null;
+  }
 
   return (
     <div className="flex items-stretch">

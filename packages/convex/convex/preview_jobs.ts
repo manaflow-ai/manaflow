@@ -12,27 +12,43 @@ export const stopPreviewInstance = internalAction({
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, { previewRunId }) => {
-    const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
-      id: previewRunId,
-    });
-
-    if (!previewRun?.morphInstanceId) {
-      return;
-    }
-    if (previewRun.morphInstanceStoppedAt) {
-      console.log("[preview-jobs] Morph instance already stopped", {
-        previewRunId: previewRun._id,
-        morphInstanceId: previewRun.morphInstanceId,
+    const previewRun = await ctx.runQuery(internal.previewRuns.getById, { id: previewRunId });
+    if (!previewRun) {
+      console.warn("[preview-jobs] Preview run not found when stopping instance", {
+        previewRunId,
       });
       return;
     }
+
+    if (!previewRun.taskRunId) {
+      console.warn("[preview-jobs] Preview run missing taskRunId, cannot stop instance", {
+        previewRunId: previewRun._id,
+      });
+      return;
+    }
+
+    const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+      id: previewRun.taskRunId,
+    });
+
+    const containerName = taskRun?.vscode?.containerName;
+    const provider = taskRun?.vscode?.provider ?? "morph";
+
+    if (!taskRun || !containerName) {
+      console.warn("[preview-jobs] Task run missing Morph container info", {
+        previewRunId: previewRun._id,
+        taskRunId: previewRun.taskRunId,
+      });
+      return;
+    }
+
     const morphApiKey = process.env.MORPH_API_KEY;
     if (!morphApiKey) {
       console.warn(
         "[preview-jobs] Cannot stop Morph instance without MORPH_API_KEY",
         {
           previewRunId: previewRun._id,
-          morphInstanceId: previewRun.morphInstanceId,
+          taskRunId: taskRun._id,
         }
       );
       return;
@@ -44,50 +60,38 @@ export const stopPreviewInstance = internalAction({
     try {
       await stopInstanceInstanceInstanceIdDelete({
         client: morphClient,
-        path: { instance_id: previewRun.morphInstanceId },
+        path: { instance_id: containerName },
       });
     } catch (error) {
       console.error("[preview-jobs] Failed to stop Morph instance", {
         previewRunId: previewRun._id,
-        morphInstanceId: previewRun.morphInstanceId,
+        taskRunId: taskRun._id,
+        containerName,
         error,
       });
     }
 
     try {
-      await ctx.runMutation(internal.previewRuns.updateInstanceMetadata, {
-        previewRunId: previewRun._id,
-        morphInstanceStoppedAt: stoppedAt,
+      await ctx.runMutation(internal.taskRuns.updateVSCodeMetadataInternal, {
+        taskRunId: taskRun._id,
+        vscode: {
+          provider,
+          status: "stopped",
+          containerName,
+          stoppedAt,
+        },
+        networking: [],
       });
     } catch (error) {
-      console.error("[preview-jobs] Failed to record Morph instance stop time", {
-        previewRunId: previewRun._id,
-        error,
-      });
-    }
-
-    if (previewRun.taskRunId) {
-      try {
-        await ctx.runMutation(internal.taskRuns.updateVSCodeMetadataInternal, {
-          taskRunId: previewRun.taskRunId,
-          vscode: {
-            provider: "morph",
-            status: "stopped",
-            containerName: previewRun.morphInstanceId,
-            stoppedAt,
-          },
-          networking: [],
-        });
-      } catch (error) {
-        console.error(
-          "[preview-jobs] Failed to update task run VSCode metadata after stop",
-          {
-            previewRunId: previewRun._id,
-            taskRunId: previewRun.taskRunId,
-            error,
-          }
-        );
-      }
+      console.error(
+        "[preview-jobs] Failed to update task run VSCode metadata after stop",
+        {
+          previewRunId: previewRun._id,
+          taskRunId: taskRun._id,
+          containerName,
+          error,
+        }
+      );
     }
   },
 });
@@ -117,6 +121,32 @@ export const requestDispatch = internalAction({
       headSha: payload.run.headSha?.slice(0, 7),
       status: payload.run.status,
     });
+
+    // Check if there's already an active preview run for this PR
+    // Skip dispatch if another run is already running (prevents duplicate jobs)
+    const activeRun = await ctx.runQuery(internal.previewRuns.getActiveByConfigAndPr, {
+      previewConfigId: payload.config._id,
+      prNumber: payload.run.prNumber,
+    });
+
+    if (activeRun && activeRun._id !== args.previewRunId) {
+      console.log("[preview-jobs] Another preview run is already active for this PR; skipping dispatch", {
+        previewRunId: args.previewRunId,
+        activeRunId: activeRun._id,
+        activeStatus: activeRun.status,
+        prNumber: payload.run.prNumber,
+      });
+      return;
+    }
+
+    // Also skip if this specific run is not pending (e.g., already running or completed)
+    if (payload.run.status !== "pending") {
+      console.log("[preview-jobs] Preview run is not pending; skipping dispatch", {
+        previewRunId: args.previewRunId,
+        status: payload.run.status,
+      });
+      return;
+    }
 
     try {
       await ctx.runMutation(internal.previewRuns.markDispatched, {

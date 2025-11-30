@@ -17,6 +17,9 @@ import type { ActionCtx } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 import type { WorkerAuthContext } from "./users/utils/getWorkerAuth";
 
+type TaskRunDoc = Doc<"taskRuns">;
+type TeamMembershipDoc = Doc<"teamMemberships">;
+
 const JSON_HEADERS = {
   "Content-Type": "application/json",
 };
@@ -85,9 +88,9 @@ async function ensureTeamMembership(
   }
 
   const memberships = await ctx.runQuery(api.teams.listTeamMemberships, {});
-  const hasMembership = memberships.some((membership) => {
-    return membership.teamId === team.uuid;
-  });
+  const hasMembership = memberships.some(
+    (membership: TeamMembershipDoc) => membership.teamId === team.uuid
+  );
 
   if (!hasMembership) {
     console.warn("[convex.crown] User missing membership", {
@@ -512,14 +515,14 @@ async function handleAllCompleteRequest(
     }
   );
 
-  const statuses = runsForTeam.map((run) => ({
+  const statuses = runsForTeam.map((run: TaskRunDoc) => ({
     id: run._id,
     status: run.status,
   }));
 
   const allComplete =
     runsForTeam.length > 0 &&
-    runsForTeam.every((run) => run.status === "completed");
+    runsForTeam.every((run: TaskRunDoc) => run.status === "completed");
 
   const response = {
     ok: true,
@@ -585,13 +588,15 @@ async function handleCrownCheckRequest(
       }),
     ]);
 
-  const allRunsFinished = runsForTeam.every((run) =>
+  const allRunsFinished = runsForTeam.every((run: TaskRunDoc) =>
     ["completed", "failed"].includes(run.status)
   );
   const allWorkersReported = runsForTeam.every(
-    (run) => run.status === "completed"
+    (run: TaskRunDoc) => run.status === "completed"
   );
-  const completedRuns = runsForTeam.filter((run) => run.status === "completed");
+  const completedRuns = runsForTeam.filter(
+    (run: TaskRunDoc) => run.status === "completed"
+  );
 
   const shouldEvaluate =
     allRunsFinished &&
@@ -649,7 +654,7 @@ async function handleCrownCheckRequest(
       projectFullName: task.projectFullName ?? null,
       autoPrEnabled: workspaceSettings?.autoPrEnabled ?? false,
     },
-    runs: runsForTeam.map((run) => ({
+    runs: runsForTeam.map((run: TaskRunDoc) => ({
       id: run._id,
       status: run.status as WorkerRunStatus,
       agentName: run.agentName ?? null,
@@ -797,6 +802,47 @@ export const crownWorkerComplete = httpAction(async (ctx, req) => {
     await ctx.runMutation(internal.taskRuns.updateScheduledStopInternal, {
       taskRunId,
       scheduledStopAt,
+    });
+  }
+
+  // Try to create/link a preview run for this task run if it has PR info
+  // This enables screenshot capture and GitHub comment posting for crown tasks
+  try {
+    const previewResult = await ctx.runMutation(
+      internal.previewRuns.enqueueFromTaskRun,
+      { taskRunId }
+    );
+
+    if (previewResult.created && previewResult.previewRunId) {
+      console.log("[convex.crown] Preview run created/linked for task run", {
+        taskRunId,
+        previewRunId: previewResult.previewRunId,
+        isNew: previewResult.isNew,
+      });
+
+      // If a new preview run was created, dispatch it to start the preview job
+      if (previewResult.isNew) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.preview_jobs.requestDispatch,
+          { previewRunId: previewResult.previewRunId }
+        );
+        console.log("[convex.crown] Preview job dispatch scheduled", {
+          taskRunId,
+          previewRunId: previewResult.previewRunId,
+        });
+      }
+    } else {
+      console.log("[convex.crown] No preview run created for task run", {
+        taskRunId,
+        reason: previewResult.reason,
+      });
+    }
+  } catch (error) {
+    // Don't fail the completion if preview run creation fails
+    console.error("[convex.crown] Failed to create preview run for task run", {
+      taskRunId,
+      error,
     });
   }
 

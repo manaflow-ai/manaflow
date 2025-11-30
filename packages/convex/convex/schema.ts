@@ -96,6 +96,7 @@ const convexSchema = defineSchema({
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
     pinned: v.optional(v.boolean()),
+    isPreview: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
     description: v.optional(v.string()),
@@ -588,15 +589,12 @@ const convexSchema = defineSchema({
       v.literal("failed"),
       v.literal("skipped"),
     ),
-    stateReason: v.optional(v.string()),
     dispatchedAt: v.optional(v.number()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
-    screenshotSetId: v.optional(v.id("previewScreenshotSets")),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
     githubCommentId: v.optional(v.number()),
-    morphInstanceId: v.optional(v.string()),
-    morphInstanceStoppedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -604,30 +602,6 @@ const convexSchema = defineSchema({
     .index("by_config_head", ["previewConfigId", "headSha"])
     .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
     .index("by_team_created", ["teamId", "createdAt"]),
-  previewScreenshotSets: defineTable({
-    previewRunId: v.id("previewRuns"),
-    status: v.union(
-      v.literal("completed"),
-      v.literal("failed"),
-      v.literal("skipped"),
-    ),
-    commitSha: v.string(),
-    capturedAt: v.number(),
-    error: v.optional(v.string()),
-    images: v.array(
-      v.object({
-        storageId: v.id("_storage"),
-        mimeType: v.string(),
-        fileName: v.optional(v.string()),
-        commitSha: v.optional(v.string()),
-        width: v.optional(v.number()),
-        height: v.optional(v.number()),
-      }),
-    ),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_run", ["previewRunId", "capturedAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),

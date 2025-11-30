@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { ChevronDown, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState, useMemo } from "react";
@@ -99,6 +100,11 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
       );
     }
   };
+
+  // In web mode, opening local editors is not available
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    return null;
+  }
 
   return (
     <div className="relative" ref={dropdownRef}>

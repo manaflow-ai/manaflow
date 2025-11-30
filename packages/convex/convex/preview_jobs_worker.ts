@@ -570,7 +570,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "failed",
-      stateReason: "Morph API key is not configured",
     });
     return;
   }
@@ -597,7 +596,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "failed",
-      stateReason: "Convex URL is not configured for preview screenshots",
     });
     return;
   }
@@ -614,7 +612,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "skipped",
-      stateReason: "No environment configured for preview run",
     });
     return;
   }
@@ -631,7 +628,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "skipped",
-      stateReason: "Environment not found for preview run",
     });
     return;
   }
@@ -644,7 +640,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "skipped",
-      stateReason: "Environment has no associated Morph snapshot",
     });
     return;
   }
@@ -723,7 +718,6 @@ export async function runPreviewJob(
   await ctx.runMutation(internal.previewRuns.updateStatus, {
     previewRunId,
     status: "running",
-    stateReason: "Provisioning Morph workspace",
   });
 
   try {
@@ -780,12 +774,6 @@ export async function runPreviewJob(
       ? `${vscodeService.url}?folder=/root/workspace`
       : null;
 
-    await ctx.runMutation(internal.previewRuns.updateInstanceMetadata, {
-      previewRunId,
-      morphInstanceId: instance.id,
-      clearStoppedAt: true,
-    });
-
     console.log("[preview-jobs] Worker service ready", {
       previewRunId,
       instanceId: instance.id,
@@ -833,7 +821,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Fetching latest changes",
     });
 
     // The repository is always at /root/workspace directly
@@ -1038,7 +1025,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Checking out PR commit",
     });
 
     const checkoutCmd = run.headRef
@@ -1087,7 +1073,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Setting up environment and triggering screenshots",
     });
 
     if (taskRunId && previewJwt) {
@@ -1248,7 +1233,6 @@ export async function runPreviewJob(
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: "failed",
-        stateReason: message,
       });
     } catch (statusError) {
       console.error("[preview-jobs] Failed to update preview status", {

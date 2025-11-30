@@ -1,7 +1,7 @@
 import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
 import { runPreviewJob } from "./preview_jobs_worker";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 
@@ -10,6 +10,41 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+async function markPreviewTaskCompleted(
+  ctx: ActionCtx,
+  taskRun: Doc<"taskRuns">,
+  task: Doc<"tasks">,
+): Promise<{
+  runStatusUpdated: boolean;
+  taskAlreadyCompleted: boolean;
+}> {
+  const runAlreadyTerminal =
+    taskRun.status === "completed" ||
+    taskRun.status === "failed" ||
+    taskRun.status === "skipped";
+
+  if (!runAlreadyTerminal) {
+    await ctx.runMutation(internal.taskRuns.updateStatus, {
+      id: taskRun._id,
+      status: "completed",
+    });
+  }
+
+  const taskAlreadyCompleted = task.isCompleted === true;
+  if (!taskAlreadyCompleted) {
+    await ctx.runMutation(internal.tasks.setCompletedInternal, {
+      taskId: task._id,
+      isCompleted: true,
+      crownEvaluationStatus: "succeeded",
+    });
+  }
+
+  return {
+    runStatusUpdated: !runAlreadyTerminal,
+    taskAlreadyCompleted,
+  };
 }
 
 export const dispatchPreviewJob = httpAction(async (ctx, req) => {
@@ -92,10 +127,9 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
     return jsonResponse({ error: "Missing required fields" }, 400);
   }
 
-  const { previewRunId, status, stateReason, screenshotSetId } = body as {
+  const { previewRunId, status, screenshotSetId } = body as {
     previewRunId: string;
     status: string;
-    stateReason?: string;
     screenshotSetId?: string;
   };
 
@@ -113,8 +147,7 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId: previewRunId as Id<"previewRuns">,
       status: status as "running" | "completed" | "failed" | "skipped",
-      stateReason,
-      screenshotSetId: screenshotSetId as Id<"previewScreenshotSets"> | undefined,
+      screenshotSetId: screenshotSetId as Id<"taskRunScreenshotSets"> | undefined,
     });
 
     return jsonResponse({ success: true });
@@ -164,8 +197,6 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
       mimeType: string;
       fileName?: string;
       commitSha?: string;
-      width?: number;
-      height?: number;
     }>;
   };
 
@@ -193,8 +224,6 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
           mimeType: img.mimeType,
           fileName: img.fileName,
           commitSha: img.commitSha,
-          width: img.width,
-          height: img.height,
         })),
       }
     );
@@ -275,6 +304,18 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       return jsonResponse({ error: "Task run not found" }, 404);
     }
 
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskRun.taskId,
+    });
+
+    if (!task) {
+      console.error("[preview-jobs-http] Task not found for preview completion", {
+        taskRunId,
+        taskId: taskRun.taskId,
+      });
+      return jsonResponse({ error: "Task not found" }, 404);
+    }
+
     if (!taskRun.latestScreenshotSetId) {
       console.log("[preview-jobs-http] No screenshots found for task run", {
         taskRunId,
@@ -282,12 +323,16 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "skipped",
-        stateReason: "No screenshots available",
       });
+
+      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+
       return jsonResponse({
         success: true,
         skipped: true,
-        reason: "No screenshots available"
+        reason: "No screenshots available",
+        runStatusUpdated: taskCompletion.runStatusUpdated,
+        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
       });
     }
 
@@ -333,9 +378,14 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           previewRunId: previewRun._id,
           commentUrl: commentResult.commentUrl,
         });
+
+        const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+
         return jsonResponse({
           success: true,
           commentUrl: commentResult.commentUrl,
+          runStatusUpdated: taskCompletion.runStatusUpdated,
+          alreadyCompleted: taskCompletion.taskAlreadyCompleted,
         });
       } else {
         console.error("[preview-jobs-http] Failed to post GitHub comment", {
@@ -358,12 +408,17 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
+        screenshotSetId: taskRun.latestScreenshotSetId ?? undefined,
       });
+
+      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
       return jsonResponse({
         success: true,
         skipped: true,
         reason: "No GitHub installation ID",
+        runStatusUpdated: taskCompletion.runStatusUpdated,
+        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
       });
     }
   } catch (error) {
