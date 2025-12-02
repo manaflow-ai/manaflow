@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
+  CheckCircle2,
+  Clock3,
   ExternalLink,
   Github,
   Link2,
@@ -15,6 +17,7 @@ import {
   Star,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import clsx from "clsx";
@@ -60,12 +63,20 @@ type TeamOption = {
   displayName: string;
 };
 
+type CreationSuccess = {
+  configId: string | null;
+  repoFullName: string;
+  baseBranch: string;
+  teamSlugOrId: string;
+};
+
 type PreviewDashboardProps = {
   selectedTeamSlugOrId: string;
   teamOptions: TeamOption[];
   providerConnectionsByTeam: Record<string, ProviderConnection[]>;
   isAuthenticated: boolean;
   previewConfigs: PreviewConfigListItem[];
+  creationSuccess?: CreationSuccess | null;
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
@@ -76,6 +87,7 @@ export function PreviewDashboard({
   providerConnectionsByTeam,
   isAuthenticated,
   previewConfigs,
+  creationSuccess,
 }: PreviewDashboardProps) {
   const [selectedTeamSlugOrIdState, setSelectedTeamSlugOrIdState] = useState(
     () => selectedTeamSlugOrId || teamOptions[0]?.slugOrId || "",
@@ -94,6 +106,8 @@ export function PreviewDashboard({
   const [updatingConfigId, setUpdatingConfigId] = useState<string | null>(null);
   const [openingConfigId, setOpeningConfigId] = useState<string | null>(null);
   const [configPendingDelete, setConfigPendingDelete] = useState<PreviewConfigListItem | null>(null);
+  const [hasDismissedSuccess, setHasDismissedSuccess] = useState(false);
+  const [copiedTestCommands, setCopiedTestCommands] = useState(false);
 
   // Public URL input state
   const [repoUrlInput, setRepoUrlInput] = useState("");
@@ -107,6 +121,7 @@ export function PreviewDashboard({
     [currentProviderConnections]
   );
   const previousTeamRef = useRef(selectedTeamSlugOrIdState);
+  const testCommandsCopyTimeoutRef = useRef<number | null>(null);
   const hasGithubAppInstallation = activeConnections.length > 0;
   const canSearchRepos =
     isAuthenticated &&
@@ -116,6 +131,112 @@ export function PreviewDashboard({
   useEffect(() => {
     setConfigs(previewConfigs);
   }, [previewConfigs]);
+
+  useEffect(() => {
+    return () => {
+      if (testCommandsCopyTimeoutRef.current !== null) {
+        window.clearTimeout(testCommandsCopyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setHasDismissedSuccess(false);
+  }, [creationSuccess?.configId, creationSuccess?.repoFullName]);
+
+  const resolvedCreationSuccess = useMemo(() => {
+    if (!creationSuccess) {
+      return null;
+    }
+
+    const matchedConfig =
+      configs.find((config) => {
+        if (creationSuccess.configId) {
+          return config.id === creationSuccess.configId;
+        }
+        return config.repoFullName === creationSuccess.repoFullName;
+      }) ?? null;
+
+    const baseBranchCandidate =
+      matchedConfig?.repoDefaultBranch ?? creationSuccess.baseBranch ?? "main";
+    const normalizedBase = baseBranchCandidate.trim();
+    const baseBranch = normalizedBase.length > 0 ? normalizedBase : "main";
+
+    return {
+      ...creationSuccess,
+      configId: matchedConfig?.id ?? creationSuccess.configId ?? null,
+      repoFullName: matchedConfig?.repoFullName ?? creationSuccess.repoFullName,
+      baseBranch,
+    };
+  }, [configs, creationSuccess]);
+
+  const creationTestBranch = useMemo(() => {
+    if (!resolvedCreationSuccess) {
+      return null;
+    }
+    const normalizedBase = resolvedCreationSuccess.baseBranch
+      .trim()
+      .replace(/[^a-zA-Z0-9._/-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const safeBase = normalizedBase.length > 0 ? normalizedBase : "main";
+    return `${safeBase}-preview-test`;
+  }, [resolvedCreationSuccess]);
+
+  const creationPrUrl = useMemo(() => {
+    if (!resolvedCreationSuccess || !creationTestBranch) {
+      return null;
+    }
+    const [owner, repoName] = resolvedCreationSuccess.repoFullName.split("/");
+    if (!owner || !repoName) {
+      return null;
+    }
+    const baseBranch =
+      resolvedCreationSuccess.baseBranch.trim().length > 0
+        ? resolvedCreationSuccess.baseBranch.trim()
+        : "main";
+    const url = new URL(
+      `https://github.com/${owner}/${repoName}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(creationTestBranch)}`
+    );
+    url.searchParams.set("quick_pull", "1");
+    url.searchParams.set("title", "preview.new test run");
+    url.searchParams.set(
+      "body",
+      "Trigger preview.new to capture screenshots on this PR. Jobs typically finish in 2-5 minutes."
+    );
+    return url.toString();
+  }, [creationTestBranch, resolvedCreationSuccess]);
+
+  const handleCopyTestCommands = useCallback(async () => {
+    if (!resolvedCreationSuccess || !creationTestBranch) {
+      return;
+    }
+    const baseBranch =
+      resolvedCreationSuccess.baseBranch.trim().length > 0
+        ? resolvedCreationSuccess.baseBranch.trim()
+        : "main";
+    const commands = [
+      `git checkout ${baseBranch}`,
+      "git pull",
+      `git checkout -b ${creationTestBranch}`,
+      'git commit --allow-empty -m "preview.new test run"',
+      `git push origin ${creationTestBranch}`,
+      creationPrUrl ? `# open ${creationPrUrl}` : "# open the GitHub compare page to create the PR",
+    ].join("\n");
+
+    try {
+      await navigator.clipboard.writeText(commands);
+      setCopiedTestCommands(true);
+      if (testCommandsCopyTimeoutRef.current !== null) {
+        window.clearTimeout(testCommandsCopyTimeoutRef.current);
+      }
+      testCommandsCopyTimeoutRef.current = window.setTimeout(() => {
+        setCopiedTestCommands(false);
+      }, 2000);
+    } catch (error) {
+      console.error("[PreviewDashboard] Failed to copy test PR commands", error);
+    }
+  }, [creationPrUrl, creationTestBranch, resolvedCreationSuccess]);
 
   // Parse GitHub URL to extract owner/repo
   const parseGithubUrl = useCallback((input: string): string | null => {
@@ -431,6 +552,8 @@ export function PreviewDashboard({
     }
   }, [selectedTeamSlugOrIdState, teamOptions]);
 
+  const showCreationSuccess = Boolean(resolvedCreationSuccess && !hasDismissedSuccess);
+
   // Repo selection box - only this part, not configured repos
   const repoSelectionBox = !isAuthenticated ? (
     <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02]">
@@ -565,6 +688,68 @@ export function PreviewDashboard({
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
+      {showCreationSuccess && resolvedCreationSuccess && (
+        <div className="mb-8 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-white shadow-lg">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex gap-3">
+              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+              <div>
+                <p className="text-sm font-semibold text-white">
+                  Environment configured for {resolvedCreationSuccess.repoFullName}
+                </p>
+                <p className="text-sm text-neutral-100">
+                  Your preview agent is set on{" "}
+                  <span className="font-mono text-emerald-100">
+                    {resolvedCreationSuccess.baseBranch}
+                  </span>
+                  . Open a quick PR to trigger screenshots.
+                </p>
+                <div className="mt-1.5 flex items-center gap-2 text-xs text-emerald-100">
+                  <Clock3 className="h-4 w-4" />
+                  <span>Runs usually finish in about 2-5 minutes.</span>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setHasDismissedSuccess(true)}
+              className="self-start rounded-md p-1 text-neutral-300 transition hover:bg-white/10 hover:text-white"
+              aria-label="Dismiss success message"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {creationPrUrl ? (
+              <Button
+                asChild
+                className="bg-white text-black hover:bg-neutral-200"
+              >
+                <Link href={creationPrUrl} target="_blank" rel="noreferrer">
+                  Open test PR on GitHub
+                </Link>
+              </Button>
+            ) : null}
+            {creationTestBranch ? (
+              <Button
+                variant="secondary"
+                onClick={() => void handleCopyTestCommands()}
+                className="border border-white/20 bg-transparent text-white hover:bg-white/10"
+              >
+                {copiedTestCommands ? "Commands copied" : "Copy test PR commands"}
+              </Button>
+            ) : null}
+          </div>
+          {creationTestBranch ? (
+            <p className="mt-2 text-xs text-neutral-200">
+              Push branch{" "}
+              <span className="font-mono text-white">{creationTestBranch}</span> against{" "}
+              <span className="font-mono text-white">{resolvedCreationSuccess.baseBranch}</span>{" "}
+              and open the GitHub link above to watch preview.new run.
+            </p>
+          ) : null}
+        </div>
+      )}
       {/* Header */}
       <div className="mb-10">
         <Link

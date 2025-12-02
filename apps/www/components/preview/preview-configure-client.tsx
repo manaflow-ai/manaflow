@@ -182,6 +182,45 @@ function deriveVncUrl(
   return normalizeVncUrl(baseUrl);
 }
 
+function parseCreatedEnvironmentId(data: unknown): string {
+  if (typeof data === "object" && data !== null && "id" in data) {
+    const record = data as Record<string, unknown>;
+    if (typeof record.id === "string") {
+      return record.id;
+    }
+  }
+  throw new Error("Invalid environment response");
+}
+
+type PreviewSaveResponse = {
+  id: string;
+  repoFullName: string;
+  repoDefaultBranch: string | null;
+};
+
+function parsePreviewSaveResponse(data: unknown): PreviewSaveResponse {
+  if (typeof data !== "object" || data === null) {
+    throw new Error("Invalid preview configuration response");
+  }
+
+  const record = data as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.repoFullName !== "string") {
+    throw new Error("Invalid preview configuration response");
+  }
+
+  const { repoDefaultBranch } = record;
+  return {
+    id: record.id,
+    repoFullName: record.repoFullName,
+    repoDefaultBranch:
+      typeof repoDefaultBranch === "string"
+        ? repoDefaultBranch
+        : repoDefaultBranch === null
+          ? null
+          : null,
+  };
+}
+
 const FRAMEWORK_ICON_META: Record<
   FrameworkIconKey,
   { icon: ReactNode; bgClass: string; textClass: string }
@@ -987,8 +1026,7 @@ export function PreviewConfigureClient({
         throw new Error(await envResponse.text());
       }
 
-      const envData = await envResponse.json();
-      const environmentId = envData.id;
+      const environmentId = parseCreatedEnvironmentId(await envResponse.json());
 
       const previewResponse = await fetch("/api/preview/configs", {
         method: "POST",
@@ -1007,7 +1045,14 @@ export function PreviewConfigureClient({
         throw new Error(await previewResponse.text());
       }
 
-      window.location.href = "/preview";
+      const previewData = parsePreviewSaveResponse(await previewResponse.json());
+      const successParams = new URLSearchParams({
+        team: resolvedTeamSlugOrId,
+        createdConfigId: previewData.id,
+        createdRepo: previewData.repoFullName,
+        createdBranch: previewData.repoDefaultBranch ?? "main",
+      });
+      window.location.href = `/preview?${successParams.toString()}`;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save configuration";
       setErrorMessage(message);

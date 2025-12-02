@@ -31,6 +31,27 @@ type TeamOption = {
   displayName: string;
 };
 
+type CreationSuccessContext = {
+  configId: string | null;
+  repoFullName: string;
+  baseBranch: string;
+  teamSlugOrId: string;
+};
+
+function getSearchValue(
+  search: Record<string, string | string[] | undefined> | undefined,
+  key: string
+): string | null {
+  if (!search) {
+    return null;
+  }
+  const value = search[key];
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+  return value ?? null;
+}
+
 function serializeProviderConnections(
   connections: Array<{
     installationId: number;
@@ -78,16 +99,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     throw new Error("Missing Stack access token");
   }
 
-  const searchTeam = (() => {
-    if (!resolvedSearch) {
-      return null;
-    }
-    const value = resolvedSearch.team;
-    if (Array.isArray(value)) {
-      return value[0] ?? null;
-    }
-    return value ?? null;
-  })();
+  const searchTeam = getSearchValue(resolvedSearch, "team");
 
   const selectedTeam =
     teams.find((team) => getTeamSlugOrId(team) === searchTeam) ?? teams[0];
@@ -142,6 +154,34 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
   const providerConnectionsByTeam = Object.fromEntries(
     providerConnectionsByTeamEntries,
   );
+  const createdConfigId = getSearchValue(resolvedSearch, "createdConfigId");
+  const createdRepo = getSearchValue(resolvedSearch, "createdRepo");
+  const createdBranch = getSearchValue(resolvedSearch, "createdBranch");
+  const creationSuccess: CreationSuccessContext | null =
+    createdConfigId || createdRepo
+      ? (() => {
+          const matchedConfig =
+            previewConfigs.find((config) => config.id === createdConfigId) ??
+            previewConfigs.find((config) => config.repoFullName === createdRepo);
+          if (matchedConfig) {
+            return {
+              configId: matchedConfig.id,
+              repoFullName: matchedConfig.repoFullName,
+              baseBranch: matchedConfig.repoDefaultBranch ?? createdBranch ?? "main",
+              teamSlugOrId: matchedConfig.teamSlugOrId,
+            };
+          }
+          if (createdRepo) {
+            return {
+              configId: createdConfigId,
+              repoFullName: createdRepo,
+              baseBranch: createdBranch ?? "main",
+              teamSlugOrId: selectedTeamSlugOrId,
+            };
+          }
+          return null;
+        })()
+      : null;
 
   return (
     <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
@@ -153,6 +193,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         providerConnectionsByTeam={providerConnectionsByTeam}
         isAuthenticated={true}
         previewConfigs={previewConfigs}
+        creationSuccess={creationSuccess ?? undefined}
       />
     </div>
   );
