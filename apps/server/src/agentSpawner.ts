@@ -16,7 +16,11 @@ import {
   generateUniqueBranchNames,
   generateUniqueBranchNamesFromTitle,
 } from "./utils/branchNameGenerator";
-import { getConvex } from "./utils/convexClient";
+import {
+  getConvex,
+  getConvexWithTokenGetter,
+  type AuthTokenGetter,
+} from "./utils/convexClient";
 import { retryOnOptimisticConcurrency } from "./utils/convexRetry";
 import { serverLogger } from "./utils/fileLogger";
 import {
@@ -65,13 +69,24 @@ export async function spawnAgent(
     }>;
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
+    authTokenGetter?: AuthTokenGetter; // Optional function to get latest auth token
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
   try {
+    // Use the token getter if provided, otherwise fall back to AsyncLocalStorage
+    // The token getter allows getting the latest token even after the original
+    // AsyncLocalStorage context token has expired.
+    const getConvexClient = options.authTokenGetter
+      ? () => getConvexWithTokenGetter(options.authTokenGetter!)
+      : getConvex;
+
     // Capture the current auth token and header JSON from AsyncLocalStorage so we can
     // re-enter the auth context inside async event handlers later.
-    const capturedAuthToken = getAuthToken();
+    // Use the token getter if available to get the latest token.
+    const capturedAuthToken = options.authTokenGetter
+      ? options.authTokenGetter()
+      : getAuthToken();
     const capturedAuthHeaderJson = getAuthHeaderJson();
 
     const newBranch =
@@ -84,7 +99,7 @@ export async function spawnAgent(
     );
 
     // Create a task run for this specific agent
-    const { taskRunId, jwt: taskRunJwt } = await getConvex().mutation(
+    const { taskRunId, jwt: taskRunJwt } = await getConvexClient().mutation(
       api.taskRuns.create,
       {
         teamSlugOrId,
@@ -97,7 +112,7 @@ export async function spawnAgent(
     );
 
     // Fetch the task to get image storage IDs
-    const task = await getConvex().query(api.tasks.getById, {
+    const task = await getConvexClient().query(api.tasks.getById, {
       teamSlugOrId,
       id: taskId,
     });
@@ -111,7 +126,7 @@ export async function spawnAgent(
 
     // If task has images with storage IDs, download them
     if (task && task.images && task.images.length > 0) {
-      const imageUrlsResult = await getConvex().query(api.storage.getUrls, {
+      const imageUrlsResult = await getConvexClient().query(api.storage.getUrls, {
         teamSlugOrId,
         storageIds: task.images.map((image) => image.storageId),
       });
@@ -268,7 +283,7 @@ export async function spawnAgent(
 
     // Fetch API keys from Convex BEFORE calling agent.environment()
     // so agents can access them in their environment configuration
-    const apiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
+    const apiKeys = await getConvexClient().query(api.apiKeys.getAllForAgents, {
       teamSlugOrId,
     });
 
@@ -423,7 +438,7 @@ export async function spawnAgent(
 
     // Update the task run with the worktree path (retry on OCC)
     await retryOnOptimisticConcurrency(() =>
-      getConvex().mutation(api.taskRuns.updateWorktreePath, {
+      getConvexClient().mutation(api.taskRuns.updateWorktreePath, {
         teamSlugOrId,
         id: taskRunId,
         worktreePath: worktreePath,
@@ -534,7 +549,7 @@ export async function spawnAgent(
 
     // Update VSCode instance information in Convex (retry on OCC)
     await retryOnOptimisticConcurrency(() =>
-      getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
+      getConvexClient().mutation(api.taskRuns.updateVSCodeInstance, {
         teamSlugOrId,
         id: taskRunId,
         vscode: {
@@ -953,6 +968,7 @@ export async function spawnAllAgents(
       altText: string;
     }>;
     theme?: "dark" | "light" | "system";
+    authTokenGetter?: AuthTokenGetter; // Optional function to get latest auth token
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult[]> {
@@ -989,6 +1005,7 @@ export async function spawnAllAgents(
         {
           ...options,
           newBranch: branchNames[index],
+          authTokenGetter: options.authTokenGetter, // Pass through the token getter
         },
         teamSlugOrId
       )

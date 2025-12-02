@@ -47,7 +47,7 @@ import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
-import { getConvex } from "./utils/convexClient";
+import { getConvex, getConvexWithTokenGetter } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
@@ -589,6 +589,11 @@ export function setupSocketHandlers(
           taskId,
         });
 
+        // Create a token getter that returns the latest auth token from the socket's closure.
+        // This allows long-running async operations to get refreshed tokens even after
+        // the original AsyncLocalStorage context token has expired.
+        const getAuthTokenFromSocket = () => currentAuthToken;
+
         (async () => {
           try {
             // Generate PR title early from the task description
@@ -598,12 +603,15 @@ export function setupSocketHandlers(
                 taskData.taskDescription,
                 safeTeam
               );
-              // Persist to Convex immediately
-              await getConvex().mutation(api.tasks.setPullRequestTitle, {
-                teamSlugOrId: safeTeam,
-                id: taskId,
-                pullRequestTitle: generatedTitle,
-              });
+              // Persist to Convex immediately, using the token getter to ensure fresh token
+              await getConvexWithTokenGetter(getAuthTokenFromSocket).mutation(
+                api.tasks.setPullRequestTitle,
+                {
+                  teamSlugOrId: safeTeam,
+                  id: taskId,
+                  pullRequestTitle: generatedTitle,
+                }
+              );
               serverLogger.info(
                 `[Server] Saved early PR title: ${generatedTitle}`
               );
@@ -615,6 +623,7 @@ export function setupSocketHandlers(
             }
 
             // Spawn all agents in parallel (each will create its own taskRun)
+            // Pass the token getter so agents can use fresh tokens during long-running operations
             const agentResults = await spawnAllAgents(
               taskId,
               {
@@ -627,6 +636,7 @@ export function setupSocketHandlers(
                 images: taskData.images,
                 theme: taskData.theme,
                 environmentId: taskData.environmentId,
+                authTokenGetter: getAuthTokenFromSocket,
               },
               safeTeam
             );
