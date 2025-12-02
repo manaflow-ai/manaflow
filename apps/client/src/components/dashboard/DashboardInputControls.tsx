@@ -123,7 +123,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   Setup required
                 </p>
                 <p className="text-xs text-neutral-300">
-                  Add credentials for this agent in Settings.
+                  {env.NEXT_PUBLIC_WEB_MODE
+                    ? "Add your API key for this agent in Settings."
+                    : "Add credentials for this agent in Settings."}
                 </p>
                 {missingRequirements.length > 0 ? (
                   <ul className="list-disc pl-4 text-xs text-neutral-400">
@@ -674,12 +676,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       </div>
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
-        {/* Cloud/Local Mode Toggle */}
-        <ModeToggleTooltip
-          isCloudMode={isCloudMode}
-          onToggle={onCloudModeToggle}
-          disabled={cloudToggleDisabled}
-        />
+        {/* Cloud/Local Mode Toggle - hidden in web mode (always cloud) */}
+        {!env.NEXT_PUBLIC_WEB_MODE && (
+          <ModeToggleTooltip
+            isCloudMode={isCloudMode}
+            onToggle={onCloudModeToggle}
+            disabled={cloudToggleDisabled}
+          />
+        )}
 
         <button
           className={clsx(

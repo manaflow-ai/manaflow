@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/utils/www-env";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
 
   if (hostname === "0github.com" && pathname === "/") {
     return NextResponse.rewrite(new URL("/heatmap", request.url));
+  }
+
+  if (hostname === "preview.new" && pathname === "/") {
+    return NextResponse.rewrite(new URL("/preview", request.url));
   }
 
   // Check if this is a PR review page that requires authentication

@@ -27,6 +27,7 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
+import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 
 export const sandboxesRouter = new OpenAPIHono();
 
@@ -494,6 +495,8 @@ sandboxesRouter.openapi(
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
+      // Kill all dev servers and user processes before pausing to avoid port conflicts on resume
+      await instance.exec(VM_CLEANUP_COMMANDS);
       await instance.pause();
       return c.body(null, 204);
     } catch (error) {

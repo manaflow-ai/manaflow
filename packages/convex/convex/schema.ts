@@ -96,6 +96,7 @@ const convexSchema = defineSchema({
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
     pinned: v.optional(v.boolean()),
+    isPreview: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
     description: v.optional(v.string()),
@@ -162,7 +163,8 @@ const convexSchema = defineSchema({
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
-    .index("by_pinned", ["pinned", "teamId", "userId"]),
+    .index("by_pinned", ["pinned", "teamId", "userId"])
+    .index("by_team_user_preview", ["teamId", "userId", "isPreview"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
@@ -300,7 +302,21 @@ const convexSchema = defineSchema({
     .index("by_vscode_status", ["vscode.status"])
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_pull_request_url", ["pullRequestUrl"]),
+
+  // Junction table linking taskRuns to pull requests by PR identity
+  // Enables efficient lookup of taskRuns when a PR webhook fires
+  taskRunPullRequests: defineTable({
+    taskRunId: v.id("taskRuns"),
+    teamId: v.string(),
+    repoFullName: v.string(), // owner/repo
+    prNumber: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId"])
+    .index("by_pr", ["teamId", "repoFullName", "prNumber"]),
+
   taskRunScreenshotSets: defineTable({
     taskId: v.id("tasks"),
     runId: v.id("taskRuns"),
@@ -309,6 +325,7 @@ const convexSchema = defineSchema({
       v.literal("failed"),
       v.literal("skipped"),
     ),
+    hasUiChanges: v.optional(v.boolean()),
     commitSha: v.optional(v.string()),
     capturedAt: v.number(),
     error: v.optional(v.string()),
@@ -318,6 +335,7 @@ const convexSchema = defineSchema({
         mimeType: v.string(),
         fileName: v.optional(v.string()),
         commitSha: v.optional(v.string()),
+        description: v.optional(v.string()),
       }),
     ),
     createdAt: v.number(),
@@ -550,7 +568,7 @@ const convexSchema = defineSchema({
     createdByUserId: v.string(),
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
-    repoInstallationId: v.optional(v.number()),
+    repoInstallationId: v.number(),
     repoDefaultBranch: v.optional(v.string()),
     environmentId: v.optional(v.id("environments")),
     status: v.optional(
@@ -567,7 +585,8 @@ const convexSchema = defineSchema({
     .index("by_team_repo", ["teamId", "repoFullName"])
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_status", ["teamId", "status", "updatedAt"])
-    .index("by_environment", ["environmentId"]),
+    .index("by_environment", ["environmentId"])
+    .index("by_installation_repo", ["repoInstallationId", "repoFullName"]),
   previewRuns: defineTable({
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),
@@ -592,11 +611,9 @@ const convexSchema = defineSchema({
     dispatchedAt: v.optional(v.number()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
-    screenshotSetId: v.optional(v.id("previewScreenshotSets")),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
     githubCommentId: v.optional(v.number()),
-    morphInstanceId: v.optional(v.string()),
-    morphInstanceStoppedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -604,30 +621,6 @@ const convexSchema = defineSchema({
     .index("by_config_head", ["previewConfigId", "headSha"])
     .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
     .index("by_team_created", ["teamId", "createdAt"]),
-  previewScreenshotSets: defineTable({
-    previewRunId: v.id("previewRuns"),
-    status: v.union(
-      v.literal("completed"),
-      v.literal("failed"),
-      v.literal("skipped"),
-    ),
-    commitSha: v.string(),
-    capturedAt: v.number(),
-    error: v.optional(v.string()),
-    images: v.array(
-      v.object({
-        storageId: v.id("_storage"),
-        mimeType: v.string(),
-        fileName: v.optional(v.string()),
-        commitSha: v.optional(v.string()),
-        width: v.optional(v.number()),
-        height: v.optional(v.number()),
-      }),
-    ),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_run", ["previewRunId", "capturedAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),

@@ -1976,137 +1976,142 @@ function TaskRunDetails({
         />
       ) : null}
 
-      {previewServices.map((service) => (
-        <div key={service.port} className="relative group mt-px">
-          <TaskRunDetailLink
-            to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
-            params={{
-              teamSlugOrId,
-              taskId,
-              runId: run._id,
-              previewId: `${service.port}`,
-            }}
-            icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
-            label={`Preview (port ${service.port})`}
+      {/* Hide preview ports and custom previews for preview screenshot jobs */}
+      {!run.isPreviewJob && (
+        <>
+          {previewServices.map((service) => (
+            <div key={service.port} className="relative group mt-px">
+              <TaskRunDetailLink
+                to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
+                params={{
+                  teamSlugOrId,
+                  taskId,
+                  runId: run._id,
+                  previewId: `${service.port}`,
+                }}
+                icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+                label={`Preview (port ${service.port})`}
+                indentLevel={indentLevel}
+                className="pr-10"
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey) {
+                    event.preventDefault();
+                    window.open(service.url, "_blank", "noopener,noreferrer");
+                  }
+                }}
+              />
+
+              <Dropdown.Root>
+                <Dropdown.Trigger
+                  onClick={(event) => event.stopPropagation()}
+                  className={clsx(
+                    "absolute right-2 top-1/2 -translate-y-1/2",
+                    "p-1 rounded flex items-center gap-1",
+                    "bg-neutral-100/80 dark:bg-neutral-700/80",
+                    "hover:bg-neutral-200/80 dark:hover:bg-neutral-600/80",
+                    "text-neutral-600 dark:text-neutral-400"
+                  )}
+                >
+                  <EllipsisVertical className="w-2.5 h-2.5" />
+                </Dropdown.Trigger>
+                <Dropdown.Portal>
+                  <Dropdown.Positioner
+                    sideOffset={8}
+                    side={isElectron ? "left" : "bottom"}
+                  >
+                    <Dropdown.Popup>
+                      <Dropdown.Arrow />
+                      <Dropdown.Item
+                        onClick={() => {
+                          window.open(service.url, "_blank", "noopener,noreferrer");
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Open in new tab
+                      </Dropdown.Item>
+                    </Dropdown.Popup>
+                  </Dropdown.Positioner>
+                </Dropdown.Portal>
+              </Dropdown.Root>
+            </div>
+          ))}
+
+          {customPreviews.map((preview, index) => (
+            <div key={index} className="relative group mt-px">
+              <TaskRunDetailLink
+                to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
+                params={{
+                  teamSlugOrId,
+                  taskId,
+                  runId: run._id,
+                  previewId: String(index),
+                }}
+                icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+                label={preview.url}
+                indentLevel={indentLevel}
+                className="pr-10"
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey) {
+                    event.preventDefault();
+                    window.open(preview.url, "_blank", "noopener,noreferrer");
+                  }
+                }}
+              />
+
+              <Dropdown.Root>
+                <Dropdown.Trigger
+                  onClick={(event) => event.stopPropagation()}
+                  className={clsx(
+                    "absolute right-2 top-1/2 -translate-y-1/2",
+                    "p-1 rounded flex items-center gap-1",
+                    "bg-neutral-100/80 dark:bg-neutral-700/80",
+                    "hover:bg-neutral-200/80 dark:hover:bg-neutral-600/80",
+                    "text-neutral-600 dark:text-neutral-400"
+                  )}
+                >
+                  <EllipsisVertical className="w-2.5 h-2.5" />
+                </Dropdown.Trigger>
+                <Dropdown.Portal>
+                  <Dropdown.Positioner
+                    sideOffset={8}
+                    side={isElectron ? "left" : "bottom"}
+                  >
+                    <Dropdown.Popup>
+                      <Dropdown.Arrow />
+                      <Dropdown.Item
+                        onClick={() => {
+                          window.open(preview.url, "_blank", "noopener,noreferrer");
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Open in new tab
+                      </Dropdown.Item>
+                      <Dropdown.Item
+                        onClick={() => handleRemovePreview(index, currentPreviewId)}
+                        className="flex items-center gap-2 text-red-600 dark:text-red-400"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove preview
+                      </Dropdown.Item>
+                    </Dropdown.Popup>
+                  </Dropdown.Positioner>
+                </Dropdown.Portal>
+              </Dropdown.Root>
+            </div>
+          ))}
+
+          <AddPreviewInput
             indentLevel={indentLevel}
-            className="pr-10"
-            onClick={(event) => {
-              if (event.metaKey || event.ctrlKey) {
-                event.preventDefault();
-                window.open(service.url, "_blank", "noopener,noreferrer");
-              }
-            }}
+            onAdd={handleAddPreview}
+            currentCount={customPreviews.length}
+            taskId={taskId}
+            runId={run._id}
+            teamSlugOrId={teamSlugOrId}
           />
-
-          <Dropdown.Root>
-            <Dropdown.Trigger
-              onClick={(event) => event.stopPropagation()}
-              className={clsx(
-                "absolute right-2 top-1/2 -translate-y-1/2",
-                "p-1 rounded flex items-center gap-1",
-                "bg-neutral-100/80 dark:bg-neutral-700/80",
-                "hover:bg-neutral-200/80 dark:hover:bg-neutral-600/80",
-                "text-neutral-600 dark:text-neutral-400"
-              )}
-            >
-              <EllipsisVertical className="w-2.5 h-2.5" />
-            </Dropdown.Trigger>
-            <Dropdown.Portal>
-              <Dropdown.Positioner
-                sideOffset={8}
-                side={isElectron ? "left" : "bottom"}
-              >
-                <Dropdown.Popup>
-                  <Dropdown.Arrow />
-                  <Dropdown.Item
-                    onClick={() => {
-                      window.open(service.url, "_blank", "noopener,noreferrer");
-                    }}
-                    className="flex items-center gap-2"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Open in new tab
-                  </Dropdown.Item>
-                </Dropdown.Popup>
-              </Dropdown.Positioner>
-            </Dropdown.Portal>
-          </Dropdown.Root>
-        </div>
-      ))}
-
-      {customPreviews.map((preview, index) => (
-        <div key={index} className="relative group mt-px">
-          <TaskRunDetailLink
-            to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
-            params={{
-              teamSlugOrId,
-              taskId,
-              runId: run._id,
-              previewId: String(index),
-            }}
-            icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
-            label={preview.url}
-            indentLevel={indentLevel}
-            className="pr-10"
-            onClick={(event) => {
-              if (event.metaKey || event.ctrlKey) {
-                event.preventDefault();
-                window.open(preview.url, "_blank", "noopener,noreferrer");
-              }
-            }}
-          />
-
-          <Dropdown.Root>
-            <Dropdown.Trigger
-              onClick={(event) => event.stopPropagation()}
-              className={clsx(
-                "absolute right-2 top-1/2 -translate-y-1/2",
-                "p-1 rounded flex items-center gap-1",
-                "bg-neutral-100/80 dark:bg-neutral-700/80",
-                "hover:bg-neutral-200/80 dark:hover:bg-neutral-600/80",
-                "text-neutral-600 dark:text-neutral-400"
-              )}
-            >
-              <EllipsisVertical className="w-2.5 h-2.5" />
-            </Dropdown.Trigger>
-            <Dropdown.Portal>
-              <Dropdown.Positioner
-                sideOffset={8}
-                side={isElectron ? "left" : "bottom"}
-              >
-                <Dropdown.Popup>
-                  <Dropdown.Arrow />
-                  <Dropdown.Item
-                    onClick={() => {
-                      window.open(preview.url, "_blank", "noopener,noreferrer");
-                    }}
-                    className="flex items-center gap-2"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Open in new tab
-                  </Dropdown.Item>
-                  <Dropdown.Item
-                    onClick={() => handleRemovePreview(index, currentPreviewId)}
-                    className="flex items-center gap-2 text-red-600 dark:text-red-400"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Remove preview
-                  </Dropdown.Item>
-                </Dropdown.Popup>
-              </Dropdown.Positioner>
-            </Dropdown.Portal>
-          </Dropdown.Root>
-        </div>
-      ))}
-
-      <AddPreviewInput
-        indentLevel={indentLevel}
-        onAdd={handleAddPreview}
-        currentCount={customPreviews.length}
-        taskId={taskId}
-        runId={run._id}
-        teamSlugOrId={teamSlugOrId}
-      />
+        </>
+      )}
 
       {hasChildren ? (
         <div className="flex flex-col">

@@ -168,11 +168,20 @@ export const setCrownWinner = authMutation({
       teamId,
     });
 
-    // Mark PR creation needed
+    // Mark PR creation needed and clear any existing PR associations
     await ctx.db.patch(args.taskRunId, {
       pullRequestUrl: "pending",
       pullRequests: undefined,
     });
+
+    // Clear junction table entries for this taskRun
+    const existingJunctionEntries = await ctx.db
+      .query("taskRunPullRequests")
+      .withIndex("by_task_run", (q) => q.eq("taskRunId", args.taskRunId))
+      .collect();
+    for (const entry of existingJunctionEntries) {
+      await ctx.db.delete(entry._id);
+    }
 
     return args.taskRunId;
   },

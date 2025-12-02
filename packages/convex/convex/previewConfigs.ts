@@ -80,7 +80,7 @@ export const upsert = authMutation({
     teamSlugOrId: v.string(),
     repoFullName: v.string(),
     environmentId: v.optional(v.id("environments")),
-    repoInstallationId: v.optional(v.number()),
+    repoInstallationId: v.number(),
     repoDefaultBranch: v.optional(v.string()),
     status: v.optional(
       v.union(
@@ -117,7 +117,7 @@ export const upsert = authMutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         environmentId: args.environmentId ?? existing.environmentId,
-        repoInstallationId: args.repoInstallationId ?? existing.repoInstallationId,
+        repoInstallationId: args.repoInstallationId,
         repoDefaultBranch: args.repoDefaultBranch ?? existing.repoDefaultBranch,
         status: args.status ?? existing.status ?? "active",
         updatedAt: now,
@@ -153,6 +153,23 @@ export const getByTeamAndRepo = internalQuery({
       .query("previewConfigs")
       .withIndex("by_team_repo", (q) =>
         q.eq("teamId", args.teamId).eq("repoFullName", repoFullName),
+      )
+      .first();
+    return config ?? null;
+  },
+});
+
+export const getByInstallationAndRepo = internalQuery({
+  args: {
+    installationId: v.number(),
+    repoFullName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+    const config = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_installation_repo", (q) =>
+        q.eq("repoInstallationId", args.installationId).eq("repoFullName", repoFullName),
       )
       .first();
     return config ?? null;

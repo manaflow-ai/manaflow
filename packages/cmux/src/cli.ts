@@ -3,7 +3,6 @@ import { Command } from "commander";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { ConvexProcesses, spawnConvex } from "./convex/spawnConvex";
 import { ensureBundleExtracted } from "./convex/ensureBundleExtracted";
 import { deployConvexFunctions } from "./convex/deployConvex";
@@ -22,21 +21,7 @@ console.log(
 console.log("\x1b[36m╚══════════════════════════════════════╝\x1b[0m\n");
 console.log("\x1b[32m✓\x1b[0m Server starting...");
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const convexDir = path.resolve(homedir(), ".cmux");
-
-// When running as a compiled binary, __dirname might be in a virtual filesystem
-// Check if we're in a bundled environment
-const isBundled = __dirname.includes("/$bunfs/");
-
-let staticDir: string;
-if (isBundled) {
-  // In bundled mode, always use the extracted files from ~/.cmux
-  staticDir = path.resolve(convexDir, "public", "dist");
-} else {
-  // In development mode, use the normal path
-  staticDir = path.resolve(__dirname, "..", "public", "dist");
-}
 
 const program = new Command();
 
@@ -78,7 +63,7 @@ process.on("SIGTERM", async () => {
 
 program
   .name("cmux")
-  .description("Socket.IO and static file server")
+  .description("Socket.IO server")
   .version(VERSION)
   .argument("[path]", "path to git repository (defaults to current directory)")
   .option("-p, --port <port>", "port to listen on", "9776")
@@ -204,17 +189,7 @@ program
       }
     }
 
-    // Check if static directory exists
-    if (!existsSync(staticDir)) {
-      console.error(`Static directory not found at: ${staticDir}`);
-      console.error("This should have been extracted automatically.");
-      console.error("Try deleting ~/.cmux and running the CLI again.");
-      process.exit(1);
-    }
-
-    console.log(
-      "\x1b[32m✓\x1b[0m Link: \x1b[36mhttp://localhost:" + port + "\x1b[0m\n"
-    );
+    console.log(`\x1b[32m✓\x1b[0m Server listening on port ${port}\n`);
 
     let gitRepoInfo = null;
     if (repoPath) {
@@ -251,7 +226,6 @@ program
 
     const serverPromise = startServer({
       port,
-      publicPath: staticDir,
       defaultRepo: gitRepoInfo,
     }).then((server) => {
       status.serverReady = true;

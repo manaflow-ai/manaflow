@@ -137,7 +137,20 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     name: team.name ?? getTeamDisplayName(team),
   }));
 
-  const detectedFrameworkPreset = await detectFrameworkPreset(repo);
+  let githubAccessToken: string | undefined;
+  try {
+    const githubAccount = await user.getConnectedAccount("github");
+    if (githubAccount) {
+      const tokenResult = await githubAccount.getAccessToken();
+      if (tokenResult.accessToken) {
+        githubAccessToken = tokenResult.accessToken;
+      }
+    }
+  } catch (error) {
+    console.error("Failed to fetch GitHub access token", error);
+  }
+
+  const detectedFrameworkPreset = await detectFrameworkPreset(repo, githubAccessToken);
 
   let initialEnvVarsContent: string | null = null;
   let initialMaintenanceScript: string | null = null;

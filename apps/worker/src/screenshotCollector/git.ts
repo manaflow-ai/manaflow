@@ -136,18 +136,21 @@ export async function resolveMergeBase(
   const candidateBranches: string[] = [];
 
   if (normalizedOverride) {
-    candidateBranches.push(normalizedOverride);
+    // Prefer remote refs over local branches since local branches may be stale
+    // after git fetch (we fetch but don't pull/update local branches)
     if (!normalizedOverride.startsWith("origin/")) {
       candidateBranches.push(`origin/${normalizedOverride}`);
-    }
-    if (!normalizedOverride.startsWith("refs/heads/")) {
-      candidateBranches.push(`refs/heads/${normalizedOverride}`);
     }
     if (
       !normalizedOverride.startsWith("refs/remotes/") &&
       !normalizedOverride.startsWith("origin/")
     ) {
       candidateBranches.push(`refs/remotes/origin/${normalizedOverride}`);
+    }
+    // Fall back to local refs if remote refs don't exist
+    candidateBranches.push(normalizedOverride);
+    if (!normalizedOverride.startsWith("refs/heads/")) {
+      candidateBranches.push(`refs/heads/${normalizedOverride}`);
     }
   }
 

@@ -53,8 +53,41 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
 
   if (!user) {
     return (
-      <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
+      <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
+        <svg
+          className="absolute inset-0 -z-10 w-full h-full -mx-8 sm:mx-0"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 832 252"
+          fill="none"
+          preserveAspectRatio="none"
+        >
+          <ellipse className="sm:hidden" cx="446" cy="96" rx="500" ry="126" fill="url(#paint0_radial_preview_1_sm)" />
+          <ellipse className="hidden sm:block" cx="446" cy="96" rx="416" ry="126" fill="url(#paint0_radial_preview_1)" />
+          <defs>
+            <radialGradient
+              id="paint0_radial_preview_1_sm"
+              cx="0"
+              cy="0"
+              r="1"
+              gradientUnits="userSpaceOnUse"
+              gradientTransform="translate(446 96) scale(500 126)"
+            >
+              <stop stopColor="rgba(4,120,255,0.25)" />
+              <stop offset="1" stopColor="rgba(4,120,255,0)" />
+            </radialGradient>
+            <radialGradient
+              id="paint0_radial_preview_1"
+              cx="0"
+              cy="0"
+              r="1"
+              gradientUnits="userSpaceOnUse"
+              gradientTransform="translate(446 96) scale(416 126)"
+            >
+              <stop stopColor="rgba(4,120,255,0.25)" />
+              <stop offset="1" stopColor="rgba(4,120,255,0)" />
+            </radialGradient>
+          </defs>
+        </svg>
 
         <PreviewDashboard
           selectedTeamSlugOrId=""
@@ -87,6 +120,14 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
       return value[0] ?? null;
     }
     return value ?? null;
+  })();
+
+  const popupComplete = (() => {
+    const value = resolvedSearch?.popup_complete;
+    if (Array.isArray(value)) {
+      return value[0] === "true";
+    }
+    return value === "true";
   })();
 
   const selectedTeam =
@@ -144,8 +185,41 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
   );
 
   return (
-    <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
+    <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
+      <svg
+        className="absolute inset-0 -z-10 w-full h-full -mx-8 sm:mx-0"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 832 252"
+        fill="none"
+        preserveAspectRatio="none"
+      >
+        <ellipse className="sm:hidden" cx="446" cy="96" rx="500" ry="126" fill="url(#paint0_radial_preview_2_sm)" />
+        <ellipse className="hidden sm:block" cx="446" cy="96" rx="416" ry="126" fill="url(#paint0_radial_preview_2)" />
+        <defs>
+          <radialGradient
+            id="paint0_radial_preview_2_sm"
+            cx="0"
+            cy="0"
+            r="1"
+            gradientUnits="userSpaceOnUse"
+            gradientTransform="translate(446 96) scale(500 126)"
+          >
+            <stop stopColor="rgba(4,120,255,0.25)" />
+            <stop offset="1" stopColor="rgba(4,120,255,0)" />
+          </radialGradient>
+          <radialGradient
+            id="paint0_radial_preview_2"
+            cx="0"
+            cy="0"
+            r="1"
+            gradientUnits="userSpaceOnUse"
+            gradientTransform="translate(446 96) scale(416 126)"
+          >
+            <stop stopColor="rgba(4,120,255,0.25)" />
+            <stop offset="1" stopColor="rgba(4,120,255,0)" />
+          </radialGradient>
+        </defs>
+      </svg>
 
       <PreviewDashboard
         selectedTeamSlugOrId={selectedTeamSlugOrId}
@@ -153,6 +227,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         providerConnectionsByTeam={providerConnectionsByTeam}
         isAuthenticated={true}
         previewConfigs={previewConfigs}
+        popupComplete={popupComplete}
       />
     </div>
   );

@@ -1,20 +1,27 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FlatCompat } from "@eslint/eslintrc";
 import tseslint from "typescript-eslint";
+import nextPlugin from "@next/eslint-plugin-next";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
 export default tseslint.config(
-  // Next.js rules via compat
-  ...compat.extends("next/core-web-vitals"),
   // TypeScript ESLint recommended (no type-checking required)
   ...tseslint.configs.recommended,
+  // React hooks rules
+  reactHooks.configs["recommended-latest"],
+  // Next.js plugin rules
+  {
+    plugins: {
+      "@next/next": nextPlugin,
+    },
+    rules: {
+      ...nextPlugin.configs.recommended.rules,
+      ...nextPlugin.configs["core-web-vitals"].rules,
+    },
+  },
   // Ensure TypeScript parser resolves the correct tsconfig root
   {
     languageOptions: {

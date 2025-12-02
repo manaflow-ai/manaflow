@@ -351,6 +351,11 @@ export type GithubInstallStateRequest = {
     returnUrl?: string;
 };
 
+export type GithubOAuthTokenResponse = {
+    accessToken: string | null;
+    error: string | null;
+};
+
 export type ResumeTaskRunResponse = {
     resumed: true;
 };
@@ -379,7 +384,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_u00k1p82' | 'snapshot_8b1361wp' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_xrlir8y6' | 'snapshot_tst7w0q1' | 'snapshot_pcmfvjra');
 };
 
 export type CreateEnvironmentResponse = {
@@ -644,7 +649,7 @@ export type PreviewConfig = {
     id: string;
     repoFullName: string;
     environmentId?: string | null;
-    repoInstallationId?: number | null;
+    repoInstallationId: number;
     repoDefaultBranch?: string | null;
     status: 'active' | 'paused' | 'disabled';
     lastRunAt?: number | null;
@@ -661,7 +666,7 @@ export type PreviewConfigMutationBody = {
     teamSlugOrId: string;
     repoFullName: string;
     environmentId?: string;
-    repoInstallationId?: number;
+    repoInstallationId: number;
     repoDefaultBranch?: string;
     status?: 'active' | 'paused' | 'disabled';
 };
@@ -673,7 +678,6 @@ export type PreviewRun = {
     headSha: string;
     baseSha?: string | null;
     status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-    stateReason?: string | null;
     createdAt: number;
     updatedAt: number;
     dispatchedAt?: number | null;
@@ -1623,6 +1627,29 @@ export type PostApiIntegrationsGithubInstallStateResponses = {
 };
 
 export type PostApiIntegrationsGithubInstallStateResponse = PostApiIntegrationsGithubInstallStateResponses[keyof PostApiIntegrationsGithubInstallStateResponses];
+
+export type GetApiIntegrationsGithubOauthTokenData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/oauth-token';
+};
+
+export type GetApiIntegrationsGithubOauthTokenErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubOauthTokenResponses = {
+    /**
+     * GitHub OAuth token response
+     */
+    200: GithubOAuthTokenResponse;
+};
+
+export type GetApiIntegrationsGithubOauthTokenResponse = GetApiIntegrationsGithubOauthTokenResponses[keyof GetApiIntegrationsGithubOauthTokenResponses];
 
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;

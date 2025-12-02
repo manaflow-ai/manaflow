@@ -570,7 +570,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "failed",
-      stateReason: "Morph API key is not configured",
     });
     return;
   }
@@ -597,7 +596,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "failed",
-      stateReason: "Convex URL is not configured for preview screenshots",
     });
     return;
   }
@@ -614,7 +612,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "skipped",
-      stateReason: "No environment configured for preview run",
     });
     return;
   }
@@ -631,7 +628,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "skipped",
-      stateReason: "Environment not found for preview run",
     });
     return;
   }
@@ -644,7 +640,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "skipped",
-      stateReason: "Environment has no associated Morph snapshot",
     });
     return;
   }
@@ -723,7 +718,6 @@ export async function runPreviewJob(
   await ctx.runMutation(internal.previewRuns.updateStatus, {
     previewRunId,
     status: "running",
-    stateReason: "Provisioning Morph workspace",
   });
 
   try {
@@ -780,12 +774,6 @@ export async function runPreviewJob(
       ? `${vscodeService.url}?folder=/root/workspace`
       : null;
 
-    await ctx.runMutation(internal.previewRuns.updateInstanceMetadata, {
-      previewRunId,
-      morphInstanceId: instance.id,
-      clearStoppedAt: true,
-    });
-
     console.log("[preview-jobs] Worker service ready", {
       previewRunId,
       instanceId: instance.id,
@@ -833,7 +821,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Fetching latest changes",
     });
 
     // The repository is always at /root/workspace directly
@@ -1009,6 +996,33 @@ export async function runPreviewJob(
       headSha: run.headSha,
     });
 
+    // Update local default branch ref to match origin
+    // This ensures tools like Claude that run `git diff main..branch` use fresh refs
+    // Unlike `git pull`, this updates the ref without requiring checkout or modifying working directory
+    const defaultBranch = config.repoDefaultBranch || "main";
+    const updateDefaultBranchResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
+      body: {
+        command: ["git", "-C", repoDir, "fetch", "origin", `${defaultBranch}:${defaultBranch}`],
+      },
+    });
+
+    if (updateDefaultBranchResponse.error || updateDefaultBranchResponse.data?.exit_code !== 0) {
+      // Non-fatal: log warning but continue - the origin/main ref is still available
+      console.warn("[preview-jobs] Failed to update local default branch ref", {
+        previewRunId,
+        defaultBranch,
+        exitCode: updateDefaultBranchResponse.data?.exit_code,
+        stderr: sliceOutput(updateDefaultBranchResponse.data?.stderr),
+      });
+    } else {
+      console.log("[preview-jobs] Updated local default branch ref", {
+        previewRunId,
+        defaultBranch,
+      });
+    }
+
     await ensureCommitAvailable({
       morphClient,
       instanceId: instance.id,
@@ -1038,12 +1052,13 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Checking out PR commit",
     });
 
+    // Use -f (force) to discard any local modifications that would conflict
+    // This is safe because we already stashed changes above
     const checkoutCmd = run.headRef
-      ? ["git", "-C", repoDir, "checkout", "-B", run.headRef, run.headSha]
-      : ["git", "-C", repoDir, "checkout", run.headSha];
+      ? ["git", "-C", repoDir, "checkout", "-f", "-B", run.headRef, run.headSha]
+      : ["git", "-C", repoDir, "checkout", "-f", run.headSha];
 
     const checkoutResponse = await execInstanceInstanceIdExecPost({
       client: morphClient,
@@ -1087,7 +1102,6 @@ export async function runPreviewJob(
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Setting up environment and triggering screenshots",
     });
 
     if (taskRunId && previewJwt) {
@@ -1248,7 +1262,6 @@ export async function runPreviewJob(
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: "failed",
-        stateReason: message,
       });
     } catch (statusError) {
       console.error("[preview-jobs] Failed to update preview status", {

@@ -36,6 +36,44 @@ export function useArchiveTask(teamSlugOrId: string) {
       // default args variant used across app
       updateLists({ teamSlugOrId });
       updateLists({ teamSlugOrId, archived: false });
+
+      // Also update getById query if it exists (used by preview list)
+      const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
+      const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
+      if (existingDetail) {
+        localStore.setQuery(api.tasks.getById, detailArgs, {
+          ...existingDetail,
+          isArchived: true,
+        });
+      }
+
+      // Also update getPreviewTasks query if it exists (used by sidebar previews)
+      const previewArgs = { teamSlugOrId: args.teamSlugOrId };
+      const previewTasks = localStore.getQuery(
+        api.tasks.getPreviewTasks,
+        previewArgs
+      );
+      if (previewTasks) {
+        localStore.setQuery(
+          api.tasks.getPreviewTasks,
+          previewArgs,
+          previewTasks.filter((t) => t._id !== args.id)
+        );
+      }
+
+      // Also update previewRuns.listByTeam query if it exists (used by dashboard previews tab)
+      const previewRunsArgs = { teamSlugOrId: args.teamSlugOrId };
+      const previewRuns = localStore.getQuery(
+        api.previewRuns.listByTeam,
+        previewRunsArgs
+      );
+      if (previewRuns) {
+        localStore.setQuery(
+          api.previewRuns.listByTeam,
+          previewRunsArgs,
+          previewRuns.filter((run) => run.taskId !== args.id)
+        );
+      }
     }
   );
 
@@ -61,6 +99,16 @@ export function useArchiveTask(teamSlugOrId: string) {
     };
     updateLists({ teamSlugOrId });
     updateLists({ teamSlugOrId, archived: false });
+
+    // Also update getById query if it exists (used by preview list)
+    const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
+    const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
+    if (existingDetail) {
+      localStore.setQuery(api.tasks.getById, detailArgs, {
+        ...existingDetail,
+        isArchived: false,
+      });
+    }
   });
 
   const archiveWithUndo = (task: Doc<"tasks">) => {

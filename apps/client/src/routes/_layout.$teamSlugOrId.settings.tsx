@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
@@ -642,40 +643,42 @@ function SettingsComponent() {
               </div>
             </div>
 
-            {/* Worktree Path */}
-            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
-                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Worktree Location
-                </h2>
-              </div>
-              <div className="p-4">
-                <div>
-                  <label
-                    htmlFor="worktreePath"
-                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
-                  >
-                    Custom Worktree Path
-                  </label>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-                    Specify where to store git worktrees. Leave empty to use the
-                    default location. You can use ~ for your home directory.
-                  </p>
-                  <input
-                    type="text"
-                    id="worktreePath"
-                    value={worktreePath}
-                    onChange={(e) => setWorktreePath(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
-                    placeholder="~/my-custom-worktrees"
-                    autoComplete="off"
-                  />
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
-                    Default location: ~/cmux
-                  </p>
+            {/* Worktree Path - hidden in web mode */}
+            {!env.NEXT_PUBLIC_WEB_MODE && (
+              <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+                <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                  <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Worktree Location
+                  </h2>
+                </div>
+                <div className="p-4">
+                  <div>
+                    <label
+                      htmlFor="worktreePath"
+                      className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                    >
+                      Custom Worktree Path
+                    </label>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                      Specify where to store git worktrees. Leave empty to use the
+                      default location. You can use ~ for your home directory.
+                    </p>
+                    <input
+                      type="text"
+                      id="worktreePath"
+                      value={worktreePath}
+                      onChange={(e) => setWorktreePath(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
+                      placeholder="~/my-custom-worktrees"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
+                      Default location: ~/cmux
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* AI Provider Authentication */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -965,32 +968,36 @@ function SettingsComponent() {
               </div>
             </div>
 
-            {/* Provider Status */}
-            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
-                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Provider Status
-                </h2>
+            {/* Provider Status - hidden in web mode */}
+            {!env.NEXT_PUBLIC_WEB_MODE && (
+              <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+                <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                  <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Provider Status
+                  </h2>
+                </div>
+                <div className="p-4">
+                  <ProviderStatusSettings />
+                </div>
               </div>
-              <div className="p-4">
-                <ProviderStatusSettings />
-              </div>
-            </div>
+            )}
 
-            {/* Container Settings */}
-            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
-                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Container Management
-                </h2>
+            {/* Container Settings - hidden in web mode */}
+            {!env.NEXT_PUBLIC_WEB_MODE && (
+              <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+                <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                  <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Container Management
+                  </h2>
+                </div>
+                <div className="p-4">
+                  <ContainerSettings
+                    teamSlugOrId={teamSlugOrId}
+                    onDataChange={handleContainerSettingsChange}
+                  />
+                </div>
               </div>
-              <div className="p-4">
-                <ContainerSettings
-                  teamSlugOrId={teamSlugOrId}
-                  onDataChange={handleContainerSettingsChange}
-                />
-              </div>
-            </div>
+            )}
 
             {/* Notifications */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800 hidden">

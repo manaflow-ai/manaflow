@@ -68,6 +68,56 @@ function normalizePullRequestRecords(
   }));
 }
 
+/**
+ * Sync the taskRunPullRequests junction table for a taskRun.
+ * This enables efficient lookup of taskRuns when a PR webhook fires.
+ */
+async function syncTaskRunPullRequests(
+  ctx: MutationCtx,
+  taskRunId: Id<"taskRuns">,
+  teamId: string,
+  pullRequests: StoredPullRequestInfo[] | undefined,
+): Promise<void> {
+  // Get existing junction entries for this taskRun
+  const existingEntries = await ctx.db
+    .query("taskRunPullRequests")
+    .withIndex("by_task_run", (q) => q.eq("taskRunId", taskRunId))
+    .collect();
+
+  // Build set of new PR identities (repoFullName + prNumber)
+  const newPrs = new Map<string, { repoFullName: string; prNumber: number }>();
+  for (const pr of pullRequests ?? []) {
+    if (pr.number !== undefined) {
+      const key = `${pr.repoFullName}:${pr.number}`;
+      newPrs.set(key, { repoFullName: pr.repoFullName, prNumber: pr.number });
+    }
+  }
+
+  // Delete entries that no longer exist
+  for (const entry of existingEntries) {
+    const key = `${entry.repoFullName}:${entry.prNumber}`;
+    if (!newPrs.has(key)) {
+      await ctx.db.delete(entry._id);
+    }
+  }
+
+  // Add new entries
+  const existingKeys = new Set(
+    existingEntries.map((e) => `${e.repoFullName}:${e.prNumber}`),
+  );
+  for (const [key, pr] of newPrs) {
+    if (!existingKeys.has(key)) {
+      await ctx.db.insert("taskRunPullRequests", {
+        taskRunId,
+        teamId,
+        repoFullName: pr.repoFullName,
+        prNumber: pr.prNumber,
+        createdAt: Date.now(),
+      });
+    }
+  }
+}
+
 function deriveGeneratedBranchName(branch?: string | null): string | undefined {
   if (!branch) return undefined;
   const trimmed = branch.trim();
@@ -1342,6 +1392,11 @@ export const updatePullRequestUrl = authMutation({
           : updates.pullRequestNumber;
     }
     await ctx.db.patch(args.id, updates);
+
+    // Sync the lookup table for PR URL -> taskRun mapping
+    if (normalizedPullRequests) {
+      await syncTaskRunPullRequests(ctx, args.id, teamId, normalizedPullRequests);
+    }
   },
 });
 
@@ -1415,6 +1470,11 @@ export const updatePullRequestState = authMutation({
           : updates.pullRequestNumber;
     }
     await ctx.db.patch(args.id, updates);
+
+    // Sync the lookup table for PR URL -> taskRun mapping
+    if (normalizedPullRequests) {
+      await syncTaskRunPullRequests(ctx, args.id, teamId, normalizedPullRequests);
+    }
   },
 });
 

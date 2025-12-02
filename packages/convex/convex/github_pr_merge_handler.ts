@@ -5,40 +5,46 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 
 /**
- * Find taskRuns that have the given PR URL(s) associated with them.
- * Handles both single PR (legacy) and multiple PRs (new format).
+ * Find taskRuns associated with a PR using indexed queries.
+ * Queries both the legacy pullRequestUrl field and the junction table.
  */
-async function findTaskRunsByPullRequestUrl(
+async function findTaskRunsByPullRequest(
   ctx: QueryCtx,
   teamId: string,
+  repoFullName: string,
+  prNumber: number,
   prUrl: string,
 ): Promise<Doc<"taskRuns">[]> {
-  // First, try to find taskRuns with the exact URL in the legacy field
-  const directMatches = await ctx.db
-    .query("taskRuns")
-    .withIndex("by_team_user", (q) => q.eq("teamId", teamId))
-    .filter((q) => q.eq(q.field("pullRequestUrl"), prUrl))
+  // Query the junction table by PR identity (most reliable for new data)
+  const junctionEntries = await ctx.db
+    .query("taskRunPullRequests")
+    .withIndex("by_pr", (q) =>
+      q.eq("teamId", teamId).eq("repoFullName", repoFullName).eq("prNumber", prNumber)
+    )
     .collect();
 
-  // Then, find taskRuns that have this URL in the pullRequests array
-  // We need to check each taskRun individually since we can't index into arrays in queries
-  const allTaskRuns = await ctx.db
+  const junctionMatches: Doc<"taskRuns">[] = [];
+  for (const entry of junctionEntries) {
+    const taskRun = await ctx.db.get(entry.taskRunId);
+    if (taskRun) {
+      junctionMatches.push(taskRun);
+    }
+  }
+
+  // Also query the legacy pullRequestUrl field for old data not yet in junction table
+  const legacyMatches = await ctx.db
     .query("taskRuns")
-    .withIndex("by_team_user", (q) => q.eq("teamId", teamId))
+    .withIndex("by_pull_request_url", (q) => q.eq("pullRequestUrl", prUrl))
     .collect();
 
-  const arrayMatches = allTaskRuns.filter(taskRun => {
-    if (!taskRun.pullRequests) return false;
-    return taskRun.pullRequests.some(pr => pr.url === prUrl);
-  });
+  // Filter legacy matches to this team
+  const teamLegacyMatches = legacyMatches.filter(run => run.teamId === teamId);
 
   // Combine and deduplicate
-  const allMatches = [...directMatches, ...arrayMatches];
-  const uniqueMatches = Array.from(
+  const allMatches = [...junctionMatches, ...teamLegacyMatches];
+  return Array.from(
     new Map(allMatches.map(run => [run._id, run])).values()
   );
-
-  return uniqueMatches;
 }
 
 /**
@@ -107,7 +113,7 @@ export const handlePullRequestMergeEvent = internalMutation({
     });
 
     // Find all taskRuns that reference this PR
-    const taskRuns = await findTaskRunsByPullRequestUrl(ctx, teamId, prUrl);
+    const taskRuns = await findTaskRunsByPullRequest(ctx, teamId, repoFullName, prNumber, prUrl);
 
     if (taskRuns.length === 0) {
       console.log("[PR merge handler] No taskRuns found for PR", {

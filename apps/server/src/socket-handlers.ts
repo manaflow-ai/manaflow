@@ -1,4 +1,5 @@
 import { api } from "@cmux/convex/api";
+import { env } from "./utils/server-env";
 import type { Id } from "@cmux/convex/dataModel";
 import type { WorkspaceConfigResponse } from "@cmux/www-openapi-client";
 import {
@@ -52,7 +53,10 @@ import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
-import { checkAllProvidersStatus } from "./utils/providerStatus";
+import {
+  checkAllProvidersStatus,
+  checkAllProvidersStatusWebMode,
+} from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
 import { getWwwClient } from "./utils/wwwClient";
@@ -382,7 +386,8 @@ export function setupSocketHandlers(
         });
       });
       // Start Docker container state sync after first authenticated connection
-      if (!dockerEventsStarted) {
+      // Skip in web mode since Docker is not used
+      if (!dockerEventsStarted && !env.NEXT_PUBLIC_WEB_MODE) {
         dockerEventsStarted = true;
         runWithAuth(initialToken, initialAuthJson, () => {
           serverLogger.info(
@@ -452,6 +457,23 @@ export function setupSocketHandlers(
     });
 
     void (async () => {
+      // In web mode, skip detecting local editors entirely
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        const emptyAvailability: AvailableEditors = {
+          vscode: false,
+          cursor: false,
+          windsurf: false,
+          finder: false,
+          iterm: false,
+          terminal: false,
+          ghostty: false,
+          alacritty: false,
+          xcode: false,
+        };
+        socket.emit("available-editors", emptyAvailability);
+        return;
+      }
+
       const commandExists = async (cmd: string) => {
         try {
           await execAsync(`command -v ${cmd}`);
@@ -525,6 +547,15 @@ export function setupSocketHandlers(
       serverLogger.info("starting task!", taskData);
       const taskId = taskData.taskId;
       try {
+        // In web mode, local (Docker) tasks are not supported
+        if (env.NEXT_PUBLIC_WEB_MODE && !taskData.isCloudMode) {
+          callback({
+            taskId,
+            error: "Local mode is not available in the web version. Please use Cloud mode.",
+          });
+          return;
+        }
+
         // For local mode, ensure Docker is running before attempting to spawn
         if (!taskData.isCloudMode) {
           try {
@@ -705,6 +736,11 @@ export function setupSocketHandlers(
         if (!callback) {
           return;
         }
+        // In web mode, local VSCode serve-web is not used
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          callback({ baseUrl: null, port: null });
+          return;
+        }
         try {
           callback({
             baseUrl: getVSCodeServeWebBaseUrl(),
@@ -729,6 +765,15 @@ export function setupSocketHandlers(
         rawData,
         callback: (response: CreateLocalWorkspaceResponse) => void
       ) => {
+        // In web mode, local workspaces are not supported
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          callback({
+            success: false,
+            error: "Local workspaces are not available in the web version. Please use Cloud mode.",
+          });
+          return;
+        }
+
         const parsed = CreateLocalWorkspaceSchema.safeParse(rawData);
         if (!parsed.success) {
           serverLogger.error(
@@ -1225,7 +1270,7 @@ export function setupSocketHandlers(
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         const convex = getConvex();
-        let taskId: Id<"tasks"> | undefined = providedTaskId;
+        const taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
 
@@ -1653,6 +1698,12 @@ export function setupSocketHandlers(
     // (I'll include the rest of the handlers in the next message due to length)
 
     socket.on("open-in-editor", async (data, callback) => {
+      // In web mode, opening local editors is not supported
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback?.({ success: false, error: "Opening local editors is not available in the web version." });
+        return;
+      }
+
       try {
         const { editor, path } = OpenInEditorSchema.parse(data);
 
@@ -1965,6 +2016,17 @@ export function setupSocketHandlers(
     });
 
     socket.on("github-test-auth", async (callback) => {
+      // In web mode, this debug feature is not available
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback({
+          authStatus: "Not available in web mode",
+          whoami: "N/A",
+          home: "N/A",
+          ghConfig: "N/A",
+        });
+        return;
+      }
+
       try {
         // Run all commands in parallel
         const [authStatus, whoami, home, ghConfig] = await Promise.all([
@@ -2365,9 +2427,10 @@ ${title}`;
 
     socket.on("check-provider-status", async (callback) => {
       try {
-        const status = await checkAllProvidersStatus({
-          teamSlugOrId: safeTeam,
-        });
+        // In web mode, only check API keys from Convex (no local files/keychains)
+        const status = env.NEXT_PUBLIC_WEB_MODE
+          ? await checkAllProvidersStatusWebMode({ teamSlugOrId: safeTeam })
+          : await checkAllProvidersStatus({ teamSlugOrId: safeTeam });
         callback({ success: true, ...status });
       } catch (error) {
         serverLogger.error("Error checking provider status:", error);
@@ -2381,6 +2444,13 @@ ${title}`;
     socket.on("archive-task", async (data, callback) => {
       try {
         const { taskId } = ArchiveTaskSchema.parse(data);
+
+        // In web mode, skip Docker container operations (managed by cloud provider)
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          serverLogger.info(`Skipping container cleanup for task ${taskId} in web mode`);
+          callback({ success: true });
+          return;
+        }
 
         // Stop/pause all containers via helper (handles querying + logging)
         const results = await stopContainersForRuns(taskId, safeTeam);

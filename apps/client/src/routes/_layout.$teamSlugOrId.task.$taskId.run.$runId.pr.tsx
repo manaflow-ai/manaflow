@@ -129,7 +129,7 @@ function RunPullRequestPage() {
                 rel="noopener noreferrer"
                 className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
               >
-                Open in GitHub
+                Open Heatmap Diff Viewer
                 <svg
                   className="w-3 h-3"
                   fill="none"

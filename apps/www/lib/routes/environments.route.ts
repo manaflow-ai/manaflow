@@ -11,16 +11,7 @@ import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
-
-const CLEANUP_COMMANDS = [
-  "tmux kill-session -t cmux 2>/dev/null || true",
-  "tmux kill-server 2>/dev/null || true",
-  "git config --global --unset user.name 2>/dev/null || true",
-  "git config --global --unset user.email 2>/dev/null || true",
-  "git config --global --unset credential.helper 2>/dev/null || true",
-  "git credential-cache exit 2>/dev/null || true",
-  "gh auth logout 2>/dev/null || true",
-].join(" && ");
+import { SNAPSHOT_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 
 export const environmentsRouter = new OpenAPIHono();
 
@@ -249,7 +240,7 @@ environmentsRouter.openapi(
         return { dataVaultKey };
       })();
 
-      await instance.exec(CLEANUP_COMMANDS);
+      await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
 
       const snapshot = await instance.snapshot();
 
@@ -873,7 +864,7 @@ environmentsRouter.openapi(
         );
       }
 
-      await instance.exec(CLEANUP_COMMANDS);
+      await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
 
       const snapshot = await instance.snapshot();
 

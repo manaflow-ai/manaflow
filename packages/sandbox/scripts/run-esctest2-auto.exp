@@ -1,0 +1,53 @@
+#!/usr/bin/expect -f
+# Automated esctest2 runner inside dmux
+# Usage: ./run-esctest2-auto.exp [test_pattern] [timeout_seconds]
+
+set timeout 120
+set test_pattern [lindex $argv 0]
+set test_timeout [lindex $argv 1]
+
+if {$test_pattern eq ""} {
+    set test_pattern ".*"
+}
+if {$test_timeout eq ""} {
+    set test_timeout 60
+}
+
+set timeout $test_timeout
+
+# Get the esctest2 directory path
+set script_dir [file dirname [info script]]
+set esctest_dir [file normalize "$script_dir/../tools/esctest2/esctest"]
+
+log_user 1
+
+# Start dmux attach to sandbox 0
+spawn dmux attach 0
+
+# Wait for shell prompt
+expect {
+    -re {[$#>]\s*$} {
+        # Got prompt
+    }
+    timeout {
+        puts "Timeout waiting for shell prompt"
+        exit 1
+    }
+}
+
+# Change to esctest directory and run tests
+send "cd $esctest_dir && python3 esctest.py --expected-terminal=xterm --max-vt-level=4 --timeout=2 --include='$test_pattern' --logfile=/tmp/esctest2.log 2>&1; echo 'ESCTEST_DONE'\r"
+
+# Wait for completion
+expect {
+    "ESCTEST_DONE" {
+        puts "\n\n=== esctest2 completed ==="
+    }
+    timeout {
+        puts "\n\n=== esctest2 timed out after $test_timeout seconds ==="
+    }
+}
+
+# Exit dmux
+send "\x04"
+expect eof
