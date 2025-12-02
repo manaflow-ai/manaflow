@@ -325,6 +325,24 @@ export const postPreviewComment = internalAction({
         return { ok: false, error: "Screenshot set not found" };
       }
 
+      // Get taskRun if available for workspace/dev browser URLs
+      let workspaceUrl: string | undefined;
+      let devServerUrl: string | undefined;
+      if (previewRun.taskRunId) {
+        const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+          id: previewRun.taskRunId,
+        });
+        if (taskRun) {
+          // Get team info for the URL
+          const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+            teamId: taskRun.teamId,
+          });
+          const teamSlug: string = team?.slug ?? taskRun.teamId;
+          workspaceUrl = `https://cmux.dev/${teamSlug}/task/${taskRun.taskId}`;
+          devServerUrl = taskRun.vscode?.ports?.proxy;
+        }
+      }
+
       // Collect previous screenshot sets for this PR so we can collapse them
       const previousRuns =
         (await ctx.runQuery(internal.previewRuns.listByConfigAndPr, {
@@ -359,7 +377,18 @@ export const postPreviewComment = internalAction({
         latestHeading,
       );
 
-      const commentSections: string[] = ["## Preview Screenshots", latestSection];
+      // Build links row (under the heading)
+      const linkParts: string[] = [];
+      if (workspaceUrl) {
+        linkParts.push(`[Open Workspace (1 hr)](${workspaceUrl}?src=preview.new)`);
+      }
+      if (devServerUrl) {
+        linkParts.push(`[Open Dev Browser (1 hr)](${devServerUrl}?src=preview.new)`);
+      }
+      linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?src=preview.new)`);
+      const linksRow = linkParts.join(" • ");
+
+      const commentSections: string[] = ["## Preview Screenshots", linksRow, latestSection];
 
       if (previousSetEntries.length > 0) {
         const collapsedSections: string[] = [];
@@ -663,8 +692,21 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       }
 
       // Build comment body
-      let commentBody: string = `[Open Workspace](${workspaceUrl}) (expires in 30m) • [Open in GitHub](https://github.com/${repoFullName}/pull/${prNumber})\n\n`;
-      commentBody += "## Preview Screenshots\n\n";
+      const devServerUrl = taskRun.vscode?.ports?.proxy;
+
+      // Build links row (under the heading)
+      const linkParts: string[] = [];
+      if (workspaceUrl) {
+        linkParts.push(`[Open Workspace (1 hr)](${workspaceUrl}?src=preview.new)`);
+      }
+      if (devServerUrl) {
+        linkParts.push(`[Open Dev Browser (1 hr)](${devServerUrl}?src=preview.new)`);
+      }
+      linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?src=preview.new)`);
+      const linksRow = linkParts.join(" • ");
+
+      let commentBody: string = "## Preview Screenshots\n\n";
+      commentBody += `${linksRow}\n\n`;
 
       if (screenshotSet.status === "completed" && screenshotSet.images.length > 0) {
         commentBody += `Successfully captured ${screenshotSet.images.length} screenshot(s) for commit \`${(screenshotSet.commitSha || "").slice(0, 7)}\`:\n\n`;
