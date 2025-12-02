@@ -606,15 +606,17 @@ export function EnvironmentConfiguration({
           },
         },
         {
-          onSuccess: async () => {
+          onSuccess: async (data) => {
             toast.success("Environment saved");
             onEnvironmentSaved?.();
             await navigate({
-              to: "/$teamSlugOrId/environments",
+              to: "/$teamSlugOrId/environments/configured",
               params: { teamSlugOrId },
               search: {
+                environmentId: data.id,
+                environmentName: envName.trim(),
+                selectedRepos,
                 step: undefined,
-                selectedRepos: undefined,
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
