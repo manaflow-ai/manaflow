@@ -601,11 +601,14 @@ export function PreviewConfigureClient({
 
   const [isSaving, setIsSaving] = useState(false);
 
+  // Ensure env section is collapsed when there are initial values.
+  // This handles edge cases where navigation or hydration might cause state mismatch.
   useEffect(() => {
-    if (initialHasEnvValues) {
+    if (initialEnvComplete) {
       setIsEnvSectionOpen(false);
     }
-  }, [initialHasEnvValues]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only run on mount to set correct initial state
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
