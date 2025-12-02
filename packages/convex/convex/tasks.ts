@@ -645,10 +645,7 @@ export const recordScreenshotResult = internalMutation({
       screenshotRunId: args.runId,
       screenshotRequestedAt: now,
       updatedAt: now,
-      latestScreenshotSetId:
-        args.status === "completed" && screenshots.length > 0
-          ? screenshotSetId
-          : undefined,
+      latestScreenshotSetId: screenshotSetId,
     };
 
     if (args.status === "completed" && screenshots.length > 0) {

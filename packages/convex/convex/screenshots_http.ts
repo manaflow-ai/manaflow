@@ -120,6 +120,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
   } else if (payload.status !== "completed") {
     await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
       id: payload.runId,
+      latestScreenshotSetId: resolvedScreenshotSetId,
     });
   }
 
