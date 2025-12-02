@@ -415,7 +415,7 @@ previewRouter.openapi(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cmux - AI Code Review for Every PR</title>
+  <title>Preview Test - cmux</title>
   <style>
     * {
       margin: 0;
@@ -425,95 +425,32 @@ previewRouter.openapi(
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #000;
-      padding: 20px;
+      background: #0a0a0f;
+      padding: 48px 24px;
+      color: #fff;
     }
     .container {
-      max-width: 600px;
-      width: 100%;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .header {
       text-align: center;
-    }
-    .logo {
-      font-size: 48px;
-      font-weight: 800;
-      color: #fff;
-      letter-spacing: -0.02em;
-      margin-bottom: 24px;
-    }
-    .logo span {
-      background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    h1 {
-      font-size: 36px;
-      font-weight: 700;
-      color: #fff;
-      margin-bottom: 16px;
-      line-height: 1.2;
-    }
-    .subtitle {
-      font-size: 18px;
-      color: #a1a1aa;
-      margin-bottom: 40px;
-      line-height: 1.6;
-    }
-    .features {
-      display: flex;
-      gap: 24px;
-      margin-bottom: 40px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .feature {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: #d4d4d8;
-      font-size: 14px;
-    }
-    .feature svg {
-      width: 20px;
-      height: 20px;
-      color: #10b981;
-    }
-    .cta {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: #fff;
-      color: #000;
-      font-size: 16px;
-      font-weight: 600;
-      padding: 16px 32px;
-      border-radius: 8px;
-      text-decoration: none;
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .cta:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);
-    }
-    .cta svg {
-      width: 20px;
-      height: 20px;
+      margin-bottom: 48px;
     }
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: rgba(16, 185, 129, 0.1);
+      background: rgba(16, 185, 129, 0.15);
       border: 1px solid rgba(16, 185, 129, 0.3);
       color: #10b981;
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 600;
       padding: 6px 12px;
       border-radius: 9999px;
-      margin-top: 32px;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
     .badge::before {
       content: '';
@@ -525,45 +462,190 @@ previewRouter.openapi(
     }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
+      50% { opacity: 0.4; }
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .subtitle {
+      font-size: 16px;
+      color: #71717a;
+      line-height: 1.5;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 16px;
+    }
+    .check-list {
+      list-style: none;
+    }
+    .check-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 14px;
+      color: #a1a1aa;
+    }
+    .check-list li:last-child {
+      border-bottom: none;
+    }
+    .check-icon {
+      width: 20px;
+      height: 20px;
+      background: rgba(16, 185, 129, 0.15);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .check-icon svg {
+      width: 12px;
+      height: 12px;
+      color: #10b981;
+    }
+    .check-text strong {
+      color: #fff;
+      font-weight: 500;
+    }
+    .promo-card {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.02) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    .promo-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .promo-label {
+      font-size: 12px;
+      color: #71717a;
+    }
+    .promo-logo {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .promo-logo span {
+      color: #10b981;
+    }
+    .promo-text {
+      font-size: 14px;
+      color: #a1a1aa;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .promo-buttons {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #fff;
+      color: #000;
+    }
+    .btn-primary:hover {
+      background: #e4e4e7;
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .btn svg {
+      width: 16px;
+      height: 16px;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">c<span>mux</span></div>
-    <h1>AI-Powered Preview Environments for Every Pull Request</h1>
-    <p class="subtitle">
-      Get instant visual previews and AI code review on every PR.
-      Ship faster with confidence.
-    </p>
-    <div class="features">
-      <div class="feature">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-        </svg>
-        Automatic Screenshots
+    <div class="header">
+      <span class="badge">Test Successful</span>
+      <h1>Preview Environment Verified</h1>
+      <p class="subtitle">Your cmux preview configuration is working correctly. This page was automatically generated to verify the setup.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">What was tested</div>
+      <ul class="check-list">
+        <li>
+          <div class="check-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div class="check-text"><strong>GitHub webhook received</strong> - PR events are being sent to cmux</div>
+        </li>
+        <li>
+          <div class="check-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div class="check-text"><strong>Dev server started</strong> - Your application is running in the preview environment</div>
+        </li>
+        <li>
+          <div class="check-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div class="check-text"><strong>Screenshot captured</strong> - The agent can browse and screenshot your UI</div>
+        </li>
+      </ul>
+    </div>
+
+    <div class="card promo-card">
+      <div class="promo-header">
+        <span class="promo-label">From the creators of</span>
+        <span class="promo-logo">c<span>mux</span>.dev</span>
       </div>
-      <div class="feature">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-        </svg>
-        AI Code Review
-      </div>
-      <div class="feature">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-        </svg>
-        GitHub Integration
+      <p class="promo-text">Get AI-powered screenshot previews for every pull request. cmux boots your dev server, captures screenshots of UI changes, and posts them directly to your PR.</p>
+      <div class="promo-buttons">
+        <a href="https://github.com/manaflow-ai/cmux" class="btn btn-secondary" target="_blank">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          Star on GitHub
+        </a>
+        <a href="https://cmux.dev" class="btn btn-primary" target="_blank">
+          Explore cmux
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+        </a>
       </div>
     </div>
-    <a href="https://cmux.dev" class="cta" target="_blank">
-      Try cmux Free
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-      </svg>
-    </a>
-    <div class="badge">Preview Environment Active</div>
   </div>
 </body>
 </html>
