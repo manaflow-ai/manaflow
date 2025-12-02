@@ -93,6 +93,7 @@ async function renderScreenshotSetMarkdown(
   ctx: ActionCtx,
   set: ScreenshotSetDoc,
   heading: string,
+  linksRow?: string,
 ): Promise<string> {
   const commitLabel = formatCommitLabel(set);
   const timestamp = formatTimestamp(set.capturedAt);
@@ -102,6 +103,9 @@ async function renderScreenshotSetMarkdown(
     const count = set.images.length;
     const intro = `Captured ${count} screenshot${count === 1 ? "" : "s"} for commit ${commitLabel} (${timestamp}).`;
     lines.push(intro, "");
+    if (linksRow) {
+      lines.push(linksRow, "");
+    }
     for (const image of set.images) {
       const storageUrl = await ctx.storage.getUrl(image.storageId);
       if (!storageUrl) continue;
@@ -369,15 +373,7 @@ export const postPreviewComment = internalAction({
         }
       }
 
-      // Build comment body
-      const latestHeading = `### Latest commit ${formatCommitLabel(screenshotSet)}`;
-      const latestSection = await renderScreenshotSetMarkdown(
-        ctx,
-        screenshotSet,
-        latestHeading,
-      );
-
-      // Build links row (under the heading)
+      // Build links row (under the heading, above screenshots)
       const linkParts: string[] = [];
       if (workspaceUrl) {
         linkParts.push(`[Open Workspace (1 hr)](${workspaceUrl}?src=preview.new)`);
@@ -388,7 +384,16 @@ export const postPreviewComment = internalAction({
       linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?src=preview.new)`);
       const linksRow = linkParts.join(" • ");
 
-      const commentSections: string[] = ["## Preview Screenshots", linksRow, latestSection];
+      // Build comment body
+      const latestHeading = `### Latest commit ${formatCommitLabel(screenshotSet)}`;
+      const latestSection = await renderScreenshotSetMarkdown(
+        ctx,
+        screenshotSet,
+        latestHeading,
+        linksRow,
+      );
+
+      const commentSections: string[] = ["## Preview Screenshots", latestSection];
 
       if (previousSetEntries.length > 0) {
         const collapsedSections: string[] = [];
@@ -694,7 +699,7 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       // Build comment body
       const devServerUrl = taskRun.vscode?.ports?.proxy;
 
-      // Build links row (under the heading)
+      // Build links row (under the heading, above screenshots)
       const linkParts: string[] = [];
       if (workspaceUrl) {
         linkParts.push(`[Open Workspace (1 hr)](${workspaceUrl}?src=preview.new)`);
@@ -706,10 +711,10 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       const linksRow = linkParts.join(" • ");
 
       let commentBody: string = "## Preview Screenshots\n\n";
-      commentBody += `${linksRow}\n\n`;
 
       if (screenshotSet.status === "completed" && screenshotSet.images.length > 0) {
         commentBody += `Successfully captured ${screenshotSet.images.length} screenshot(s) for commit \`${(screenshotSet.commitSha || "").slice(0, 7)}\`:\n\n`;
+        commentBody += `${linksRow}\n\n`;
 
         for (const image of screenshotSet.images) {
           // Get storage URL for the image
