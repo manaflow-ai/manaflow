@@ -555,11 +555,6 @@ export function PreviewConfigureClient({
 
   useEffect(() => {
     if (
-      startAtConfigureEnvironment &&
-      instance?.vscodeUrl &&
-      !hasCompletedSetup
-    ) {
-    if (
       (startAtConfigureEnvironment || isWaitingForWorkspace) &&
       isWorkspaceReady &&
       !hasCompletedSetup
