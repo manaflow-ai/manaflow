@@ -63,7 +63,7 @@ export function PreviewConfigureSuccessClient({
   };
 
   return (
-    <div className="min-h-dvh bg-white dark:bg-black font-mono flex items-center justify-center px-6">
+    <div className="min-h-dvh bg-white dark:bg-black flex items-center justify-center px-6 font-sans">
       <div className="max-w-lg w-full">
         <div className="text-center mb-8">
           <div className="mx-auto mb-6 grid place-items-center">
@@ -76,7 +76,7 @@ export function PreviewConfigureSuccessClient({
           </h1>
           <div className="mt-3 flex items-center justify-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
             <Github className="h-4 w-4" />
-            <span className="font-mono">{repoFullName}</span>
+            <span>{repoFullName}</span>
           </div>
         </div>
 
@@ -111,7 +111,7 @@ export function PreviewConfigureSuccessClient({
         </div>
 
         {/* Test PR Section */}
-        <div className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/20 p-6 mb-6">
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 p-6 mb-6">
           <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-2">
             Test your configuration
           </h2>
@@ -151,7 +151,7 @@ export function PreviewConfigureSuccessClient({
                 "inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold transition",
                 isCreatingPR
                   ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-500 cursor-not-allowed"
-                  : "bg-blue-600 text-white hover:bg-blue-700"
+                  : "bg-emerald-600 text-white hover:bg-emerald-700"
               )}
             >
               {isCreatingPR ? (

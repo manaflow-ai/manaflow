@@ -408,22 +408,135 @@ previewRouter.openapi(
         sha: baseSha,
       });
 
-      // Create a test file with a timestamp
-      const testFileName = ".cmux-test-preview.md";
-      const testFileContent = `# cmux Preview Test
-
-This is a test file created by cmux to verify the preview configuration.
-
-Created at: ${new Date().toISOString()}
-
-You can safely close or merge this PR after verifying the preview works correctly.
+      // Create a test HTML page in public/ so it's accessible as a page
+      const testFileName = "public/cmux-test-preview.html";
+      const isoTimestamp = new Date(timestamp).toISOString();
+      const testFileContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cmux Preview Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 48px;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    }
+    .icon {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+    }
+    .icon svg {
+      width: 40px;
+      height: 40px;
+      color: white;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 12px;
+    }
+    .subtitle {
+      font-size: 16px;
+      color: #6b7280;
+      margin-bottom: 32px;
+      line-height: 1.5;
+    }
+    .info {
+      background: #f3f4f6;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .info-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #9ca3af;
+      margin-bottom: 4px;
+    }
+    .info-value {
+      font-size: 14px;
+      color: #374151;
+      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #ecfdf5;
+      color: #059669;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px 16px;
+      border-radius: 9999px;
+    }
+    .badge::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    </div>
+    <h1>Preview Working!</h1>
+    <p class="subtitle">
+      Your cmux preview environment is configured correctly and ready to use.
+    </p>
+    <div class="info">
+      <div class="info-label">Created at</div>
+      <div class="info-value">${isoTimestamp}</div>
+    </div>
+    <span class="badge">Preview Active</span>
+  </div>
+</body>
+</html>
 `;
 
       await octokit.rest.repos.createOrUpdateFileContents({
         owner,
         repo,
         path: testFileName,
-        message: "test: add cmux preview test file",
+        message: "test: add cmux preview test page",
         content: Buffer.from(testFileContent).toString("base64"),
         branch: testBranchName,
       });
@@ -439,11 +552,15 @@ You can safely close or merge this PR after verifying the preview works correctl
 
 This PR was automatically created by cmux to test your preview configuration.
 
+### What this PR adds
+
+A test HTML page at \`public/cmux-test-preview.html\` that will be accessible at \`/cmux-test-preview.html\` in your preview environment.
+
 ### What to expect
 
 A preview environment will be created for this PR. This typically takes **2-5 minutes**.
 
-Once complete, you'll see a comment on this PR with a link to the preview environment.
+Once complete, you'll see a comment on this PR with a screenshot of the test page and a link to the preview environment.
 
 ### After testing
 
