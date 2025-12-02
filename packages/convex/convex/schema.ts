@@ -597,6 +597,7 @@ const convexSchema = defineSchema({
     githubCommentId: v.optional(v.number()),
     morphInstanceId: v.optional(v.string()),
     morphInstanceStoppedAt: v.optional(v.number()),
+    triggerPrompt: v.optional(v.string()), // Custom prompt from @cmux comment trigger
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -835,12 +835,15 @@ export const createForPreview = internalMutation({
     prUrl: v.string(),
     headSha: v.string(),
     baseBranch: v.optional(v.string()),
+    triggerPrompt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    const defaultText = `Preview screenshots for PR #${args.prNumber}`;
+    const defaultDescription = `Capture UI screenshots for ${args.prUrl}`;
     const taskId = await ctx.db.insert("tasks", {
-      text: `Preview screenshots for PR #${args.prNumber}`,
-      description: `Capture UI screenshots for ${args.prUrl}`,
+      text: args.triggerPrompt || defaultText,
+      description: args.triggerPrompt ? defaultText : defaultDescription,
       projectFullName: args.repoFullName,
       baseBranch: args.baseBranch,
       worktreePath: undefined,

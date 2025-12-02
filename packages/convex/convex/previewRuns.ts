@@ -20,6 +20,8 @@ export const enqueueFromWebhook = internalMutation({
     headRef: v.optional(v.string()),
     headRepoFullName: v.optional(v.string()),
     headRepoCloneUrl: v.optional(v.string()),
+    triggerPrompt: v.optional(v.string()),
+    forceNewRun: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const repoFullName = normalizeRepoFullName(args.repoFullName);
@@ -27,16 +29,19 @@ export const enqueueFromWebhook = internalMutation({
       ? normalizeRepoFullName(args.headRepoFullName)
       : undefined;
 
-    const existing = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_config_head", (q) =>
-        q.eq("previewConfigId", args.previewConfigId).eq("headSha", args.headSha),
-      )
-      .order("desc")
-      .first();
+    // Skip deduplication if forceNewRun is true (e.g., from @cmux comment trigger)
+    if (!args.forceNewRun) {
+      const existing = await ctx.db
+        .query("previewRuns")
+        .withIndex("by_config_head", (q) =>
+          q.eq("previewConfigId", args.previewConfigId).eq("headSha", args.headSha),
+        )
+        .order("desc")
+        .first();
 
-    if (existing && (existing.status === "pending" || existing.status === "running")) {
-      return existing._id;
+      if (existing && (existing.status === "pending" || existing.status === "running")) {
+        return existing._id;
+      }
     }
 
     const now = Date.now();
@@ -59,6 +64,7 @@ export const enqueueFromWebhook = internalMutation({
       completedAt: undefined,
       screenshotSetId: undefined,
       githubCommentUrl: undefined,
+      triggerPrompt: args.triggerPrompt,
       createdAt: now,
       updatedAt: now,
     });

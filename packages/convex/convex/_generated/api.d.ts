@@ -23,6 +23,7 @@ import type * as environments from "../environments.js";
 import type * as github from "../github.js";
 import type * as github_app from "../github_app.js";
 import type * as github_check_runs from "../github_check_runs.js";
+import type * as github_comment_trigger from "../github_comment_trigger.js";
 import type * as github_commit_statuses from "../github_commit_statuses.js";
 import type * as github_deployments from "../github_deployments.js";
 import type * as github_http from "../github_http.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   github: typeof github;
   github_app: typeof github_app;
   github_check_runs: typeof github_check_runs;
+  github_comment_trigger: typeof github_comment_trigger;
   github_commit_statuses: typeof github_commit_statuses;
   github_deployments: typeof github_deployments;
   github_http: typeof github_http;

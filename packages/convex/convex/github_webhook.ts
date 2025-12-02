@@ -4,6 +4,7 @@ import type {
   DeploymentStatusEvent,
   InstallationEvent,
   InstallationRepositoriesEvent,
+  IssueCommentEvent,
   PullRequestEvent,
   PushEvent,
   StatusEvent,
@@ -215,8 +216,185 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
       case "create":
       case "delete":
       case "pull_request_review":
-      case "pull_request_review_comment":
+      case "pull_request_review_comment": {
+        break;
+      }
       case "issue_comment": {
+        try {
+          const commentPayload = body as IssueCommentEvent;
+
+          // Only process newly created comments
+          if (commentPayload.action !== "created") {
+            break;
+          }
+
+          // Only process comments on PRs (not issues)
+          if (!commentPayload.issue?.pull_request) {
+            break;
+          }
+
+          const commentBody = commentPayload.comment?.body ?? "";
+
+          // Check for @cmux trigger (case-insensitive)
+          const cmuxTriggerMatch = commentBody.match(/@cmux\s+(.+)/is);
+          if (!cmuxTriggerMatch) {
+            break;
+          }
+
+          const triggerPrompt = cmuxTriggerMatch[1].trim();
+          if (!triggerPrompt) {
+            break;
+          }
+
+          const repoFullName = String(commentPayload.repository?.full_name ?? "");
+          const installation = Number(commentPayload.installation?.id ?? 0);
+          const prNumber = Number(commentPayload.issue?.number ?? 0);
+
+          if (!repoFullName || !installation || !prNumber) {
+            console.warn("[issue_comment] Missing required fields for @cmux trigger", {
+              repoFullName,
+              installation,
+              prNumber,
+              delivery,
+            });
+            break;
+          }
+
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) {
+            console.warn("[issue_comment] No teamId found for installation", {
+              installation,
+              delivery,
+            });
+            break;
+          }
+
+          // Check if preview is configured for this repo
+          const previewConfig = await _ctx.runQuery(
+            internal.previewConfigs.getByTeamAndRepo,
+            { teamId, repoFullName },
+          );
+
+          if (!previewConfig) {
+            console.log("[issue_comment] No preview config found for repo", {
+              repoFullName,
+              teamId,
+            });
+            break;
+          }
+
+          // Fetch PR details from GitHub API
+          const prDetails = await _ctx.runAction(
+            internal.github_comment_trigger.fetchPrDetails,
+            {
+              installationId: installation,
+              repoFullName,
+              prNumber,
+            },
+          );
+
+          if (!prDetails) {
+            console.error("[issue_comment] Failed to fetch PR details", {
+              repoFullName,
+              prNumber,
+              delivery,
+            });
+            break;
+          }
+
+          console.log("[issue_comment] @cmux trigger detected", {
+            repoFullName,
+            prNumber,
+            triggerPrompt: triggerPrompt.slice(0, 100),
+            headSha: prDetails.headSha?.slice(0, 7),
+            commentAuthor: commentPayload.comment?.user?.login,
+          });
+
+          // Create a new preview run with the custom prompt (force new run to skip deduplication)
+          const runId = await _ctx.runMutation(
+            internal.previewRuns.enqueueFromWebhook,
+            {
+              previewConfigId: previewConfig._id,
+              teamId,
+              repoFullName,
+              repoInstallationId: installation,
+              prNumber,
+              prUrl: prDetails.prUrl,
+              headSha: prDetails.headSha,
+              baseSha: prDetails.baseSha,
+              headRef: prDetails.headRef,
+              headRepoFullName: prDetails.headRepoFullName,
+              headRepoCloneUrl: prDetails.headRepoCloneUrl,
+              triggerPrompt,
+              forceNewRun: true,
+            },
+          );
+
+          // Create task and taskRun for screenshot collection
+          const taskId = await _ctx.runMutation(
+            internal.tasks.createForPreview,
+            {
+              teamId,
+              userId: previewConfig.createdByUserId,
+              previewRunId: runId,
+              repoFullName,
+              prNumber,
+              prUrl: prDetails.prUrl,
+              headSha: prDetails.headSha,
+              baseBranch: previewConfig.repoDefaultBranch,
+              triggerPrompt,
+            },
+          );
+
+          const { taskRunId } = await _ctx.runMutation(
+            internal.taskRuns.createForPreview,
+            {
+              taskId,
+              teamId,
+              userId: previewConfig.createdByUserId,
+              prUrl: prDetails.prUrl,
+              environmentId: previewConfig.environmentId,
+              newBranch: prDetails.headRef,
+              triggerPrompt,
+            },
+          );
+
+          // Link the taskRun to the preview run
+          await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
+            previewRunId: runId,
+            taskRunId,
+          });
+
+          console.log("[issue_comment] Preview job created from @cmux trigger", {
+            runId,
+            taskId,
+            taskRunId,
+            repoFullName,
+            prNumber,
+          });
+
+          // Trigger the preview job dispatch
+          await _ctx.scheduler.runAfter(
+            0,
+            internal.preview_jobs.requestDispatch,
+            { previewRunId: runId },
+          );
+
+          console.log("[issue_comment] Preview job dispatch scheduled", {
+            runId,
+          });
+        } catch (err) {
+          console.error("[issue_comment] Handler failed", {
+            err,
+            delivery,
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          });
+        }
         break;
       }
       case "workflow_run": {

@@ -1732,6 +1732,7 @@ export const createForPreview = internalMutation({
     prUrl: v.string(),
     environmentId: v.optional(v.id("environments")),
     newBranch: v.optional(v.string()),
+    triggerPrompt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -1740,10 +1741,11 @@ export const createForPreview = internalMutation({
       throw new Error("Task not found");
     }
 
+    const defaultPrompt = `Capture UI screenshots for ${args.prUrl}`;
     const taskRunId = await ctx.db.insert("taskRuns", {
       taskId: args.taskId,
       parentRunId: undefined,
-      prompt: `Capture UI screenshots for ${args.prUrl}`,
+      prompt: args.triggerPrompt || defaultPrompt,
       agentName: "screenshot-collector",
       newBranch: args.newBranch,
       status: "pending",
