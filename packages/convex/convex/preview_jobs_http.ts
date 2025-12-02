@@ -276,6 +276,65 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
     }
 
     if (!taskRun.latestScreenshotSetId) {
+      // Check if there's a skipped screenshot set we should report
+      const latestScreenshotSet = await ctx.runQuery(
+        internal.github_pr_queries.getLatestScreenshotSetByRunId,
+        { runId: taskRunId as Id<"taskRuns"> }
+      );
+
+      if (latestScreenshotSet && latestScreenshotSet.status === "skipped") {
+        console.log("[preview-jobs-http] Found skipped screenshot set for task run", {
+          taskRunId,
+          screenshotSetId: latestScreenshotSet._id,
+          reason: latestScreenshotSet.error,
+        });
+
+        // Post GitHub comment about skipped screenshots if we have installation ID
+        if (previewRun.repoInstallationId) {
+          const commentResult = await ctx.runAction(
+            internal.github_pr_comments.postPreviewCommentWithTaskScreenshots,
+            {
+              installationId: previewRun.repoInstallationId,
+              repoFullName: previewRun.repoFullName,
+              prNumber: previewRun.prNumber,
+              taskRunId: taskRunId as Id<"taskRuns">,
+              previewRunId: previewRun._id,
+            }
+          );
+
+          if (commentResult.ok) {
+            console.log("[preview-jobs-http] Successfully posted skipped screenshots GitHub comment", {
+              taskRunId,
+              previewRunId: previewRun._id,
+              commentUrl: commentResult.commentUrl,
+            });
+            return jsonResponse({
+              success: true,
+              skipped: true,
+              reason: latestScreenshotSet.error ?? "No UI changes detected",
+              commentUrl: commentResult.commentUrl,
+            });
+          } else {
+            console.error("[preview-jobs-http] Failed to post skipped screenshots GitHub comment", {
+              taskRunId,
+              previewRunId: previewRun._id,
+              error: commentResult.error,
+            });
+          }
+        }
+
+        await ctx.runMutation(internal.previewRuns.updateStatus, {
+          previewRunId: previewRun._id,
+          status: "skipped",
+          stateReason: latestScreenshotSet.error ?? "No UI changes detected",
+        });
+        return jsonResponse({
+          success: true,
+          skipped: true,
+          reason: latestScreenshotSet.error ?? "No UI changes detected",
+        });
+      }
+
       console.log("[preview-jobs-http] No screenshots found for task run", {
         taskRunId,
       });

@@ -58,3 +58,37 @@ export const getScreenshotSet = internalQuery({
     };
   },
 });
+
+export const getLatestScreenshotSetByRunId = internalQuery({
+  args: {
+    runId: v.id("taskRuns"),
+  },
+  handler: async (ctx, { runId }) => {
+    // Query for the most recent screenshot set for this run
+    const screenshotSet = await ctx.db
+      .query("taskRunScreenshotSets")
+      .withIndex("by_run_capturedAt", (q) => q.eq("runId", runId))
+      .order("desc")
+      .first();
+
+    if (!screenshotSet) {
+      return null;
+    }
+
+    // Get URLs for all screenshots
+    const imagesWithUrls = await Promise.all(
+      screenshotSet.images.map(async (image) => {
+        const url = await ctx.storage.getUrl(image.storageId);
+        return {
+          ...image,
+          url: url ?? undefined,
+        };
+      }),
+    );
+
+    return {
+      ...screenshotSet,
+      images: imagesWithUrls,
+    };
+  },
+});
