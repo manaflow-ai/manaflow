@@ -11,16 +11,16 @@ implement better mouse scrolling behavior in the terminal, similar to how we do 
 
 add a command pallete action for opening the sandbox's browser that does the same thing as cmux browser <sandbox-id> (auto infer the active sandbox based on the selected one in the sidebar). also, add a command pallete action for opening in the editor. right below open in editor, we should have set default editor command, which should be configurable to a bash command the user provides, eg. (code, cursor, windsurf, vim, emacs, etc.). open in editor should be alt+e.
 
-for command pallete actions for deleting focused tab/panel, i got confused since i searched for delete instead of close. can we add potential synonyms to all the keyboard shortcuts so they're more easily searchable?
+[x] for command pallete actions for deleting focused tab/panel, i got confused since i searched for delete instead of close. can we add potential synonyms to all the keyboard shortcuts so they're more easily searchable?
 
 [x] dont write code yet. research codebase and lmk how many websocket connectsion are made when user runs the `cmux` command and makes a bunch of sandboxes/tabs/panes.
 [x] refactor so each `cmux` command only makes one websocket connection by updating the protocol. implement auto-reconnect with state recovery as well.
 
-for panes focus up/down/right/left, let's do vim style keyboard shortcuts so we should add alt+hjkl in addition to the existing alt+arrows. we should be able to focus to the sidebar as well with alt+h, and focus to the main area with alt+l. (think about how to make this as intuitive as possible). make sure these shortcuts work in sidebar as well as main area.
+[x] for panes focus up/down/right/left, let's do vim style keyboard shortcuts so we should add alt+hjkl in addition to the existing alt+arrows. we should be able to focus to the sidebar as well with alt+h, and focus to the main area with alt+l. (think about how to make this as intuitive as possible). make sure these shortcuts work in sidebar as well as main area.
 
 implement text highlighting->copy for each of the virtual terminals (shouldn't copy text outside of the highlighted region, we should see the highlight, as well as a status message like "copied to clipboard", highlight bg color should be chosen carefully based on the terminal bg color theme)
 
-handle alt+d/alt+D to split the focused pane horizontally/vertically. (lowercase for horizontal, uppercase for vertical)
+[x] handle alt+d/alt+D to split the focused pane horizontally/vertically. (lowercase for horizontal, uppercase for vertical)
 
 [x] after running `cmux` and exiting via ctrl+q, and then i open git diff, pressing "q" fails to close the less program
 
@@ -30,9 +30,9 @@ for the emulated terminal, support option+backspace to delete the prev word (ctr
 
 inside sandboxes, we need to handle open commands and propagate it to the host machine. eg open in browser.
 
-make sure mouse events can be passed through to the virtual terminal for the `cmux` command.
-change ctrl+s shortcut to alt+s for sidebar
-inside sandbox virtual terminal, make links command clickable
+[x] make sure mouse events can be passed through to the virtual terminal for the `cmux` command.
+[x] change ctrl+s shortcut to alt+s for sidebar
+inside sandbox virtual terminal, make links navigatable via command + click
 
 [x] add a REST endpoint that will mark a sandbox+tab pair as "needs attention". then go through
 
@@ -41,7 +41,7 @@ first thing we should implement is to replace open-url.sh with the internal cmux
 
 [x] if we're in dmux, can we render [debug build] in bottom left so it's obvious?
 
-[] add git-delta and set it as the default pager (git config --global core.pager delta
+[x] add git-delta and set it as the default pager (git config --global core.pager delta
 git config --global interactive.diffFilter 'delta --color-only'
 git config --global delta.navigate true
 git config --global merge.conflictStyle zdiff3)
@@ -57,6 +57,10 @@ go through @docs/escape-sequence-todos.md and let's start fixing the ones that a
 if user is typing something, we should make sure to scroll it into view iff it's not already in view.
 
 i want git diff to always use less. rn if diffs fit vertical space, there's no less, and it just prints it.
+
+instrument how long it takes to make a new sandbox, as well as the bottlenecks. then optimize new sandbox creation. (eg by doing more things in parallel).
+
+for virtual terminal, implement text highlighting->copy to clipboard.
 
 ## dogfood blockers
 

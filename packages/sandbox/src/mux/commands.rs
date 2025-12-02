@@ -216,6 +216,38 @@ impl MuxCommand {
         }
     }
 
+    /// Returns synonyms/alternative search terms for the command.
+    /// These help users find commands when they use different terminology.
+    pub fn synonyms(&self) -> &'static [&'static str] {
+        match self {
+            MuxCommand::ClosePane => &["delete", "remove", "kill", "destroy", "close"],
+            MuxCommand::CloseTab => &["delete", "remove", "kill", "destroy", "close"],
+            MuxCommand::SplitHorizontal => &["divide", "new pane", "hsplit"],
+            MuxCommand::SplitVertical => &["divide", "new pane", "vsplit"],
+            MuxCommand::ToggleZoom => &["maximize", "fullscreen", "expand"],
+            MuxCommand::FocusLeft => &["move left", "navigate left", "go left"],
+            MuxCommand::FocusRight => &["move right", "navigate right", "go right"],
+            MuxCommand::FocusUp => &["move up", "navigate up", "go up"],
+            MuxCommand::FocusDown => &["move down", "navigate down", "go down"],
+            MuxCommand::NewTab => &["create tab", "add tab", "open tab"],
+            MuxCommand::NewSandbox => &["create sandbox", "add sandbox"],
+            MuxCommand::DeleteSandbox => &["remove sandbox", "destroy sandbox", "kill sandbox"],
+            MuxCommand::OpenCommandPalette => &["search", "find command", "quick open"],
+            MuxCommand::ToggleHelp => {
+                &["shortcuts", "keybindings", "keyboard shortcuts", "hotkeys"]
+            }
+            MuxCommand::Quit => &["exit", "close", "terminate"],
+            MuxCommand::RenameTab => &["edit tab name", "change tab name"],
+            MuxCommand::ToggleSidebar => &["show sidebar", "hide sidebar", "sidebar"],
+            MuxCommand::RefreshSandboxes => &["reload", "update sandboxes"],
+            MuxCommand::ScrollPageUp => &["page up", "scroll up fast"],
+            MuxCommand::ScrollPageDown => &["page down", "scroll down fast"],
+            MuxCommand::ScrollToTop => &["beginning", "start", "top"],
+            MuxCommand::ScrollToBottom => &["end", "bottom"],
+            _ => &[],
+        }
+    }
+
     /// Returns a description of what the command does.
     pub fn description(&self) -> &'static str {
         match self {
@@ -392,7 +424,7 @@ impl MuxCommand {
             // Pane management - use Alt for pane operations
             MuxCommand::SplitHorizontal => Some((KeyModifiers::ALT, KeyCode::Char('-'))),
             MuxCommand::SplitVertical => Some((KeyModifiers::ALT, KeyCode::Char('\\'))),
-            MuxCommand::ClosePane => Some((KeyModifiers::ALT, KeyCode::Char('x'))),
+            MuxCommand::ClosePane => Some((KeyModifiers::ALT, KeyCode::Char('w'))),
             MuxCommand::ToggleZoom => Some((KeyModifiers::ALT, KeyCode::Char('z'))),
 
             // Swap panes
@@ -421,7 +453,9 @@ impl MuxCommand {
 
             // Tab management - all Alt-based
             MuxCommand::NewTab => Some((KeyModifiers::ALT, KeyCode::Char('t'))),
-            MuxCommand::CloseTab => Some((KeyModifiers::ALT, KeyCode::Char('w'))),
+            MuxCommand::CloseTab => {
+                Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('W')))
+            }
             MuxCommand::RenameTab => Some((KeyModifiers::ALT, KeyCode::Char('r'))),
             MuxCommand::MoveTabLeft => {
                 Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('[')))
@@ -493,6 +527,13 @@ impl MuxCommand {
         let description_match = smart_match(trimmed, self.description());
         let category_match = smart_match(trimmed, self.category());
 
+        // Also match against synonyms
+        let synonym_match = self
+            .synonyms()
+            .iter()
+            .filter_map(|synonym| smart_match(trimmed, synonym))
+            .max_by_key(|m| m.score);
+
         let mut best_score: Option<i64> = None;
 
         if let Some(m) = &label_match {
@@ -508,6 +549,14 @@ impl MuxCommand {
 
         if let Some(m) = category_match {
             let weighted = m.score + 50;
+            if best_score.is_none_or(|s| weighted > s) {
+                best_score = Some(weighted);
+            }
+        }
+
+        // Synonyms get a bonus slightly below description matches
+        if let Some(m) = synonym_match {
+            let weighted = m.score + 80;
             if best_score.is_none_or(|s| weighted > s) {
                 best_score = Some(weighted);
             }
@@ -533,6 +582,33 @@ impl MuxCommand {
             }
             if keycode == KeyCode::Char('}') {
                 return Some(MuxCommand::NextSandbox);
+            }
+
+            // Vim-style pane navigation with Alt+hjkl (in addition to Alt+arrows)
+            match keycode {
+                KeyCode::Char('h') => return Some(MuxCommand::FocusLeft),
+                KeyCode::Char('j') => return Some(MuxCommand::FocusDown),
+                KeyCode::Char('k') => return Some(MuxCommand::FocusUp),
+                KeyCode::Char('l') => return Some(MuxCommand::FocusRight),
+                _ => {}
+            }
+
+            // Alt+Shift+hjkl for swap pane (vim-style, in addition to Alt+Shift+arrows)
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                match keycode {
+                    KeyCode::Char('H') => return Some(MuxCommand::SwapPaneLeft),
+                    KeyCode::Char('J') => return Some(MuxCommand::SwapPaneDown),
+                    KeyCode::Char('K') => return Some(MuxCommand::SwapPaneUp),
+                    KeyCode::Char('L') => return Some(MuxCommand::SwapPaneRight),
+                    _ => {}
+                }
+            }
+
+            // Alt+d for vertical split, Alt+D (Alt+Shift+d) for horizontal split
+            match keycode {
+                KeyCode::Char('d') => return Some(MuxCommand::SplitVertical),
+                KeyCode::Char('D') => return Some(MuxCommand::SplitHorizontal),
+                _ => {}
             }
         }
 
@@ -570,6 +646,10 @@ impl PaletteCommand for MuxCommand {
 
     fn is_current(&self) -> bool {
         false
+    }
+
+    fn synonyms(&self) -> &[&str] {
+        MuxCommand::synonyms(self)
     }
 }
 
@@ -839,5 +919,55 @@ mod tests {
         // Alt+S toggles focus between sidebar and main area
         let sidebar_toggle = MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('s'));
         assert_eq!(sidebar_toggle, Some(MuxCommand::ToggleSidebar));
+    }
+
+    #[test]
+    fn vim_style_navigation_works() {
+        // Alt+hjkl for pane navigation
+        assert_eq!(
+            MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('h')),
+            Some(MuxCommand::FocusLeft)
+        );
+        assert_eq!(
+            MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('j')),
+            Some(MuxCommand::FocusDown)
+        );
+        assert_eq!(
+            MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('k')),
+            Some(MuxCommand::FocusUp)
+        );
+        assert_eq!(
+            MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('l')),
+            Some(MuxCommand::FocusRight)
+        );
+
+        // Alt+d for vertical split, Alt+D (shift) for horizontal split
+        assert_eq!(
+            MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('d')),
+            Some(MuxCommand::SplitVertical)
+        );
+        assert_eq!(
+            MuxCommand::from_key(KeyModifiers::ALT, KeyCode::Char('D')),
+            Some(MuxCommand::SplitHorizontal)
+        );
+    }
+
+    #[test]
+    fn synonym_matching_works() {
+        // "delete" should match ClosePane and CloseTab via synonyms
+        assert!(MuxCommand::ClosePane.matches("delete"));
+        assert!(MuxCommand::CloseTab.matches("delete"));
+
+        // "kill" should also match
+        assert!(MuxCommand::ClosePane.matches("kill"));
+
+        // "maximize" should match ToggleZoom
+        assert!(MuxCommand::ToggleZoom.matches("maximize"));
+
+        // "exit" should match Quit
+        assert!(MuxCommand::Quit.matches("exit"));
+
+        // "shortcuts" should match ToggleHelp
+        assert!(MuxCommand::ToggleHelp.matches("shortcuts"));
     }
 }

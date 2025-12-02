@@ -323,6 +323,36 @@ impl LayoutNode {
         }
     }
 
+    /// Find the sibling pane that would take focus when the given pane is closed.
+    /// Returns the first pane ID from the sibling subtree in the split.
+    pub fn find_sibling(&self, id: PaneId) -> Option<PaneId> {
+        match self {
+            LayoutNode::Pane(_) => None,
+            LayoutNode::Split { first, second, .. } => {
+                let first_contains = first.contains_pane(id);
+                let second_contains = second.contains_pane(id);
+
+                if first_contains && first.pane_count() == 1 {
+                    // Pane is directly in first, sibling is in second
+                    // Return the first pane in the sibling (topmost/leftmost)
+                    second.pane_ids().first().copied()
+                } else if second_contains && second.pane_count() == 1 {
+                    // Pane is directly in second, sibling is in first
+                    // Return the last pane in the sibling (bottommost/rightmost)
+                    first.pane_ids().last().copied()
+                } else if first_contains {
+                    // Recurse into first
+                    first.find_sibling(id)
+                } else if second_contains {
+                    // Recurse into second
+                    second.find_sibling(id)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// Calculate areas for all panes given a bounding rect.
     pub fn calculate_areas(&mut self, area: Rect) {
         match self {
@@ -547,9 +577,12 @@ impl Tab {
             return false;
         };
 
+        // Find the sibling pane (the one that will take over in the split)
+        let sibling = self.layout.find_sibling(active_id);
+
         if self.layout.remove_pane(active_id) {
-            // Select a new active pane
-            self.active_pane = self.layout.pane_ids().first().copied();
+            // Focus the sibling, or fall back to first available
+            self.active_pane = sibling.or_else(|| self.layout.pane_ids().first().copied());
             true
         } else {
             false
@@ -559,15 +592,20 @@ impl Tab {
     /// Remove a specific pane by ID, updating the active pane if needed.
     pub fn remove_pane_by_id(&mut self, pane_id: PaneId) -> bool {
         let was_active = self.active_pane == Some(pane_id);
+
+        // Find the sibling pane (the one that will take over in the split)
+        let sibling = self.layout.find_sibling(pane_id);
+
         if !self.layout.remove_pane(pane_id) {
             return false;
         }
 
         if was_active || self.active_pane.is_none() {
-            self.active_pane = self.layout.pane_ids().first().copied();
+            // Focus the sibling, or fall back to first available
+            self.active_pane = sibling.or_else(|| self.layout.pane_ids().first().copied());
         } else if let Some(active) = self.active_pane {
             if !self.contains_pane(active) {
-                self.active_pane = self.layout.pane_ids().first().copied();
+                self.active_pane = sibling.or_else(|| self.layout.pane_ids().first().copied());
             }
         }
 

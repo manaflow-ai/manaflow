@@ -477,6 +477,20 @@ fi
         let gitconfig = root_home.join(".gitconfig");
         let content = r#"[safe]
 	directory = *
+
+[core]
+	pager = delta
+
+[interactive]
+	diffFilter = delta --color-only
+
+[delta]
+	navigate = true
+	line-numbers = true
+	side-by-side = false
+
+[merge]
+	conflictStyle = zdiff3
 "#;
         fs::write(&gitconfig, content).await?;
         Ok(())
@@ -853,6 +867,7 @@ fi
 
         let mut cmd = CommandBuilder::new(&self.nsenter_path);
         cmd.args(nsenter_args(inner_pid, None, &command));
+        cmd.env("HOME", "/root");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit RGB color support
         cmd.env("LANG", "C.UTF-8");
@@ -1386,6 +1401,7 @@ impl SandboxService for BubblewrapService {
         let mut cmd = CommandBuilder::new(&self.nsenter_path);
 
         cmd.args(nsenter_args(entry.inner_pid, None, &target_command));
+        cmd.env("HOME", "/root");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit RGB color support
         cmd.env("LANG", "C.UTF-8");

@@ -36,6 +36,12 @@ pub trait PaletteCommand: Clone + Copy + PartialEq {
     fn is_current(&self) -> bool {
         false
     }
+
+    /// Optional synonyms/alternative search terms for the command.
+    /// These help users find commands when they use different terminology.
+    fn synonyms(&self) -> &[&str] {
+        &[]
+    }
 }
 
 /// Result of fuzzy matching a command.
@@ -376,11 +382,18 @@ pub fn fuzzy_match<C: PaletteCommand>(command: &C, query: &str) -> Option<Comman
         .description()
         .map(|d| normalize_whitespace(d).to_lowercase());
 
-    // 1. Substring match
+    // Check if any synonym matches
+    let synonym_match = command.synonyms().iter().any(|syn| {
+        let syn_lower = normalize_whitespace(syn).to_lowercase();
+        syn_lower.contains(&query_lower) || query_lower.contains(&syn_lower)
+    });
+
+    // 1. Substring match (label, description, or synonym)
     if label_lower.contains(&query_lower)
         || desc_lower
             .as_ref()
             .is_some_and(|d| d.contains(&query_lower))
+        || synonym_match
     {
         let indices: Vec<usize> = label.char_indices().map(|(idx, _)| idx).collect();
         return Some(CommandMatch {

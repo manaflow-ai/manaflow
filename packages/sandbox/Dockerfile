@@ -219,6 +219,19 @@ RUN bun add -g \
   fi && \
   rm -rf /root/.bun/install/cache
 
+# Install git-delta for better git diffs
+RUN arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64) delta_arch="x86_64-unknown-linux-gnu" ;; \
+    aarch64) delta_arch="aarch64-unknown-linux-gnu" ;; \
+    *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+  esac; \
+  DELTA_VERSION="0.18.2"; \
+  curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/delta-${DELTA_VERSION}-${delta_arch}.tar.gz" | tar -xz -C /tmp && \
+  mv /tmp/delta-${DELTA_VERSION}-${delta_arch}/delta /usr/local/bin/delta && \
+  rm -rf /tmp/delta-* && \
+  chmod +x /usr/local/bin/delta
+
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
   mv /root/.local/bin/uv /usr/local/bin/uv && \
   rm -rf /root/.local
