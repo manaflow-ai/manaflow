@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { env } from "@/lib/utils/www-env";
 import { OpenCmuxClient } from "./OpenCmuxClient";
+import { CheckSessionStorageRedirect } from "./CheckSessionStorageRedirect";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,13 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
     hasRefreshToken: !!stackRefreshToken,
     hasAccessToken: !!stackAccessToken,
   });
+
+  // If no return URL in query params, this is a client component that will check sessionStorage
+  // For OAuth popup flow, the callback URL is stored in sessionStorage
+  if (!afterAuthReturnToRaw) {
+    // Return a client component that checks sessionStorage
+    return <CheckSessionStorageRedirect fallbackPath="/" />;
+  }
 
   // Handle Electron deep link redirects
   if (afterAuthReturnToRaw?.startsWith(CMUX_SCHEME)) {
