@@ -557,7 +557,7 @@ export function PreviewConfigureClient({
   const initialDevScriptValue = initialDevScript ?? initialFrameworkConfig.devScript;
   const initialMaintenanceNone = initialMaintenanceScriptValue.trim().length === 0;
   const initialDevNone = initialDevScriptValue.trim().length === 0;
-  const initialEnvComplete = initialHasEnvValues;
+  const initialEnvComplete = startAtConfigureEnvironment || initialHasEnvValues;
   const initialMaintenanceComplete = initialMaintenanceNone || initialMaintenanceScriptValue.trim().length > 0;
   const initialDevComplete = initialDevNone || initialDevScriptValue.trim().length > 0;
 
@@ -600,12 +600,6 @@ export function PreviewConfigureClient({
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (initialHasEnvValues) {
-      setIsEnvSectionOpen(false);
-    }
-  }, [initialHasEnvValues]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
