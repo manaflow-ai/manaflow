@@ -594,6 +594,7 @@ export function PreviewConfigureClient({
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
   const [isFrameworkMenuOpen, setIsFrameworkMenuOpen] = useState(false);
   const [hasCompletedSetup, setHasCompletedSetup] = useState(false);
+  const [isWaitingForSandbox, setIsWaitingForSandbox] = useState(false);
   const [isEnvOpen, setIsEnvOpen] = useState(false);
   const [isBuildOpen, setIsBuildOpen] = useState(false);
   const [envNone, setEnvNone] = useState(false);
@@ -714,15 +715,27 @@ export function PreviewConfigureClient({
   const devDone = devNone || devScriptValue.length > 0;
 
   // Auto-enter configuration once VS Code is available when resuming an existing environment
+  // or when user clicked Next while sandbox was still provisioning
   useEffect(() => {
     if (startAtConfigureEnvironment && instance?.vscodeUrl && !hasCompletedSetup) {
       setHasCompletedSetup(true);
     }
-  }, [hasCompletedSetup, instance?.vscodeUrl, startAtConfigureEnvironment]);
+    // Transition from waiting state to completed setup once sandbox is ready
+    if (isWaitingForSandbox && instance?.vscodeUrl) {
+      setIsWaitingForSandbox(false);
+      setHasCompletedSetup(true);
+    }
+  }, [hasCompletedSetup, instance?.vscodeUrl, startAtConfigureEnvironment, isWaitingForSandbox]);
 
   const handleEnterConfigureEnvironment = useCallback(() => {
-    setHasCompletedSetup(true);
-  }, []);
+    // If sandbox is ready, go directly to configure environment
+    if (instance?.vscodeUrl) {
+      setHasCompletedSetup(true);
+    } else {
+      // Otherwise show loading screen until sandbox is ready
+      setIsWaitingForSandbox(true);
+    }
+  }, [instance?.vscodeUrl]);
 
   const browserPlaceholder = useMemo(
     () =>
@@ -1160,6 +1173,23 @@ export function PreviewConfigureClient({
       );
     }
 
+    // Show loading screen when user clicked Next but sandbox isn't ready yet
+    if (isWaitingForSandbox) {
+      return (
+        <div className="flex min-h-dvh items-center justify-center bg-white dark:bg-black font-mono">
+          <div className="text-center px-6">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
+            <h1 className="mt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">
+              Starting your workspace...
+            </h1>
+            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+              We&apos;re provisioning your development environment. This typically takes 30-60 seconds.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-dvh bg-white dark:bg-black font-mono">
         {/* Main Content */}
@@ -1475,14 +1505,8 @@ export function PreviewConfigureClient({
               </div>
               <button
                 type="button"
-                disabled={!isWorkspaceReady}
                 onClick={handleEnterConfigureEnvironment}
-                className={clsx(
-                  "inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
-                  isWorkspaceReady
-                    ? "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200"
-                    : "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 opacity-50 cursor-not-allowed"
-                )}
+                className="inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200"
               >
                 Next
                 <ArrowRight className="w-4 h-4" />
