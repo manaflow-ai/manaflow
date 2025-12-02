@@ -136,6 +136,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   zsh-autosuggestions \
   zsh-syntax-highlighting \
   vim \
+  neovim \
+  emacs-nox \
   tini \
   python3 \
   python3-venv \
