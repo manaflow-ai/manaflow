@@ -1,6 +1,23 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
+import type { Doc } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
+
+function assertTaskAccess(
+  task: Doc<"tasks"> | null,
+  teamId: string,
+  userId: string,
+) {
+  if (!task || task.teamId !== teamId) {
+    throw new Error("Task not found or unauthorized");
+  }
+  if (task.isPreview === true) {
+    return;
+  }
+  if (task.userId !== userId) {
+    throw new Error("Task not found or unauthorized");
+  }
+}
 
 export const listByTask = authQuery({
   args: {
@@ -13,9 +30,7 @@ export const listByTask = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const task = await ctx.db.get(args.taskId);
-    if (!task || task.teamId !== teamId || task.userId !== userId) {
-      throw new Error("Task not found or unauthorized");
-    }
+    assertTaskAccess(task, teamId, userId);
 
     const comments = await ctx.db
       .query("taskComments")
@@ -41,9 +56,7 @@ export const createForTask = authMutation({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const task = await ctx.db.get(args.taskId);
-    if (!task || task.teamId !== teamId || task.userId !== userId) {
-      throw new Error("Task not found or unauthorized");
-    }
+    assertTaskAccess(task, teamId, userId);
 
     const now = Date.now();
     return await ctx.db.insert("taskComments", {
@@ -70,9 +83,7 @@ export const createSystemForTask = authMutation({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const task = await ctx.db.get(args.taskId);
-    if (!task || task.teamId !== teamId || task.userId !== userId) {
-      throw new Error("Task not found or unauthorized");
-    }
+    assertTaskAccess(task, teamId, userId);
 
     const now = Date.now();
     return await ctx.db.insert("taskComments", {
@@ -97,9 +108,7 @@ export const latestSystemByTask = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const task = await ctx.db.get(args.taskId);
-    if (!task || task.teamId !== teamId || task.userId !== userId) {
-      throw new Error("Task not found or unauthorized");
-    }
+    assertTaskAccess(task, teamId, userId);
 
     const comments = await ctx.db
       .query("taskComments")
