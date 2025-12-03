@@ -783,6 +783,14 @@ export async function runPreviewJob(
       screenshotLogUrl: `${workerService.url.replace(':39377', ':39376')}/file?path=/root/.cmux/screenshot-collector/screenshot-collector.log`,
     });
 
+    // Generate workspace and dev browser URLs for preliminary comment
+    const team = taskRunId
+      ? await ctx.runQuery(internal.teams.getByTeamIdInternal, { teamId: run.teamId })
+      : null;
+    const teamSlug = team?.slug ?? run.teamId;
+    const workspaceUrl = taskId ? `https://cmux.sh/${teamSlug}/task/${taskId}` : undefined;
+    const devServerUrl = taskId ? `https://cmux.sh/${teamSlug}/task/${taskId}/browser` : undefined;
+
     if (taskRunId) {
       const networking = instance.networking?.http_services?.map((s) => ({
         status: "running" as const,
@@ -812,6 +820,49 @@ export async function runPreviewJob(
         taskRunId,
         instanceId: instance.id,
       });
+    }
+
+    // Post preliminary "in progress" comment to GitHub PR immediately after workspace is ready
+    // This gives users quick access to the workspace/dev browser while screenshots are being captured
+    if (run.repoInstallationId && workspaceUrl && devServerUrl) {
+      console.log("[preview-jobs] Posting preliminary preview comment", {
+        previewRunId,
+        workspaceUrl,
+        devServerUrl,
+      });
+
+      try {
+        const preliminaryResult = await ctx.runAction(
+          internal.github_pr_comments.postPreliminaryPreviewComment,
+          {
+            installationId: run.repoInstallationId,
+            repoFullName: run.repoFullName,
+            prNumber: run.prNumber,
+            previewRunId,
+            workspaceUrl,
+            devServerUrl,
+          }
+        );
+
+        if (preliminaryResult.ok) {
+          console.log("[preview-jobs] Posted preliminary preview comment", {
+            previewRunId,
+            commentId: preliminaryResult.commentId,
+            commentUrl: preliminaryResult.commentUrl,
+          });
+        } else {
+          console.warn("[preview-jobs] Failed to post preliminary comment", {
+            previewRunId,
+            error: preliminaryResult.error,
+          });
+        }
+      } catch (error) {
+        // Non-fatal: log warning but continue with the preview job
+        console.warn("[preview-jobs] Error posting preliminary comment", {
+          previewRunId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     // Step 2: Fetch latest changes and checkout PR
