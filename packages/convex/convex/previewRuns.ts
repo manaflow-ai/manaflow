@@ -613,3 +613,119 @@ export const createManual = authMutation({
     return { previewRunId: runId, reused: false };
   },
 });
+
+/**
+ * List screenshot sets for a specific PR.
+ * Returns the most recent screenshot sets from preview runs associated with this PR.
+ * This is used by the PR review diff viewer to display screenshots alongside code changes.
+ */
+export const listScreenshotSetsForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+    const take = Math.max(1, Math.min(args.limit ?? 10, 50));
+
+    // Find preview runs for this PR across all configs for the team/repo
+    const configs = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_team_repo", (q) =>
+        q.eq("teamId", teamId).eq("repoFullName", repoFullName)
+      )
+      .collect();
+
+    if (configs.length === 0) {
+      return [];
+    }
+
+    // Get the most recent preview runs with screenshots for each config
+    const allRuns: Array<{
+      previewRunId: Id<"previewRuns">;
+      screenshotSetId: Id<"taskRunScreenshotSets">;
+      headSha: string;
+      status: "pending" | "running" | "completed" | "failed" | "skipped";
+      createdAt: number;
+    }> = [];
+
+    for (const config of configs) {
+      const runs = await ctx.db
+        .query("previewRuns")
+        .withIndex("by_config_pr", (q) =>
+          q.eq("previewConfigId", config._id).eq("prNumber", args.prNumber)
+        )
+        .order("desc")
+        .take(take);
+
+      for (const run of runs) {
+        if (run.screenshotSetId) {
+          allRuns.push({
+            previewRunId: run._id,
+            screenshotSetId: run.screenshotSetId,
+            headSha: run.headSha,
+            status: run.status,
+            createdAt: run.createdAt,
+          });
+        }
+      }
+    }
+
+    // Sort by creation time and take most recent
+    allRuns.sort((a, b) => b.createdAt - a.createdAt);
+    const limitedRuns = allRuns.slice(0, take);
+
+    // Fetch the actual screenshot sets with URLs
+    const results = await Promise.all(
+      limitedRuns.map(async (run) => {
+        const screenshotSet = await ctx.db.get(run.screenshotSetId);
+        if (!screenshotSet) {
+          return null;
+        }
+
+        // Get URLs for all images
+        const imagesWithUrls = await Promise.all(
+          screenshotSet.images.map(async (image) => {
+            const url = await ctx.storage.getUrl(image.storageId);
+            return {
+              storageId: image.storageId,
+              mimeType: image.mimeType,
+              fileName: image.fileName,
+              commitSha: image.commitSha,
+              description: image.description,
+              url: url ?? null,
+            };
+          })
+        );
+
+        // Filter out images without URLs
+        const validImages = imagesWithUrls.filter(
+          (img): img is typeof img & { url: string } => img.url !== null
+        );
+
+        if (validImages.length === 0) {
+          return null;
+        }
+
+        return {
+          screenshotSetId: run.screenshotSetId,
+          previewRunId: run.previewRunId,
+          headSha: run.headSha,
+          runStatus: run.status,
+          screenshotStatus: screenshotSet.status,
+          hasUiChanges: screenshotSet.hasUiChanges ?? null,
+          capturedAt: screenshotSet.capturedAt,
+          images: validImages,
+        };
+      })
+    );
+
+    // Filter out null results
+    return results.filter(
+      (result): result is NonNullable<typeof result> => result !== null
+    );
+  },
+});
