@@ -45,18 +45,18 @@ See `src/mux/terminal.rs` for the current implementation. Key supported sequence
   - `OSC 112 ST`
   - Also implemented OSC 12 (set/query cursor color)
 
-- [ ] **CSI ? 1004 h/l** - Focus Reporting
+- [x] **CSI ? 1004 h/l** - Focus Reporting
   - `CSI ? 1004 h` = enable focus events
   - `CSI ? 1004 l` = disable focus events
   - When enabled, send `CSI I` on focus in, `CSI O` on focus out
   - Used by vim/neovim to detect when terminal gains/loses focus
 
-- [ ] **OSC 7** - Current Working Directory
+- [x] **OSC 7** - Current Working Directory
   - Format: `OSC 7 ; file://hostname/path ST`
   - Shells emit this after each command
   - Store in terminal state for UI display / tab titles
 
-- [ ] **CSI ? 1034 h/l** - Meta Sends Escape
+- [x] **CSI ? 1034 h/l** - Meta Sends Escape
   - Controls whether Alt+key sends ESC+key or sets high bit
   - Most terminals default to ESC prefix mode
 

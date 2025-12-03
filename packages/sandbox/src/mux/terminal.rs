@@ -150,6 +150,36 @@ fn linear_rgb_to_u8_x11(r: f64, g: f64, b: f64) -> (u8, u8, u8) {
     )
 }
 
+/// URL-decode a percent-encoded string (e.g., from OSC 7 file:// URIs)
+/// Converts %XX sequences to their corresponding bytes
+fn url_decode(s: &str) -> String {
+    let mut result = Vec::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                result.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).into_owned()
+}
+
+/// Convert ASCII hex digit to value (0-15)
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
+}
+
 /// Convert CIE xyY to XYZ
 /// Handles out-of-gamut coordinates by mapping to white
 #[allow(clippy::many_single_char_names)]
@@ -747,6 +777,15 @@ pub struct VirtualTerminal {
     /// LNM - Line Feed/New Line Mode (ANSI mode 20)
     /// When set, LF/VT/FF also perform CR (carriage return)
     newline_mode: bool,
+    /// Focus reporting mode (mode 1004)
+    /// When enabled, terminal sends CSI I on focus in and CSI O on focus out
+    pub focus_reporting: bool,
+    /// Meta sends escape mode (mode 1034)
+    /// When enabled, Alt+key sends ESC+key instead of setting high bit
+    pub meta_sends_escape: bool,
+    /// Current working directory (OSC 7)
+    /// Shells emit this after each command to track the current directory
+    pub current_working_directory: Option<String>,
     /// Cursor style (DECSCUSR) - 0=default, 1=blinking block, 2=steady block,
     /// 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar
     cursor_style: u8,
@@ -834,7 +873,10 @@ impl VirtualTerminal {
             enable_left_right_margins: false,
             reverse_wraparound: false,
             newline_mode: true, // LNM mode 20 - set by default in xterm
-            cursor_style: 0,    // Default cursor style (blinking block)
+            focus_reporting: false,
+            meta_sends_escape: true, // Default mode - Alt+key sends ESC+key
+            current_working_directory: None,
+            cursor_style: 0, // Default cursor style (blinking block)
             dcs_handler: DcsHandler::None,
             dcs_data: Vec::new(),
         }
@@ -1771,6 +1813,28 @@ impl Perform for VirtualTerminal {
                         }
                     }
                 }
+                // OSC 7 - Current working directory
+                // Format: OSC 7 ; file://hostname/path ST
+                "7" => {
+                    if params.len() > 1 {
+                        if let Ok(uri) = std::str::from_utf8(params[1]) {
+                            // Parse file:// URI to extract path
+                            // Format: file://hostname/path or file:///path
+                            if let Some(path) = uri.strip_prefix("file://") {
+                                // Skip hostname (everything up to first / after //)
+                                if let Some(slash_idx) = path.find('/') {
+                                    let decoded_path = &path[slash_idx..];
+                                    // URL-decode the path (handle %XX sequences)
+                                    let path_str = url_decode(decoded_path);
+                                    self.current_working_directory = Some(path_str);
+                                }
+                            } else {
+                                // Not a file:// URI, store as-is (could be just a path)
+                                self.current_working_directory = Some(uri.to_string());
+                            }
+                        }
+                    }
+                }
                 // OSC 4 - Query/Set indexed color (256-color palette)
                 // Format: OSC 4 ; index ; colorspec ST or OSC 4 ; index ; ? ST
                 "4" => {
@@ -2466,6 +2530,16 @@ impl Perform for VirtualTerminal {
                             1006 => {
                                 // SGR extended mouse mode
                                 self.sgr_mouse_mode = enable;
+                            }
+                            1004 => {
+                                // Focus reporting mode
+                                // When enabled, send CSI I on focus in, CSI O on focus out
+                                self.focus_reporting = enable;
+                            }
+                            1034 => {
+                                // Meta sends escape mode
+                                // When enabled, Alt+key sends ESC+key instead of setting high bit
+                                self.meta_sends_escape = enable;
                             }
                             45 => {
                                 // Reverse wraparound mode
