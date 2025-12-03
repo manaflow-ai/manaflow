@@ -294,7 +294,7 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         handle_onboard_event(&mut app, onboard_event.clone(), &event_tx_for_handler);
                     }
                     MuxEvent::SendTerminalInput { pane_id, input } => {
-                        if let Ok(manager) = terminal_manager.try_lock() {
+                        if let Ok(mut manager) = terminal_manager.try_lock() {
                             if !manager.send_input(*pane_id, input.clone()) {
                                 tracing::warn!("Failed to send terminal input to pane {:?}", pane_id);
                             }
@@ -795,7 +795,7 @@ fn handle_input(
                         if let Some(pane_id) = app.active_pane_id() {
                             let input = key_to_terminal_input(key.modifiers, key.code);
                             if !input.is_empty() {
-                                if let Ok(guard) = terminal_manager.try_lock() {
+                                if let Ok(mut guard) = terminal_manager.try_lock() {
                                     guard.send_input(pane_id, input);
                                 }
                             }
@@ -940,7 +940,7 @@ fn handle_input(
                                 }
                             }
 
-                            if let Ok(guard) = terminal_manager.try_lock() {
+                            if let Ok(mut guard) = terminal_manager.try_lock() {
                                 let (mouse_mode, sgr_mode) = guard
                                     .get_buffer(pane_id)
                                     .map(|b| (b.mouse_tracking(), b.sgr_mouse_mode()))
@@ -992,7 +992,7 @@ fn handle_input(
         Event::Paste(text) => {
             // Forward paste to active terminal
             if let Some(pane_id) = app.active_pane_id() {
-                if let Ok(guard) = terminal_manager.try_lock() {
+                if let Ok(mut guard) = terminal_manager.try_lock() {
                     guard.send_input(pane_id, text.into_bytes());
                 }
             }
