@@ -322,6 +322,43 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                             }
                         });
                     }
+                    MuxEvent::OpenSandboxBrowser { sandbox_id } => {
+                        // Launch browser in background process
+                        // Use `cmux browser <id>` to handle proxy setup
+                        let sandbox_id = sandbox_id.clone();
+                        let base_url = app.base_url.clone();
+                        tokio::spawn(async move {
+                            let result = tokio::process::Command::new("cmux")
+                                .arg("browser")
+                                .arg(&sandbox_id)
+                                .arg("--base-url")
+                                .arg(&base_url)
+                                .spawn();
+                            if let Err(e) = result {
+                                tracing::warn!("Failed to launch browser for sandbox {}: {}", sandbox_id, e);
+                            }
+                        });
+                    }
+                    MuxEvent::OpenSandboxEditor { sandbox_id } => {
+                        // Open VS Code connected to sandbox via Remote SSH or similar
+                        // For now, try to open vscode:// URI with the sandbox
+                        let sandbox_id = sandbox_id.clone();
+                        let base_url = app.base_url.clone();
+                        tokio::spawn(async move {
+                            // Try opening VS Code via code command
+                            let result = tokio::process::Command::new("code")
+                                .arg("--folder-uri")
+                                .arg(format!("vscode-remote://ssh-remote+root@{}/workspace", sandbox_id))
+                                .spawn();
+                            if let Err(e) = result {
+                                // Fallback: try opening the browser-based editor
+                                tracing::warn!("VS Code not available, trying web editor: {}", e);
+                                let _ = tokio::process::Command::new("open")
+                                    .arg(format!("{}/sandboxes/{}/editor", base_url.trim_end_matches('/'), sandbox_id))
+                                    .spawn();
+                            }
+                        });
+                    }
                     _ => {}
                 }
                 app.handle_event(event);

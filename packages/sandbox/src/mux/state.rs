@@ -618,6 +618,26 @@ impl<'a> MuxApp<'a> {
             MuxCommand::RefreshSandboxes => {
                 self.set_status("Refreshing sandboxes...");
             }
+            MuxCommand::OpenSandboxBrowser => {
+                if let Some(sandbox_id) = self.selected_sandbox_id_string() {
+                    self.set_status("Opening browser...");
+                    let _ = self.event_tx.send(MuxEvent::OpenSandboxBrowser {
+                        sandbox_id: sandbox_id.to_string(),
+                    });
+                } else {
+                    self.set_status("No sandbox selected");
+                }
+            }
+            MuxCommand::OpenSandboxEditor => {
+                if let Some(sandbox_id) = self.selected_sandbox_id_string() {
+                    self.set_status("Opening editor...");
+                    let _ = self.event_tx.send(MuxEvent::OpenSandboxEditor {
+                        sandbox_id: sandbox_id.to_string(),
+                    });
+                } else {
+                    self.set_status("No sandbox selected");
+                }
+            }
 
             // Session
             MuxCommand::NewSession => {
@@ -885,6 +905,12 @@ impl<'a> MuxApp<'a> {
             }
             MuxEvent::ExecInSandbox { .. } => {
                 // Exec requests are handled in the runner
+            }
+            MuxEvent::OpenSandboxBrowser { .. } => {
+                // Browser opening is handled in the runner
+            }
+            MuxEvent::OpenSandboxEditor { .. } => {
+                // Editor opening is handled in the runner
             }
         }
     }
