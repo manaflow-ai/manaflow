@@ -161,6 +161,7 @@ sandboxesRouter.openapi(
         teamSlugOrId: body.teamSlugOrId,
         environmentId: body.environmentId,
         snapshotId: body.snapshotId,
+        isTaskRun: Boolean(body.taskRunId),
       });
 
       const environmentEnvVarsPromise = environmentDataVaultKey

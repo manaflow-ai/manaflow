@@ -1,4 +1,4 @@
-import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
+import { DEFAULT_MORPH_SNAPSHOT_ID, TASK_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
@@ -22,12 +22,15 @@ export const resolveTeamAndSnapshot = async ({
   teamSlugOrId,
   environmentId,
   snapshotId,
+  isTaskRun,
 }: {
   req: Request;
   convex: ConvexClient;
   teamSlugOrId: string;
   environmentId?: string;
   snapshotId?: string;
+  /** When true, uses the performance snapshot for task runs */
+  isTaskRun?: boolean;
 }): Promise<SnapshotResolution> => {
   const team = await verifyTeamAccess({ req, teamSlugOrId });
 
@@ -87,8 +90,11 @@ export const resolveTeamAndSnapshot = async ({
     };
   }
 
+  // Use performance snapshot for task runs, default for other sandboxes
+  const defaultSnapshotId = isTaskRun ? TASK_MORPH_SNAPSHOT_ID : DEFAULT_MORPH_SNAPSHOT_ID;
+
   return {
     team,
-    resolvedSnapshotId: DEFAULT_MORPH_SNAPSHOT_ID,
+    resolvedSnapshotId: defaultSnapshotId,
   };
 };

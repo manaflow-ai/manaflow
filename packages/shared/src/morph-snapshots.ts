@@ -116,3 +116,10 @@ if (!firstPreset) {
 }
 
 export const DEFAULT_MORPH_SNAPSHOT_ID: MorphSnapshotId = firstPreset.id;
+
+// Performance/big snapshot for task runs - uses the 8vcpu_32gb_48gb preset
+const performancePreset = MORPH_SNAPSHOT_PRESETS.find(
+  (preset) => preset.presetId === "8vcpu_32gb_48gb"
+);
+
+export const TASK_MORPH_SNAPSHOT_ID: MorphSnapshotId = performancePreset?.id ?? DEFAULT_MORPH_SNAPSHOT_ID;
