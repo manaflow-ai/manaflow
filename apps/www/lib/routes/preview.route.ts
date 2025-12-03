@@ -1,5 +1,7 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
+import { env } from "@/lib/utils/www-env";
+import { ConvexHttpClient } from "convex/browser";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -285,5 +287,72 @@ previewRouter.openapi(
       limit: query.limit,
     });
     return c.json({ runs: runs.map(formatPreviewRun) });
+  },
+);
+
+// Waitlist endpoint - no authentication required
+const WaitlistBody = z
+  .object({
+    email: z.string().email(),
+    provider: z.enum(["gitlab", "bitbucket"]),
+  })
+  .openapi("WaitlistBody");
+
+previewRouter.openapi(
+  createRoute({
+    method: "post",
+    path: "/preview/waitlist",
+    tags: ["Preview"],
+    summary: "Join the waitlist for GitLab/Bitbucket support",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: WaitlistBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Successfully joined waitlist",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.boolean(),
+              alreadyExists: z.boolean(),
+            }),
+          },
+        },
+      },
+      400: { description: "Invalid request" },
+    },
+  }),
+  async (c) => {
+    const body = c.req.valid("json");
+
+    // Create an unauthenticated Convex client for waitlist submissions
+    const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+
+    // Optionally get user ID if authenticated
+    let userId: string | undefined;
+    try {
+      const accessToken = await getAccessTokenFromRequest(c.req.raw);
+      if (accessToken) {
+        // We don't need the user ID for now, but could extract it from token if needed
+        userId = undefined;
+      }
+    } catch {
+      // Ignore auth errors - waitlist is open to everyone
+    }
+
+    const result = await convex.mutation(api.previewWaitlist.join, {
+      email: body.email,
+      provider: body.provider,
+      userId,
+    });
+
+    return c.json({ success: true, alreadyExists: result.alreadyExists });
   },
 );

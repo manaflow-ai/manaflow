@@ -63,6 +63,8 @@ type TeamOption = {
   displayName: string;
 };
 
+type NonGithubProvider = "gitlab" | "bitbucket";
+
 type PreviewDashboardProps = {
   selectedTeamSlugOrId: string;
   teamOptions: TeamOption[];
@@ -70,6 +72,7 @@ type PreviewDashboardProps = {
   isAuthenticated: boolean;
   previewConfigs: PreviewConfigListItem[];
   popupComplete?: boolean;
+  connectedNonGithubProvider?: NonGithubProvider | null;
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
@@ -110,6 +113,139 @@ function FeatureCard({
           {description}
         </p>
       </div>
+    </div>
+  );
+}
+
+type WaitlistBoxProps = {
+  provider: NonGithubProvider;
+};
+
+const PROVIDER_CONFIG = {
+  gitlab: {
+    name: "GitLab",
+    bgColor: "bg-[#fc6d26]",
+    hoverBgColor: "hover:bg-[#ff8245]",
+    icon: (
+      <svg className="h-5 w-5 shrink-0" viewBox="90 90 200 175" fill="currentColor">
+        <path d="M282.83,170.73l-.27-.69-26.14-68.22a6.81,6.81,0,0,0-2.69-3.24,7,7,0,0,0-8,.43,7,7,0,0,0-2.32,3.52l-17.65,54H154.29l-17.65-54A6.86,6.86,0,0,0,134.32,99a7,7,0,0,0-8-.43,6.87,6.87,0,0,0-2.69,3.24L97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82,19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91,40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" />
+      </svg>
+    ),
+  },
+  bitbucket: {
+    name: "Bitbucket",
+    bgColor: "bg-[#0052cc]",
+    hoverBgColor: "hover:bg-[#006cf2]",
+    icon: (
+      <svg className="h-5 w-5 shrink-0" viewBox="-2 -2 65 59">
+        <path
+          d="M2 .82a2 2 0 00-2 2.32l8.49 51.54a2.7 2.7 0 00.91 1.61 2.71 2.71 0 001.75.66l15.76-18.88H24.7l-3.47-18.39h38.44l2.7-16.53a2 2 0 00-2-2.32L2 .82z"
+          fill="currentColor"
+          fillRule="nonzero"
+        />
+      </svg>
+    ),
+  },
+} as const;
+
+function WaitlistBox({ provider }: WaitlistBoxProps) {
+  const [email, setEmail] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const config = PROVIDER_CONFIG[provider];
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const response = await fetch("/api/preview/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), provider }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "Failed to join waitlist");
+      }
+
+      setIsSubmitted(true);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to join waitlist";
+      console.error("[WaitlistBox] Failed to submit", error);
+      setSubmitError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (isSubmitted) {
+    return (
+      <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden py-16 sm:py-10 px-6">
+        <GrainOverlay opacity={0.02} />
+        <div className="mx-auto mb-4 grid place-items-center">
+          <div className="h-12 w-12 rounded-full bg-emerald-500/10 ring-8 ring-emerald-500/5 grid place-items-center">
+            <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+          </div>
+        </div>
+        <h3 className="text-base font-medium text-white pb-2 text-center">
+          You&apos;re on the list!
+        </h3>
+        <p className="text-sm text-neutral-400 text-center max-w-xs">
+          We&apos;ll notify you when {config.name} support is available.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden py-16 sm:py-10 px-6">
+      <GrainOverlay opacity={0.02} />
+      <div
+        className={`mb-4 h-12 w-12 rounded-full ${config.bgColor}/10 grid place-items-center text-white`}
+      >
+        {config.icon}
+      </div>
+      <h3 className="text-base font-medium text-white pb-2 text-center">
+        {config.name} support coming soon
+      </h3>
+      <p className="text-sm text-neutral-400 text-center max-w-xs pb-5">
+        Join the waitlist to be notified when {config.name} integration is
+        available.
+      </p>
+      <form onSubmit={handleSubmit} className="w-full max-w-xs">
+        <div className="flex gap-2">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Enter your email"
+            required
+            className="flex-1 h-10 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-neutral-500 focus:border-white/20 focus:outline-none"
+          />
+          <Button
+            type="submit"
+            disabled={isSubmitting || !email.trim()}
+            className={`h-10 px-4 ${config.bgColor} ${config.hoverBgColor} text-white disabled:opacity-50`}
+          >
+            {isSubmitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              "Join"
+            )}
+          </Button>
+        </div>
+        {submitError && (
+          <p className="pt-2 text-xs text-red-400">{submitError}</p>
+        )}
+      </form>
     </div>
   );
 }
@@ -247,6 +383,7 @@ function PreviewDashboardInner({
   isAuthenticated,
   previewConfigs,
   popupComplete,
+  connectedNonGithubProvider,
 }: PreviewDashboardProps) {
   const [selectedTeamSlugOrIdState, setSelectedTeamSlugOrIdState] = useState(
     () => selectedTeamSlugOrId || teamOptions[0]?.slugOrId || ""
@@ -661,6 +798,10 @@ function PreviewDashboardInner({
     }
   }, [selectedTeamSlugOrIdState, teamOptions]);
 
+  // Show waitlist for GitLab/Bitbucket users
+  const showWaitlist =
+    isAuthenticated && connectedNonGithubProvider && !hasGithubAppInstallation;
+
   // Repo selection box - only this part, not configured repos
   const repoSelectionBox = !isAuthenticated ? (
     <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm px-4 py-10 overflow-hidden">
@@ -747,6 +888,8 @@ function PreviewDashboardInner({
         </Button>
       </div>
     </div>
+  ) : showWaitlist ? (
+    <WaitlistBox provider={connectedNonGithubProvider} />
   ) : !hasGithubAppInstallation ? (
     <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden py-16 sm:py-10">
       <GrainOverlay opacity={0.02} />

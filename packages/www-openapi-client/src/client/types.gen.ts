@@ -689,6 +689,11 @@ export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
 };
 
+export type WaitlistBody = {
+    email: string;
+    provider: 'gitlab' | 'bitbucket';
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2564,6 +2569,32 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
+
+export type PostApiPreviewWaitlistData = {
+    body: WaitlistBody;
+    path?: never;
+    query?: never;
+    url: '/api/preview/waitlist';
+};
+
+export type PostApiPreviewWaitlistErrors = {
+    /**
+     * Invalid request
+     */
+    400: unknown;
+};
+
+export type PostApiPreviewWaitlistResponses = {
+    /**
+     * Successfully joined waitlist
+     */
+    200: {
+        success: boolean;
+        alreadyExists: boolean;
+    };
+};
+
+export type PostApiPreviewWaitlistResponse = PostApiPreviewWaitlistResponses[keyof PostApiPreviewWaitlistResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

@@ -1042,6 +1042,16 @@ const convexSchema = defineSchema({
     .index("by_statusId", ["statusId"])
     .index("by_sha_context", ["sha", "context", "updatedAt"])
     .index("by_sha", ["sha", "updatedAt"]),
+
+  // Waitlist for GitLab/Bitbucket preview support
+  previewWaitlist: defineTable({
+    email: v.string(),
+    provider: v.union(v.literal("gitlab"), v.literal("bitbucket")),
+    userId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_email_provider", ["email", "provider"])
+    .index("by_provider", ["provider", "createdAt"]),
 });
 
 export default convexSchema;

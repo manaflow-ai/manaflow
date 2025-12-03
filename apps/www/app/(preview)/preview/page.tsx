@@ -100,12 +100,21 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     );
   }
 
-  const [auth, teamsResult] = await Promise.all([
+  const [auth, teamsResult, gitlabAccount, bitbucketAccount] = await Promise.all([
     user.getAuthJson(),
     user.listTeams(),
+    user.getConnectedAccount("gitlab").catch(() => null),
+    user.getConnectedAccount("bitbucket").catch(() => null),
   ]);
   const teams: StackTeam[] = teamsResult;
   const { accessToken } = auth;
+
+  // Determine which non-GitHub provider the user signed in with (if any)
+  const connectedNonGithubProvider = gitlabAccount
+    ? ("gitlab" as const)
+    : bitbucketAccount
+      ? ("bitbucket" as const)
+      : null;
 
   if (!accessToken) {
     throw new Error("Missing Stack access token");
@@ -228,6 +237,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         isAuthenticated={true}
         previewConfigs={previewConfigs}
         popupComplete={popupComplete}
+        connectedNonGithubProvider={connectedNonGithubProvider}
       />
     </div>
   );
