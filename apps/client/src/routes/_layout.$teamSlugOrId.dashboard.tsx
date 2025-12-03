@@ -65,11 +65,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
 });
 
 // Default agents (not persisted to localStorage)
-const DEFAULT_AGENTS = [
-  "claude/sonnet-4.5",
-  "claude/opus-4.1",
-  "codex/gpt-5.1-codex-high",
-];
+const DEFAULT_AGENTS = ["claude/opus-4.5"];
 const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
 const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
   KNOWN_AGENT_NAMES.has(agent)
