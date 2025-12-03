@@ -1,12 +1,14 @@
-import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { FloatingPane } from "@/components/floating-pane";
+import { PreviewRunGroup } from "@/components/PreviewRunGroup";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { groupPreviewTasks } from "@/lib/preview-task-groups";
 import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
+import { useMemo } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/previews")({
   component: PreviewsRoute,
@@ -22,6 +24,10 @@ function PreviewsRoute() {
   const { teamSlugOrId } = Route.useParams();
   const tasks = useQuery(api.tasks.getPreviewTasks, { teamSlugOrId });
   const { expandTaskIds } = useExpandTasks();
+  const previewGroups = useMemo(
+    () => (tasks ? groupPreviewTasks(tasks) : []),
+    [tasks]
+  );
 
   return (
     <FloatingPane>
@@ -34,18 +40,19 @@ function PreviewsRoute() {
         <div className="overflow-y-auto px-4 pb-6">
           {tasks === undefined ? (
             <TaskTreeSkeleton count={10} />
-          ) : tasks.length === 0 ? (
+          ) : previewGroups.length === 0 ? (
             <p className="mt-6 text-sm text-neutral-500 dark:text-neutral-400 select-none">
               No preview runs yet.
             </p>
           ) : (
-            <div className="mt-2 space-y-1">
-              {tasks.map((task) => (
-                <TaskTree
-                  key={task._id}
-                  task={task}
-                  defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+            <div className="mt-2 space-y-3">
+              {previewGroups.map((group) => (
+                <PreviewRunGroup
+                  key={group.key}
+                  group={group}
                   teamSlugOrId={teamSlugOrId}
+                  expandTaskIds={expandTaskIds}
+                  variant="page"
                 />
               ))}
             </div>
