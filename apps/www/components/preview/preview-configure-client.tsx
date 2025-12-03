@@ -860,7 +860,9 @@ export function PreviewConfigureClient({
         throw new Error(await previewResponse.text());
       }
 
-      window.location.href = "/preview";
+      const previewData = await previewResponse.json();
+      const successUrl = `/preview/configure/success?previewConfigId=${encodeURIComponent(previewData.id)}&team=${encodeURIComponent(resolvedTeamSlugOrId)}`;
+      window.location.href = successUrl;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to save configuration";

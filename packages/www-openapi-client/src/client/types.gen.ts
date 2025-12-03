@@ -689,6 +689,20 @@ export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
 };
 
+export type CreateTestPrResponse = {
+    success: boolean;
+    prUrl?: string;
+    prNumber?: number;
+    error?: string;
+};
+
+export type CreateTestPrBody = {
+    teamSlugOrId: string;
+    previewConfigId: string;
+    repoFullName: string;
+    baseBranch?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2564,6 +2578,37 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
+
+export type PostApiPreviewTestPrData = {
+    body: CreateTestPrBody;
+    path?: never;
+    query?: never;
+    url: '/api/preview/test-pr';
+};
+
+export type PostApiPreviewTestPrErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Internal server error
+     */
+    500: unknown;
+};
+
+export type PostApiPreviewTestPrResponses = {
+    /**
+     * Test PR created
+     */
+    200: CreateTestPrResponse;
+};
+
+export type PostApiPreviewTestPrResponse = PostApiPreviewTestPrResponses[keyof PostApiPreviewTestPrResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
