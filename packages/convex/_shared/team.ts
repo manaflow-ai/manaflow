@@ -74,3 +74,27 @@ export async function resolveTeamIdLoose(
   // Back-compat: allow legacy string teamIds (e.g., "default").
   return teamSlugOrId;
 }
+
+/**
+ * Check if a user can access a task for reading.
+ * Preview tasks allow team-wide access (any team member can view).
+ * Regular tasks require userId match.
+ */
+export function canAccessTaskForReading(
+  task: { teamId: string; userId: string; isPreview?: boolean },
+  teamId: string,
+  userId: string
+): boolean {
+  // Must be in the same team
+  if (task.teamId !== teamId) {
+    return false;
+  }
+
+  // Preview tasks allow team-wide access
+  if (task.isPreview === true) {
+    return true;
+  }
+
+  // Regular tasks require userId match
+  return task.userId === userId;
+}

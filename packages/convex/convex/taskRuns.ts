@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
-import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
+import {
+  canAccessTaskForReading,
+  getTeamId,
+  resolveTeamIdLoose,
+} from "../_shared/team";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -617,9 +621,18 @@ export const subscribe = authQuery({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const doc = await ctx.db.get(args.id);
-    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+    if (!doc || doc.teamId !== teamId) {
       return null;
     }
+
+    // Check access: allow team-wide access for preview tasks
+    if (doc.userId !== userId) {
+      const task = await ctx.db.get(doc.taskId);
+      if (!task || !canAccessTaskForReading(task, teamId, userId)) {
+        return null;
+      }
+    }
+
     // Rewrite morph URLs in networking field
     if (doc.networking) {
       return {

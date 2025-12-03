@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { canAccessTaskForReading, resolveTeamIdLoose } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
 
 export const listByTask = authQuery({
@@ -13,7 +13,7 @@ export const listByTask = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const task = await ctx.db.get(args.taskId);
-    if (!task || task.teamId !== teamId || task.userId !== userId) {
+    if (!task || !canAccessTaskForReading(task, teamId, userId)) {
       throw new Error("Task not found or unauthorized");
     }
 
@@ -97,7 +97,7 @@ export const latestSystemByTask = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     const task = await ctx.db.get(args.taskId);
-    if (!task || task.teamId !== teamId || task.userId !== userId) {
+    if (!task || !canAccessTaskForReading(task, teamId, userId)) {
       throw new Error("Task not found or unauthorized");
     }
 
