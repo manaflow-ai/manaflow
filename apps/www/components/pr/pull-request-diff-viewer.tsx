@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { PrScreenshotGallery } from "./pr-screenshot-gallery";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -1017,6 +1018,25 @@ export function PullRequestDiffViewer({
   const comparisonFileOutputs = useConvexQuery(
     api.codeReview.listFileOutputsForComparison,
     comparisonQueryArgs
+  );
+
+  // Fetch screenshots for PR (only when prNumber is available)
+  const screenshotQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" ||
+      typeof prNumber !== "number" ||
+      Number.isNaN(prNumber)
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+          },
+    [normalizedJobType, teamSlugOrId, repoFullName, prNumber]
+  );
+  const prScreenshots = useConvexQuery(
+    api.codeReview.listScreenshotsForPr,
+    screenshotQueryArgs
   );
 
   const fileOutputs =
@@ -2188,6 +2208,9 @@ export function PullRequestDiffViewer({
                 onModelChange={handleHeatmapModelPreferenceChange}
               />
               <CmuxPromoCard />
+              {prScreenshots && prScreenshots.length > 0 ? (
+                <PrScreenshotGallery screenshotSets={prScreenshots} />
+              ) : null}
               {targetCount > 0 ? (
                 <div className="flex justify-center">
                   <ErrorNavigator

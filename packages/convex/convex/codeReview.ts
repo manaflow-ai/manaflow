@@ -1095,3 +1095,113 @@ export const listFileOutputsForComparison = authQuery({
     }));
   },
 });
+
+/**
+ * Get screenshots for a pull request by looking up task runs linked to the PR.
+ * Returns the latest screenshot set for each task run that has screenshots.
+ */
+export const listScreenshotsForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+
+    // Find task runs linked to this PR via the junction table
+    const prLinks = await ctx.db
+      .query("taskRunPullRequests")
+      .withIndex("by_pr", (q) =>
+        q
+          .eq("teamId", teamId)
+          .eq("repoFullName", args.repoFullName)
+          .eq("prNumber", args.prNumber)
+      )
+      .order("desc")
+      .take(20);
+
+    if (prLinks.length === 0) {
+      return [];
+    }
+
+    // Fetch task runs and their screenshot sets
+    const screenshotSets: Array<{
+      _id: string;
+      taskId: string;
+      runId: string;
+      status: "completed" | "failed" | "skipped";
+      hasUiChanges?: boolean;
+      commitSha?: string;
+      capturedAt: number;
+      error?: string;
+      images: Array<{
+        storageId: string;
+        mimeType: string;
+        fileName?: string;
+        commitSha?: string;
+        description?: string;
+        url?: string;
+      }>;
+    }> = [];
+
+    for (const link of prLinks) {
+      const taskRun = await ctx.db.get(link.taskRunId);
+      if (!taskRun?.latestScreenshotSetId) {
+        continue;
+      }
+
+      const screenshotSet = await ctx.db.get(taskRun.latestScreenshotSetId);
+      if (!screenshotSet || screenshotSet.status !== "completed") {
+        continue;
+      }
+
+      // Get URLs for all images
+      const imagesWithUrls = await Promise.all(
+        screenshotSet.images.map(async (image) => {
+          const url = await ctx.storage.getUrl(image.storageId);
+          return {
+            storageId: image.storageId as string,
+            mimeType: image.mimeType,
+            fileName: image.fileName,
+            commitSha: image.commitSha,
+            description: image.description,
+            url: url ?? undefined,
+          };
+        })
+      );
+
+      // Only include sets that have at least one valid image URL
+      const hasValidImages = imagesWithUrls.some((img) => img.url);
+      if (!hasValidImages) {
+        continue;
+      }
+
+      screenshotSets.push({
+        _id: screenshotSet._id as string,
+        taskId: screenshotSet.taskId as string,
+        runId: screenshotSet.runId as string,
+        status: screenshotSet.status,
+        hasUiChanges: screenshotSet.hasUiChanges,
+        commitSha: screenshotSet.commitSha,
+        capturedAt: screenshotSet.capturedAt,
+        error: screenshotSet.error,
+        images: imagesWithUrls,
+      });
+    }
+
+    // Sort by capturedAt descending (most recent first) and deduplicate by runId
+    const seenRunIds = new Set<string>();
+    const dedupedSets = screenshotSets
+      .sort((a, b) => b.capturedAt - a.capturedAt)
+      .filter((set) => {
+        if (seenRunIds.has(set.runId)) {
+          return false;
+        }
+        seenRunIds.add(set.runId);
+        return true;
+      });
+
+    return dedupedSets;
+  },
+});
