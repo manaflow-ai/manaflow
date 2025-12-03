@@ -1,11 +1,12 @@
 import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { Doc } from "@cmux/convex/dataModel";
+import { groupPreviewRunsByPr, type PreviewRunGroup } from "@/lib/previewRuns";
 import { useLocalStorage } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
 import { memo, useCallback, useMemo, useState } from "react";
 import { TaskItem } from "./TaskItem";
-import { PreviewItem } from "./PreviewItem";
+import { PreviewRunGroupCard } from "./PreviewRunGroup";
 import { ChevronRight } from "lucide-react";
 
 type TaskCategoryKey =
@@ -110,12 +111,6 @@ const createCollapsedCategoryState = (
   merged: defaultValue,
 });
 
-// Preview run types
-type PreviewRunWithConfig = Doc<"previewRuns"> & {
-  configRepoFullName?: string;
-  taskId?: Id<"tasks">;
-};
-
 type PreviewCategoryKey = "in_progress" | "completed";
 
 const PREVIEW_CATEGORY_ORDER: PreviewCategoryKey[] = ["in_progress", "completed"];
@@ -136,18 +131,21 @@ const PREVIEW_CATEGORY_META: Record<
 
 const createEmptyPreviewCategoryBuckets = (): Record<
   PreviewCategoryKey,
-  PreviewRunWithConfig[]
+  PreviewRunGroup[]
 > => ({
   in_progress: [],
   completed: [],
 });
 
-const getPreviewCategory = (run: PreviewRunWithConfig): PreviewCategoryKey | null => {
-  if (run.status === "pending" || run.status === "running") {
+const getPreviewCategory = (
+  group: PreviewRunGroup
+): PreviewCategoryKey | null => {
+  const status = group.latest.status;
+  if (status === "pending" || status === "running") {
     return "in_progress";
   }
   // Only "completed" and "skipped" should show as completed (green circles)
-  if (run.status === "completed" || run.status === "skipped") {
+  if (status === "completed" || status === "skipped") {
     return "completed";
   }
   // "failed" runs are excluded from both categories
@@ -155,17 +153,17 @@ const getPreviewCategory = (run: PreviewRunWithConfig): PreviewCategoryKey | nul
 };
 
 const categorizePreviewRuns = (
-  runs: PreviewRunWithConfig[] | undefined
-): Record<PreviewCategoryKey, PreviewRunWithConfig[]> | null => {
-  if (!runs) {
+  groups: PreviewRunGroup[] | undefined | null
+): Record<PreviewCategoryKey, PreviewRunGroup[]> | null => {
+  if (!groups) {
     return null;
   }
   const buckets = createEmptyPreviewCategoryBuckets();
-  for (const run of runs) {
-    const key = getPreviewCategory(run);
+  for (const group of groups) {
+    const key = getPreviewCategory(group);
     // Skip runs that don't belong to any category (e.g., failed runs)
     if (key !== null) {
-      buckets[key].push(run);
+      buckets[key].push(group);
     }
   }
   return buckets;
@@ -234,11 +232,16 @@ export const TaskList = memo(function TaskList({
   }, [setCollapsedCategories]);
 
   // Preview runs categorization
-  const categorizedPreviewRuns = useMemo(
-    () => categorizePreviewRuns(previewRuns),
+  const previewRunGroups = useMemo(
+    () => (previewRuns ? groupPreviewRunsByPr(previewRuns) : null),
     [previewRuns]
   );
-  const previewCategoryBuckets = categorizedPreviewRuns ?? createEmptyPreviewCategoryBuckets();
+  const categorizedPreviewRuns = useMemo(
+    () => categorizePreviewRuns(previewRunGroups),
+    [previewRunGroups]
+  );
+  const previewCategoryBuckets =
+    categorizedPreviewRuns ?? createEmptyPreviewCategoryBuckets();
 
   const collapsedPreviewStorageKey = useMemo(
     () => `dashboard-collapsed-preview-categories-${teamSlugOrId}`,
@@ -329,7 +332,7 @@ export const TaskList = memo(function TaskList({
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
               Loading...
             </div>
-          ) : previewRuns.length === 0 ? (
+          ) : !previewRunGroups || previewRunGroups.length === 0 ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
               No preview runs
             </div>
@@ -339,7 +342,7 @@ export const TaskList = memo(function TaskList({
                 <PreviewCategorySection
                   key={categoryKey}
                   categoryKey={categoryKey}
-                  previewRuns={previewCategoryBuckets[categoryKey]}
+                  previewRunGroups={previewCategoryBuckets[categoryKey]}
                   teamSlugOrId={teamSlugOrId}
                   collapsed={Boolean(collapsedPreviewCategories[categoryKey])}
                   onToggle={togglePreviewCategoryCollapse}
@@ -448,13 +451,13 @@ function TaskCategorySection({
 
 function PreviewCategorySection({
   categoryKey,
-  previewRuns,
+  previewRunGroups,
   teamSlugOrId,
   collapsed,
   onToggle,
 }: {
   categoryKey: PreviewCategoryKey;
-  previewRuns: PreviewRunWithConfig[];
+  previewRunGroups: PreviewRunGroup[];
   teamSlugOrId: string;
   collapsed: boolean;
   onToggle: (key: PreviewCategoryKey) => void;
@@ -494,15 +497,19 @@ function PreviewCategorySection({
           <div className="flex items-center gap-2 text-xs font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
             <span>{meta.title}</span>
             <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              {previewRuns.length}
+              {previewRunGroups.length}
             </span>
           </div>
         </div>
       </div>
-      {collapsed ? null : previewRuns.length > 0 ? (
-        <div id={contentId} className="flex flex-col w-full">
-          {previewRuns.map((run) => (
-            <PreviewItem key={run._id} previewRun={run} teamSlugOrId={teamSlugOrId} />
+      {collapsed ? null : previewRunGroups.length > 0 ? (
+        <div id={contentId} className="flex flex-col w-full gap-2 py-2">
+          {previewRunGroups.map((group) => (
+            <PreviewRunGroupCard
+              key={group.key}
+              group={group}
+              teamSlugOrId={teamSlugOrId}
+            />
           ))}
         </div>
       ) : (

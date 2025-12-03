@@ -4,7 +4,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import {
+  formatPreviewTimestamp,
+  type PreviewRunWithExtras,
+} from "@/lib/previewRuns";
 import { useClipboard } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
@@ -17,13 +20,8 @@ import {
 } from "lucide-react";
 import { memo, useCallback } from "react";
 
-type PreviewRunWithConfig = Doc<"previewRuns"> & {
-  configRepoFullName?: string;
-  taskId?: Id<"tasks">;
-};
-
 interface PreviewItemProps {
-  previewRun: PreviewRunWithConfig;
+  previewRun: PreviewRunWithExtras;
   teamSlugOrId: string;
 }
 
@@ -72,22 +70,8 @@ export const PreviewItem = memo(function PreviewItem({
     [archive, previewRun.taskId]
   );
 
-  // Format the timestamp
-  const formatTime = (timestamp: number | undefined) => {
-    if (!timestamp) return null;
-    const date = new Date(timestamp);
-    const today = new Date();
-    const isToday =
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear();
-
-    return isToday
-      ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : date.toLocaleDateString([], { month: "short", day: "numeric" });
-  };
-
   const timestamp = previewRun.completedAt || previewRun.startedAt || previewRun.createdAt;
+  const formattedTime = formatPreviewTimestamp(timestamp);
 
   const rowContent = (
     <>
@@ -121,7 +105,7 @@ export const PreviewItem = memo(function PreviewItem({
         <span className="truncate">{repoName}</span>
       </div>
       <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 tabular-nums text-right">
-        {formatTime(timestamp)}
+        {formattedTime}
       </div>
     </>
   );
