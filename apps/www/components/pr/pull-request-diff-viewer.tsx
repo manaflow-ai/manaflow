@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { PullRequestScreenshotGallery } from "./pull-request-screenshot-gallery";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -377,6 +378,10 @@ type StreamFileState = {
   skipReason?: string | null;
   summary?: string | null;
 };
+
+type PullRequestScreenshotSetList = FunctionReturnType<
+  typeof api.previewRuns.listScreenshotSetsForPr
+>;
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:pr-diff-viewer:file-tree-width";
 const SIDEBAR_DEFAULT_WIDTH = 330;
@@ -1010,6 +1015,22 @@ export function PullRequestDiffViewer({
     ]
   );
 
+  const screenshotQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" ||
+      prNumber === null ||
+      prNumber === undefined ||
+      !teamSlugOrId
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            limit: 12,
+          },
+    [normalizedJobType, prNumber, repoFullName, teamSlugOrId]
+  );
+
   const prFileOutputs = useConvexQuery(
     api.codeReview.listFileOutputsForPr,
     prQueryArgs
@@ -1018,9 +1039,18 @@ export function PullRequestDiffViewer({
     api.codeReview.listFileOutputsForComparison,
     comparisonQueryArgs
   );
+  const prScreenshotSets = useConvexQuery(
+    api.previewRuns.listScreenshotSetsForPr,
+    screenshotQueryArgs
+  );
 
   const fileOutputs =
     normalizedJobType === "comparison" ? comparisonFileOutputs : prFileOutputs;
+
+  const screenshotSets: PullRequestScreenshotSetList =
+    prScreenshotSets ?? [];
+  const isLoadingScreenshots =
+    screenshotQueryArgs !== "skip" && prScreenshotSets === undefined;
 
   const fileOutputIndex = useMemo(() => {
     if (!fileOutputs) {
@@ -2187,6 +2217,13 @@ export function PullRequestDiffViewer({
                 selectedModel={heatmapModelPreference}
                 onModelChange={handleHeatmapModelPreferenceChange}
               />
+              {screenshotQueryArgs !== "skip" ? (
+                <PullRequestScreenshotGallery
+                  screenshotSets={screenshotSets}
+                  isLoading={isLoadingScreenshots}
+                  headCommitRef={commitRef}
+                />
+              ) : null}
               <CmuxPromoCard />
               {targetCount > 0 ? (
                 <div className="flex justify-center">

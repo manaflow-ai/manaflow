@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
@@ -406,6 +406,92 @@ export const listByConfigAndPr = internalQuery({
       .order("desc")
       .take(take);
     return runs;
+  },
+});
+
+export const listScreenshotSetsForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const limit = Math.max(1, Math.min(args.limit ?? 10, 20));
+    const normalizedRepo = normalizeRepoFullName(args.repoFullName);
+    const repoCandidates = new Set<string>([
+      normalizedRepo,
+      args.repoFullName.trim(),
+    ]);
+    repoCandidates.delete("");
+
+    const runIds = new Set<Id<"taskRuns">>();
+
+    for (const repo of repoCandidates) {
+      const links = await ctx.db
+        .query("taskRunPullRequests")
+        .withIndex("by_pr", (q) =>
+          q
+            .eq("teamId", teamId)
+            .eq("repoFullName", repo)
+            .eq("prNumber", args.prNumber),
+        )
+        .collect();
+
+      for (const link of links) {
+        runIds.add(link.taskRunId);
+      }
+    }
+
+    if (runIds.size === 0) {
+      return [];
+    }
+
+    const runs = await Promise.all(
+      Array.from(runIds).map((runId) => ctx.db.get(runId)),
+    );
+    const validRunIds = runs
+      .filter((run): run is NonNullable<typeof run> => Boolean(run))
+      .filter((run) => run.teamId === teamId)
+      .map((run) => run._id);
+
+    const screenshotSets = await Promise.all(
+      validRunIds.map((runId) =>
+        ctx.db
+          .query("taskRunScreenshotSets")
+          .withIndex("by_run_capturedAt", (q) => q.eq("runId", runId))
+          .order("desc")
+          .take(limit),
+      ),
+    );
+
+    const flattened = screenshotSets.flat();
+    if (flattened.length === 0) {
+      return [];
+    }
+
+    flattened.sort((a, b) => b.capturedAt - a.capturedAt);
+    const limited = flattened.slice(0, limit);
+
+    return Promise.all(
+      limited.map(async (set) => {
+        const images = await Promise.all(
+          set.images.map(async (image) => {
+            const url = await ctx.storage.getUrl(image.storageId);
+            return {
+              ...image,
+              url: url ?? undefined,
+            };
+          }),
+        );
+
+        return {
+          ...set,
+          images,
+        };
+      }),
+    );
   },
 });
 
