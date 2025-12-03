@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
+import type { Id } from "./_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
@@ -299,6 +300,117 @@ export const getPullRequest = authQuery({
       .first();
 
     return pr ?? null;
+  },
+});
+
+export const listScreenshotSetsForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    commitRef: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { teamSlugOrId, repoFullName, prNumber, commitRef, limit }) => {
+    const teamId = await getTeamId(ctx, teamSlugOrId);
+    const take = Math.max(1, Math.min(limit ?? 3, 10));
+
+    const prRunEntries = await ctx.db
+      .query("taskRunPullRequests")
+      .withIndex("by_pr", (q) =>
+        q.eq("teamId", teamId).eq("repoFullName", repoFullName).eq("prNumber", prNumber)
+      )
+      .order("desc")
+      .take(50);
+
+    if (prRunEntries.length === 0) {
+      return [];
+    }
+
+    const seenRunIds = new Set<string>();
+    const sets = [] as Array<{
+      _id: Id<"taskRunScreenshotSets">;
+      runId: Id<"taskRuns">;
+      taskId: Id<"tasks">;
+      status: "completed" | "failed" | "skipped";
+      commitSha?: string | null;
+      capturedAt: number;
+      error?: string | null;
+      hasUiChanges?: boolean;
+      images: Array<{
+        storageId: Id<"_storage">;
+        mimeType: string;
+        fileName?: string;
+        commitSha?: string;
+        description?: string;
+        url?: string;
+      }>;
+    }>;
+
+    for (const entry of prRunEntries) {
+      if (seenRunIds.has(entry.taskRunId)) {
+        continue;
+      }
+      seenRunIds.add(entry.taskRunId);
+
+      const run = await ctx.db.get(entry.taskRunId);
+      if (!run || run.teamId !== teamId || !run.latestScreenshotSetId) {
+        continue;
+      }
+
+      const set = await ctx.db.get(run.latestScreenshotSetId);
+      if (!set || set.runId !== run._id) {
+        continue;
+      }
+
+      const imagesWithUrls = await Promise.all(
+        set.images.map(async (image) => {
+          const url = await ctx.storage.getUrl(image.storageId);
+          return {
+            ...image,
+            url: url ?? undefined,
+          };
+        })
+      );
+
+      const hasRenderableImage = imagesWithUrls.some((image) => Boolean(image.url));
+      if (!hasRenderableImage) {
+        continue;
+      }
+
+      sets.push({
+        _id: set._id,
+        runId: set.runId,
+        taskId: set.taskId,
+        status: set.status,
+        commitSha: set.commitSha,
+        capturedAt: set.capturedAt,
+        error: set.error,
+        hasUiChanges: set.hasUiChanges,
+        images: imagesWithUrls,
+      });
+    }
+
+    if (sets.length === 0) {
+      return [];
+    }
+
+    const normalizedCommit = commitRef?.trim().toLowerCase();
+
+    sets.sort((a, b) => {
+      if (normalizedCommit) {
+        const aMatches = a.commitSha?.toLowerCase() === normalizedCommit;
+        const bMatches = b.commitSha?.toLowerCase() === normalizedCommit;
+        if (aMatches && !bMatches) return -1;
+        if (!aMatches && bMatches) return 1;
+      }
+      if (a.capturedAt !== b.capturedAt) {
+        return b.capturedAt - a.capturedAt;
+      }
+      return b._id.localeCompare(a._id);
+    });
+
+    return sets.slice(0, take);
   },
 });
 

@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { PrScreenshotGallery } from "./pr-screenshot-gallery";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -1009,6 +1010,44 @@ export function PullRequestDiffViewer({
       baseCommitRef,
     ]
   );
+
+  const screenshotQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" ||
+      prNumber === null ||
+      prNumber === undefined
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+          },
+    [normalizedJobType, prNumber, teamSlugOrId, repoFullName, commitRef]
+  );
+
+  const screenshotSets = useConvexQuery(
+    api.github_prs.listScreenshotSetsForPr,
+    screenshotQueryArgs
+  );
+
+  const highlightedScreenshotSetId = useMemo(() => {
+    if (!screenshotSets || screenshotSets.length === 0) {
+      return null;
+    }
+
+    const normalizedCommit = commitRef?.toLowerCase();
+    if (normalizedCommit) {
+      const matched = screenshotSets.find(
+        (set) => set.commitSha?.toLowerCase() === normalizedCommit
+      );
+      if (matched) {
+        return matched._id;
+      }
+    }
+
+    return screenshotSets[0]?._id ?? null;
+  }, [screenshotSets, commitRef]);
 
   const prFileOutputs = useConvexQuery(
     api.codeReview.listFileOutputsForPr,
@@ -2103,6 +2142,10 @@ export function PullRequestDiffViewer({
     return kitties[Math.floor(Math.random() * kitties.length)];
   }, []);
 
+  const shouldRenderScreenshots = Boolean(
+    screenshotSets && screenshotSets.length > 0
+  );
+
   const heatmapGradientCss = useMemo(
     () => buildHeatmapGradientStyles(deferredHeatmapColors),
     [deferredHeatmapColors]
@@ -2248,6 +2291,12 @@ export function PullRequestDiffViewer({
           </div>
 
           <div className="flex-1 min-w-0 space-y-3">
+            {shouldRenderScreenshots && screenshotSets ? (
+              <PrScreenshotGallery
+                screenshotSets={screenshotSets}
+                highlightedSetId={highlightedScreenshotSetId}
+              />
+            ) : null}
             {thresholdedFileEntries.map(
               ({ entry, review, diffHeatmap, streamState }) => {
                 const isFocusedFile =
