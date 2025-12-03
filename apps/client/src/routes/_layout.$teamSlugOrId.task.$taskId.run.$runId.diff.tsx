@@ -448,22 +448,27 @@ function WorkflowRunsWrapper({
   teamSlugOrId,
   repoFullName,
   prNumber,
-  headSha,
   checksExpandedByRepo,
   setChecksExpandedByRepo,
 }: {
   teamSlugOrId: string;
   repoFullName: string;
   prNumber: number;
-  headSha?: string;
   checksExpandedByRepo: Record<string, boolean | null>;
   setChecksExpandedByRepo: React.Dispatch<React.SetStateAction<Record<string, boolean | null>>>;
 }) {
+  // Fetch PR data to get headSha for more efficient workflow run lookups
+  const prData = useQuery(api.github_prs.getPullRequest, {
+    teamSlugOrId,
+    repoFullName,
+    number: prNumber,
+  });
+
   const workflowData = useCombinedWorkflowData({
     teamSlugOrId,
     repoFullName,
     prNumber,
-    headSha,
+    headSha: prData?.headSha ?? undefined,
   });
 
   // Auto-expand if there are failures (only on initial load)
@@ -855,7 +860,6 @@ function RunDiffPage() {
                     teamSlugOrId={teamSlugOrId}
                     repoFullName={pr.repoFullName}
                     prNumber={pr.number}
-                    headSha={undefined}
                     checksExpandedByRepo={checksExpandedByRepo}
                     setChecksExpandedByRepo={setChecksExpandedByRepo}
                   />
