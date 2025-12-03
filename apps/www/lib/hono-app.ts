@@ -24,6 +24,7 @@ import {
   iframePreflightRouter,
   workspaceConfigsRouter,
   previewRouter,
+  waitlistRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -126,6 +127,7 @@ app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
 app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
+app.route("/", waitlistRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

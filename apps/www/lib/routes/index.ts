@@ -22,3 +22,4 @@ export { branchRouter } from "./branch.route";
 export { codeReviewRouter } from "./code-review.route";
 export { workspaceConfigsRouter } from "./workspace-configs.route";
 export { previewRouter } from "./preview.route";
+export { waitlistRouter } from "./waitlist.route";

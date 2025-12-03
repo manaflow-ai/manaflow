@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Bell,
   Camera,
   CheckCircle2,
   ExternalLink,
@@ -71,6 +72,12 @@ type PreviewDashboardProps = {
   previewConfigs: PreviewConfigListItem[];
   popupComplete?: boolean;
 };
+
+type WaitlistProvider = "gitlab" | "bitbucket";
+type ParsedRepoInput =
+  | { provider: "github"; repoFullName: string }
+  | { provider: WaitlistProvider; repoFullName: string | null }
+  | { provider: "unknown"; repoFullName: null };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
 
@@ -254,6 +261,15 @@ function PreviewDashboardInner({
   const [isInstallingApp, setIsInstallingApp] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [waitlistProvider, setWaitlistProvider] =
+    useState<WaitlistProvider | null>(null);
+  const [waitlistEmail, setWaitlistEmail] = useState("");
+  const [waitlistNotes, setWaitlistNotes] = useState("");
+  const [waitlistSubmitting, setWaitlistSubmitting] = useState(false);
+  const [waitlistSuccess, setWaitlistSuccess] = useState(false);
+  const [waitlistContext, setWaitlistContext] = useState<string | null>(null);
+  const [waitlistRepoUrl, setWaitlistRepoUrl] = useState<string | null>(null);
+  const [waitlistError, setWaitlistError] = useState<string | null>(null);
 
   // Repository selection state
   const [selectedInstallationId, setSelectedInstallationId] = useState<
@@ -340,29 +356,50 @@ function PreviewDashboardInner({
     setConfigs(previewConfigs);
   }, [previewConfigs]);
 
-  // Parse GitHub URL to extract owner/repo
-  const parseGithubUrl = useCallback((input: string): string | null => {
-    const trimmed = input.trim();
-    // Try to parse as URL
-    try {
-      const url = new URL(trimmed);
-      if (url.hostname === "github.com" || url.hostname === "www.github.com") {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (parts.length >= 2) {
-          return `${parts[0]}/${parts[1]}`;
-        }
+  // Parse repo input and detect provider
+  const parseRepoInput = useCallback(
+    (input: string): ParsedRepoInput => {
+      const trimmed = input.trim();
+      if (!trimmed) {
+        return { provider: "unknown", repoFullName: null };
       }
-    } catch {
-      // Not a valid URL, check if it's owner/repo format
+
+      try {
+        const url = new URL(trimmed);
+        const host = url.hostname.toLowerCase();
+        const parts = url.pathname.split("/").filter(Boolean);
+        const ownerRepo =
+          parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
+
+        if (host.includes("gitlab")) {
+          return { provider: "gitlab", repoFullName: ownerRepo };
+        }
+        if (host.includes("bitbucket")) {
+          return { provider: "bitbucket", repoFullName: ownerRepo };
+        }
+        if (host === "github.com" || host === "www.github.com") {
+          if (ownerRepo) {
+            return { provider: "github", repoFullName: ownerRepo };
+          }
+        }
+      } catch {
+        // Not a valid URL, fall through to regex parsing
+      }
+
       const ownerRepoMatch = trimmed.match(
         /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/
       );
       if (ownerRepoMatch) {
-        return trimmed;
+        return {
+          provider: "github",
+          repoFullName: `${ownerRepoMatch[1]}/${ownerRepoMatch[2]}`,
+        };
       }
-    }
-    return null;
-  }, []);
+
+      return { provider: "unknown", repoFullName: null };
+    },
+    []
+  );
 
   const handleOpenConfig = useCallback((config: PreviewConfigListItem) => {
     setOpeningConfigId(config.id);
@@ -432,8 +469,90 @@ function PreviewDashboardInner({
     setErrorMessage(null);
   }, []);
 
+  const openWaitlist = useCallback(
+    (provider: WaitlistProvider, context?: string, repoUrl?: string) => {
+      setWaitlistProvider(provider);
+      setWaitlistContext(context ?? null);
+      setWaitlistRepoUrl(repoUrl ?? null);
+      setWaitlistNotes("");
+      setWaitlistError(null);
+      setWaitlistSuccess(false);
+    },
+    []
+  );
+
+  const closeWaitlist = useCallback(() => {
+    setWaitlistProvider(null);
+    setWaitlistSubmitting(false);
+    setWaitlistError(null);
+    setWaitlistSuccess(false);
+    setWaitlistNotes("");
+  }, []);
+
+  const handleWaitlistSubmit = useCallback(async () => {
+    if (!waitlistProvider) return;
+    const email = waitlistEmail.trim();
+    if (!email) {
+      setWaitlistError("Enter your email to join the waitlist.");
+      return;
+    }
+
+    setWaitlistSubmitting(true);
+    setWaitlistError(null);
+
+    try {
+      const response = await fetch("/api/waitlist/git-provider", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          provider: waitlistProvider,
+          context: waitlistContext ?? undefined,
+          repoUrl: waitlistRepoUrl ?? undefined,
+          notes: waitlistNotes.trim() || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      setWaitlistSuccess(true);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message || "Failed to join waitlist"
+          : "Failed to join waitlist";
+      setWaitlistError(message);
+    } finally {
+      setWaitlistSubmitting(false);
+    }
+  }, [
+    waitlistProvider,
+    waitlistEmail,
+    waitlistContext,
+    waitlistRepoUrl,
+    waitlistNotes,
+  ]);
+
   const handleStartPreview = useCallback(async () => {
-    const repoName = parseGithubUrl(repoUrlInput);
+    const parsedRepo = parseRepoInput(repoUrlInput);
+    if (parsedRepo.provider !== "github") {
+      if (parsedRepo.provider === "gitlab" || parsedRepo.provider === "bitbucket") {
+        const providerLabel =
+          parsedRepo.provider === "gitlab" ? "GitLab" : "Bitbucket";
+        setErrorMessage(
+          `${providerLabel} support is on the waitlist. Join and we'll follow up.`
+        );
+        openWaitlist(parsedRepo.provider, "quick_input", repoUrlInput.trim());
+        return;
+      }
+
+      setErrorMessage("Please enter a valid GitHub URL or owner/repo");
+      return;
+    }
+
+    const repoName = parsedRepo.repoFullName;
     if (!repoName) {
       setErrorMessage("Please enter a valid GitHub URL or owner/repo");
       return;
@@ -517,10 +636,11 @@ function PreviewDashboardInner({
     window.location.href = configurePath;
   }, [
     repoUrlInput,
-    parseGithubUrl,
+    parseRepoInput,
     selectedTeamSlugOrIdState,
     hasGithubAppInstallation,
     isAuthenticated,
+    openWaitlist,
   ]);
 
   // Auto-select first connection for the team, but keep user choice if still valid
@@ -666,7 +786,7 @@ function PreviewDashboardInner({
     <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm px-4 py-10 overflow-hidden">
       <GrainOverlay opacity={0.02} />
       <p className="text-sm text-neutral-300/85 pb-6 max-w-xs text-center">
-        Select a Git provider to import a Git Repository
+        GitHub is supported today. Join the waitlist for GitLab or Bitbucket.
       </p>
       <div className="flex flex-col gap-3 w-full max-w-xs">
         <Button
@@ -688,63 +808,64 @@ function PreviewDashboardInner({
           Continue with GitHub
         </Button>
         <Button
-          onClick={() => signInWithPopup("gitlab")}
-          disabled={signingInProvider !== null}
+          onClick={() => {
+            setErrorMessage(null);
+            openWaitlist("gitlab", "provider_button");
+          }}
+          disabled={waitlistSubmitting}
           className="w-full h-10 bg-[#fc6d26] text-white hover:bg-[#ff8245] inline-flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          {signingInProvider === "gitlab" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <svg
-              className="h-4 w-4 shrink-0"
-              viewBox="90 90 200 175"
-              fill="currentColor"
-            >
-              <path d="M282.83,170.73l-.27-.69-26.14-68.22a6.81,6.81,0,0,0-2.69-3.24,7,7,0,0,0-8,.43,7,7,0,0,0-2.32,3.52l-17.65,54H154.29l-17.65-54A6.86,6.86,0,0,0,134.32,99a7,7,0,0,0-8-.43,6.87,6.87,0,0,0-2.69,3.24L97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82,19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91,40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" />
-            </svg>
-          )}
-          Continue with GitLab
+          <svg
+            className="h-4 w-4 shrink-0"
+            viewBox="90 90 200 175"
+            fill="currentColor"
+          >
+            <path d="M282.83,170.73l-.27-.69-26.14-68.22a6.81,6.81,0,0,0-2.69-3.24,7,7,0,0,0-8,.43,7,7,0,0,0-2.32,3.52l-17.65,54H154.29l-17.65-54A6.86,6.86,0,0,0,134.32,99a7,7,0,0,0-8-.43,6.87,6.87,0,0,0-2.69,3.24L97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82,19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91,40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" />
+          </svg>
+          Join GitLab waitlist
         </Button>
         <Button
-          onClick={() => signInWithPopup("bitbucket")}
-          disabled={signingInProvider !== null}
+          onClick={() => {
+            setErrorMessage(null);
+            openWaitlist("bitbucket", "provider_button");
+          }}
+          disabled={waitlistSubmitting}
           className="w-full h-10 bg-[#0052cc] text-white hover:bg-[#006cf2] inline-flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          {signingInProvider === "bitbucket" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <svg className="h-4 w-4 shrink-0" viewBox="-2 -2 65 59">
-              <defs>
-                <linearGradient
-                  id="bitbucket-grad"
-                  x1="104.953%"
-                  x2="46.569%"
-                  y1="21.921%"
-                  y2="75.234%"
-                >
-                  <stop
-                    offset="7%"
-                    stopColor="currentColor"
-                    stopOpacity="0.4"
-                  />
-                  <stop offset="100%" stopColor="currentColor" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M59.696 18.86h-18.77l-3.15 18.39h-13L9.426 55.47a2.71 2.71 0 001.75.66h40.74a2 2 0 002-1.68l5.78-35.59z"
-                fill="url(#bitbucket-grad)"
-                fillRule="nonzero"
-                transform="translate(-.026 .82)"
-              />
-              <path
-                d="M2 .82a2 2 0 00-2 2.32l8.49 51.54a2.7 2.7 0 00.91 1.61 2.71 2.71 0 001.75.66l15.76-18.88H24.7l-3.47-18.39h38.44l2.7-16.53a2 2 0 00-2-2.32L2 .82z"
-                fill="currentColor"
-                fillRule="nonzero"
-              />
-            </svg>
-          )}
-          Continue with Bitbucket
+          <svg className="h-4 w-4 shrink-0" viewBox="-2 -2 65 59">
+            <defs>
+              <linearGradient
+                id="bitbucket-grad"
+                x1="104.953%"
+                x2="46.569%"
+                y1="21.921%"
+                y2="75.234%"
+              >
+                <stop
+                  offset="7%"
+                  stopColor="currentColor"
+                  stopOpacity="0.4"
+                />
+                <stop offset="100%" stopColor="currentColor" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M59.696 18.86h-18.77l-3.15 18.39h-13L9.426 55.47a2.71 2.71 0 001.75.66h40.74a2 2 0 002-1.68l5.78-35.59z"
+              fill="url(#bitbucket-grad)"
+              fillRule="nonzero"
+              transform="translate(-.026 .82)"
+            />
+            <path
+              d="M2 .82a2 2 0 00-2 2.32l8.49 51.54a2.7 2.7 0 00.91 1.61 2.71 2.71 0 001.75.66l15.76-18.88H24.7l-3.47-18.39h38.44l2.7-16.53a2 2 0 00-2-2.32L2 .82z"
+              fill="currentColor"
+              fillRule="nonzero"
+            />
+          </svg>
+          Join Bitbucket waitlist
         </Button>
+        <p className="text-[11px] text-center text-neutral-500">
+          GitLab and Bitbucket support is on the waitlist. We&apos;ll notify you when it&apos;s live.
+        </p>
       </div>
     </div>
   ) : !hasGithubAppInstallation ? (
@@ -1167,6 +1288,104 @@ function PreviewDashboardInner({
           </Section>
         </div>
       </div>
+
+      {waitlistProvider && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+          onClick={() => {
+            if (waitlistSubmitting) return;
+            closeWaitlist();
+          }}
+        >
+          <div
+            className="w-full max-w-lg rounded-lg border border-white/10 bg-neutral-900 px-6 py-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-sky-500/10 p-2 text-sky-400">
+                <Bell className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">
+                  {waitlistProvider === "gitlab" ? "GitLab waitlist" : "Bitbucket waitlist"}
+                </p>
+                <h3 className="text-lg font-semibold text-white">
+                  {waitlistProvider === "gitlab"
+                    ? "GitLab support is on the waitlist"
+                    : "Bitbucket support is on the waitlist"}
+                </h3>
+                <p className="pt-1 text-sm text-neutral-400">
+                  We&apos;re prioritizing GitHub today. Join the waitlist and
+                  we&apos;ll reach out as soon as{" "}
+                  {waitlistProvider === "gitlab" ? "GitLab" : "Bitbucket"} is
+                  ready.
+                </p>
+                {waitlistRepoUrl && (
+                  <p className="pt-1 text-xs text-neutral-500">
+                    Repo entered:{" "}
+                    <span className="text-neutral-300">{waitlistRepoUrl}</span>
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="pt-5 space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-neutral-400">
+                  Work email
+                </label>
+                <input
+                  type="email"
+                  value={waitlistEmail}
+                  onChange={(event) => setWaitlistEmail(event.target.value)}
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-white/30 focus:outline-none"
+                  placeholder="you@company.com"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-neutral-400">
+                  Notes (optional)
+                </label>
+                <textarea
+                  value={waitlistNotes}
+                  onChange={(event) => setWaitlistNotes(event.target.value)}
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-white/30 focus:outline-none"
+                  placeholder="Share how you&apos;d like to use previews"
+                  rows={3}
+                />
+              </div>
+              {waitlistError && (
+                <p className="text-xs text-red-400">{waitlistError}</p>
+              )}
+              {waitlistSuccess && (
+                <p className="text-xs text-emerald-400">
+                  Added to the {waitlistProvider === "gitlab" ? "GitLab" : "Bitbucket"} waitlist. We&apos;ll reach out soon.
+                </p>
+              )}
+              <div className="flex justify-end gap-3 pt-1">
+                <Button
+                  variant="secondary"
+                  onClick={closeWaitlist}
+                  disabled={waitlistSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void handleWaitlistSubmit()}
+                  disabled={waitlistSubmitting || waitlistSuccess}
+                  className="bg-white text-black hover:bg-neutral-200"
+                >
+                  {waitlistSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Join waitlist"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {configPendingDelete && (
         <div
