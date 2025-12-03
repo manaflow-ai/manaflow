@@ -58,6 +58,8 @@ pub enum MuxCommand {
     NewSandbox,
     DeleteSandbox,
     RefreshSandboxes,
+    OpenSandboxBrowser,
+    OpenSandboxEditor,
 
     // Session management
     NewSession,
@@ -140,6 +142,8 @@ impl MuxCommand {
             MuxCommand::NewSandbox,
             MuxCommand::DeleteSandbox,
             MuxCommand::RefreshSandboxes,
+            MuxCommand::OpenSandboxBrowser,
+            MuxCommand::OpenSandboxEditor,
             // Session management
             MuxCommand::NewSession,
             MuxCommand::AttachSandbox,
@@ -207,6 +211,8 @@ impl MuxCommand {
             MuxCommand::NewSandbox => "New Sandbox",
             MuxCommand::DeleteSandbox => "Delete Sandbox",
             MuxCommand::RefreshSandboxes => "Refresh Sandboxes",
+            MuxCommand::OpenSandboxBrowser => "Open Sandbox Browser",
+            MuxCommand::OpenSandboxEditor => "Open Sandbox Editor",
             MuxCommand::NewSession => "New Session",
             MuxCommand::AttachSandbox => "Attach to Sandbox",
             MuxCommand::DetachSandbox => "Detach from Sandbox",
@@ -241,6 +247,8 @@ impl MuxCommand {
             MuxCommand::NewTab => &["create tab", "add tab", "open tab"],
             MuxCommand::NewSandbox => &["create sandbox", "add sandbox"],
             MuxCommand::DeleteSandbox => &["remove sandbox", "destroy sandbox", "kill sandbox"],
+            MuxCommand::OpenSandboxBrowser => &["web", "http", "chrome", "firefox", "safari"],
+            MuxCommand::OpenSandboxEditor => &["code", "vscode", "ide", "edit files"],
             MuxCommand::OpenCommandPalette => &["search", "find command", "quick open"],
             MuxCommand::ToggleHelp => {
                 &["shortcuts", "keybindings", "keyboard shortcuts", "hotkeys"]
@@ -305,6 +313,8 @@ impl MuxCommand {
             MuxCommand::NewSandbox => "Create a new sandbox",
             MuxCommand::DeleteSandbox => "Delete the selected sandbox",
             MuxCommand::RefreshSandboxes => "Refresh the sandbox list",
+            MuxCommand::OpenSandboxBrowser => "Open browser connected to sandbox network",
+            MuxCommand::OpenSandboxEditor => "Open VS Code editor for sandbox files",
             MuxCommand::NewSession => "Create a new sandbox session",
             MuxCommand::AttachSandbox => "Attach to an existing sandbox",
             MuxCommand::DetachSandbox => "Detach from the current sandbox",
@@ -370,9 +380,11 @@ impl MuxCommand {
             | MuxCommand::NextSandbox
             | MuxCommand::PrevSandbox => "Sidebar",
 
-            MuxCommand::NewSandbox | MuxCommand::DeleteSandbox | MuxCommand::RefreshSandboxes => {
-                "Sandbox"
-            }
+            MuxCommand::NewSandbox
+            | MuxCommand::DeleteSandbox
+            | MuxCommand::RefreshSandboxes
+            | MuxCommand::OpenSandboxBrowser
+            | MuxCommand::OpenSandboxEditor => "Sandbox",
 
             MuxCommand::NewSession | MuxCommand::AttachSandbox | MuxCommand::DetachSandbox => {
                 "Session"
@@ -493,6 +505,8 @@ impl MuxCommand {
                 Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('X')))
             }
             MuxCommand::RefreshSandboxes => Some((KeyModifiers::ALT, KeyCode::Char('R'))), // Alt+Shift+R
+            MuxCommand::OpenSandboxBrowser => Some((KeyModifiers::ALT, KeyCode::Char('b'))),
+            MuxCommand::OpenSandboxEditor => Some((KeyModifiers::ALT, KeyCode::Char('e'))),
 
             // Session - use Alt
             MuxCommand::NewSession => None, // Access via command palette

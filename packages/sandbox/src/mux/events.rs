@@ -56,4 +56,8 @@ pub enum MuxEvent {
         sandbox_id: String,
         command: Vec<String>,
     },
+    /// Open browser connected to sandbox network
+    OpenSandboxBrowser { sandbox_id: String },
+    /// Open VS Code editor for sandbox files
+    OpenSandboxEditor { sandbox_id: String },
 }
