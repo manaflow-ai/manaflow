@@ -15,6 +15,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
+import { MockGitHubComment } from "./mock-github-comment";
 import Link from "next/link";
 import clsx from "clsx";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -1167,6 +1168,19 @@ function PreviewDashboardInner({
             </div>
           </Section>
         </div>
+      </div>
+
+      {/* Example GitHub Comment */}
+      <div className="pt-10">
+        <Section title="Example PR comment">
+          <p className="text-sm text-neutral-400 pb-4">
+            Here's what preview.new posts to your pull requests:
+          </p>
+          <MockGitHubComment
+            repoFullName="acme/webapp"
+            prNumber={42}
+          />
+        </Section>
       </div>
 
       {configPendingDelete && (
