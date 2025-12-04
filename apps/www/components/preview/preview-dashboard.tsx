@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowLeft,
   Camera,
@@ -425,6 +426,15 @@ function PreviewDashboardInner({
   const handleCancelDelete = useCallback(() => {
     setConfigPendingDelete(null);
   }, []);
+
+  const handleDeleteDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) return;
+      if (updatingConfigId === configPendingDelete?.id) return;
+      setConfigPendingDelete(null);
+    },
+    [configPendingDelete?.id, updatingConfigId]
+  );
 
   const handleTeamChange = useCallback((nextTeam: string) => {
     setSelectedTeamSlugOrIdState(nextTeam);
@@ -1169,34 +1179,29 @@ function PreviewDashboardInner({
         </div>
       </div>
 
-      {configPendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
-          onClick={() => {
-            if (updatingConfigId === configPendingDelete.id) return;
-            handleCancelDelete();
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
+      <Dialog.Root
+        open={Boolean(configPendingDelete)}
+        onOpenChange={handleDeleteDialogOpenChange}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl focus:outline-none">
             <div className="flex items-start gap-3">
               <div className="rounded-full bg-red-500/10 p-2 text-red-400">
                 <Trash2 className="h-5 w-5" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-white">
+                <Dialog.Title className="text-lg font-semibold text-white">
                   Delete configuration?
-                </h3>
-                <p className="pt-1 text-sm text-neutral-400">
+                </Dialog.Title>
+                <Dialog.Description className="pt-1 text-sm text-neutral-400">
                   Are you sure you want to remove{" "}
                   <span className="text-white">
-                    {configPendingDelete.repoFullName}
+                    {configPendingDelete?.repoFullName}
                   </span>{" "}
                   from preview.new? This stops screenshot previews for this
                   repository.
-                </p>
+                </Dialog.Description>
               </div>
             </div>
             {configError && (
@@ -1205,26 +1210,35 @@ function PreviewDashboardInner({
             <div className="pt-5 flex justify-end gap-3">
               <Button
                 onClick={handleCancelDelete}
-                disabled={updatingConfigId === configPendingDelete.id}
+                disabled={
+                  configPendingDelete
+                    ? updatingConfigId === configPendingDelete.id
+                    : false
+                }
                 variant="secondary"
               >
                 Cancel
               </Button>
               <Button
                 onClick={() => void handleDeleteConfig()}
-                disabled={updatingConfigId === configPendingDelete.id}
+                disabled={
+                  configPendingDelete
+                    ? updatingConfigId === configPendingDelete.id
+                    : false
+                }
                 variant="destructive"
               >
-                {updatingConfigId === configPendingDelete.id ? (
+                {configPendingDelete &&
+                updatingConfigId === configPendingDelete.id ? (
                   <Loader2 className="pr-2 h-4 w-4 animate-spin" />
                 ) : (
                   "Delete"
                 )}
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }
