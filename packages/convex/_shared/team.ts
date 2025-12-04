@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../convex/_generated/server";
 
 export function isUuid(value: string): boolean {
@@ -47,7 +48,7 @@ export async function getTeamId(
       )
       .first();
     if (!membership) {
-      throw new Error("Forbidden: Not a member of this team");
+      throw new ConvexError("Forbidden: Not a member of this team");
     }
   }
 
