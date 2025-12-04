@@ -970,7 +970,8 @@ export function PullRequestDiffViewer({
     () =>
       normalizedJobType !== "pull_request" ||
       prNumber === null ||
-      prNumber === undefined
+      prNumber === undefined ||
+      !teamSlugOrId
         ? ("skip" as const)
         : {
             teamSlugOrId,
@@ -991,7 +992,7 @@ export function PullRequestDiffViewer({
 
   const comparisonQueryArgs = useMemo(
     () =>
-      normalizedJobType !== "comparison" || !comparisonSlug
+      normalizedJobType !== "comparison" || !comparisonSlug || !teamSlugOrId
         ? ("skip" as const)
         : {
             teamSlugOrId,
