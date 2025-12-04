@@ -37,7 +37,10 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
       );
     });
     if (!teamMembership) {
-      throw redirect({ to: "/team-picker" });
+      throw redirect({
+        to: "/no-access",
+        search: { team: teamSlugOrId },
+      });
     }
   },
   loader: async ({ params }) => {

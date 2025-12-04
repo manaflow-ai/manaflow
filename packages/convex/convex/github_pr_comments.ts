@@ -411,12 +411,13 @@ export const postPreviewComment = internalAction({
       const commentSections: string[] = ["## Preview Screenshots"];
 
       // Build links row (under the heading)
+      // Note: Workspace and Dev Browser require team membership; Diff Heatmap is public
       const linkParts: string[] = [];
       if (workspaceUrl) {
-        linkParts.push(`[Open Workspace (1 hr expiry)](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
+        linkParts.push(`[Open Workspace](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace) (team members only)`);
       }
       if (devServerUrl) {
-        linkParts.push(`[Open Dev Browser (1 hr expiry)](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
+        linkParts.push(`[Open Dev Browser](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser) (team members only)`);
       }
       linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap)`);
 

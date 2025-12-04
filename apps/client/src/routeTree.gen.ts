@@ -21,6 +21,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as HandlerSplatRouteImport } from './routes/handler.$'
 import { Route as LayoutTeamPickerRouteImport } from './routes/_layout.team-picker'
 import { Route as LayoutProfileRouteImport } from './routes/_layout.profile'
+import { Route as LayoutNoAccessRouteImport } from './routes/_layout.no-access'
 import { Route as LayoutDebugRouteImport } from './routes/_layout.debug'
 import { Route as LayoutTeamSlugOrIdRouteImport } from './routes/_layout.$teamSlugOrId'
 import { Route as LayoutTeamSlugOrIdWorkspacesRouteImport } from './routes/_layout.$teamSlugOrId.workspaces'
@@ -105,6 +106,11 @@ const LayoutTeamPickerRoute = LayoutTeamPickerRouteImport.update({
 const LayoutProfileRoute = LayoutProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutNoAccessRoute = LayoutNoAccessRouteImport.update({
+  id: '/no-access',
+  path: '/no-access',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutDebugRoute = LayoutDebugRouteImport.update({
@@ -270,6 +276,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
+  '/no-access': typeof LayoutNoAccessRoute
   '/profile': typeof LayoutProfileRoute
   '/team-picker': typeof LayoutTeamPickerRoute
   '/handler/$': typeof HandlerSplatRoute
@@ -309,6 +316,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
+  '/no-access': typeof LayoutNoAccessRoute
   '/profile': typeof LayoutProfileRoute
   '/team-picker': typeof LayoutTeamPickerRoute
   '/handler/$': typeof HandlerSplatRoute
@@ -348,6 +356,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_layout/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/_layout/debug': typeof LayoutDebugRoute
+  '/_layout/no-access': typeof LayoutNoAccessRoute
   '/_layout/profile': typeof LayoutProfileRoute
   '/_layout/team-picker': typeof LayoutTeamPickerRoute
   '/handler/$': typeof HandlerSplatRoute
@@ -389,6 +398,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/$teamSlugOrId'
     | '/debug'
+    | '/no-access'
     | '/profile'
     | '/team-picker'
     | '/handler/$'
@@ -428,6 +438,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/$teamSlugOrId'
     | '/debug'
+    | '/no-access'
     | '/profile'
     | '/team-picker'
     | '/handler/$'
@@ -466,6 +477,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/_layout/$teamSlugOrId'
     | '/_layout/debug'
+    | '/_layout/no-access'
     | '/_layout/profile'
     | '/_layout/team-picker'
     | '/handler/$'
@@ -592,6 +604,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof LayoutProfileRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/no-access': {
+      id: '/_layout/no-access'
+      path: '/no-access'
+      fullPath: '/no-access'
+      preLoaderRoute: typeof LayoutNoAccessRouteImport
       parentRoute: typeof LayoutRoute
     }
     '/_layout/debug': {
@@ -891,6 +910,7 @@ const LayoutTeamSlugOrIdRouteWithChildren =
 interface LayoutRouteChildren {
   LayoutTeamSlugOrIdRoute: typeof LayoutTeamSlugOrIdRouteWithChildren
   LayoutDebugRoute: typeof LayoutDebugRoute
+  LayoutNoAccessRoute: typeof LayoutNoAccessRoute
   LayoutProfileRoute: typeof LayoutProfileRoute
   LayoutTeamPickerRoute: typeof LayoutTeamPickerRoute
 }
@@ -898,6 +918,7 @@ interface LayoutRouteChildren {
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutTeamSlugOrIdRoute: LayoutTeamSlugOrIdRouteWithChildren,
   LayoutDebugRoute: LayoutDebugRoute,
+  LayoutNoAccessRoute: LayoutNoAccessRoute,
   LayoutProfileRoute: LayoutProfileRoute,
   LayoutTeamPickerRoute: LayoutTeamPickerRoute,
 }
