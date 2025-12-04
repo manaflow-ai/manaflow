@@ -98,6 +98,10 @@
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
     },
+    "./screenshots/sanitize-markdown": {
+      "import": "./src/screenshots/sanitize-markdown.ts",
+      "types": "./src/screenshots/sanitize-markdown.ts"
+    },
     "./git-providers": {
       "import": "./src/git-providers/index.ts",
       "types": "./src/git-providers/index.ts"

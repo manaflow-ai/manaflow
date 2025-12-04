@@ -2,7 +2,10 @@ use std::{
     collections::VecDeque,
     io::{Read, Write},
     process::{Command, Stdio},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::SystemTime,
 };
 
@@ -309,28 +312,25 @@ impl Session {
             }
         }
 
-        let _ = send_task.abort();
+        send_task.abort();
     }
 
     async fn handle_control(&self, ctrl: ControlMsg) {
-        match ctrl.typ.as_str() {
-            "resize" => {
-                if let (Some(cols), Some(rows)) = (ctrl.cols, ctrl.rows) {
-                    let size = PtySize {
-                        rows,
-                        cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    };
-                    if let Some(master) = &self.master {
-                        // Try to resize via master pty if available
-                        if let Ok(m) = master.lock() {
-                            let _ = m.resize(size);
-                        }
+        if ctrl.typ.as_str() == "resize" {
+            if let (Some(cols), Some(rows)) = (ctrl.cols, ctrl.rows) {
+                let size = PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                };
+                if let Some(master) = &self.master {
+                    // Try to resize via master pty if available
+                    if let Ok(m) = master.lock() {
+                        let _ = m.resize(size);
                     }
                 }
             }
-            _ => {}
         }
     }
 }

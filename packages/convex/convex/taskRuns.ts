@@ -617,9 +617,19 @@ export const subscribe = authQuery({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const doc = await ctx.db.get(args.id);
-    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+    if (!doc || doc.teamId !== teamId) {
       return null;
     }
+
+    // Check if this is a preview task - if so, allow team-wide access
+    const task = await ctx.db.get(doc.taskId);
+    const isPreviewTask = task?.isPreview === true;
+
+    // For preview tasks, only require team membership; otherwise require user ownership
+    if (!isPreviewTask && doc.userId !== userId) {
+      return null;
+    }
+
     // Rewrite morph URLs in networking field
     if (doc.networking) {
       return {

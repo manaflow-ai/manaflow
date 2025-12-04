@@ -1,511 +1,592 @@
 use anyhow::Result;
 use gix::bstr::ByteSlice;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 #[cfg(test)]
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::{
-  repo::cache::{ensure_repo, resolve_repo_url},
-  types::{DiffEntry, GitDiffOptions},
+    repo::cache::{ensure_repo, resolve_repo_url},
+    types::{DiffEntry, GitDiffOptions},
 };
-use gix::{Repository, hash::ObjectId};
+use gix::{hash::ObjectId, Repository};
 use similar::TextDiff;
 
 fn oid_from_rev_parse(repo: &Repository, rev: &str) -> anyhow::Result<ObjectId> {
-  if let Ok(oid) = ObjectId::from_hex(rev.as_bytes()) { return Ok(oid); }
-  let candidates = [
-    rev.to_string(),
-    format!("refs/remotes/origin/{}", rev),
-    format!("refs/heads/{}", rev),
-    format!("refs/tags/{}", rev),
-  ];
-  for cand in candidates {
-    if let Ok(r) = repo.find_reference(&cand) {
-      if let Some(id) = r.target().try_id() { return Ok(id.to_owned()); }
+    if let Ok(oid) = ObjectId::from_hex(rev.as_bytes()) {
+        return Ok(oid);
     }
-  }
-  if let Ok(spec) = repo.rev_parse_single(rev) {
-    if let Ok(obj) = spec.object() { return Ok(obj.id); }
-  }
-  Err(anyhow::anyhow!("could not resolve rev '{}'", rev))
+    let candidates = [
+        rev.to_string(),
+        format!("refs/remotes/origin/{}", rev),
+        format!("refs/heads/{}", rev),
+        format!("refs/tags/{}", rev),
+    ];
+    for cand in candidates {
+        if let Ok(r) = repo.find_reference(&cand) {
+            if let Some(id) = r.target().try_id() {
+                return Ok(id.to_owned());
+            }
+        }
+    }
+    if let Ok(spec) = repo.rev_parse_single(rev) {
+        if let Ok(obj) = spec.object() {
+            return Ok(obj.id);
+        }
+    }
+    Err(anyhow::anyhow!("could not resolve rev '{}'", rev))
 }
 
 fn is_binary(data: &[u8]) -> bool {
-  data.iter().any(|&b| b == 0) || std::str::from_utf8(data).is_err()
+    data.contains(&0) || std::str::from_utf8(data).is_err()
 }
 
-fn collect_tree_blobs(repo: &Repository, tree_id: ObjectId, prefix: &str, out: &mut HashMap<String, ObjectId>) -> anyhow::Result<()> {
-  let obj = repo.find_object(tree_id)?;
-  let tree = obj.try_into_tree()?;
-  for entry_res in tree.iter() {
-    let entry = entry_res?;
-    let name = entry.filename().to_str_lossy().into_owned();
-    let full = if prefix.is_empty() { name.clone() } else { format!("{}/{}", prefix, name) };
-    let mode = entry.mode();
-    if mode.is_tree() {
-      let id = entry.oid().to_owned();
-      collect_tree_blobs(repo, id, &full, out)?;
-    } else {
-      let id = entry.oid().to_owned();
-      out.insert(full, id);
+fn collect_tree_blobs(
+    repo: &Repository,
+    tree_id: ObjectId,
+    prefix: &str,
+    out: &mut HashMap<String, ObjectId>,
+) -> anyhow::Result<()> {
+    let obj = repo.find_object(tree_id)?;
+    let tree = obj.try_into_tree()?;
+    for entry_res in tree.iter() {
+        let entry = entry_res?;
+        let name = entry.filename().to_str_lossy().into_owned();
+        let full = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+        let mode = entry.mode();
+        if mode.is_tree() {
+            let id = entry.oid().to_owned();
+            collect_tree_blobs(repo, id, &full, out)?;
+        } else {
+            let id = entry.oid().to_owned();
+            out.insert(full, id);
+        }
     }
-  }
-  Ok(())
+    Ok(())
 }
 
 fn resolve_default_base(repo: &Repository, head_oid: ObjectId) -> ObjectId {
-  if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
-    if let Some(name) = r.target().try_name() {
-      let s = name.as_bstr().to_str_lossy().into_owned();
-      if let Ok(rr) = repo.find_reference(&s) {
-        if let Some(id) = rr.target().try_id() {
-          return id.to_owned();
+    if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Some(name) = r.target().try_name() {
+            let s = name.as_bstr().to_str_lossy().into_owned();
+            if let Ok(rr) = repo.find_reference(&s) {
+                if let Some(id) = rr.target().try_id() {
+                    return id.to_owned();
+                }
+            }
         }
-      }
     }
-  }
-  if let Ok(r) = repo.find_reference("refs/remotes/origin/main") {
-    if let Some(id) = r.target().try_id() {
-      return id.to_owned();
+    if let Ok(r) = repo.find_reference("refs/remotes/origin/main") {
+        if let Some(id) = r.target().try_id() {
+            return id.to_owned();
+        }
     }
-  }
-  if let Ok(commit) = repo.head_commit() {
-    return commit.id;
-  }
-  head_oid
+    if let Ok(commit) = repo.head_commit() {
+        return commit.id;
+    }
+    head_oid
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct DiffComputationDebug {
-  pub head_oid: String,
-  pub resolved_base_oid: String,
-  pub compare_base_oid: String,
-  pub base_ref_input: Option<String>,
-  pub repo_path: String,
-  pub merge_commit_oid: Option<String>,
+    pub head_oid: String,
+    pub resolved_base_oid: String,
+    pub compare_base_oid: String,
+    pub base_ref_input: Option<String>,
+    pub repo_path: String,
+    pub merge_commit_oid: Option<String>,
 }
 
 #[cfg(test)]
 thread_local! {
-  static LAST_DIFF_DEBUG: RefCell<Option<DiffComputationDebug>> = RefCell::new(None);
+  static LAST_DIFF_DEBUG: RefCell<Option<DiffComputationDebug>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 pub fn last_diff_debug() -> Option<DiffComputationDebug> {
-  LAST_DIFF_DEBUG.with(|cell| cell.borrow().clone())
+    LAST_DIFF_DEBUG.with(|cell| cell.borrow().clone())
 }
 
 fn is_ancestor(repo: &Repository, anc: ObjectId, desc: ObjectId) -> bool {
-  match crate::merge_base::merge_base(
-    "",
-    repo,
-    desc,
-    anc,
-    crate::merge_base::MergeBaseStrategy::Bfs,
-  ) {
-    Some(x) if x == anc => true,
-    _ => false,
-  }
+    matches!(
+        crate::merge_base::merge_base(
+            "",
+            repo,
+            desc,
+            anc,
+            crate::merge_base::MergeBaseStrategy::Bfs,
+        ),
+        Some(x) if x == anc
+    )
 }
 
 fn find_merge_parent_on_base(
-  repo: &Repository,
-  mut base_tip: ObjectId,
-  head_tip: ObjectId,
-  limit: usize,
+    repo: &Repository,
+    mut base_tip: ObjectId,
+    head_tip: ObjectId,
+    limit: usize,
 ) -> Option<(ObjectId, ObjectId)> {
-  let mut seen = 0usize;
-  let mut ancestor_candidate: Option<(ObjectId, ObjectId)> = None;
-  while seen < limit {
-    seen += 1;
-    let obj = repo.find_object(base_tip).ok()?;
-    let commit = obj.try_into_commit().ok()?;
-    let mut parents_iter = commit.parent_ids();
-    let first_parent = parents_iter.next().map(|p| p.detach());
-    let rest: Vec<ObjectId> = parents_iter.map(|p| p.detach()).collect();
-    if let Some(p1) = first_parent {
-      if rest.iter().any(|p| *p == head_tip) {
-        return Some((base_tip, p1));
-      }
-      if ancestor_candidate.is_none()
-        && rest.iter().any(|p| is_ancestor(repo, *p, head_tip))
-      {
-        ancestor_candidate = Some((base_tip, p1));
-      }
-      base_tip = p1;
-    } else {
-      break;
+    let mut seen = 0usize;
+    let mut ancestor_candidate: Option<(ObjectId, ObjectId)> = None;
+    while seen < limit {
+        seen += 1;
+        let obj = repo.find_object(base_tip).ok()?;
+        let commit = obj.try_into_commit().ok()?;
+        let mut parents_iter = commit.parent_ids();
+        let first_parent = parents_iter.next().map(|p| p.detach());
+        let rest: Vec<ObjectId> = parents_iter.map(|p| p.detach()).collect();
+        if let Some(p1) = first_parent {
+            if rest.contains(&head_tip) {
+                return Some((base_tip, p1));
+            }
+            if ancestor_candidate.is_none() && rest.iter().any(|p| is_ancestor(repo, *p, head_tip))
+            {
+                ancestor_candidate = Some((base_tip, p1));
+            }
+            base_tip = p1;
+        } else {
+            break;
+        }
     }
-  }
-  ancestor_candidate
+    ancestor_candidate
 }
 
 fn parse_oid(hex: &str) -> Option<ObjectId> {
-  let trimmed = hex.trim();
-  if trimmed.is_empty() {
-    return None;
-  }
-  ObjectId::from_hex(trimmed.as_bytes()).ok()
+    let trimmed = hex.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    ObjectId::from_hex(trimmed.as_bytes()).ok()
 }
 
 pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
-  let include = opts.includeContents.unwrap_or(true);
-  let max_bytes = opts.maxBytes.unwrap_or(950*1024) as usize;
-  let t_total = Instant::now();
-  #[cfg(test)]
-  LAST_DIFF_DEBUG.with(|cell| {
-    *cell.borrow_mut() = None;
-  });
+    let include = opts.includeContents.unwrap_or(true);
+    let max_bytes = opts.maxBytes.unwrap_or(950 * 1024) as usize;
+    let t_total = Instant::now();
+    #[cfg(test)]
+    LAST_DIFF_DEBUG.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
 
-  let head_ref = opts.headRef.trim();
-  if head_ref.is_empty() {
-    return Ok(Vec::new());
-  }
+    let head_ref = opts.headRef.trim();
+    if head_ref.is_empty() {
+        return Ok(Vec::new());
+    }
 
-  let base_ref_input = opts
-    .baseRef
-    .as_ref()
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty());
-  #[cfg(test)]
-  let base_ref_for_debug = base_ref_input.clone();
+    let base_ref_input = opts
+        .baseRef
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    #[cfg(test)]
+    let base_ref_for_debug = base_ref_input.clone();
 
-  #[cfg(debug_assertions)]
-  println!(
-    "[native.refs] start headRef={} baseRef={:?} originPathOverride={:?} repoFullName={:?}",
-    head_ref,
-    base_ref_input,
-    opts.originPathOverride,
-    opts.repoFullName
-  );
-
-  let t_repo_path = Instant::now();
-  let repo_path = if let Some(p) = &opts.originPathOverride { std::path::PathBuf::from(p) } else {
-    let url = resolve_repo_url(opts.repoFullName.as_deref(), opts.repoUrl.as_deref())?;
-    ensure_repo(&url)?
-  };
-  let _d_repo_path = t_repo_path.elapsed();
-  let cwd = repo_path.to_string_lossy().to_string();
-
-  // If a specific repo path is provided, assume the caller ensures freshness.
-  // Avoid synchronous fetch here to reduce latency.
-  let _d_fetch = if opts.originPathOverride.is_some() {
-    Duration::from_millis(0)
-  } else {
-    let t_fetch = Instant::now();
-    let _ = crate::repo::cache::swr_fetch_origin_all_path(
-      std::path::Path::new(&cwd),
-      crate::repo::cache::fetch_window_ms(),
+    #[cfg(debug_assertions)]
+    println!(
+        "[native.refs] start headRef={} baseRef={:?} originPathOverride={:?} repoFullName={:?}",
+        head_ref, base_ref_input, opts.originPathOverride, opts.repoFullName
     );
-    t_fetch.elapsed()
-  };
 
-  let t_open = Instant::now();
-  let repo = gix::open(&cwd)?;
-  let _d_open = t_open.elapsed();
-  let t_head = Instant::now();
-  let head_oid = match oid_from_rev_parse(&repo, head_ref) {
-    Ok(oid) => oid,
-    Err(_) => {
-      let _d_head = t_head.elapsed();
-      #[cfg(debug_assertions)]
-      println!(
+    let t_repo_path = Instant::now();
+    let repo_path = if let Some(p) = &opts.originPathOverride {
+        std::path::PathBuf::from(p)
+    } else {
+        let url = resolve_repo_url(opts.repoFullName.as_deref(), opts.repoUrl.as_deref())?;
+        ensure_repo(&url)?
+    };
+    let _d_repo_path = t_repo_path.elapsed();
+    let cwd = repo_path.to_string_lossy().to_string();
+
+    // If a specific repo path is provided, assume the caller ensures freshness.
+    // Avoid synchronous fetch here to reduce latency.
+    let _d_fetch = if opts.originPathOverride.is_some() {
+        Duration::from_millis(0)
+    } else {
+        let t_fetch = Instant::now();
+        let _ = crate::repo::cache::swr_fetch_origin_all_path(
+            std::path::Path::new(&cwd),
+            crate::repo::cache::fetch_window_ms(),
+        );
+        t_fetch.elapsed()
+    };
+
+    let t_open = Instant::now();
+    let repo = gix::open(&cwd)?;
+    let _d_open = t_open.elapsed();
+    let t_head = Instant::now();
+    let head_oid = match oid_from_rev_parse(&repo, head_ref) {
+        Ok(oid) => oid,
+        Err(_) => {
+            let _d_head = t_head.elapsed();
+            #[cfg(debug_assertions)]
+            println!(
         "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms (failed to resolve); cwd={}",
         t_total.elapsed().as_millis(),
         _d_head.as_millis(),
         cwd,
       );
-      return Ok(Vec::new());
-    }
-  };
-  let _d_head = t_head.elapsed();
+            return Ok(Vec::new());
+        }
+    };
+    let _d_head = t_head.elapsed();
 
-  let t_base = Instant::now();
-  let mut resolved_base_oid = match base_ref_input {
-    Some(ref spec) => match oid_from_rev_parse(&repo, spec) {
-      Ok(oid) => oid,
-      Err(_) => {
-        let _d_base = t_base.elapsed();
-        #[cfg(debug_assertions)]
-        println!(
+    let t_base = Instant::now();
+    let mut resolved_base_oid = match base_ref_input {
+        Some(ref spec) => match oid_from_rev_parse(&repo, spec) {
+            Ok(oid) => oid,
+            Err(_) => {
+                let _d_base = t_base.elapsed();
+                #[cfg(debug_assertions)]
+                println!(
           "[cmux_native_git] git_diff timings: total={}ms resolve_head={}ms resolve_base={}ms (failed to resolve); cwd={}",
           t_total.elapsed().as_millis(),
           _d_head.as_millis(),
           _d_base.as_millis(),
           cwd,
         );
-        return Ok(Vec::new());
-      }
-    },
-    None => resolve_default_base(&repo, head_oid),
-  };
-  let _d_base = t_base.elapsed();
-  if let Some(ref known_base) = opts.lastKnownBaseSha {
-    if let Some(candidate) = parse_oid(known_base) {
-      if repo.find_object(candidate).is_ok() && is_ancestor(&repo, candidate, head_oid) {
-        resolved_base_oid = candidate;
-      }
-    }
-  }
-  let t_merge_base = Instant::now();
-  // Compute merge-base; prefer BFS (pure gix) to avoid shelling out
-  let mut compare_base_oid = crate::merge_base::merge_base(
-    &cwd,
-    &repo,
-    resolved_base_oid,
-    head_oid,
-    crate::merge_base::MergeBaseStrategy::Bfs,
-  )
-  .unwrap_or(resolved_base_oid);
-  #[cfg(test)]
-  let mut merge_commit_for_debug: Option<String> = None;
-  if let Some(ref known_merge) = opts.lastKnownMergeCommitSha {
-    if let Some(merge_oid) = parse_oid(known_merge) {
-      if let Ok(obj) = repo.find_object(merge_oid) {
-        if let Ok(commit) = obj.try_into_commit() {
-          if let Some(parent_oid) = commit.parent_ids().next().map(|p| p.detach()) {
-            if is_ancestor(&repo, parent_oid, head_oid) {
-              compare_base_oid = parent_oid;
-              #[cfg(test)]
-              {
-                merge_commit_for_debug = Some(merge_oid.to_string());
-              }
+                return Ok(Vec::new());
             }
-          }
+        },
+        None => resolve_default_base(&repo, head_oid),
+    };
+    let _d_base = t_base.elapsed();
+    if let Some(ref known_base) = opts.lastKnownBaseSha {
+        if let Some(candidate) = parse_oid(known_base) {
+            if repo.find_object(candidate).is_ok() && is_ancestor(&repo, candidate, head_oid) {
+                resolved_base_oid = candidate;
+            }
         }
-      }
     }
-  } else if base_ref_input.is_none() {
-    if let Some((merge_commit_oid, parent_oid)) =
-      find_merge_parent_on_base(&repo, resolved_base_oid, head_oid, 20_000)
-    {
-      compare_base_oid = parent_oid;
-      #[cfg(test)]
-      {
-        merge_commit_for_debug = Some(merge_commit_oid.to_string());
-      }
-      let _ = merge_commit_oid;
-    }
-  }
-  #[cfg(test)]
-  LAST_DIFF_DEBUG.with(|cell| {
-    *cell.borrow_mut() = Some(DiffComputationDebug {
-      head_oid: head_oid.to_string(),
-      resolved_base_oid: resolved_base_oid.to_string(),
-      compare_base_oid: compare_base_oid.to_string(),
-      base_ref_input: base_ref_for_debug.clone(),
-      repo_path: cwd.clone(),
-      merge_commit_oid: merge_commit_for_debug.clone(),
-    });
-  });
-  let _d_merge_base = t_merge_base.elapsed();
-  #[cfg(debug_assertions)]
-  println!(
-    "[native.refs] MB({}, {})={}",
-    resolved_base_oid,
-    head_oid,
-    compare_base_oid
-  );
-
-  let t_tree_ids = Instant::now();
-  let base_commit = repo.find_object(compare_base_oid)?.try_into_commit()?;
-  let base_tree_id = base_commit.tree_id()?.detach();
-  let head_commit = repo.find_object(head_oid)?.try_into_commit()?;
-  let head_tree_id = head_commit.tree_id()?.detach();
-  let _d_tree_ids = t_tree_ids.elapsed();
-
-  let mut base_map: HashMap<String, ObjectId> = HashMap::new();
-  let mut head_map: HashMap<String, ObjectId> = HashMap::new();
-  let t_collect_base = Instant::now();
-  collect_tree_blobs(&repo, base_tree_id, "", &mut base_map)?;
-  let _d_collect_base = t_collect_base.elapsed();
-  let t_collect_head = Instant::now();
-  collect_tree_blobs(&repo, head_tree_id, "", &mut head_map)?;
-  let _d_collect_head = t_collect_head.elapsed();
-
-  // Utility closures to obtain blob data safely; handle submodules and non-blobs gracefully
-  let mut out: Vec<DiffEntry> = Vec::new();
-  let mut _num_added: usize = 0;
-  let mut _num_modified: usize = 0;
-  let mut _num_deleted: usize = 0;
-  let mut _num_binary: usize = 0;
-  let mut _total_scanned_bytes: usize = 0;
-  let mut _blob_read_ns: u128 = 0;
-  let mut _textdiff_ns: u128 = 0;
-  let mut _textdiff_count: usize = 0;
-  let mut _max_diff_ns: u128 = 0;
-  let mut _max_diff_path: Option<String> = None;
-
-  let get_blob_bytes = |id: ObjectId| -> Option<Vec<u8>> {
-    if let Ok(obj) = repo.find_object(id) {
-      if let Ok(blob) = obj.try_into_blob() {
-        return Some(blob.data.to_vec());
-      }
-    }
-    None
-  };
-
-  // Precompute path partitions
-  let mut base_only: HashMap<String, ObjectId> = HashMap::new();
-  let mut head_only: HashMap<String, ObjectId> = HashMap::new();
-  for (p, oid) in &base_map { if !head_map.contains_key(p) { base_only.insert(p.clone(), *oid); } }
-  for (p, oid) in &head_map { if !base_map.contains_key(p) { head_only.insert(p.clone(), *oid); } }
-
-  // Identity-based rename detection: pair deletions and additions with the same blob OID
-  let mut id_to_old: HashMap<ObjectId, Vec<String>> = HashMap::new();
-  let mut id_to_new: HashMap<ObjectId, Vec<String>> = HashMap::new();
-  for (p, oid) in &base_only { id_to_old.entry(*oid).or_default().push(p.clone()); }
-  for (p, oid) in &head_only { id_to_new.entry(*oid).or_default().push(p.clone()); }
-
-  let mut renamed_pairs: Vec<(String, String, ObjectId)> = Vec::new();
-  for (oid, olds) in id_to_old.iter_mut() {
-    if let Some(news) = id_to_new.get_mut(oid) {
-      let n = std::cmp::min(olds.len(), news.len());
-      for _ in 0..n {
-        let old_p = olds.pop().unwrap();
-        let new_p = news.pop().unwrap();
-        renamed_pairs.push((old_p.clone(), new_p.clone(), *oid));
-        // Remove matched from base_only/head_only
-        base_only.remove(&old_p);
-        head_only.remove(&new_p);
-      }
-    }
-  }
-
-  // Emit renames (content identical by OID)
-  for (old_path, new_path, oid) in renamed_pairs {
-    let t_bl = Instant::now();
-    let new_data = get_blob_bytes(oid);
-    _blob_read_ns += t_bl.elapsed().as_nanos();
-    // New content may be missing (e.g., submodule) -> treat as binary
-    let bin = match &new_data {
-      Some(buf) => is_binary(buf),
-      None => true,
-    };
-    let mut e = DiffEntry{ filePath: new_path.clone(), oldPath: Some(old_path.clone()), status: "renamed".into(), additions: 0, deletions: 0, isBinary: bin, ..Default::default() };
-    if let Some(buf) = &new_data {
-      e.newSize = Some(buf.len() as i32);
-      e.oldSize = Some(buf.len() as i32);
-    }
-    if include && !bin {
-      e.contentOmitted = Some(true);
-    } else { e.contentOmitted = Some(false); }
-    out.push(e);
-  }
-
-  // Handle modifications where the path exists in both
-  let t_loop_add_mod = Instant::now();
-  for (path, new_id) in &head_map {
-    if let Some(old_id) = base_map.get(path) {
-      if old_id == new_id { continue; }
-      let t_bl1 = Instant::now();
-      let old_data = get_blob_bytes(*old_id);
-      let new_data = get_blob_bytes(*new_id);
-      _blob_read_ns += t_bl1.elapsed().as_nanos();
-      let bin = match (&old_data, &new_data) {
-        (Some(a), Some(b)) => is_binary(a) || is_binary(b),
-        _ => true,
-      };
-      let mut e = DiffEntry{ filePath: path.clone(), status: "modified".into(), additions: 0, deletions: 0, isBinary: bin, ..Default::default() };
-      if include && !bin {
-        let old_str = String::from_utf8_lossy(old_data.as_ref().unwrap()).into_owned();
-        let new_str = String::from_utf8_lossy(new_data.as_ref().unwrap()).into_owned();
-        let old_sz = old_str.as_bytes().len();
-        let new_sz = new_str.as_bytes().len();
-        e.oldSize = Some(old_sz as i32);
-        e.newSize = Some(new_sz as i32);
-        if old_sz + new_sz <= max_bytes {
-          let t_diff = Instant::now();
-          // Use changes grouped by operations; count per-line inserts/deletes only.
-          let diff = TextDiff::from_lines(&old_str, &new_str);
-          let mut adds = 0i32; let mut dels = 0i32;
-          for op in diff.ops() {
-            for change in diff.iter_changes(op) {
-              match change.tag() {
-                similar::ChangeTag::Insert => adds += 1,
-                similar::ChangeTag::Delete => dels += 1,
-                _ => {}
-              }
+    let t_merge_base = Instant::now();
+    // Compute merge-base; prefer BFS (pure gix) to avoid shelling out
+    let mut compare_base_oid = crate::merge_base::merge_base(
+        &cwd,
+        &repo,
+        resolved_base_oid,
+        head_oid,
+        crate::merge_base::MergeBaseStrategy::Bfs,
+    )
+    .unwrap_or(resolved_base_oid);
+    #[cfg(test)]
+    let mut merge_commit_for_debug: Option<String> = None;
+    if let Some(ref known_merge) = opts.lastKnownMergeCommitSha {
+        if let Some(merge_oid) = parse_oid(known_merge) {
+            if let Ok(obj) = repo.find_object(merge_oid) {
+                if let Ok(commit) = obj.try_into_commit() {
+                    if let Some(parent_oid) = commit.parent_ids().next().map(|p| p.detach()) {
+                        if is_ancestor(&repo, parent_oid, head_oid) {
+                            compare_base_oid = parent_oid;
+                            #[cfg(test)]
+                            {
+                                merge_commit_for_debug = Some(merge_oid.to_string());
+                            }
+                        }
+                    }
+                }
             }
-          }
-          let d_diff = t_diff.elapsed().as_nanos();
-          _textdiff_ns += d_diff; _textdiff_count += 1; _total_scanned_bytes += old_sz + new_sz;
-          if d_diff > _max_diff_ns { _max_diff_ns = d_diff; _max_diff_path = Some(path.clone()); }
-          e.additions = adds; e.deletions = dels;
-          e.oldContent = Some(old_str);
-          e.newContent = Some(new_str);
-          e.contentOmitted = Some(false);
-        } else { e.contentOmitted = Some(true); }
-      } else { e.contentOmitted = Some(false); }
-      // Do not filter out zero-line modifications: mode changes or metadata changes should still show up.
-      out.push(e);
-      _num_modified += 1;
-      if bin { _num_binary += 1; }
+        }
+    } else if base_ref_input.is_none() {
+        if let Some((merge_commit_oid, parent_oid)) =
+            find_merge_parent_on_base(&repo, resolved_base_oid, head_oid, 20_000)
+        {
+            compare_base_oid = parent_oid;
+            #[cfg(test)]
+            {
+                merge_commit_for_debug = Some(merge_commit_oid.to_string());
+            }
+            let _ = merge_commit_oid;
+        }
     }
-  }
-  let _d_loop_add_mod = t_loop_add_mod.elapsed();
+    #[cfg(test)]
+    LAST_DIFF_DEBUG.with(|cell| {
+        *cell.borrow_mut() = Some(DiffComputationDebug {
+            head_oid: head_oid.to_string(),
+            resolved_base_oid: resolved_base_oid.to_string(),
+            compare_base_oid: compare_base_oid.to_string(),
+            base_ref_input: base_ref_for_debug.clone(),
+            repo_path: cwd.clone(),
+            merge_commit_oid: merge_commit_for_debug.clone(),
+        });
+    });
+    let _d_merge_base = t_merge_base.elapsed();
+    #[cfg(debug_assertions)]
+    println!(
+        "[native.refs] MB({}, {})={}",
+        resolved_base_oid, head_oid, compare_base_oid
+    );
 
-  // Additions not matched as renames
-  for (path, new_id) in &head_only {
-    let t_bl = Instant::now();
-    let new_data = get_blob_bytes(*new_id);
-    _blob_read_ns += t_bl.elapsed().as_nanos();
-    let (bin, new_sz) = match &new_data {
-      Some(buf) => (is_binary(buf), buf.len()),
-      None => (true, 0),
+    let t_tree_ids = Instant::now();
+    let base_commit = repo.find_object(compare_base_oid)?.try_into_commit()?;
+    let base_tree_id = base_commit.tree_id()?.detach();
+    let head_commit = repo.find_object(head_oid)?.try_into_commit()?;
+    let head_tree_id = head_commit.tree_id()?.detach();
+    let _d_tree_ids = t_tree_ids.elapsed();
+
+    let mut base_map: HashMap<String, ObjectId> = HashMap::new();
+    let mut head_map: HashMap<String, ObjectId> = HashMap::new();
+    let t_collect_base = Instant::now();
+    collect_tree_blobs(&repo, base_tree_id, "", &mut base_map)?;
+    let _d_collect_base = t_collect_base.elapsed();
+    let t_collect_head = Instant::now();
+    collect_tree_blobs(&repo, head_tree_id, "", &mut head_map)?;
+    let _d_collect_head = t_collect_head.elapsed();
+
+    // Utility closures to obtain blob data safely; handle submodules and non-blobs gracefully
+    let mut out: Vec<DiffEntry> = Vec::new();
+    let mut _num_added: usize = 0;
+    let mut _num_modified: usize = 0;
+    let mut _num_deleted: usize = 0;
+    let mut _num_binary: usize = 0;
+    let mut _total_scanned_bytes: usize = 0;
+    let mut _blob_read_ns: u128 = 0;
+    let mut _textdiff_ns: u128 = 0;
+    let mut _textdiff_count: usize = 0;
+    let mut _max_diff_ns: u128 = 0;
+    let mut _max_diff_path: Option<String> = None;
+
+    let get_blob_bytes = |id: ObjectId| -> Option<Vec<u8>> {
+        if let Ok(obj) = repo.find_object(id) {
+            if let Ok(blob) = obj.try_into_blob() {
+                return Some(blob.data.to_vec());
+            }
+        }
+        None
     };
-    let mut e = DiffEntry{ filePath: path.clone(), status: "added".into(), additions: 0, deletions: 0, isBinary: bin, ..Default::default() };
-    if include && !bin {
-      let new_str = String::from_utf8_lossy(new_data.as_ref().unwrap()).into_owned();
-      e.newSize = Some(new_sz as i32);
-      e.oldSize = Some(0);
-      if new_sz <= max_bytes {
-        e.oldContent = Some(String::new());
-        e.newContent = Some(new_str.clone());
-        e.contentOmitted = Some(false);
-        e.additions = new_str.lines().count() as i32;
-        _total_scanned_bytes += new_sz;
-      } else { e.contentOmitted = Some(true); }
-    } else { e.contentOmitted = Some(false); }
-    out.push(e);
-    _num_added += 1;
-    if bin { _num_binary += 1; }
-  }
 
-  // Deletions not matched as renames
-  let t_loop_del = Instant::now();
-  for (path, old_id) in &base_only {
-    let t_bl = Instant::now();
-    let old_data = get_blob_bytes(*old_id);
-    _blob_read_ns += t_bl.elapsed().as_nanos();
-    let (bin, old_sz) = match &old_data {
-      Some(buf) => (is_binary(buf), buf.len()),
-      None => (true, 0),
-    };
-    let mut e = DiffEntry{ filePath: path.clone(), status: "deleted".into(), additions: 0, deletions: 0, isBinary: bin, ..Default::default() };
-    if include && !bin {
-      let old_str = String::from_utf8_lossy(old_data.as_ref().unwrap()).into_owned();
-      e.oldSize = Some(old_sz as i32);
-      if old_sz <= max_bytes {
-        e.oldContent = Some(old_str);
-        e.newContent = Some(String::new());
-        e.contentOmitted = Some(false);
-        e.deletions = e.oldContent.as_ref().unwrap().lines().count() as i32;
-        _total_scanned_bytes += old_sz;
-      } else { e.contentOmitted = Some(true); }
-    } else { e.contentOmitted = Some(false); }
-    out.push(e);
-    _num_deleted += 1;
-    if bin { _num_binary += 1; }
-  }
-  let _d_loop_del = t_loop_del.elapsed();
+    // Precompute path partitions
+    let mut base_only: HashMap<String, ObjectId> = HashMap::new();
+    let mut head_only: HashMap<String, ObjectId> = HashMap::new();
+    for (p, oid) in &base_map {
+        if !head_map.contains_key(p) {
+            base_only.insert(p.clone(), *oid);
+        }
+    }
+    for (p, oid) in &head_map {
+        if !base_map.contains_key(p) {
+            head_only.insert(p.clone(), *oid);
+        }
+    }
 
-  let _d_total = t_total.elapsed();
-  #[cfg(debug_assertions)]
-  println!(
+    // Identity-based rename detection: pair deletions and additions with the same blob OID
+    let mut id_to_old: HashMap<ObjectId, Vec<String>> = HashMap::new();
+    let mut id_to_new: HashMap<ObjectId, Vec<String>> = HashMap::new();
+    for (p, oid) in &base_only {
+        id_to_old.entry(*oid).or_default().push(p.clone());
+    }
+    for (p, oid) in &head_only {
+        id_to_new.entry(*oid).or_default().push(p.clone());
+    }
+
+    let mut renamed_pairs: Vec<(String, String, ObjectId)> = Vec::new();
+    for (oid, olds) in id_to_old.iter_mut() {
+        if let Some(news) = id_to_new.get_mut(oid) {
+            let n = std::cmp::min(olds.len(), news.len());
+            for _ in 0..n {
+                let old_p = olds.pop().unwrap();
+                let new_p = news.pop().unwrap();
+                renamed_pairs.push((old_p.clone(), new_p.clone(), *oid));
+                // Remove matched from base_only/head_only
+                base_only.remove(&old_p);
+                head_only.remove(&new_p);
+            }
+        }
+    }
+
+    // Emit renames (content identical by OID)
+    for (old_path, new_path, oid) in renamed_pairs {
+        let t_bl = Instant::now();
+        let new_data = get_blob_bytes(oid);
+        _blob_read_ns += t_bl.elapsed().as_nanos();
+        // New content may be missing (e.g., submodule) -> treat as binary
+        let bin = match &new_data {
+            Some(buf) => is_binary(buf),
+            None => true,
+        };
+        let mut e = DiffEntry {
+            filePath: new_path.clone(),
+            oldPath: Some(old_path.clone()),
+            status: "renamed".into(),
+            additions: 0,
+            deletions: 0,
+            isBinary: bin,
+            ..Default::default()
+        };
+        if let Some(buf) = &new_data {
+            e.newSize = Some(buf.len() as i32);
+            e.oldSize = Some(buf.len() as i32);
+        }
+        if include && !bin {
+            e.contentOmitted = Some(true);
+        } else {
+            e.contentOmitted = Some(false);
+        }
+        out.push(e);
+    }
+
+    // Handle modifications where the path exists in both
+    let t_loop_add_mod = Instant::now();
+    for (path, new_id) in &head_map {
+        if let Some(old_id) = base_map.get(path) {
+            if old_id == new_id {
+                continue;
+            }
+            let t_bl1 = Instant::now();
+            let old_data = get_blob_bytes(*old_id);
+            let new_data = get_blob_bytes(*new_id);
+            _blob_read_ns += t_bl1.elapsed().as_nanos();
+            let bin = match (&old_data, &new_data) {
+                (Some(a), Some(b)) => is_binary(a) || is_binary(b),
+                _ => true,
+            };
+            let mut e = DiffEntry {
+                filePath: path.clone(),
+                status: "modified".into(),
+                additions: 0,
+                deletions: 0,
+                isBinary: bin,
+                ..Default::default()
+            };
+            if include && !bin {
+                let old_str = String::from_utf8_lossy(old_data.as_ref().unwrap()).into_owned();
+                let new_str = String::from_utf8_lossy(new_data.as_ref().unwrap()).into_owned();
+                let old_sz = old_str.len();
+                let new_sz = new_str.len();
+                e.oldSize = Some(old_sz as i32);
+                e.newSize = Some(new_sz as i32);
+                if old_sz + new_sz <= max_bytes {
+                    let t_diff = Instant::now();
+                    // Use changes grouped by operations; count per-line inserts/deletes only.
+                    let diff = TextDiff::from_lines(&old_str, &new_str);
+                    let mut adds = 0i32;
+                    let mut dels = 0i32;
+                    for op in diff.ops() {
+                        for change in diff.iter_changes(op) {
+                            match change.tag() {
+                                similar::ChangeTag::Insert => adds += 1,
+                                similar::ChangeTag::Delete => dels += 1,
+                                _ => {}
+                            }
+                        }
+                    }
+                    let d_diff = t_diff.elapsed().as_nanos();
+                    _textdiff_ns += d_diff;
+                    _textdiff_count += 1;
+                    _total_scanned_bytes += old_sz + new_sz;
+                    if d_diff > _max_diff_ns {
+                        _max_diff_ns = d_diff;
+                        _max_diff_path = Some(path.clone());
+                    }
+                    e.additions = adds;
+                    e.deletions = dels;
+                    e.oldContent = Some(old_str);
+                    e.newContent = Some(new_str);
+                    e.contentOmitted = Some(false);
+                } else {
+                    e.contentOmitted = Some(true);
+                }
+            } else {
+                e.contentOmitted = Some(false);
+            }
+            // Do not filter out zero-line modifications: mode changes or metadata changes should still show up.
+            out.push(e);
+            _num_modified += 1;
+            if bin {
+                _num_binary += 1;
+            }
+        }
+    }
+    let _d_loop_add_mod = t_loop_add_mod.elapsed();
+
+    // Additions not matched as renames
+    for (path, new_id) in &head_only {
+        let t_bl = Instant::now();
+        let new_data = get_blob_bytes(*new_id);
+        _blob_read_ns += t_bl.elapsed().as_nanos();
+        let (bin, new_sz) = match &new_data {
+            Some(buf) => (is_binary(buf), buf.len()),
+            None => (true, 0),
+        };
+        let mut e = DiffEntry {
+            filePath: path.clone(),
+            status: "added".into(),
+            additions: 0,
+            deletions: 0,
+            isBinary: bin,
+            ..Default::default()
+        };
+        if include && !bin {
+            let new_str = String::from_utf8_lossy(new_data.as_ref().unwrap()).into_owned();
+            e.newSize = Some(new_sz as i32);
+            e.oldSize = Some(0);
+            if new_sz <= max_bytes {
+                e.oldContent = Some(String::new());
+                e.newContent = Some(new_str.clone());
+                e.contentOmitted = Some(false);
+                e.additions = new_str.lines().count() as i32;
+                _total_scanned_bytes += new_sz;
+            } else {
+                e.contentOmitted = Some(true);
+            }
+        } else {
+            e.contentOmitted = Some(false);
+        }
+        out.push(e);
+        _num_added += 1;
+        if bin {
+            _num_binary += 1;
+        }
+    }
+
+    // Deletions not matched as renames
+    let t_loop_del = Instant::now();
+    for (path, old_id) in &base_only {
+        let t_bl = Instant::now();
+        let old_data = get_blob_bytes(*old_id);
+        _blob_read_ns += t_bl.elapsed().as_nanos();
+        let (bin, old_sz) = match &old_data {
+            Some(buf) => (is_binary(buf), buf.len()),
+            None => (true, 0),
+        };
+        let mut e = DiffEntry {
+            filePath: path.clone(),
+            status: "deleted".into(),
+            additions: 0,
+            deletions: 0,
+            isBinary: bin,
+            ..Default::default()
+        };
+        if include && !bin {
+            let old_str = String::from_utf8_lossy(old_data.as_ref().unwrap()).into_owned();
+            e.oldSize = Some(old_sz as i32);
+            if old_sz <= max_bytes {
+                e.oldContent = Some(old_str);
+                e.newContent = Some(String::new());
+                e.contentOmitted = Some(false);
+                e.deletions = e.oldContent.as_ref().unwrap().lines().count() as i32;
+                _total_scanned_bytes += old_sz;
+            } else {
+                e.contentOmitted = Some(true);
+            }
+        } else {
+            e.contentOmitted = Some(false);
+        }
+        out.push(e);
+        _num_deleted += 1;
+        if bin {
+            _num_binary += 1;
+        }
+    }
+    let _d_loop_del = t_loop_del.elapsed();
+
+    let _d_total = t_total.elapsed();
+    #[cfg(debug_assertions)]
+    println!(
     "[cmux_native_git] git_diff timings: total={}ms repo_path={}ms fetch={}ms open_repo={}ms resolve_head={}ms resolve_base={}ms merge_base={}ms tree_ids={}ms collect_base={}ms collect_head={}ms add_mod_loop={}ms del_loop={}ms blob_read={}ms textdiff={}ms textdiff_count={} scanned_bytes={} files: +{} ~{} -{} (binary={}) max_textdiff={{path: {:?}, ms: {}}} cwd={} out_len={}",
     _d_total.as_millis(),
     _d_repo_path.as_millis(),
@@ -532,105 +613,215 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
     cwd,
     out.len(),
   );
-  if out.is_empty() {
-    // Fallback to git CLI diff parsing if our tree comparison produced nothing but there might be changes (e.g., merge edge-cases)
-    #[cfg(debug_assertions)]
-    println!("[native.refs] tree-diff empty; attempting CLI fallback");
-    let r = crate::util::run_git(
-      &cwd,
-      &["diff", "--name-status", &compare_base_oid.to_string(), &head_oid.to_string()]
-    );
-    if let Ok(ns) = r {
-      #[cfg(debug_assertions)]
-      println!("[native.refs] CLI fallback detected {} lines", ns.lines().count());
-      let mut fallback: Vec<DiffEntry> = Vec::new();
-      for line in ns.lines() {
-        if line.trim().is_empty() { continue; }
-        // Format: <status>\t<path> [\t<path2>]
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.is_empty() { continue; }
-        let status = parts[0].trim();
-        match status {
-          "A" => {
-            if parts.len() >= 2 {
-              let path = parts[1].to_string();
-              let mut e = DiffEntry{ filePath: path.clone(), status: "added".into(), additions: 0, deletions: 0, isBinary: false, ..Default::default() };
-              if include {
-                // new content from head
-                if let Ok(buf) = crate::util::run_git(&cwd, &["show", &format!("{}:{}", head_oid, path)]) {
-                  let new_sz = buf.as_bytes().len();
-                  e.newSize = Some(new_sz as i32);
-                  e.oldSize = Some(0);
-                  if new_sz <= max_bytes { e.newContent = Some(buf.clone()); e.oldContent = Some(String::new()); e.additions = buf.lines().count() as i32; e.contentOmitted = Some(false);} else { e.contentOmitted = Some(true); }
+    if out.is_empty() {
+        // Fallback to git CLI diff parsing if our tree comparison produced nothing but there might be changes (e.g., merge edge-cases)
+        #[cfg(debug_assertions)]
+        println!("[native.refs] tree-diff empty; attempting CLI fallback");
+        let r = crate::util::run_git(
+            &cwd,
+            &[
+                "diff",
+                "--name-status",
+                &compare_base_oid.to_string(),
+                &head_oid.to_string(),
+            ],
+        );
+        if let Ok(ns) = r {
+            #[cfg(debug_assertions)]
+            println!(
+                "[native.refs] CLI fallback detected {} lines",
+                ns.lines().count()
+            );
+            let mut fallback: Vec<DiffEntry> = Vec::new();
+            for line in ns.lines() {
+                if line.trim().is_empty() {
+                    continue;
                 }
-              }
-              fallback.push(e);
-            }
-          }
-          "M" => {
-            if parts.len() >= 2 {
-              let path = parts[1].to_string();
-              let mut e = DiffEntry{ filePath: path.clone(), status: "modified".into(), additions: 0, deletions: 0, isBinary: false, ..Default::default() };
-              if include {
-                let old_s = crate::util::run_git(&cwd, &["show", &format!("{}:{}", compare_base_oid, path)]).unwrap_or_default();
-                let new_s = crate::util::run_git(&cwd, &["show", &format!("{}:{}", head_oid, path)]).unwrap_or_default();
-                let old_sz = old_s.as_bytes().len(); let new_sz = new_s.as_bytes().len();
-                e.oldSize = Some(old_sz as i32); e.newSize = Some(new_sz as i32);
-                if old_sz + new_sz <= max_bytes {
-                  let diff = TextDiff::from_lines(&old_s, &new_s);
-                  let mut adds=0i32; let mut dels=0i32; for op in diff.ops(){ let tag=op.tag(); for ch in diff.iter_changes(op){ match (tag, ch.tag()) { (similar::DiffTag::Insert, _) => adds+=1, (similar::DiffTag::Delete, _) => dels+=1, _=>{} } } }
-                  e.additions = adds; e.deletions = dels; e.oldContent = Some(old_s); e.newContent = Some(new_s); e.contentOmitted = Some(false);
-                } else { e.contentOmitted = Some(true); }
-              }
-              fallback.push(e);
-            }
-          }
-          "D" => {
-            if parts.len() >= 2 {
-              let path = parts[1].to_string();
-              let mut e = DiffEntry{ filePath: path.clone(), status: "deleted".into(), additions: 0, deletions: 0, isBinary: false, ..Default::default() };
-              if include {
-                if let Ok(buf) = crate::util::run_git(&cwd, &["show", &format!("{}:{}", compare_base_oid, path)]) {
-                  let old_sz = buf.as_bytes().len(); e.oldSize = Some(old_sz as i32);
-                  if old_sz <= max_bytes { e.oldContent = Some(buf.clone()); e.newContent = Some(String::new()); e.deletions = buf.lines().count() as i32; e.contentOmitted = Some(false);} else { e.contentOmitted = Some(true); }
+                // Format: <status>\t<path> [\t<path2>]
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.is_empty() {
+                    continue;
                 }
-              }
-              fallback.push(e);
+                let status = parts[0].trim();
+                match status {
+                    "A" => {
+                        if parts.len() >= 2 {
+                            let path = parts[1].to_string();
+                            let mut e = DiffEntry {
+                                filePath: path.clone(),
+                                status: "added".into(),
+                                additions: 0,
+                                deletions: 0,
+                                isBinary: false,
+                                ..Default::default()
+                            };
+                            if include {
+                                // new content from head
+                                if let Ok(buf) = crate::util::run_git(
+                                    &cwd,
+                                    &["show", &format!("{}:{}", head_oid, path)],
+                                ) {
+                                    let new_sz = buf.len();
+                                    e.newSize = Some(new_sz as i32);
+                                    e.oldSize = Some(0);
+                                    if new_sz <= max_bytes {
+                                        e.newContent = Some(buf.clone());
+                                        e.oldContent = Some(String::new());
+                                        e.additions = buf.lines().count() as i32;
+                                        e.contentOmitted = Some(false);
+                                    } else {
+                                        e.contentOmitted = Some(true);
+                                    }
+                                }
+                            }
+                            fallback.push(e);
+                        }
+                    }
+                    "M" => {
+                        if parts.len() >= 2 {
+                            let path = parts[1].to_string();
+                            let mut e = DiffEntry {
+                                filePath: path.clone(),
+                                status: "modified".into(),
+                                additions: 0,
+                                deletions: 0,
+                                isBinary: false,
+                                ..Default::default()
+                            };
+                            if include {
+                                let old_s = crate::util::run_git(
+                                    &cwd,
+                                    &["show", &format!("{}:{}", compare_base_oid, path)],
+                                )
+                                .unwrap_or_default();
+                                let new_s = crate::util::run_git(
+                                    &cwd,
+                                    &["show", &format!("{}:{}", head_oid, path)],
+                                )
+                                .unwrap_or_default();
+                                let old_sz = old_s.len();
+                                let new_sz = new_s.len();
+                                e.oldSize = Some(old_sz as i32);
+                                e.newSize = Some(new_sz as i32);
+                                if old_sz + new_sz <= max_bytes {
+                                    let diff = TextDiff::from_lines(&old_s, &new_s);
+                                    let mut adds = 0i32;
+                                    let mut dels = 0i32;
+                                    for op in diff.ops() {
+                                        let tag = op.tag();
+                                        for ch in diff.iter_changes(op) {
+                                            match (tag, ch.tag()) {
+                                                (similar::DiffTag::Insert, _) => adds += 1,
+                                                (similar::DiffTag::Delete, _) => dels += 1,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    e.additions = adds;
+                                    e.deletions = dels;
+                                    e.oldContent = Some(old_s);
+                                    e.newContent = Some(new_s);
+                                    e.contentOmitted = Some(false);
+                                } else {
+                                    e.contentOmitted = Some(true);
+                                }
+                            }
+                            fallback.push(e);
+                        }
+                    }
+                    "D" => {
+                        if parts.len() >= 2 {
+                            let path = parts[1].to_string();
+                            let mut e = DiffEntry {
+                                filePath: path.clone(),
+                                status: "deleted".into(),
+                                additions: 0,
+                                deletions: 0,
+                                isBinary: false,
+                                ..Default::default()
+                            };
+                            if include {
+                                if let Ok(buf) = crate::util::run_git(
+                                    &cwd,
+                                    &["show", &format!("{}:{}", compare_base_oid, path)],
+                                ) {
+                                    let old_sz = buf.len();
+                                    e.oldSize = Some(old_sz as i32);
+                                    if old_sz <= max_bytes {
+                                        e.oldContent = Some(buf.clone());
+                                        e.newContent = Some(String::new());
+                                        e.deletions = buf.lines().count() as i32;
+                                        e.contentOmitted = Some(false);
+                                    } else {
+                                        e.contentOmitted = Some(true);
+                                    }
+                                }
+                            }
+                            fallback.push(e);
+                        }
+                    }
+                    "R" | "R100" | "R099" | "R098" | "R097" | "R096" | "R095" | "R094" | "R093"
+                    | "R092" | "R091" | "R090" => {
+                        if parts.len() >= 3 {
+                            let oldp = parts[1].to_string();
+                            let newp = parts[2].to_string();
+                            let mut e = DiffEntry {
+                                filePath: newp.clone(),
+                                oldPath: Some(oldp.clone()),
+                                status: "renamed".into(),
+                                additions: 0,
+                                deletions: 0,
+                                isBinary: false,
+                                ..Default::default()
+                            };
+                            if include {
+                                let new_s = crate::util::run_git(
+                                    &cwd,
+                                    &["show", &format!("{}:{}", head_oid, newp)],
+                                )
+                                .unwrap_or_default();
+                                let new_sz = new_s.len();
+                                e.newSize = Some(new_sz as i32);
+                                e.oldSize = Some(new_sz as i32);
+                                if new_sz <= max_bytes {
+                                    e.oldContent = Some(new_s.clone());
+                                    e.newContent = Some(new_s);
+                                    e.contentOmitted = Some(false);
+                                } else {
+                                    e.contentOmitted = Some(true);
+                                }
+                            }
+                            fallback.push(e);
+                        }
+                    }
+                    _ => {}
+                }
             }
-          }
-          "R" | "R100" | "R099" | "R098" | "R097" | "R096" | "R095" | "R094" | "R093" | "R092" | "R091" | "R090" => {
-            if parts.len() >= 3 {
-              let oldp = parts[1].to_string();
-              let newp = parts[2].to_string();
-              let mut e = DiffEntry{ filePath: newp.clone(), oldPath: Some(oldp.clone()), status: "renamed".into(), additions: 0, deletions: 0, isBinary: false, ..Default::default() };
-              if include {
-                let new_s = crate::util::run_git(&cwd, &["show", &format!("{}:{}", head_oid, newp)]).unwrap_or_default();
-                let new_sz = new_s.as_bytes().len(); e.newSize = Some(new_sz as i32); e.oldSize = Some(new_sz as i32);
-                if new_sz <= max_bytes { e.oldContent = Some(new_s.clone()); e.newContent = Some(new_s); e.contentOmitted = Some(false);} else { e.contentOmitted = Some(true); }
-              }
-              fallback.push(e);
+            if !fallback.is_empty() {
+                #[cfg(debug_assertions)]
+                println!(
+                    "[native.refs] CLI fallback returning {} entries",
+                    fallback.len()
+                );
+                // Stable sort by filePath (case-insensitive)
+                fallback.sort_by(|a, b| {
+                    a.filePath
+                        .to_lowercase()
+                        .cmp(&b.filePath.to_lowercase())
+                        .then_with(|| a.filePath.cmp(&b.filePath))
+                });
+                return Ok(fallback);
             }
-          }
-          _ => {}
         }
-      }
-      if !fallback.is_empty() {
-        #[cfg(debug_assertions)] println!("[native.refs] CLI fallback returning {} entries", fallback.len());
-        // Stable sort by filePath (case-insensitive)
-        fallback.sort_by(|a, b| {
-          a.filePath.to_lowercase().cmp(&b.filePath.to_lowercase())
-            .then_with(|| a.filePath.cmp(&b.filePath))
-        });
-        return Ok(fallback);
-      }
     }
-  }
 
-  // Stable sort by filePath (case-insensitive)
-  out.sort_by(|a, b| {
-    a.filePath.to_lowercase().cmp(&b.filePath.to_lowercase())
-      .then_with(|| a.filePath.cmp(&b.filePath))
-  });
+    // Stable sort by filePath (case-insensitive)
+    out.sort_by(|a, b| {
+        a.filePath
+            .to_lowercase()
+            .cmp(&b.filePath.to_lowercase())
+            .then_with(|| a.filePath.cmp(&b.filePath))
+    });
 
-  Ok(out)
+    Ok(out)
 }

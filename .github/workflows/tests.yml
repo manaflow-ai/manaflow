@@ -47,13 +47,14 @@ jobs:
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            apps/server/native/core
-            crates/cmux-env
-            crates/cmux-proxy
+          workspaces: apps/server/native/core
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Build native-core addon
+        run: bun run build
+        working-directory: apps/server/native/core
 
       - name: Run tests
         env:
@@ -63,8 +64,8 @@ jobs:
           CMUX_BUILD_LINUX: "0"
           # Skip Docker E2E tests in CI for stability/speed
           CMUX_SKIP_DOCKER_TESTS: "1"
-          # Skip slow cargo crates handled in dedicated workflows
-          CMUX_SKIP_CARGO_CRATES: "sandbox"
+          # Skip cargo crates handled in dedicated workflows
+          CMUX_SKIP_CARGO_CRATES: "sandbox,cmux-env,cmux-xterm,cmux-proxy,global-proxy,server/native/core"
           # Stack Auth env vars
           STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
           STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}

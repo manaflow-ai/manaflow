@@ -110,15 +110,19 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       if (
         e.ctrlKey &&
         e.shiftKey &&
+        !e.altKey &&
+        !e.metaKey &&
         (e.code === "KeyS" || e.key.toLowerCase() === "s")
       ) {
         e.preventDefault();
+        e.stopPropagation();
         setIsHidden((prev) => !prev);
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // Use capture phase to intercept before browser default handlers
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, []);
 
   // Listen for storage events from command bar (sidebar visibility sync)

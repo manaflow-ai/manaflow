@@ -333,12 +333,7 @@ async fn test_http_proxy_routes_by_header() {
         .expect("resp custom timeout")
         .unwrap();
     assert_eq!(resp_custom.status(), StatusCode::OK);
-    let body_custom = resp_custom
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
+    let body_custom = resp_custom.into_body().collect().await.unwrap().to_bytes();
     let s_custom = String::from_utf8(body_custom.to_vec()).unwrap();
     assert!(
         s_custom.contains("ok:GET:/hello"),

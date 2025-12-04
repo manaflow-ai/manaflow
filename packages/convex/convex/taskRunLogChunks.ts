@@ -43,11 +43,25 @@ export const getChunks = authQuery({
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
+
+    // Check if this is a preview task - if so, allow team-wide access
+    const taskRun = await ctx.db.get(args.taskRunId);
+    if (!taskRun || taskRun.teamId !== teamId) {
+      return [];
+    }
+
+    const task = await ctx.db.get(taskRun.taskId);
+    const isPreviewTask = task?.isPreview === true;
+
+    // For preview tasks, only require team membership; otherwise require user ownership
+    if (!isPreviewTask && taskRun.userId !== userId) {
+      return [];
+    }
+
     const chunks = await ctx.db
       .query("taskRunLogChunks")
       .withIndex("by_taskRun", (q) => q.eq("taskRunId", args.taskRunId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
 
     return chunks;

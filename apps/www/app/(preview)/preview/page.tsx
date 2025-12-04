@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
 import { api } from "@cmux/convex/api";
@@ -7,6 +8,24 @@ import {
   getTeamSlugOrId,
   type StackTeam,
 } from "@/lib/team-utils";
+
+export const metadata: Metadata = {
+  title: "Screenshot previews for GitHub PRs",
+  description:
+    "Code review agent that takes screenshots of code diffs involving UI changes. Automatically capture and preview visual changes in your pull requests.",
+  openGraph: {
+    title: "Screenshot previews for GitHub PRs",
+    description:
+      "Code review agent that takes screenshots of code diffs involving UI changes",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Screenshot previews for GitHub PRs",
+    description:
+      "Code review agent that takes screenshots of code diffs involving UI changes",
+  },
+};
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +52,7 @@ type TeamOption = {
 
 function serializeProviderConnections(
   connections: Array<{
+    id: string;
     installationId: number;
     accountLogin: string | null | undefined;
     accountType: string | null | undefined;
@@ -40,6 +60,7 @@ function serializeProviderConnections(
   }>
 ) {
   return connections.map((conn) => ({
+    id: conn.id,
     installationId: conn.installationId,
     accountLogin: conn.accountLogin ?? null,
     accountType: conn.accountType ?? null,
