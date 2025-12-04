@@ -70,8 +70,6 @@ type PreviewConfigureClientProps = {
   teams: PreviewTeamOption[];
   repo: string;
   installationId: string | null;
-  initialFrameworkPreset?: FrameworkPreset;
-  initialPackageManager?: PackageManager;
   initialEnvVarsContent?: string | null;
   initialMaintenanceScript?: string | null;
   initialDevScript?: string | null;
@@ -376,8 +374,6 @@ export function PreviewConfigureClient({
   teams,
   repo,
   installationId: _installationId,
-  initialFrameworkPreset = "other",
-  initialPackageManager = "npm",
   initialEnvVarsContent,
   initialMaintenanceScript,
   initialDevScript,
@@ -403,10 +399,10 @@ export function PreviewConfigureClient({
       initialEnvVars.some((r) => r.name.trim().length > 0 || r.value.trim().length > 0),
     [initialEnvPrefilled, initialEnvVars]
   );
-  const initialFrameworkConfig = getFrameworkPresetConfig(
-    initialFrameworkPreset,
-    initialPackageManager
-  );
+  // Use "other" as default until framework detection completes
+  const initialFrameworkConfig = getFrameworkPresetConfig("other", "npm");
+  // If scripts are provided (e.g., from existing environment), use them
+  // Otherwise, use defaults that will be updated when detection completes
   const initialMaintenanceScriptValue =
     initialMaintenanceScript ?? initialFrameworkConfig.maintenanceScript;
   const initialDevScriptValue =
@@ -442,14 +438,18 @@ export function PreviewConfigureClient({
 
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
   const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
-  const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>(
-    initialFrameworkPreset
-  );
+  const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>("other");
+  const [isDetectingFramework, setIsDetectingFramework] = useState(true);
+  const [detectedPackageManager, setDetectedPackageManager] = useState<PackageManager>("npm");
   const [maintenanceScript, setMaintenanceScript] = useState(
     initialMaintenanceScriptValue
   );
   const [devScript, setDevScript] = useState(initialDevScriptValue);
-  const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
+  const [hasUserEditedScripts, setHasUserEditedScripts] = useState(
+    // If initial scripts are provided (from existing environment), consider them as user-edited
+    // so framework detection doesn't override them
+    Boolean(initialMaintenanceScript || initialDevScript)
+  );
   const [hasCompletedSetup, setHasCompletedSetup] = useState(false);
   const [isWaitingForWorkspace, setIsWaitingForWorkspace] = useState(false);
   const [envNone, setEnvNone] = useState(false);
@@ -470,6 +470,49 @@ export function PreviewConfigureClient({
       setIsEnvSectionOpen(false);
     }
   }, [initialHasEnvValues]);
+
+  // Framework detection runs in the background on mount
+  useEffect(() => {
+    // Skip if scripts were already provided (e.g., from existing environment)
+    if (initialMaintenanceScript || initialDevScript) {
+      setIsDetectingFramework(false);
+      return;
+    }
+
+    const detectFramework = async () => {
+      try {
+        const response = await fetch(
+          `/api/integrations/github/framework-detection?repo=${encodeURIComponent(repo)}`
+        );
+        if (!response.ok) {
+          console.error("Framework detection failed:", await response.text());
+          return;
+        }
+        const result = await response.json() as {
+          framework: FrameworkPreset;
+          packageManager: PackageManager;
+          maintenanceScript: string;
+          devScript: string;
+        };
+
+        // Only update if user hasn't manually edited
+        if (!hasUserEditedScripts) {
+          setFrameworkPreset(result.framework);
+          setDetectedPackageManager(result.packageManager);
+          setMaintenanceScript(result.maintenanceScript);
+          setDevScript(result.devScript);
+        }
+      } catch (error) {
+        console.error("Framework detection failed:", error);
+      } finally {
+        setIsDetectingFramework(false);
+      }
+    };
+
+    void detectFramework();
+    // Only run on mount - hasUserEditedScripts check is inside the effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo, initialMaintenanceScript, initialDevScript]);
 
   const persistentIframeManager = iframeManager;
 
@@ -742,12 +785,12 @@ export function PreviewConfigureClient({
       setFrameworkPreset(preset);
       // Only auto-fill if user hasn't manually edited the scripts
       if (!hasUserEditedScripts) {
-        const presetConfig = getFrameworkPresetConfig(preset, initialPackageManager);
+        const presetConfig = getFrameworkPresetConfig(preset, detectedPackageManager);
         setMaintenanceScript(presetConfig.maintenanceScript);
         setDevScript(presetConfig.devScript);
       }
     },
-    [hasUserEditedScripts, initialPackageManager]
+    [hasUserEditedScripts, detectedPackageManager]
   );
 
   const handleMaintenanceScriptChange = useCallback((value: string) => {
@@ -1308,6 +1351,7 @@ export function PreviewConfigureClient({
         <FrameworkPresetSelect
           value={frameworkPreset}
           onValueChange={handleFrameworkPresetChange}
+          isLoading={isDetectingFramework}
         />
 
         {/* Maintenance and Dev Scripts - Always expanded on initial setup */}

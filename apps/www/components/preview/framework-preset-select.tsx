@@ -1,7 +1,7 @@
 "use client";
 
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { ChevronDown, Check, Sparkles } from "lucide-react";
+import { ChevronDown, Check, Sparkles, Loader2 } from "lucide-react";
 import { forwardRef, type ReactNode } from "react";
 import clsx from "clsx";
 import {
@@ -204,6 +204,7 @@ function FrameworkIconBubble({ preset }: { preset: FrameworkPreset }) {
 type FrameworkPresetSelectProps = {
   value: FrameworkPreset;
   onValueChange: (value: FrameworkPreset) => void;
+  isLoading?: boolean;
 };
 
 const SelectTrigger = forwardRef<
@@ -299,6 +300,7 @@ SelectItem.displayName = "SelectItem";
 export function FrameworkPresetSelect({
   value,
   onValueChange,
+  isLoading = false,
 }: FrameworkPresetSelectProps) {
   const frameworkOptions = Object.keys(FRAMEWORK_PRESETS) as FrameworkPreset[];
 
@@ -309,6 +311,12 @@ export function FrameworkPresetSelect({
         className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2"
       >
         Framework Preset
+        {isLoading && (
+          <span className="ml-2 inline-flex items-center text-xs font-normal text-neutral-500 dark:text-neutral-400">
+            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            Detecting...
+          </span>
+        )}
       </label>
       <SelectPrimitive.Root
         value={value}

@@ -335,6 +335,13 @@ export type GithubPrsFileContentsBatchBody = {
     maxFileBytes?: number;
 };
 
+export type FrameworkDetectionResponse = {
+    framework: 'next' | 'vite' | 'remix' | 'nuxt' | 'sveltekit' | 'angular' | 'cra' | 'vue' | 'other';
+    packageManager: 'npm' | 'yarn' | 'pnpm' | 'bun';
+    maintenanceScript: string;
+    devScript: string;
+};
+
 export type GithubInstallStateResponse = {
     state: string;
     installUrl: string;
@@ -1596,6 +1603,38 @@ export type PostApiIntegrationsGithubPrsFileContentsBatchResponses = {
 };
 
 export type PostApiIntegrationsGithubPrsFileContentsBatchResponse = PostApiIntegrationsGithubPrsFileContentsBatchResponses[keyof PostApiIntegrationsGithubPrsFileContentsBatchResponses];
+
+export type GetApiIntegrationsGithubFrameworkDetectionData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Repository full name (owner/repo)
+         */
+        repo: string;
+    };
+    url: '/api/integrations/github/framework-detection';
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionResponses = {
+    /**
+     * OK
+     */
+    200: FrameworkDetectionResponse;
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionResponse = GetApiIntegrationsGithubFrameworkDetectionResponses[keyof GetApiIntegrationsGithubFrameworkDetectionResponses];
 
 export type PostApiIntegrationsGithubInstallStateData = {
     body: GithubInstallStateRequest;

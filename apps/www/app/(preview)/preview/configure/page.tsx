@@ -11,7 +11,6 @@ import {
   getTeamSlugOrId,
   type StackTeam,
 } from "@/lib/team-utils";
-import { detectFrameworkAndPackageManager } from "@/lib/github/framework-detection";
 import { env } from "@/lib/utils/www-env";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 
@@ -137,26 +136,11 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     name: team.name ?? getTeamDisplayName(team),
   }));
 
-  let githubAccessToken: string | undefined;
-  try {
-    const githubAccount = await user.getConnectedAccount("github");
-    if (githubAccount) {
-      const tokenResult = await githubAccount.getAccessToken();
-      if (tokenResult.accessToken) {
-        githubAccessToken = tokenResult.accessToken;
-      }
-    }
-  } catch (error) {
-    console.error("Failed to fetch GitHub access token", error);
-  }
-
-  const detectionResult = await detectFrameworkAndPackageManager(repo, githubAccessToken);
-
   let initialEnvVarsContent: string | null = null;
-  // Use detected scripts from package.json, can be overridden by environment
-  // Keep empty string if no dev script found (don't convert to null which would trigger preset fallback)
-  let initialMaintenanceScript: string | null = detectionResult.maintenanceScript;
-  let initialDevScript: string | null = detectionResult.devScript;
+  // Framework detection happens client-side now to avoid blocking page load
+  // Environment can still override scripts if provided
+  let initialMaintenanceScript: string | null = null;
+  let initialDevScript: string | null = null;
 
   if (environmentId) {
     try {
@@ -197,8 +181,6 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
       teams={clientTeams}
       repo={repo}
       installationId={installationId}
-      initialFrameworkPreset={detectionResult.framework}
-      initialPackageManager={detectionResult.packageManager}
       initialEnvVarsContent={initialEnvVarsContent}
       initialMaintenanceScript={initialMaintenanceScript}
       initialDevScript={initialDevScript}
