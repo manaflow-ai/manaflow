@@ -343,8 +343,22 @@ pub async fn upload_sync_files_with_list(
                 chmod 644 /root/.ssh/*.pub 2>/dev/null || true
                 chmod 644 /root/.ssh/known_hosts 2>/dev/null || true
                 chmod 644 /root/.ssh/config 2>/dev/null || true
+                # Create authorized_keys from user's public keys for SSH access
+                cat /root/.ssh/*.pub > /root/.ssh/authorized_keys 2>/dev/null || true
+                chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
             fi
         fi
+        # Add container's SSH key to authorized_keys for dmux ssh command
+        # This key is generated in the Docker image and allows the container to SSH into sandboxes
+        CONTAINER_KEY_FILE="/usr/share/cmux/container-ssh.pub"
+        if [ -f "$CONTAINER_KEY_FILE" ]; then
+            mkdir -p /root/.ssh
+            cat "$CONTAINER_KEY_FILE" >> /root/.ssh/authorized_keys 2>/dev/null || true
+            chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+        fi
+        # Start sshd for SSH access to sandbox
+        mkdir -p /run/sshd
+        /usr/sbin/sshd 2>/dev/null || true
     "#;
 
     let exec_body = ExecRequest {

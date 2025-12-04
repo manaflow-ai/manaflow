@@ -3155,6 +3155,29 @@ impl TerminalBuffer {
         self.terminal.rows()
     }
 
+    /// Get all terminal content as plain text (scrollback + viewport).
+    /// Each line is joined with newlines, and trailing whitespace is trimmed.
+    pub fn get_all_text(&self) -> String {
+        let mut lines = Vec::new();
+
+        // Add scrollback lines first
+        for row in &self.terminal.internal_grid.lines_above {
+            lines.push(row.as_string().trim_end().to_string());
+        }
+
+        // Add viewport lines
+        for row in &self.terminal.internal_grid.viewport {
+            lines.push(row.as_string().trim_end().to_string());
+        }
+
+        // Remove trailing empty lines
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+
+        lines.join("\n")
+    }
+
     /// Try to extract a URL at the given row and column (0-indexed).
     pub fn url_at_position(&self, row: usize, col: usize) -> Option<String> {
         if self.scroll_offset != 0 {
@@ -3399,8 +3422,16 @@ impl TerminalManager {
         self.sessions.contains_key(&pane_id)
     }
 
-    /// Send input to a terminal session via the multiplexed connection
-    pub fn send_input(&self, pane_id: PaneId, data: Vec<u8>) -> bool {
+    /// Send input to a terminal session via the multiplexed connection.
+    /// Also scrolls to bottom so the user sees where they're typing.
+    pub fn send_input(&mut self, pane_id: PaneId, data: Vec<u8>) -> bool {
+        // Auto-scroll to bottom when user types - they want to see the cursor
+        if let Some(buffer) = self.buffers.get_mut(&pane_id) {
+            if buffer.scroll_offset() > 0 {
+                buffer.scroll_to_bottom();
+            }
+        }
+
         let session = match self.sessions.get(&pane_id) {
             Some(s) => s,
             None => return false,
@@ -3647,7 +3678,11 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
 
                             match server_msg {
                                 MuxServerMessage::SandboxCreated(summary) => {
-                                    let _ = event_tx_clone.send(MuxEvent::SandboxCreated(summary));
+                                    // No tab_id for server-broadcast events (created by other clients)
+                                    let _ = event_tx_clone.send(MuxEvent::SandboxCreated {
+                                        sandbox: summary,
+                                        tab_id: None,
+                                    });
                                 }
                                 MuxServerMessage::SandboxList { sandboxes } => {
                                     let _ = event_tx_clone.send(MuxEvent::SandboxesRefreshed(sandboxes));

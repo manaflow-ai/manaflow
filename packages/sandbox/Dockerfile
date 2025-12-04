@@ -136,6 +136,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   zsh-autosuggestions \
   zsh-syntax-highlighting \
   vim \
+  neovim \
+  emacs-nox \
   tini \
   python3 \
   python3-venv \
@@ -154,6 +156,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   make \
   build-essential \
   openssh-client \
+  openssh-server \
   jq \
   findutils \
   && mkdir -p -m 755 /etc/apt/keyrings \
@@ -163,6 +166,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   && apt-get update \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
+
+# Configure sshd for sandbox access
+RUN mkdir -p /run/sshd && \
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config && \
+    ssh-keygen -A && \
+    # Generate container SSH key for container-to-sandbox SSH access
+    mkdir -p /root/.ssh /usr/share/cmux && \
+    ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519 -N "" -C "cmux-container" && \
+    chmod 600 /root/.ssh/id_ed25519 && \
+    chmod 644 /root/.ssh/id_ed25519.pub && \
+    # Copy public key to shared location accessible by sandboxes
+    cp /root/.ssh/id_ed25519.pub /usr/share/cmux/container-ssh.pub
 
 RUN arch="$(uname -m)"; \
   case "$arch" in \

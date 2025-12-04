@@ -221,8 +221,16 @@ async function resolveVSCodeExecutable(logger: Logger) {
         .find((line) => line.length > 0);
 
       if (candidate) {
-        resolvedVSCodeExecutable = candidate;
-        logger.info(`Resolved VS Code CLI executable: ${candidate}`);
+        const normalizedCandidate =
+          normalizeVSCodeExecutableCandidate(candidate);
+        resolvedVSCodeExecutable = normalizedCandidate;
+        logger.info(
+          `Resolved VS Code CLI executable: ${
+            normalizedCandidate !== candidate
+              ? `${normalizedCandidate} (from ${candidate})`
+              : normalizedCandidate
+          }`
+        );
         break;
       }
     } catch (error) {
@@ -241,9 +249,15 @@ async function resolveVSCodeExecutable(logger: Logger) {
         .map((line) => line.trim())
         .find((line) => line.length > 0);
       if (candidate) {
-        resolvedVSCodeExecutable = candidate;
+        const normalizedCandidate =
+          normalizeVSCodeExecutableCandidate(candidate);
+        resolvedVSCodeExecutable = normalizedCandidate;
         logger.info(
-          `Resolved VS Code CLI executable via shell lookup: ${candidate}`
+          `Resolved VS Code CLI executable via shell lookup: ${
+            normalizedCandidate !== candidate
+              ? `${normalizedCandidate} (from ${candidate})`
+              : normalizedCandidate
+          }`
         );
       }
     } catch (error) {
@@ -255,6 +269,40 @@ async function resolveVSCodeExecutable(logger: Logger) {
   }
 
   return resolvedVSCodeExecutable;
+}
+
+/**
+ * VS Code CLI binaries are sometimes exposed as shell aliases (e.g.
+ * `alias code=/app/openvscode-server/bin/openvscode-server`). Normalize those
+ * alias strings into an executable path we can `access`/`spawn`.
+ */
+export function normalizeVSCodeExecutableCandidate(candidate: string): string {
+  const trimmed = candidate.trim();
+  const aliasPatterns = [
+    /^alias\s+code=(.+)$/i,
+    /^code:\s*aliased to\s*(.+)$/i,
+    /^code is an alias for\s+(.+)$/i,
+  ];
+
+  for (const pattern of aliasPatterns) {
+    const match = trimmed.match(pattern);
+    if (match?.[1]) {
+      let aliasTarget = match[1].trim();
+      if (
+        (aliasTarget.startsWith("'") && aliasTarget.endsWith("'")) ||
+        (aliasTarget.startsWith('"') && aliasTarget.endsWith('"'))
+      ) {
+        aliasTarget = aliasTarget.slice(1, -1);
+      }
+      // Alias definitions can include arguments; we only need the binary path.
+      const [path] = aliasTarget.split(/\s+/);
+      if (path) {
+        return path;
+      }
+    }
+  }
+
+  return trimmed;
 }
 
 async function warmUpVSCodeServeWeb(port: number, logger: Logger) {

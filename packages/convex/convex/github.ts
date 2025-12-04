@@ -179,6 +179,7 @@ export const listProviderConnections = authQuery({
       .withIndex("by_team", (q) => q.eq("teamId", teamId))
       .collect();
     return rows.map((r) => ({
+      id: r._id,
       installationId: r.installationId,
       accountLogin: r.accountLogin,
       accountType: r.accountType,

@@ -68,6 +68,7 @@ vte = "0.15"
 base64 = "0.22.1"
 unicode-width = "0.2"
 open = "5"
+arboard = "3"
 
 [dev-dependencies]
 assert_cmd = "2.0"

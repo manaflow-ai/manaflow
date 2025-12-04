@@ -60,6 +60,8 @@ struct SandboxHandle {
     network: SandboxNetwork,
     created_at: DateTime<Utc>,
     lease: IpLease,
+    /// Correlation ID for matching placeholders to created sandboxes (from tab_id)
+    correlation_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -475,8 +477,8 @@ fi
         fs::create_dir_all(&root_home).await?;
 
         let gitconfig = root_home.join(".gitconfig");
-        // Only set safe.directory - don't override user's pager preferences
-        // Users can enable delta via command palette (EnableDeltaPager)
+        // Only set safe.directory - user's gitconfig is synced from host
+        // Users can enable delta via command palette (EnableDeltaPager) for better diff viewing
         let content = r#"[safe]
 	directory = *
 "#;
@@ -1119,6 +1121,7 @@ impl SandboxService for BubblewrapService {
             network,
             created_at: Utc::now(),
             lease,
+            correlation_id: request.tab_id.clone(),
         };
 
         let entry = SandboxEntry {
@@ -2076,6 +2079,7 @@ impl SandboxHandle {
             workspace: self.workspace.to_string_lossy().to_string(),
             status,
             network: self.network.clone(),
+            correlation_id: self.correlation_id.clone(),
         }
     }
 }

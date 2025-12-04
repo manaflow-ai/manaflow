@@ -28,6 +28,8 @@ pub struct CreateSandboxRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema, PartialEq, Eq)]
 pub enum SandboxStatus {
+    /// Placeholder - creation in progress (client-only, never sent by server)
+    Creating,
     Running,
     Exited,
     Failed,
@@ -52,6 +54,11 @@ pub struct SandboxSummary {
     pub workspace: String,
     pub status: SandboxStatus,
     pub network: SandboxNetwork,
+    /// Correlation ID (tab_id) for matching placeholders to created sandboxes.
+    /// Set by client when creating a placeholder; used to update in-place when
+    /// the server responds with the real sandbox.
+    #[serde(default)]
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]

@@ -89,6 +89,13 @@ enum Command {
     #[command(name = "_internal-proxy", hide = true)]
     InternalProxy { address: String },
 
+    /// Internal helper to proxy SSH through WebSocket to a sandbox (used as SSH ProxyCommand)
+    #[command(name = "_ssh-proxy", hide = true)]
+    SshProxy {
+        /// Sandbox ID or index
+        id: String,
+    },
+
     /// Start the sandbox server container
     Start(StartArgs),
     /// Stop the sandbox server container
@@ -116,6 +123,12 @@ enum Command {
 
     /// Check Docker setup and download sandbox image if needed
     Onboard,
+
+    /// SSH into a sandbox (real SSH, not WebSocket attach)
+    Ssh(SshArgs),
+
+    /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-0`)
+    SshConfig,
 }
 
 #[derive(Args, Debug)]
@@ -146,6 +159,15 @@ struct AuthArgs {
 enum AuthCommand {
     /// List detected authentication files on the host
     Status,
+}
+
+#[derive(Args, Debug)]
+struct SshArgs {
+    /// Sandbox ID or index
+    id: String,
+    /// Additional SSH arguments (e.g., -L 8080:localhost:8080 for port forwarding)
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    ssh_args: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -460,6 +482,9 @@ async fn run() -> anyhow::Result<()> {
                 tokio::io::copy(&mut ri, &mut stdout)
             );
         }
+        Command::SshProxy { id } => {
+            handle_ssh_proxy(&cli.base_url, &id).await?;
+        }
         Command::Proxy { id, port } => {
             handle_proxy(cli.base_url, id, port).await?;
         }
@@ -600,6 +625,12 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::Onboard => {
             handle_onboard().await?;
+        }
+        Command::Ssh(args) => {
+            handle_real_ssh(&client, &cli.base_url, &args).await?;
+        }
+        Command::SshConfig => {
+            handle_ssh_config(&client, &cli.base_url).await?;
         }
         Command::Sandboxes(cmd) => {
             match cmd {
@@ -1855,6 +1886,172 @@ async fn handle_onboard() -> anyhow::Result<()> {
             println!("\nSkipping image download. You can download it later with:");
             println!("\n  \x1b[36mdocker pull {}\x1b[0m\n", image_name);
         }
+    }
+
+    Ok(())
+}
+
+/// Handle real SSH to a sandbox (via WebSocket proxy)
+async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
+    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+
+    // Sync SSH keys and config files to sandbox before connecting
+    // This ensures authorized_keys exists and sshd is running
+    eprintln!("Syncing SSH keys to sandbox {}...", args.id);
+    if let Err(e) = upload_sync_files(client, base_url, &args.id, false).await {
+        eprintln!("Warning: Failed to sync files: {}", e);
+    }
+
+    // Build SSH command with ProxyCommand using our _ssh-proxy
+    let mut ssh_args = vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=no".to_string(),
+        "-o".to_string(),
+        "UserKnownHostsFile=/dev/null".to_string(),
+        "-o".to_string(),
+        "LogLevel=ERROR".to_string(),
+        "-o".to_string(),
+        format!("ProxyCommand={} _ssh-proxy {}", binary_name, args.id),
+    ];
+
+    // The hostname (doesn't matter since we use ProxyCommand, but SSH requires one)
+    // Must come before any remote command
+    ssh_args.push(format!("root@sandbox-{}", args.id));
+
+    // Add any extra SSH args from user (typically remote commands to execute)
+    for arg in &args.ssh_args {
+        ssh_args.push(arg.clone());
+    }
+
+    eprintln!("Connecting to sandbox {}...", args.id);
+
+    // Execute native SSH with ProxyCommand
+    // Use exec on Unix to replace process and fully inherit terminal for passphrase prompts
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new("ssh").args(&ssh_args).exec();
+        // exec only returns on error
+        return Err(anyhow::anyhow!("Failed to exec ssh: {}", err));
+    }
+
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new("ssh").args(&ssh_args).status()?;
+        if !status.success() {
+            return Err(anyhow::anyhow!("SSH connection failed"));
+        }
+        Ok(())
+    }
+}
+
+/// Generate SSH config for easy sandbox access
+async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<()> {
+    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+
+    println!("# SSH config for {} sandboxes", binary_name);
+    println!("# Add this to ~/.ssh/config");
+    println!();
+
+    // Generate a wildcard config for sandbox-* pattern using _ssh-proxy
+    println!("# Wildcard config for all sandboxes (works from macOS shell)");
+    println!("Host sandbox-*");
+    println!("    User root");
+    println!("    StrictHostKeyChecking no");
+    println!("    UserKnownHostsFile /dev/null");
+    println!("    LogLevel ERROR");
+    println!(
+        "    ProxyCommand {} _ssh-proxy $(echo %n | sed 's/sandbox-//')",
+        binary_name
+    );
+    println!();
+
+    eprintln!();
+    eprintln!("Usage examples:");
+    eprintln!("  ssh sandbox-0                           # SSH into sandbox 0");
+    eprintln!("  ssh sandbox-0 -L 8080:localhost:8080    # With port forwarding");
+    eprintln!("  scp sandbox-0:/workspace/file ./        # Copy files");
+    eprintln!("  rsync -avz sandbox-0:/workspace/ ./     # Rsync with sandbox");
+    eprintln!();
+    eprintln!("Or use '{}' directly:", binary_name);
+    eprintln!("  {} ssh <index>              # Direct SSH", binary_name);
+    eprintln!(
+        "  {} ssh <index> -L 8080:localhost:8080  # With port forwarding",
+        binary_name
+    );
+
+    Ok(())
+}
+
+/// Internal SSH proxy command - bridges stdin/stdout to WebSocket for SSH ProxyCommand
+async fn handle_ssh_proxy(base_url: &str, id: &str) -> anyhow::Result<()> {
+    // Build WebSocket URL for the proxy endpoint
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let proxy_url = format!(
+        "{}/sandboxes/{}/proxy?port=22",
+        ws_url.trim_end_matches('/'),
+        id
+    );
+
+    // Connect to WebSocket
+    let (ws_stream, _) = connect_async(&proxy_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to proxy: {}", e))?;
+
+    let (mut ws_write, mut ws_read) = ws_stream.split();
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+
+    // Bridge stdin/stdout to WebSocket
+    let stdin_to_ws = async {
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if ws_write
+                        .send(Message::Binary(buf[..n].to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    let ws_to_stdout = async {
+        while let Some(msg) = ws_read.next().await {
+            match msg {
+                Ok(Message::Binary(data)) => {
+                    if stdout.write_all(&data).await.is_err() {
+                        break;
+                    }
+                    if stdout.flush().await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Text(text)) => {
+                    if stdout.write_all(text.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    if stdout.flush().await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = stdin_to_ws => {}
+        _ = ws_to_stdout => {}
     }
 
     Ok(())

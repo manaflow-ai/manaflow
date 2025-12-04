@@ -18,6 +18,7 @@
   --z-popover-hover: 10010; /* hover states within popovers */
   --z-tooltip: 10020; /* tooltips above popovers */
 
+  --z-floating-high-overlay: 999998; /* overlays for transient floating UIs */
   --z-floating-high: 999999; /* transient floating UIs */
   --z-global-blocking: 99999999; /* full-app blocking overlays (auth/boot) */
   /* Keep resize handle above overlays but below popovers/menus */

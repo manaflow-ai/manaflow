@@ -16,6 +16,7 @@ import {
   type ClipboardEvent,
 } from "react";
 import { toast } from "sonner";
+import TextareaAutosize from "react-textarea-autosize";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -318,11 +319,12 @@ export function WorkspaceSetupPanel({
                     </p>
                   </div>
 
-                  <textarea
+                  <TextareaAutosize
                     value={maintenanceScript}
                     onChange={(e) => setMaintenanceScript(e.target.value)}
                     placeholder={`# e.g.\npnpm install\nbun install\nuv sync`}
-                    rows={3}
+                    minRows={3}
+                    maxRows={50}
                     className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 resize-none dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600"
                   />
                 </div>

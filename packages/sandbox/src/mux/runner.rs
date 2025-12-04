@@ -188,7 +188,7 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
             Some(event) = event_rx.recv() => {
                 match &event {
                     MuxEvent::ConnectToSandbox { sandbox_id } => {
-                        app.pending_connect = Some(sandbox_id.clone());
+                        app.pending_connects.push_back(sandbox_id.clone());
                         try_consume_pending_connection(&mut app, &terminal_manager);
                     }
                     MuxEvent::CreateSandboxWithWorkspace {
@@ -200,10 +200,6 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         let workspace_path = workspace_path.clone();
                         let tab_id_value =
                             tab_id.clone().unwrap_or_else(|| TabId::new().to_string());
-                        if let Ok(uuid) = uuid::Uuid::parse_str(&tab_id_value) {
-                            app.pending_creation_tab_ids
-                                .push_back(TabId::from_uuid(uuid));
-                        }
                         tokio::spawn(async move {
                             if let Err(error) = create_sandbox_with_workspace(
                                 base_url,
@@ -221,11 +217,12 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         });
                     }
                     MuxEvent::ConnectActivePaneToSandbox => {
+                        // Use selected sandbox, or fall back to first item in pending queue
                         let target = app
                             .selected_sandbox_id_string()
-                            .or_else(|| app.pending_connect.clone());
+                            .or_else(|| app.pending_connects.front().cloned());
                         if let Some(sandbox_id) = target {
-                            app.pending_connect = Some(sandbox_id);
+                            app.pending_connects.push_back(sandbox_id);
                             try_consume_pending_connection(&mut app, &terminal_manager);
                         }
                     }
@@ -294,7 +291,7 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         handle_onboard_event(&mut app, onboard_event.clone(), &event_tx_for_handler);
                     }
                     MuxEvent::SendTerminalInput { pane_id, input } => {
-                        if let Ok(manager) = terminal_manager.try_lock() {
+                        if let Ok(mut manager) = terminal_manager.try_lock() {
                             if !manager.send_input(*pane_id, input.clone()) {
                                 tracing::warn!("Failed to send terminal input to pane {:?}", pane_id);
                             }
@@ -353,79 +350,109 @@ fn fallback_terminal_size() -> (u16, u16) {
     (fallback_rows, fallback_cols)
 }
 
-fn connect_active_pane_to_sandbox(
-    app: &MuxApp<'_>,
-    terminal_manager: &crate::mux::terminal::SharedTerminalManager,
-    sandbox_id: &str,
-) {
-    let Some(pane_id) = app.active_pane_id() else {
-        return;
-    };
-
-    if let Ok(guard) = terminal_manager.try_lock() {
-        if guard.is_connected(pane_id) {
-            return;
-        }
-    }
-
-    let (rows, cols) = preferred_size_for_pane(app, pane_id).unwrap_or_else(fallback_terminal_size);
-    let manager = terminal_manager.clone();
-    let event_tx = app.event_tx.clone();
-    let sandbox_id = sandbox_id.to_string();
-    let tab_id = app.workspace_manager.active_tab_id();
-
-    tokio::spawn(async move {
-        if let Err(e) = connect_to_sandbox(manager, pane_id, sandbox_id, tab_id, cols, rows).await {
-            let _ = event_tx.send(MuxEvent::Error(format!(
-                "Failed to connect to sandbox: {}",
-                e
-            )));
-        }
-    });
-}
-
+/// Process all pending sandbox connections from the queue.
+/// This connects terminals for ALL user-created sandboxes, not just the selected one.
 fn try_consume_pending_connection(
     app: &mut MuxApp<'_>,
     terminal_manager: &crate::mux::terminal::SharedTerminalManager,
 ) {
-    let Some(sandbox_id) = app.pending_connect.clone() else {
-        return;
-    };
+    // Process all pending connections in the queue
+    while let Some(sandbox_id) = app.pending_connects.pop_front() {
+        // Verify the sandbox exists in sidebar
+        let sandbox_exists = app
+            .sidebar
+            .sandboxes
+            .iter()
+            .any(|s| s.id.to_string() == sandbox_id);
+        if !sandbox_exists {
+            continue;
+        }
 
-    if !app.select_sandbox(&sandbox_id) {
-        return;
+        // Connect terminal for this specific sandbox's workspace
+        connect_sandbox_terminal(app, terminal_manager, &sandbox_id);
     }
+}
 
-    app.sidebar.select_by_id(&sandbox_id);
+/// Connect a terminal for a SPECIFIC sandbox (not necessarily the currently selected one).
+/// This gets the pane from the sandbox's own workspace and connects the terminal there.
+fn connect_sandbox_terminal(
+    app: &mut MuxApp<'_>,
+    terminal_manager: &crate::mux::terminal::SharedTerminalManager,
+    sandbox_id: &str,
+) {
+    use crate::mux::layout::{PaneContent, SandboxId};
 
-    let Some(pane_id) = app.active_pane_id() else {
+    // Parse the sandbox ID
+    let Ok(sandbox_uuid) = uuid::Uuid::parse_str(sandbox_id) else {
+        return;
+    };
+    let sandbox_layout_id = SandboxId::from_uuid(sandbox_uuid);
+
+    // Get the pane_id from this sandbox's workspace (not the active workspace!)
+    let pane_id = app
+        .workspace_manager
+        .get_workspace(sandbox_layout_id)
+        .and_then(|ws| ws.active_tab())
+        .and_then(|tab| tab.active_pane);
+
+    let Some(pane_id) = pane_id else {
         return;
     };
 
-    if let Some(tab) = app.active_tab_mut() {
-        if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
-            if let PaneContent::Terminal {
-                sandbox_id: pane_sandbox,
-                ..
-            } = &mut pane.content
-            {
-                *pane_sandbox = Some(sandbox_id.clone());
+    // Update the pane's sandbox_id in the workspace
+    if let Some(ws) = app.workspace_manager.get_workspace_mut(sandbox_layout_id) {
+        if let Some(tab) = ws.active_tab_mut() {
+            if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
+                if let PaneContent::Terminal {
+                    sandbox_id: pane_sandbox,
+                    ..
+                } = &mut pane.content
+                {
+                    *pane_sandbox = Some(sandbox_id.to_string());
+                }
             }
         }
     }
 
+    // Check if already connected
     let already_connected = terminal_manager
         .try_lock()
         .map(|guard| guard.is_connected(pane_id))
         .unwrap_or(false);
 
     if already_connected {
-        app.pending_connect = None;
         return;
     }
 
-    connect_active_pane_to_sandbox(app, terminal_manager, &sandbox_id);
-    app.pending_connect = None;
+    // Get dimensions for the pane
+    let (rows, cols) = app
+        .workspace_manager
+        .get_workspace(sandbox_layout_id)
+        .and_then(|ws| ws.active_tab())
+        .and_then(|tab| tab.layout.find_pane(pane_id))
+        .and_then(pane_content_dimensions)
+        .unwrap_or_else(fallback_terminal_size);
+
+    // Spawn terminal connection
+    let manager = terminal_manager.clone();
+    let event_tx = app.event_tx.clone();
+    let sandbox_id_owned = sandbox_id.to_string();
+    let tab_id = app
+        .workspace_manager
+        .get_workspace(sandbox_layout_id)
+        .and_then(|ws| ws.active_tab())
+        .map(|tab| tab.id);
+
+    tokio::spawn(async move {
+        if let Err(e) =
+            connect_to_sandbox(manager, pane_id, sandbox_id_owned, tab_id, cols, rows).await
+        {
+            let _ = event_tx.send(MuxEvent::Error(format!(
+                "Failed to connect to sandbox: {}",
+                e
+            )));
+        }
+    });
 }
 
 fn pane_content_dimensions(pane: &crate::mux::layout::Pane) -> Option<(u16, u16)> {
@@ -438,15 +465,6 @@ fn pane_content_dimensions(pane: &crate::mux::layout::Pane) -> Option<(u16, u16)
     }
 
     Some((rows, cols))
-}
-
-fn preferred_size_for_pane(
-    app: &MuxApp<'_>,
-    pane_id: crate::mux::layout::PaneId,
-) -> Option<(u16, u16)> {
-    let tab = app.active_tab()?;
-    let pane = tab.layout.find_pane(pane_id)?;
-    pane_content_dimensions(pane)
 }
 
 fn sync_terminal_sizes(
@@ -744,6 +762,21 @@ fn handle_input(
                 if cmd == MuxCommand::Quit {
                     return true;
                 }
+                // Handle DeleteSandbox specially - needs to remove from sidebar immediately
+                // and spawn async deletion task (same as Backspace in sidebar)
+                if cmd == MuxCommand::DeleteSandbox {
+                    if let Some((sandbox_id, sandbox_name)) = remove_selected_sandbox(app) {
+                        let base_url = app.base_url.clone();
+                        let event_tx = app.event_tx.clone();
+
+                        app.set_status(format!("Deleting sandbox: {}", sandbox_name));
+
+                        tokio::spawn(async move {
+                            delete_sidebar_sandbox(base_url, sandbox_id, event_tx).await;
+                        });
+                    }
+                    return false;
+                }
                 app.execute_command(cmd);
                 return false;
             }
@@ -795,7 +828,7 @@ fn handle_input(
                         if let Some(pane_id) = app.active_pane_id() {
                             let input = key_to_terminal_input(key.modifiers, key.code);
                             if !input.is_empty() {
-                                if let Ok(guard) = terminal_manager.try_lock() {
+                                if let Ok(mut guard) = terminal_manager.try_lock() {
                                     guard.send_input(pane_id, input);
                                 }
                             }
@@ -940,7 +973,7 @@ fn handle_input(
                                 }
                             }
 
-                            if let Ok(guard) = terminal_manager.try_lock() {
+                            if let Ok(mut guard) = terminal_manager.try_lock() {
                                 let (mouse_mode, sgr_mode) = guard
                                     .get_buffer(pane_id)
                                     .map(|b| (b.mouse_tracking(), b.sgr_mouse_mode()))
@@ -992,7 +1025,7 @@ fn handle_input(
         Event::Paste(text) => {
             // Forward paste to active terminal
             if let Some(pane_id) = app.active_pane_id() {
-                if let Ok(guard) = terminal_manager.try_lock() {
+                if let Ok(mut guard) = terminal_manager.try_lock() {
                     guard.send_input(pane_id, text.into_bytes());
                 }
             }
@@ -1066,12 +1099,17 @@ fn remove_selected_sandbox(app: &mut MuxApp<'_>) -> Option<(String, String)> {
         return None;
     }
 
-    let current_index = app
-        .sidebar
-        .selected_index
-        .min(app.sidebar.sandboxes.len().saturating_sub(1));
+    // Get the current selected sandbox by ID
+    let selected_id = app.sidebar.selected_id?;
+    let current_index = app.sidebar.selected_index();
 
-    let sandbox = app.sidebar.sandboxes.remove(current_index);
+    // Find and remove the sandbox from the list
+    let sandbox_pos = app
+        .sidebar
+        .sandboxes
+        .iter()
+        .position(|s| s.id == selected_id)?;
+    let sandbox = app.sidebar.sandboxes.remove(sandbox_pos);
     let sandbox_id = sandbox.id.to_string();
     let sandbox_name = sandbox.name.clone();
     let sandbox_uuid = SandboxId::from_uuid(sandbox.id);
@@ -1079,29 +1117,23 @@ fn remove_selected_sandbox(app: &mut MuxApp<'_>) -> Option<(String, String)> {
     app.workspace_manager.remove_sandbox(sandbox_uuid);
     app.focus = FocusArea::Sidebar;
 
-    if let Some(pending) = &app.pending_connect {
-        if pending == &sandbox_id {
-            app.pending_connect = None;
-        }
-    }
+    // Remove the deleted sandbox from pending_connects queue
+    app.pending_connects.retain(|id| id != &sandbox_id);
 
     if app.sidebar.sandboxes.is_empty() {
-        app.sidebar.selected_index = 0;
+        app.sidebar.selected_id = None;
         app.workspace_manager.active_sandbox_id = None;
         return Some((sandbox_id, sandbox_name));
     }
 
-    let next_index = if current_index < app.sidebar.sandboxes.len() {
-        current_index
-    } else {
-        app.sidebar.sandboxes.len() - 1
-    };
+    // Select the next sandbox (stay at same position, or last if we removed the last)
+    let next_index = current_index.min(app.sidebar.sandboxes.len() - 1);
+    let next_sandbox = &app.sidebar.sandboxes[next_index];
+    let next_id = next_sandbox.id;
+    let next_id_str = next_id.to_string();
 
-    app.sidebar.selected_index = next_index;
-
-    let next_selected_id = app.sidebar.sandboxes[next_index].id.to_string();
-    let _ = app.select_sandbox(&next_selected_id);
-    app.sidebar.select_by_id(&next_selected_id);
+    app.sidebar.select_by_id(next_id);
+    let _ = app.select_sandbox(&next_id_str);
 
     Some((sandbox_id, sandbox_name))
 }
@@ -1243,7 +1275,10 @@ async fn create_sandbox_with_workspace(
         }
     }
 
-    let _ = event_tx.send(MuxEvent::SandboxCreated(summary.clone()));
+    let _ = event_tx.send(MuxEvent::SandboxCreated {
+        sandbox: summary.clone(),
+        tab_id: Some(tab_id.clone()),
+    });
     let _ = event_tx.send(MuxEvent::StatusMessage {
         message: format!("Created sandbox: {}", sandbox_id),
     });

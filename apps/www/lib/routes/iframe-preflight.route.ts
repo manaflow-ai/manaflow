@@ -397,54 +397,48 @@ iframePreflightRouter.openapi(
                   };
                 }
 
-                const metadataUserId =
-                  typeof metadata.userId === "string"
-                    ? metadata.userId
-                    : null;
-                if (metadataUserId && metadataUserId !== userId) {
-                  return {
-                    authorized: false,
-                    reason:
-                      "You do not have permission to resume this workspace.",
-                  };
+                // Fast path: user owns this workspace
+                if (metadata.userId === userId) {
+                  return { authorized: true };
                 }
 
+                // Check team membership
                 const metadataTeamId =
                   typeof metadata.teamId === "string"
                     ? metadata.teamId
                     : null;
 
-                if (metadataTeamId) {
-                  try {
-                    const memberships = await teamMembershipsPromise;
-                    const belongsToTeam = memberships.some((membership) => {
-                      const membershipTeam =
-                        membership.team?.teamId ?? membership.teamId;
-                      return membershipTeam === metadataTeamId;
-                    });
-
-                    if (!belongsToTeam) {
-                      return {
-                        authorized: false,
-                        reason:
-                          "You are not a member of the team that owns this workspace.",
-                      };
-                    }
-                  } catch (error) {
-                    console.error(
-                      "[iframe-preflight] Failed to verify team membership",
-                      error,
-                    );
-                    return {
-                      authorized: false,
-                      reason:
-                        "We could not verify your team membership for this workspace.",
-                    };
-                  }
-                } else if (!metadataUserId) {
+                if (!metadataTeamId) {
                   return {
                     authorized: false,
                     reason: "Unable to verify workspace ownership.",
+                  };
+                }
+
+                try {
+                  const memberships = await teamMembershipsPromise;
+                  const belongsToTeam = memberships.some((membership) => {
+                    const membershipTeam =
+                      membership.team?.teamId ?? membership.teamId;
+                    return membershipTeam === metadataTeamId;
+                  });
+
+                  if (!belongsToTeam) {
+                    return {
+                      authorized: false,
+                      reason:
+                        "You are not a member of the team that owns this workspace.",
+                    };
+                  }
+                } catch (error) {
+                  console.error(
+                    "[iframe-preflight] Failed to verify team membership",
+                    error,
+                  );
+                  return {
+                    authorized: false,
+                    reason:
+                      "We could not verify your team membership for this workspace.",
                   };
                 }
 

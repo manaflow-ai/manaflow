@@ -128,6 +128,40 @@ export async function detectRemoteHead(
   );
 }
 
+async function tryFetchBranch(
+  workspaceDir: string,
+  branch: string
+): Promise<boolean> {
+  // Extract the branch name without origin/ prefix for fetching
+  const branchName = branch.startsWith("origin/")
+    ? branch.slice("origin/".length)
+    : branch.startsWith("refs/remotes/origin/")
+      ? branch.slice("refs/remotes/origin/".length)
+      : branch;
+
+  try {
+    await runCommandCapture(
+      "git",
+      ["fetch", "origin", branchName, "--depth=1"],
+      { cwd: workspaceDir }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function tryDeepen(workspaceDir: string): Promise<boolean> {
+  try {
+    await runCommandCapture("git", ["fetch", "--deepen=100"], {
+      cwd: workspaceDir,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveMergeBase(
   workspaceDir: string,
   baseBranchOverride?: string | null
@@ -169,20 +203,71 @@ export async function resolveMergeBase(
     }
   }
 
+  // If no override-based branch was found, try to detect remote HEAD
   if (!baseBranch) {
-    baseBranch = await detectRemoteHead(workspaceDir);
+    try {
+      baseBranch = await detectRemoteHead(workspaceDir);
+    } catch {
+      // Remote HEAD detection failed, try fetching origin/main or origin/master
+      for (const defaultBranch of ["origin/main", "origin/master"]) {
+        const fetched = await tryFetchBranch(workspaceDir, defaultBranch);
+        if (fetched) {
+          try {
+            await runCommandCapture(
+              "git",
+              ["rev-parse", "--verify", "--quiet", `${defaultBranch}^{}`],
+              { cwd: workspaceDir }
+            );
+            baseBranch = defaultBranch;
+            break;
+          } catch {
+            // Continue to next candidate
+          }
+        }
+      }
+    }
   }
 
-  const mergeBaseRaw = await runCommandCapture(
-    "git",
-    ["merge-base", "HEAD", baseBranch],
-    { cwd: workspaceDir }
-  );
-  const mergeBase = mergeBaseRaw.split("\n")[0]?.trim();
-  if (!mergeBase) {
+  if (!baseBranch) {
     throw new Error(
-      `Unable to determine merge base between HEAD and ${baseBranch}`
+      "Unable to determine base branch: no override provided and remote HEAD detection failed"
     );
   }
+
+  // Try merge-base, and if it fails, attempt to fetch/deepen and retry
+  const tryMergeBase = async (): Promise<string | null> => {
+    try {
+      const mergeBaseRaw = await runCommandCapture(
+        "git",
+        ["merge-base", "HEAD", baseBranch],
+        { cwd: workspaceDir }
+      );
+      return mergeBaseRaw.split("\n")[0]?.trim() || null;
+    } catch {
+      return null;
+    }
+  };
+
+  let mergeBase = await tryMergeBase();
+
+  // If merge-base failed, the base branch ref might be missing or shallow clone
+  if (!mergeBase) {
+    // Try fetching the specific branch first
+    await tryFetchBranch(workspaceDir, baseBranch);
+    mergeBase = await tryMergeBase();
+  }
+
+  // If still no merge base, try deepening the shallow clone
+  if (!mergeBase) {
+    await tryDeepen(workspaceDir);
+    mergeBase = await tryMergeBase();
+  }
+
+  if (!mergeBase) {
+    throw new Error(
+      `Command "git merge-base HEAD ${baseBranch}" failed: unable to find common ancestor (possibly shallow clone without shared history)`
+    );
+  }
+
   return { baseBranch, mergeBase };
 }
