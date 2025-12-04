@@ -83,6 +83,11 @@ function resolveStrategy(): PrReviewStrategyId {
 }
 
 export function getConvexHttpActionBaseUrl(): string | null {
+  // Prefer explicit CONVEX_SITE_URL for self-hosted setups where HTTP actions are on a different port
+  if (env.CONVEX_SITE_URL) {
+    return env.CONVEX_SITE_URL.replace(/\/$/, "");
+  }
+  // Fall back to transforming NEXT_PUBLIC_CONVEX_URL for Convex Cloud
   const url = env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) {
     return null;
