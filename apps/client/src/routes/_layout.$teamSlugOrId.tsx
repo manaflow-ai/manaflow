@@ -2,6 +2,7 @@ import { CmuxComments } from "@/components/cmux-comments";
 import { CommandBar } from "@/components/CommandBar";
 import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
+import { WebVersionBanner } from "@/components/WebVersionBanner";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
 import { cachedGetUser } from "@/lib/cachedGetUser";
@@ -75,14 +76,16 @@ function LayoutComponent() {
     <ExpandTasksProvider>
       <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
-        <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
-
-        {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
-        <Suspense fallback={<div>Loading...</div>}>
-          <Outlet />
-        </Suspense>
-        {/* </div> */}
+      <div className="flex min-h-[100dvh] flex-col bg-white dark:bg-black">
+        <WebVersionBanner />
+        <div className="flex min-h-0 grow flex-row">
+          <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
+          <div className="flex min-h-0 flex-1">
+            <Suspense fallback={<div>Loading...</div>}>
+              <Outlet />
+            </Suspense>
+          </div>
+        </div>
       </div>
 
       <button
