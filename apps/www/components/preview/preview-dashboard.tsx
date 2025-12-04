@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   Github,
   Link2,
@@ -232,6 +234,173 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+/** Mock GitHub PR comment showing what preview.new posts */
+function MockGitHubComment() {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  return (
+    <div className="mt-10 pt-10 border-t border-white/5">
+      <h2 className="text-base font-medium text-white pb-4">
+        Example PR comment
+      </h2>
+
+      {/* Mock GitHub comment container */}
+      <div className="rounded-lg border border-[#30363d] bg-[#0d1117] overflow-hidden">
+        {/* Comment header */}
+        <div className="flex items-center gap-3 px-4 py-3 bg-[#161b22] border-b border-[#30363d]">
+          {/* Bot avatar */}
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center shrink-0">
+            <Camera className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <span className="font-semibold text-[#c9d1d9] text-sm">
+              preview-bot
+            </span>
+            <span className="px-1.5 py-0.5 text-xs font-medium rounded-full border border-[#30363d] text-[#8b949e] bg-transparent">
+              bot
+            </span>
+            <span className="text-[#8b949e] text-sm">
+              commented 2 minutes ago
+            </span>
+          </div>
+        </div>
+
+        {/* Comment body */}
+        <div className="px-4 py-4 text-[#c9d1d9] text-sm leading-relaxed">
+          {/* Title section */}
+          <div className="flex items-center gap-2 pb-3">
+            <Camera className="w-4 h-4 text-sky-400" />
+            <span className="font-semibold">
+              Screenshot Preview
+            </span>
+            <span className="px-2 py-0.5 text-xs rounded-full bg-emerald-500/20 text-emerald-400 font-medium">
+              Ready
+            </span>
+          </div>
+
+          <p className="text-[#8b949e] pb-4">
+            Visual diff for PR #1156: &quot;Add dark mode toggle to settings&quot;
+          </p>
+
+          {/* Screenshot preview - collapsible */}
+          <div className="border border-[#30363d] rounded-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="w-full flex items-center justify-between px-3 py-2 bg-[#161b22] hover:bg-[#1c2128] transition-colors text-left"
+            >
+              <span className="text-sm font-medium text-[#c9d1d9]">
+                Screenshots (3 pages)
+              </span>
+              {isExpanded ? (
+                <ChevronUp className="w-4 h-4 text-[#8b949e]" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-[#8b949e]" />
+              )}
+            </button>
+
+            {isExpanded && (
+              <div className="p-3 space-y-3 bg-[#0d1117]">
+                {/* Mock screenshot thumbnails */}
+                {[
+                  { name: "Home Page", status: "changed" },
+                  { name: "Settings", status: "changed" },
+                  { name: "Profile", status: "unchanged" },
+                ].map((page) => (
+                  <div
+                    key={page.name}
+                    className="flex items-center gap-3 p-2 rounded border border-[#30363d] bg-[#161b22]"
+                  >
+                    {/* Mock thumbnail */}
+                    <div className="w-24 h-16 rounded bg-[#21262d] flex items-center justify-center shrink-0 relative overflow-hidden">
+                      <div className="absolute inset-0 flex">
+                        <div className="w-1/2 h-full bg-[#1c2128] flex items-center justify-center">
+                          <div className="w-8 h-6 rounded-sm bg-[#30363d]" />
+                        </div>
+                        <div className="w-1/2 h-full bg-[#0d1117] flex items-center justify-center">
+                          <div className="w-8 h-6 rounded-sm bg-[#30363d]" />
+                        </div>
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 h-3 bg-gradient-to-t from-[#161b22] to-transparent" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-[#c9d1d9] text-sm truncate">
+                          {page.name}
+                        </span>
+                        {page.status === "changed" ? (
+                          <span className="px-1.5 py-0.5 text-xs rounded bg-amber-500/20 text-amber-400">
+                            changed
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 text-xs rounded bg-[#21262d] text-[#8b949e]">
+                            unchanged
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[#8b949e] pt-0.5">
+                        {page.status === "changed"
+                          ? "Visual differences detected"
+                          : "No visual changes"}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Links section */}
+          <div className="flex items-center gap-4 pt-4 text-sm">
+            <span className="inline-flex items-center gap-1.5 text-[#58a6ff] hover:underline cursor-pointer">
+              <ExternalLink className="w-3.5 h-3.5" />
+              View full report
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[#58a6ff] hover:underline cursor-pointer">
+              <Github className="w-3.5 h-3.5" />
+              View diff
+            </span>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center gap-2 pt-4 mt-4 border-t border-[#21262d]">
+            <span className="text-xs text-[#8b949e]">
+              Powered by
+            </span>
+            <span className="text-xs font-medium text-[#c9d1d9]">
+              preview.new
+            </span>
+          </div>
+        </div>
+
+        {/* Reactions bar */}
+        <div className="px-4 py-2 border-t border-[#30363d] flex items-center gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#30363d] bg-[#161b22] hover:bg-[#21262d] transition-colors text-sm"
+          >
+            <span>+</span>
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#30363d] bg-[#161b22] hover:bg-[#21262d] transition-colors text-sm"
+          >
+            <span>&#128064;</span>
+            <span className="text-[#8b949e]">3</span>
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#30363d] bg-[#161b22] hover:bg-[#21262d] transition-colors text-sm"
+          >
+            <span>&#128077;</span>
+            <span className="text-[#8b949e]">2</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function PreviewDashboard(props: PreviewDashboardProps) {
   return (
@@ -1168,6 +1337,9 @@ function PreviewDashboardInner({
           </Section>
         </div>
       </div>
+
+      {/* Mock GitHub comment preview */}
+      <MockGitHubComment />
 
       {configPendingDelete && (
         <div
