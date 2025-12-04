@@ -413,15 +413,21 @@ export const postPreviewComment = internalAction({
       // Build links row (under the heading)
       const linkParts: string[] = [];
       if (workspaceUrl) {
-        linkParts.push(`[Open Workspace (1 hr expiry)](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
+        linkParts.push(`[Open Workspace](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace) 🔒`);
       }
       if (devServerUrl) {
-        linkParts.push(`[Open Dev Browser (1 hr expiry)](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
+        linkParts.push(`[Open Dev Browser](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser) 🔒`);
       }
       linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap)`);
 
       if (linkParts.length > 0) {
         commentSections.push(linkParts.join(" · "));
+        // Add access note if workspace/browser links are present
+        if (workspaceUrl || devServerUrl) {
+          commentSections.push(
+            "_🔒 = requires [cmux](https://cmux.sh) team access_"
+          );
+        }
       }
 
       // Render the main screenshot section

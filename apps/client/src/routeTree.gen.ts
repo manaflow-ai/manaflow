@@ -16,6 +16,7 @@ import { Route as ElectronErrorRouteImport } from './routes/electron-error'
 import { Route as DebugWebcontentsRouteImport } from './routes/debug-webcontents'
 import { Route as DebugMonacoRouteImport } from './routes/debug-monaco'
 import { Route as DebugIconRouteImport } from './routes/debug-icon'
+import { Route as AccessDeniedRouteImport } from './routes/access-denied'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HandlerSplatRouteImport } from './routes/handler.$'
@@ -81,6 +82,11 @@ const DebugMonacoRoute = DebugMonacoRouteImport.update({
 const DebugIconRoute = DebugIconRouteImport.update({
   id: '/debug-icon',
   path: '/debug-icon',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccessDeniedRoute = AccessDeniedRouteImport.update({
+  id: '/access-denied',
+  path: '/access-denied',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LayoutRoute = LayoutRouteImport.update({
@@ -261,6 +267,7 @@ const LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/access-denied': typeof AccessDeniedRoute
   '/debug-icon': typeof DebugIconRoute
   '/debug-monaco': typeof DebugMonacoRoute
   '/debug-webcontents': typeof DebugWebcontentsRoute
@@ -300,6 +307,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/access-denied': typeof AccessDeniedRoute
   '/debug-icon': typeof DebugIconRoute
   '/debug-monaco': typeof DebugMonacoRoute
   '/debug-webcontents': typeof DebugWebcontentsRoute
@@ -339,6 +347,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_layout': typeof LayoutRouteWithChildren
+  '/access-denied': typeof AccessDeniedRoute
   '/debug-icon': typeof DebugIconRoute
   '/debug-monaco': typeof DebugMonacoRoute
   '/debug-webcontents': typeof DebugWebcontentsRoute
@@ -380,6 +389,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/access-denied'
     | '/debug-icon'
     | '/debug-monaco'
     | '/debug-webcontents'
@@ -419,6 +429,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/access-denied'
     | '/debug-icon'
     | '/debug-monaco'
     | '/debug-webcontents'
@@ -457,6 +468,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_layout'
+    | '/access-denied'
     | '/debug-icon'
     | '/debug-monaco'
     | '/debug-webcontents'
@@ -498,6 +510,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LayoutRoute: typeof LayoutRouteWithChildren
+  AccessDeniedRoute: typeof AccessDeniedRoute
   DebugIconRoute: typeof DebugIconRoute
   DebugMonacoRoute: typeof DebugMonacoRoute
   DebugWebcontentsRoute: typeof DebugWebcontentsRoute
@@ -557,6 +570,13 @@ declare module '@tanstack/react-router' {
       path: '/debug-icon'
       fullPath: '/debug-icon'
       preLoaderRoute: typeof DebugIconRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/access-denied': {
+      id: '/access-denied'
+      path: '/access-denied'
+      fullPath: '/access-denied'
+      preLoaderRoute: typeof AccessDeniedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_layout': {
@@ -908,6 +928,7 @@ const LayoutRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LayoutRoute: LayoutRouteWithChildren,
+  AccessDeniedRoute: AccessDeniedRoute,
   DebugIconRoute: DebugIconRoute,
   DebugMonacoRoute: DebugMonacoRoute,
   DebugWebcontentsRoute: DebugWebcontentsRoute,
