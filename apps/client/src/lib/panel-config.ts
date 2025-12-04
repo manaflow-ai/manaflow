@@ -30,16 +30,26 @@ const DEFAULT_LAYOUT_PANELS: LayoutPanels = {
   bottomRight: "browser",
 };
 
-export const DEFAULT_PANEL_CONFIG: PanelConfig = {
+const SHARED_LAYOUTS: PanelConfig["layouts"] = {
+  "four-panel": { ...DEFAULT_LAYOUT_PANELS },
+  "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
+  "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
+  "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "terminal" },
+  "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
+  "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "chat", bottomRight: "terminal" },
+  "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "terminal" },
+};
+
+const LEGACY_PANEL_CONFIG: PanelConfig = {
   layoutMode: "four-panel",
+  layouts: SHARED_LAYOUTS,
+};
+
+export const DEFAULT_PANEL_CONFIG: PanelConfig = {
+  layoutMode: "three-left",
   layouts: {
-    "four-panel": { ...DEFAULT_LAYOUT_PANELS },
-    "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
-    "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
-    "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "terminal" },
-    "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
-    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "chat", bottomRight: "terminal" },
-    "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "terminal" },
+    ...SHARED_LAYOUTS,
+    "three-left": { topLeft: "workspace", topRight: "browser", bottomLeft: null, bottomRight: "gitDiff" },
   },
 };
 
@@ -81,54 +91,149 @@ export const LAYOUT_DESCRIPTIONS: Record<LayoutMode, string> = {
 
 const STORAGE_KEY = "taskPanelConfig";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isLayoutMode(value: unknown): value is LayoutMode {
+  return (
+    value === "four-panel" ||
+    value === "two-horizontal" ||
+    value === "two-vertical" ||
+    value === "three-left" ||
+    value === "three-right" ||
+    value === "three-top" ||
+    value === "three-bottom"
+  );
+}
+
+function isPanelType(value: unknown): value is PanelType {
+  return (
+    value === "chat" ||
+    value === "workspace" ||
+    value === "terminal" ||
+    value === "browser" ||
+    value === "gitDiff"
+  );
+}
+
+function normalizePanel(value: unknown): PanelType | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (isPanelType(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+function cloneLayouts(layouts: PanelConfig["layouts"]): PanelConfig["layouts"] {
+  const clone: Partial<PanelConfig["layouts"]> = {};
+  for (const mode of Object.keys(layouts) as LayoutMode[]) {
+    clone[mode] = { ...layouts[mode] };
+  }
+  return clone as PanelConfig["layouts"];
+}
+
+function clonePanelConfig(config: PanelConfig): PanelConfig {
+  return {
+    layoutMode: config.layoutMode,
+    layouts: cloneLayouts(config.layouts),
+  };
+}
+
+function resolvePanelValue(
+  value: unknown,
+  fallback: PanelType | null
+): PanelType | null {
+  const parsed = normalizePanel(value);
+  return parsed === undefined ? fallback : parsed;
+}
+
+function applyParsedConfig(parsed: unknown, base: PanelConfig): PanelConfig {
+  const layouts = cloneLayouts(base.layouts);
+
+  if (!isRecord(parsed)) {
+    return { layoutMode: base.layoutMode, layouts };
+  }
+
+  // Migrate old config format to new format
+  if (parsed.topLeft !== undefined && parsed.layouts === undefined) {
+    const layoutMode = isLayoutMode(parsed.layoutMode)
+      ? parsed.layoutMode
+      : LEGACY_PANEL_CONFIG.layoutMode;
+    const current = layouts[layoutMode];
+    layouts[layoutMode] = {
+      topLeft: resolvePanelValue(parsed.topLeft, current.topLeft),
+      topRight: resolvePanelValue(parsed.topRight, current.topRight),
+      bottomLeft: resolvePanelValue(parsed.bottomLeft, current.bottomLeft),
+      bottomRight: resolvePanelValue(parsed.bottomRight, current.bottomRight),
+    };
+    return { layoutMode, layouts };
+  }
+
+  // New format
+  const layoutMode = isLayoutMode(parsed.layoutMode)
+    ? parsed.layoutMode
+    : base.layoutMode;
+
+  if (isRecord(parsed.layouts)) {
+    for (const mode of Object.keys(layouts) as LayoutMode[]) {
+      const stored = parsed.layouts[mode];
+      if (!isRecord(stored)) {
+        continue;
+      }
+      const current = layouts[mode];
+      layouts[mode] = {
+        topLeft: resolvePanelValue(stored.topLeft, current.topLeft),
+        topRight: resolvePanelValue(stored.topRight, current.topRight),
+        bottomLeft: resolvePanelValue(stored.bottomLeft, current.bottomLeft),
+        bottomRight: resolvePanelValue(stored.bottomRight, current.bottomRight),
+      };
+    }
+  }
+
+  return { layoutMode, layouts };
+}
+
+function layoutsEqual(first: LayoutPanels, second: LayoutPanels): boolean {
+  return (
+    first.topLeft === second.topLeft &&
+    first.topRight === second.topRight &&
+    first.bottomLeft === second.bottomLeft &&
+    first.bottomRight === second.bottomRight
+  );
+}
+
+function isLegacyDefaultConfig(config: PanelConfig): boolean {
+  if (config.layoutMode !== LEGACY_PANEL_CONFIG.layoutMode) {
+    return false;
+  }
+
+  for (const mode of Object.keys(LEGACY_PANEL_CONFIG.layouts) as LayoutMode[]) {
+    if (!layoutsEqual(config.layouts[mode], LEGACY_PANEL_CONFIG.layouts[mode])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function loadPanelConfig(): PanelConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored);
-
-      // Migrate old config format to new format
-      if (parsed.topLeft !== undefined && !parsed.layouts) {
-        // Old format detected, migrate to new format
-        const layoutMode: LayoutMode = parsed.layoutMode ?? "four-panel";
-        const config: PanelConfig = {
-          layoutMode,
-          layouts: { ...DEFAULT_PANEL_CONFIG.layouts },
-        };
-        // Set the current layout mode's panels from the old config
-        config.layouts[layoutMode] = {
-          topLeft: parsed.topLeft ?? null,
-          topRight: parsed.topRight ?? null,
-          bottomLeft: parsed.bottomLeft ?? null,
-          bottomRight: parsed.bottomRight ?? null,
-        };
-        return config;
+      const parsed: unknown = JSON.parse(stored);
+      const legacyConfig = applyParsedConfig(parsed, LEGACY_PANEL_CONFIG);
+      if (isLegacyDefaultConfig(legacyConfig)) {
+        return clonePanelConfig(DEFAULT_PANEL_CONFIG);
       }
-
-      // New format
-      const layoutMode = parsed.layoutMode ?? DEFAULT_PANEL_CONFIG.layoutMode;
-      const layouts = { ...DEFAULT_PANEL_CONFIG.layouts };
-
-      // Merge stored layouts with defaults
-      if (parsed.layouts) {
-        for (const mode of Object.keys(layouts) as LayoutMode[]) {
-          if (parsed.layouts[mode]) {
-            layouts[mode] = {
-              topLeft: parsed.layouts[mode].topLeft ?? layouts[mode].topLeft,
-              topRight: parsed.layouts[mode].topRight ?? layouts[mode].topRight,
-              bottomLeft: parsed.layouts[mode].bottomLeft ?? layouts[mode].bottomLeft,
-              bottomRight: parsed.layouts[mode].bottomRight ?? layouts[mode].bottomRight,
-            };
-          }
-        }
-      }
-
-      return { layoutMode, layouts };
+      return applyParsedConfig(parsed, DEFAULT_PANEL_CONFIG);
     }
   } catch (error) {
     console.error("Failed to load panel config:", error);
   }
-  return DEFAULT_PANEL_CONFIG;
+  return clonePanelConfig(DEFAULT_PANEL_CONFIG);
 }
 
 export function savePanelConfig(config: PanelConfig): void {
