@@ -487,14 +487,22 @@ const convexSchema = defineSchema({
     org: v.string(),
     name: v.string(),
     gitRemote: v.string(),
-    provider: v.optional(v.string()), // e.g. "github", "gitlab", etc.
+    provider: v.optional(
+      v.union(v.literal("github"), v.literal("gitlab"), v.literal("bitbucket"))
+    ),
     userId: v.string(),
     teamId: v.string(),
-    // Provider metadata (GitHub App)
-    providerRepoId: v.optional(v.number()),
+    // Provider metadata
+    providerRepoId: v.optional(v.number()), // Numeric repo ID (GitHub/GitLab)
+    providerRepoIdStr: v.optional(v.string()), // String repo ID (Bitbucket slug)
     ownerLogin: v.optional(v.string()),
     ownerType: v.optional(
-      v.union(v.literal("User"), v.literal("Organization"))
+      v.union(
+        v.literal("User"),
+        v.literal("Organization"),
+        v.literal("Group"),
+        v.literal("Team")
+      )
     ),
     visibility: v.optional(v.union(v.literal("public"), v.literal("private"))),
     defaultBranch: v.optional(v.string()),
@@ -568,8 +576,11 @@ const convexSchema = defineSchema({
     teamId: v.string(),
     createdByUserId: v.string(),
     repoFullName: v.string(),
-    repoProvider: v.optional(v.literal("github")),
-    repoInstallationId: v.number(),
+    repoProvider: v.optional(
+      v.union(v.literal("github"), v.literal("gitlab"), v.literal("bitbucket"))
+    ),
+    repoInstallationId: v.number(), // GitHub numeric installation ID (kept required for backward compat)
+    repoInstallationIdStr: v.optional(v.string()), // GitLab/Bitbucket string identifier
     repoDefaultBranch: v.optional(v.string()),
     environmentId: v.optional(v.id("environments")),
     status: v.optional(
@@ -699,22 +710,39 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"]),
 
-  // GitHub App installation connections (team-scoped, but teamId may be set later)
+  // Git provider connections (team-scoped, but teamId may be set later)
+  // Supports GitHub App, GitLab OAuth, and Bitbucket OAuth
   providerConnections: defineTable({
     teamId: v.optional(v.string()), // Canonical team UUID; may be set post-install
     connectedByUserId: v.optional(v.string()), // Stack user who linked the install (when known)
-    type: v.literal("github_app"),
+    type: v.union(
+      v.literal("github_app"),
+      v.literal("gitlab_oauth"),
+      v.literal("bitbucket_oauth")
+    ),
+    // GitHub App installation ID (required for GitHub, optional for others)
     installationId: v.number(),
-    accountLogin: v.optional(v.string()), // org or user login
-    accountId: v.optional(v.number()),
+    // GitLab/Bitbucket string identifier (when not using numeric ID)
+    installationIdStr: v.optional(v.string()),
+    accountLogin: v.optional(v.string()), // org/user/group login
+    accountId: v.optional(v.number()), // numeric account ID (GitHub/GitLab)
+    accountIdStr: v.optional(v.string()), // string account ID (Bitbucket workspace)
     accountType: v.optional(
-      v.union(v.literal("User"), v.literal("Organization"))
+      v.union(
+        v.literal("User"),
+        v.literal("Organization"),
+        v.literal("Group"),
+        v.literal("Team")
+      )
     ),
     isActive: v.optional(v.boolean()),
+    // Provider-specific metadata (API base URLs for self-hosted, etc.)
+    providerMetadata: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_installationId", ["installationId"]) // resolve installation -> connection
+    .index("by_installationId", ["installationId"]) // resolve GitHub installation -> connection
+    .index("by_installationIdStr", ["installationIdStr"]) // resolve GitLab/Bitbucket -> connection
     .index("by_team", ["teamId"]) // list connections for team
     .index("by_team_type", ["teamId", "type"]),
 
@@ -778,11 +806,16 @@ const convexSchema = defineSchema({
     returnUrl: v.optional(v.string()),
   }).index("by_nonce", ["nonce"]),
 
-  // Pull Requests ingested from GitHub (via webhook or backfill)
+  // Pull Requests / Merge Requests ingested from providers (via webhook or backfill)
   pullRequests: defineTable({
     // Identity within provider and repo context
-    provider: v.literal("github"),
-    installationId: v.number(),
+    provider: v.union(
+      v.literal("github"),
+      v.literal("gitlab"),
+      v.literal("bitbucket")
+    ),
+    installationId: v.number(), // GitHub numeric installation ID (kept required for backward compat)
+    installationIdStr: v.optional(v.string()), // GitLab/Bitbucket string identifier
     repositoryId: v.optional(v.number()),
     repoFullName: v.string(), // owner/repo
     number: v.number(), // PR number

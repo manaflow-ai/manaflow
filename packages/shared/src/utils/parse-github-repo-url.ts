@@ -1,4 +1,6 @@
 /**
+ * @deprecated Use `parseRepoUrl` from `@cmux/shared/git-providers` for multi-provider support.
+ *
  * Parses a GitHub repository URL and extracts repository information.
  * Supports multiple formats:
  * - Simple: owner/repo
@@ -48,4 +50,31 @@ export function parseGithubRepoUrl(input: string): {
     url: `https://github.com/${owner}/${cleanRepo}`,
     gitUrl: `https://github.com/${owner}/${cleanRepo}.git`,
   };
+}
+
+// Re-export types and utilities from git-providers for convenience
+export type { ParsedRepo, GitProviderId } from "../git-providers/types.js";
+export { providerRegistry } from "../git-providers/registry.js";
+
+import { providerRegistry } from "../git-providers/registry.js";
+import type { ParsedRepo } from "../git-providers/types.js";
+
+/**
+ * Parse a repository URL from any supported provider (GitHub, GitLab, Bitbucket).
+ * Auto-detects the provider from the URL format.
+ *
+ * @param input - Repository URL or identifier
+ * @returns Parsed repository with provider info, or null if invalid
+ *
+ * @example
+ * ```typescript
+ * parseRepoUrl("https://github.com/owner/repo")
+ * // => { provider: "github", owner: "owner", name: "repo", ... }
+ *
+ * parseRepoUrl("https://gitlab.com/group/project")
+ * // => { provider: "gitlab", owner: "group", name: "project", ... }
+ * ```
+ */
+export function parseRepoUrl(input: string): ParsedRepo | null {
+  return providerRegistry.parseRepoUrl(input);
 }

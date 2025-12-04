@@ -101,6 +101,22 @@
     "./screenshots/sanitize-markdown": {
       "import": "./src/screenshots/sanitize-markdown.ts",
       "types": "./src/screenshots/sanitize-markdown.ts"
+    },
+    "./git-providers": {
+      "import": "./src/git-providers/index.ts",
+      "types": "./src/git-providers/index.ts"
+    },
+    "./git-providers/types": {
+      "import": "./src/git-providers/types.ts",
+      "types": "./src/git-providers/types.ts"
+    },
+    "./git-providers/registry": {
+      "import": "./src/git-providers/registry.ts",
+      "types": "./src/git-providers/registry.ts"
+    },
+    "./git-providers/providers/github": {
+      "import": "./src/git-providers/providers/github.ts",
+      "types": "./src/git-providers/providers/github.ts"
     }
   },
   "dependencies": {
