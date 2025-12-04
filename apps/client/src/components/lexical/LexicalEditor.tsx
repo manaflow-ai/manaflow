@@ -36,7 +36,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { EditorStatePlugin } from "./EditorStatePlugin";
 import { ImageNode } from "./ImageNode";
-import { ImagePlugin } from "./ImagePlugin";
+import { ImagePlugin, type TrackedImage } from "./ImagePlugin";
 import { MentionPlugin } from "./MentionPlugin";
 
 // Minimal shape of a serialized Lexical node we care about
@@ -539,6 +539,7 @@ interface LexicalEditorProps {
     };
     clear: () => void;
   }) => void;
+  onImagesChange?: (images: TrackedImage[]) => void;
 }
 
 export default function LexicalEditor({
@@ -556,6 +557,7 @@ export default function LexicalEditor({
   maxHeight,
   minHeight,
   onEditorReady,
+  onImagesChange,
 }: LexicalEditorProps) {
   const initialConfig = useMemo(
     () => ({
@@ -632,7 +634,7 @@ export default function LexicalEditor({
           branch={branch}
           environmentId={environmentId}
         />
-        <ImagePlugin />
+        <ImagePlugin onImagesChange={onImagesChange} />
         <EditorStatePlugin onEditorReady={onEditorReady} />
       </div>
     </LexicalComposer>

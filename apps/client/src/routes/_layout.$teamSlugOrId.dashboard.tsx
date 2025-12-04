@@ -2,7 +2,9 @@ import { env } from "@/client-env";
 import {
   DashboardInput,
   type EditorApi,
+  type TrackedImage,
 } from "@/components/dashboard/DashboardInput";
+import { ImagePillbox } from "@/components/dashboard/ImagePillbox";
 import { DashboardInputControls } from "@/components/dashboard/DashboardInputControls";
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
@@ -151,6 +153,20 @@ function DashboardComponent() {
 
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
+
+  // Track images in the editor for pillbox display
+  const [editorImages, setEditorImages] = useState<TrackedImage[]>([]);
+
+  const handleImagesChange = useCallback((images: TrackedImage[]) => {
+    setEditorImages(images);
+  }, []);
+
+  const handleImageRemove = useCallback((nodeKey: string) => {
+    // Use the global function exposed by ImagePlugin
+    if (window.__lexicalImageRemove) {
+      window.__lexicalImageRemove(nodeKey);
+    }
+  }, []);
 
   const persistAgentSelection = useCallback((agents: string[]) => {
     try {
@@ -979,6 +995,9 @@ function DashboardComponent() {
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
+              images={editorImages}
+              onImagesChange={handleImagesChange}
+              onImageRemove={handleImageRemove}
             />
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel
@@ -1057,6 +1076,9 @@ type DashboardMainCardProps = {
   canSubmit: boolean;
   onStartTask: () => void;
   isStartingTask: boolean;
+  images: TrackedImage[];
+  onImagesChange: (images: TrackedImage[]) => void;
+  onImageRemove: (nodeKey: string) => void;
 };
 
 function DashboardMainCard({
@@ -1086,6 +1108,9 @@ function DashboardMainCard({
   canSubmit,
   onStartTask,
   isStartingTask,
+  images,
+  onImagesChange,
+  onImageRemove,
 }: DashboardMainCardProps) {
   return (
     <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
@@ -1098,7 +1123,13 @@ function DashboardMainCard({
         branch={lexicalBranch}
         persistenceKey="dashboard-task-description"
         maxHeight="300px"
+        onImagesChange={onImagesChange}
       />
+      {images.length > 0 && (
+        <div className="px-3 py-2 border-t border-neutral-100 dark:border-neutral-600/50">
+          <ImagePillbox images={images} onRemove={onImageRemove} />
+        </div>
+      )}
 
       <DashboardInputFooter>
         <DashboardInputControls

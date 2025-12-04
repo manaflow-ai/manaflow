@@ -1,19 +1,104 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $insertNodes } from "lexical";
-import { useEffect, useRef, useState } from "react";
-import { $createImageNode, ImageNode } from "./ImageNode";
+import { $getRoot, $insertNodes, type LexicalNode } from "lexical";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { $createImageNode, $isImageNode, ImageNode } from "./ImageNode";
+
+export interface TrackedImage {
+  src: string;
+  fileName?: string;
+  altText: string;
+  nodeKey: string;
+}
 
 declare global {
   interface Window {
     __lexicalImageFileSelect?: () => void;
+    __lexicalImageRemove?: (nodeKey: string) => void;
   }
 }
 
-export function ImagePlugin() {
+interface ImagePluginProps {
+  onImagesChange?: (images: TrackedImage[]) => void;
+}
+
+export function ImagePlugin({ onImagesChange }: ImagePluginProps) {
   const [editor] = useLexicalComposerContext();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
+  const lastImagesRef = useRef<string>("");
+
+  // Track images in the editor and report changes
+  const extractImages = useCallback((): TrackedImage[] => {
+    const images: TrackedImage[] = [];
+    editor.getEditorState().read(() => {
+      const root = $getRoot();
+      const walkNode = (node: LexicalNode): void => {
+        if ($isImageNode(node)) {
+          images.push({
+            src: node.getSrc(),
+            fileName: node.getFileName(),
+            altText: node.getAltText(),
+            nodeKey: node.getKey(),
+          });
+        }
+        if ("getChildren" in node && typeof node.getChildren === "function") {
+          const children = node.getChildren() as LexicalNode[];
+          children.forEach(walkNode);
+        }
+      };
+      const children = root.getChildren();
+      children.forEach(walkNode);
+    });
+    return images;
+  }, [editor]);
+
+  // Remove image by node key
+  const removeImage = useCallback(
+    (nodeKey: string) => {
+      editor.update(() => {
+        const node = editor.getEditorState()._nodeMap.get(nodeKey);
+        if (node && $isImageNode(node)) {
+          node.remove();
+        }
+      });
+    },
+    [editor]
+  );
+
+  // Register update listener to track image changes
+  useEffect(() => {
+    if (!onImagesChange) return;
+
+    const unregister = editor.registerUpdateListener(() => {
+      const images = extractImages();
+      const imagesKey = JSON.stringify(images.map((i) => i.nodeKey));
+
+      // Only call onImagesChange if the images actually changed
+      if (imagesKey !== lastImagesRef.current) {
+        lastImagesRef.current = imagesKey;
+        onImagesChange(images);
+      }
+    });
+
+    // Initial extraction
+    const initialImages = extractImages();
+    const initialKey = JSON.stringify(initialImages.map((i) => i.nodeKey));
+    if (initialKey !== lastImagesRef.current) {
+      lastImagesRef.current = initialKey;
+      onImagesChange(initialImages);
+    }
+
+    return unregister;
+  }, [editor, extractImages, onImagesChange]);
+
+  // Expose removeImage globally
+  useEffect(() => {
+    window.__lexicalImageRemove = removeImage;
+    return () => {
+      delete window.__lexicalImageRemove;
+    };
+  }, [removeImage]);
 
   useEffect(() => {
     if (!editor.hasNodes([ImageNode])) {

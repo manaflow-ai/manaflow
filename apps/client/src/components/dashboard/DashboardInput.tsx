@@ -1,4 +1,5 @@
 import LexicalEditor from "@/components/lexical/LexicalEditor";
+import type { TrackedImage } from "@/components/lexical/ImagePlugin";
 import clsx from "clsx";
 import {
   forwardRef,
@@ -9,6 +10,8 @@ import {
   useRef,
 } from "react";
 import type { Id } from "@cmux/convex/dataModel";
+
+export type { TrackedImage };
 
 export interface EditorApi {
   getContent: () => {
@@ -32,6 +35,7 @@ interface DashboardInputProps {
   environmentId?: Id<"environments">;
   persistenceKey?: string;
   maxHeight?: string;
+  onImagesChange?: (images: TrackedImage[]) => void;
 }
 
 export const DashboardInput = memo(
@@ -44,6 +48,7 @@ export const DashboardInput = memo(
       environmentId,
       persistenceKey,
       maxHeight = "600px",
+      onImagesChange,
     },
     ref
   ) {
@@ -349,6 +354,7 @@ export const DashboardInput = memo(
         contentEditableClassName={lexicalClassName}
         maxHeight={maxHeight}
         onEditorReady={handleEditorReady}
+        onImagesChange={onImagesChange}
       />
     );
   })
