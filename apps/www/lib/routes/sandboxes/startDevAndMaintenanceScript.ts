@@ -83,11 +83,17 @@ export async function runMaintenanceAndDevScripts({
   const devExitCodePath = `${CMUX_RUNTIME_DIR}/dev_${runId}.exit-code`;
   const devErrorLogPath = `${CMUX_RUNTIME_DIR}/dev_${runId}.log`;
 
+  // Determine setup mode based on whether this is a cloud workspace
+  const setupMode = isCloudWorkspace ? "cloud" : "local";
+
   // Create maintenance script if provided
   const maintenanceScriptContent = hasMaintenanceScript
     ? `#!/bin/zsh
 set -eux
 cd ${WORKSPACE_ROOT}
+
+# CMUX_SETUP_MODE indicates whether the workspace is running in "local" or "cloud" mode
+export CMUX_SETUP_MODE="${setupMode}"
 
 echo "=== Maintenance Script Started at \\$(date) ==="
 ${maintenanceScript}
