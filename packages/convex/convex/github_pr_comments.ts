@@ -85,6 +85,30 @@ const summarizeSet = (
   return `${prefix} – commit ${commit} (${timestamp})`;
 };
 
+const buildPreviewLinks = ({
+  repoFullName,
+  prNumber,
+  workspaceUrl,
+  devServerUrl,
+}: {
+  repoFullName: string;
+  prNumber: number;
+  workspaceUrl?: string;
+  devServerUrl?: string;
+}): string[] => {
+  const linkParts: string[] = [];
+  if (workspaceUrl) {
+    linkParts.push(`[Open Workspace (1 hr expiry)](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
+  }
+  if (devServerUrl) {
+    linkParts.push(`[Open Dev Browser (1 hr expiry)](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
+  }
+  linkParts.push(
+    `[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap)`,
+  );
+  return linkParts;
+};
+
 /**
  * Formats a single screenshot image into markdown lines.
  * Shared helper to ensure consistent rendering across all codepaths.
@@ -340,6 +364,187 @@ export const addPrReaction = internalAction({
   },
 });
 
+export const postPreviewInProgressComment = internalAction({
+  args: {
+    installationId: v.number(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    previewRunId: v.id("previewRuns"),
+    workspaceUrl: v.optional(v.string()),
+    devServerUrl: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    {
+      installationId,
+      repoFullName,
+      prNumber,
+      previewRunId,
+      workspaceUrl,
+      devServerUrl,
+    },
+  ): Promise<{ ok: true; commentId?: number; commentUrl?: string } | { ok: false; error: string }> => {
+    try {
+      const accessToken = await fetchInstallationAccessToken(installationId);
+      if (!accessToken) {
+        console.error(
+          "[github_pr_comments] Failed to get access token for in-progress preview comment",
+          { installationId },
+        );
+        return { ok: false, error: "Failed to get access token" };
+      }
+
+      const repo = parseRepoFullName(repoFullName);
+      if (!repo) {
+        console.error("[github_pr_comments] Invalid repo full name", {
+          repoFullName,
+        });
+        return { ok: false, error: "Invalid repository name" };
+      }
+
+      const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
+        id: previewRunId,
+      });
+
+      if (!previewRun) {
+        console.error("[github_pr_comments] Preview run not found for draft comment", {
+          previewRunId,
+        });
+        return { ok: false, error: "Preview run not found" };
+      }
+
+      const octokit = createOctokit(accessToken);
+      const linkParts = buildPreviewLinks({
+        repoFullName,
+        prNumber,
+        workspaceUrl,
+        devServerUrl,
+      });
+
+      const shortSha = previewRun.headSha
+        ? `\`${previewRun.headSha.slice(0, 7)}\``
+        : "latest commit";
+      const statusLine =
+        `⏳ Preview is starting for commit ${shortSha}. ` +
+        "Workspace and dev browser links are ready; screenshots will be attached here when the preview job finishes.";
+
+      const commentSections: string[] = ["## Preview Screenshots"];
+      if (linkParts.length > 0) {
+        commentSections.push(linkParts.join(" · "));
+      }
+      commentSections.push(statusLine);
+      commentSections.push("---", PREVIEW_SIGNATURE);
+
+      const commentBody = commentSections.join("\n\n");
+      const existingCommentId = previewRun.githubCommentId;
+      let commentId = existingCommentId;
+      let commentUrl = previewRun.githubCommentUrl;
+      let createdNewComment = false;
+
+      if (existingCommentId) {
+        try {
+          const { data } = await octokit.rest.issues.updateComment({
+            owner: repo.owner,
+            repo: repo.repo,
+            comment_id: existingCommentId,
+            body: commentBody,
+          });
+          commentId = data.id;
+          commentUrl = data.html_url;
+          console.log("[github_pr_comments] Updated existing preview comment with in-progress state", {
+            previewRunId,
+            commentId,
+          });
+        } catch (error) {
+          const status =
+            typeof error === "object" && error && "status" in error
+              ? (error as { status?: number }).status
+              : undefined;
+          if (status !== 404) {
+            console.error(
+              "[github_pr_comments] Failed to update existing preview comment",
+              {
+                previewRunId,
+                commentId: existingCommentId,
+                error,
+              },
+            );
+            return {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          commentId = undefined;
+        }
+      }
+
+      if (!commentId) {
+        const { data } = await octokit.rest.issues.createComment({
+          owner: repo.owner,
+          repo: repo.repo,
+          issue_number: prNumber,
+          body: commentBody,
+        });
+        commentId = data.id;
+        commentUrl = data.html_url;
+        createdNewComment = true;
+        console.log("[github_pr_comments] Created preview in-progress comment", {
+          previewRunId,
+          prNumber,
+          commentId,
+          commentUrl,
+        });
+      }
+
+      if (!commentId) {
+        return { ok: false, error: "Failed to create or update comment" };
+      }
+
+      const nextStatus: "running" | "completed" | "failed" | "skipped" =
+        previewRun.status === "running" ||
+        previewRun.status === "completed" ||
+        previewRun.status === "failed" ||
+        previewRun.status === "skipped"
+          ? previewRun.status
+          : "running";
+
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId,
+        status: nextStatus,
+        githubCommentId: commentId,
+        githubCommentUrl: commentUrl,
+      });
+
+      if (createdNewComment) {
+        await collapseOlderPreviewComments({
+          octokit,
+          owner: repo.owner,
+          repo: repo.repo,
+          prNumber,
+          latestCommentId: commentId,
+        });
+      }
+
+      return { ok: true, commentId, commentUrl };
+    } catch (error) {
+      console.error(
+        "[github_pr_comments] Unexpected error posting in-progress preview comment",
+        {
+          installationId,
+          repoFullName,
+          prNumber,
+          previewRunId,
+          error,
+        },
+      );
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+});
+
 /**
  * Unified function to post preview comments to GitHub PRs.
  *
@@ -407,18 +612,27 @@ export const postPreviewComment = internalAction({
         return { ok: false, error: "Screenshot set not found" };
       }
 
+      const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
+        id: previewRunId,
+      });
+
+      if (!previewRun) {
+        console.error("[github_pr_comments] Preview run not found for screenshot comment", {
+          previewRunId,
+        });
+        return { ok: false, error: "Preview run not found" };
+      }
+
       // Build comment sections
       const commentSections: string[] = ["## Preview Screenshots"];
 
       // Build links row (under the heading)
-      const linkParts: string[] = [];
-      if (workspaceUrl) {
-        linkParts.push(`[Open Workspace (1 hr expiry)](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
-      }
-      if (devServerUrl) {
-        linkParts.push(`[Open Dev Browser (1 hr expiry)](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
-      }
-      linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap)`);
+      const linkParts = buildPreviewLinks({
+        repoFullName,
+        prNumber,
+        workspaceUrl,
+        devServerUrl,
+      });
 
       if (linkParts.length > 0) {
         commentSections.push(linkParts.join(" · "));
@@ -488,38 +702,96 @@ export const postPreviewComment = internalAction({
       commentSections.push("---", PREVIEW_SIGNATURE);
       const commentBody = commentSections.join("\n\n");
 
-      const { data } = await octokit.rest.issues.createComment({
-        owner: repo.owner,
-        repo: repo.repo,
-        issue_number: prNumber,
-        body: commentBody,
-      });
+      const existingCommentId = previewRun.githubCommentId;
+      let commentId = existingCommentId;
+      let commentUrl = previewRun.githubCommentUrl;
+      let createdNewComment = false;
 
-      console.log("[github_pr_comments] Successfully posted preview comment", {
-        installationId,
-        repoFullName,
-        prNumber,
-        commentId: data.id,
-        commentUrl: data.html_url,
-      });
+      if (existingCommentId) {
+        try {
+          const { data } = await octokit.rest.issues.updateComment({
+            owner: repo.owner,
+            repo: repo.repo,
+            comment_id: existingCommentId,
+            body: commentBody,
+          });
+          commentId = data.id;
+          commentUrl = data.html_url;
+          console.log("[github_pr_comments] Updated existing preview comment", {
+            installationId,
+            repoFullName,
+            prNumber,
+            commentId,
+          });
+        } catch (error) {
+          const status =
+            typeof error === "object" && error && "status" in error
+              ? (error as { status?: number }).status
+              : undefined;
+          if (status !== 404) {
+            console.error(
+              "[github_pr_comments] Failed to update existing preview comment",
+              {
+                installationId,
+                repoFullName,
+                prNumber,
+                commentId: existingCommentId,
+                error,
+              },
+            );
+            return {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          commentId = undefined;
+        }
+      }
+
+      if (!commentId) {
+        const { data } = await octokit.rest.issues.createComment({
+          owner: repo.owner,
+          repo: repo.repo,
+          issue_number: prNumber,
+          body: commentBody,
+        });
+
+        commentId = data.id;
+        commentUrl = data.html_url;
+        createdNewComment = true;
+
+        console.log("[github_pr_comments] Successfully posted preview comment", {
+          installationId,
+          repoFullName,
+          prNumber,
+          commentId,
+          commentUrl,
+        });
+      }
+
+      if (!commentId) {
+        return { ok: false, error: "Failed to create or update comment" };
+      }
 
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: screenshotSet.status as "completed" | "failed" | "skipped",
         screenshotSetId,
-        githubCommentUrl: data.html_url,
-        githubCommentId: data.id,
+        githubCommentUrl: commentUrl,
+        githubCommentId: commentId,
       });
 
-      await collapseOlderPreviewComments({
-        octokit,
-        owner: repo.owner,
-        repo: repo.repo,
-        prNumber,
-        latestCommentId: data.id,
-      });
+      if (createdNewComment) {
+        await collapseOlderPreviewComments({
+          octokit,
+          owner: repo.owner,
+          repo: repo.repo,
+          prNumber,
+          latestCommentId: commentId,
+        });
+      }
 
-      return { ok: true, commentId: data.id, commentUrl: data.html_url };
+      return { ok: true, commentId, commentUrl };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error posting preview comment",

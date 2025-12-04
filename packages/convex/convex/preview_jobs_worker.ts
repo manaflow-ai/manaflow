@@ -706,6 +706,43 @@ export async function runPreviewJob(
   }
 
   const keepInstanceForTaskRun = Boolean(taskRunId);
+
+  if (run.repoInstallationId && taskId) {
+    try {
+      const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+        teamId: run.teamId,
+      });
+      const teamSlug = team?.slug ?? run.teamId;
+      const workspaceUrl = `https://cmux.sh/${teamSlug}/task/${taskId}`;
+      const devServerUrl = `${workspaceUrl}/browser`;
+
+      const commentResult = await ctx.runAction(
+        internal.github_pr_comments.postPreviewInProgressComment,
+        {
+          installationId: run.repoInstallationId,
+          repoFullName: run.repoFullName,
+          prNumber: run.prNumber,
+          previewRunId,
+          workspaceUrl,
+          devServerUrl,
+        },
+      );
+
+      if (!commentResult?.ok) {
+        console.warn("[preview-jobs] Failed to post in-progress preview comment", {
+          previewRunId,
+          prNumber: run.prNumber,
+          error: commentResult?.error,
+        });
+      }
+    } catch (error) {
+      console.error("[preview-jobs] Error posting in-progress preview comment", {
+        previewRunId,
+        error,
+      });
+    }
+  }
+
   console.log("[preview-jobs] Launching Morph instance", {
     previewRunId,
     snapshotId,
