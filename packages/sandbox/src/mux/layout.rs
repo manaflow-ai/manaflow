@@ -521,9 +521,24 @@ pub struct Tab {
     pub active_pane: Option<PaneId>,
 }
 
+const DEFAULT_LEFT_SPLIT_RATIO: f32 = 0.6;
+const DEFAULT_TOP_RIGHT_SPLIT_RATIO: f32 = 0.55;
+
 impl Tab {
     pub fn new(name: impl Into<String>) -> Self {
-        let layout = LayoutNode::terminal(None, "Terminal");
+        let right_split = LayoutNode::Split {
+            direction: Direction::Horizontal,
+            ratio: DEFAULT_TOP_RIGHT_SPLIT_RATIO,
+            first: Box::new(LayoutNode::terminal(None, "Browser")),
+            second: Box::new(LayoutNode::terminal(None, "Git Diff")),
+        };
+
+        let layout = LayoutNode::Split {
+            direction: Direction::Vertical,
+            ratio: DEFAULT_LEFT_SPLIT_RATIO,
+            first: Box::new(LayoutNode::terminal(None, "VS Code")),
+            second: Box::new(right_split),
+        };
         let active_pane = layout.pane_ids().first().copied();
         Self {
             id: TabId::new(),
@@ -1245,6 +1260,76 @@ mod tests {
         let workspace = Workspace::new();
         assert_eq!(workspace.tabs.len(), 1);
         assert_eq!(workspace.active_tab_index, 0);
+        assert_eq!(
+            workspace
+                .tabs
+                .first()
+                .expect("tab should exist")
+                .layout
+                .pane_count(),
+            3
+        );
+    }
+
+    #[test]
+    fn default_tab_layout_matches_three_panel_template() {
+        let tab = Tab::new("Tab 1");
+        assert_eq!(tab.layout.pane_count(), 3);
+
+        let (left_id, top_right_id, bottom_right_id, left_ratio, top_ratio) = match &tab.layout {
+            LayoutNode::Split {
+                direction: Direction::Vertical,
+                ratio,
+                first,
+                second,
+            } => {
+                let left_id = match first.as_ref() {
+                    LayoutNode::Pane(pane) => pane.id,
+                    other => panic!("expected left pane, found {:?}", other),
+                };
+
+                let (top_id, bottom_id, nested_ratio) = match second.as_ref() {
+                    LayoutNode::Split {
+                        direction: Direction::Horizontal,
+                        ratio,
+                        first,
+                        second,
+                    } => {
+                        let top_id = match first.as_ref() {
+                            LayoutNode::Pane(pane) => pane.id,
+                            other => panic!("expected top-right pane, found {:?}", other),
+                        };
+                        let bottom_id = match second.as_ref() {
+                            LayoutNode::Pane(pane) => pane.id,
+                            other => panic!("expected bottom-right pane, found {:?}", other),
+                        };
+                        (top_id, bottom_id, *ratio)
+                    }
+                    other => panic!("expected right split, found {:?}", other),
+                };
+
+                (left_id, top_id, bottom_id, *ratio, nested_ratio)
+            }
+            other => panic!("unexpected layout structure: {:?}", other),
+        };
+
+        assert_eq!(tab.active_pane, Some(left_id));
+        assert!((left_ratio - DEFAULT_LEFT_SPLIT_RATIO).abs() < f32::EPSILON);
+        assert!((top_ratio - DEFAULT_TOP_RIGHT_SPLIT_RATIO).abs() < f32::EPSILON);
+
+        let titles = [
+            ("VS Code", left_id),
+            ("Browser", top_right_id),
+            ("Git Diff", bottom_right_id),
+        ];
+
+        for (expected_title, pane_id) in titles {
+            let pane = tab
+                .layout
+                .find_pane(pane_id)
+                .expect("pane should exist");
+            assert_eq!(pane.title(), expected_title);
+        }
     }
 
     #[test]
@@ -1296,20 +1381,45 @@ mod tests {
         let sandbox_id = SandboxId::new();
         manager.add_sandbox(sandbox_id, "Test");
 
-        let pane_id = manager
+        let pane_ids = manager
             .active_tab()
-            .and_then(|tab| tab.layout.pane_ids().first().copied())
-            .expect("tab should have a pane");
+            .expect("tab should exist")
+            .layout
+            .pane_ids();
+        assert_eq!(pane_ids.len(), 3);
 
-        let info = match manager.handle_pane_exit(pane_id) {
+        let first_outcome = manager
+            .handle_pane_exit(pane_ids[0])
+            .expect("pane should be removed");
+        assert!(matches!(first_outcome, PaneExitOutcome::PaneRemoved { .. }));
+
+        let remaining_after_first = manager
+            .active_tab()
+            .expect("tab should remain")
+            .layout
+            .pane_ids();
+        assert_eq!(remaining_after_first.len(), 2);
+
+        let second_outcome = manager
+            .handle_pane_exit(remaining_after_first[0])
+            .expect("pane should be removed");
+        assert!(matches!(second_outcome, PaneExitOutcome::PaneRemoved { .. }));
+
+        let last_pane = manager
+            .active_tab()
+            .expect("tab should remain")
+            .layout
+            .pane_ids()[0];
+
+        let info = match manager.handle_pane_exit(last_pane) {
             Some(PaneExitOutcome::TabClosed(info)) => info,
-            other => panic!("expected tab to close, got {:?}", other),
+            other => panic!("expected tab to close on last pane, got {:?}", other),
         };
 
         assert_eq!(info.sandbox_id, sandbox_id);
         assert_eq!(info.tab_name, "Tab 1");
         assert!(info.was_active_tab);
-        assert_eq!(info.pane_ids, vec![pane_id]);
+        assert_eq!(info.pane_ids, vec![last_pane]);
 
         let workspace = manager
             .active_workspace()
@@ -1330,27 +1440,50 @@ mod tests {
                 .expect("workspace should be active");
             workspace.new_tab();
         }
-
-        let pane_ids: Vec<_> = manager
+        let tab_ids: Vec<_> = manager
             .active_workspace()
             .expect("workspace should exist")
             .tabs
             .iter()
-            .map(|tab| tab.layout.pane_ids()[0])
+            .map(|tab| tab.id)
             .collect();
 
-        let info = match manager.handle_pane_exit(pane_ids[0]) {
-            Some(PaneExitOutcome::TabClosed(info)) => info,
-            other => panic!("expected tab to close, got {:?}", other),
-        };
+        let pane_ids = manager
+            .active_workspace()
+            .expect("workspace should exist")
+            .tabs
+            .first()
+            .expect("tab should exist")
+            .layout
+            .pane_ids();
 
-        assert!(!info.was_active_tab);
+        for (idx, pane_id) in pane_ids.iter().enumerate() {
+            let outcome = manager
+                .handle_pane_exit(*pane_id)
+                .expect("pane removal should succeed");
+
+            if idx < pane_ids.len() - 1 {
+                assert!(matches!(outcome, PaneExitOutcome::PaneRemoved { .. }));
+            } else {
+                match outcome {
+                    PaneExitOutcome::TabClosed(info) => {
+                        assert!(!info.was_active_tab);
+                        assert_eq!(info.tab_name, "Tab 1");
+                        assert_eq!(info.sandbox_id, sandbox_id);
+                        assert_eq!(info.pane_ids, vec![*pane_id]);
+                    }
+                    other => panic!("expected tab to close, got {:?}", other),
+                }
+            }
+        }
+
         let workspace = manager
             .active_workspace()
             .expect("workspace should still exist");
         assert_eq!(workspace.tabs.len(), 1);
         assert_eq!(workspace.active_tab_index, 0);
         assert_eq!(workspace.tabs[0].id, manager.active_tab().unwrap().id);
+        assert_eq!(workspace.tabs[0].id, tab_ids[1]);
     }
 
     #[test]
@@ -1359,15 +1492,11 @@ mod tests {
         let sandbox_id = SandboxId::new();
         manager.add_sandbox(sandbox_id, "Test");
 
-        let exiting_pane = {
-            let workspace = manager
-                .active_workspace_mut()
-                .expect("workspace should be active");
-            let tab = workspace.active_tab_mut().expect("tab should exist");
-            let current_pane = tab.active_pane.expect("pane should exist");
-            tab.split(Direction::Vertical, Pane::terminal(None, "Second"));
-            current_pane
-        };
+        let exiting_pane = manager
+            .active_tab()
+            .expect("tab should exist")
+            .layout
+            .pane_ids()[0];
 
         let outcome = manager.handle_pane_exit(exiting_pane);
         assert!(matches!(outcome, Some(PaneExitOutcome::PaneRemoved { .. })));
@@ -1377,7 +1506,7 @@ mod tests {
             .expect("workspace should still exist");
         assert_eq!(workspace.tabs.len(), 1);
         let tab = workspace.tabs.first().expect("tab should remain");
-        assert_eq!(tab.layout.pane_count(), 1);
+        assert_eq!(tab.layout.pane_count(), 2);
         assert!(tab.contains_pane(tab.active_pane.expect("active pane should exist")));
     }
 }

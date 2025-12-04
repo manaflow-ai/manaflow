@@ -353,15 +353,12 @@ fn fallback_terminal_size() -> (u16, u16) {
     (fallback_rows, fallback_cols)
 }
 
-fn connect_active_pane_to_sandbox(
+fn connect_pane_to_sandbox(
     app: &MuxApp<'_>,
     terminal_manager: &crate::mux::terminal::SharedTerminalManager,
     sandbox_id: &str,
+    pane_id: crate::mux::layout::PaneId,
 ) {
-    let Some(pane_id) = app.active_pane_id() else {
-        return;
-    };
-
     if let Ok(guard) = terminal_manager.try_lock() {
         if guard.is_connected(pane_id) {
             return;
@@ -375,7 +372,9 @@ fn connect_active_pane_to_sandbox(
     let tab_id = app.workspace_manager.active_tab_id();
 
     tokio::spawn(async move {
-        if let Err(e) = connect_to_sandbox(manager, pane_id, sandbox_id, tab_id, cols, rows).await {
+        if let Err(e) =
+            connect_to_sandbox(manager, pane_id, sandbox_id, tab_id, cols, rows).await
+        {
             let _ = event_tx.send(MuxEvent::Error(format!(
                 "Failed to connect to sandbox: {}",
                 e
@@ -398,33 +397,34 @@ fn try_consume_pending_connection(
 
     app.sidebar.select_by_id(&sandbox_id);
 
-    let Some(pane_id) = app.active_pane_id() else {
+    if app.active_tab().is_none() {
         return;
-    };
+    }
 
     if let Some(tab) = app.active_tab_mut() {
-        if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
-            if let PaneContent::Terminal {
-                sandbox_id: pane_sandbox,
-                ..
-            } = &mut pane.content
-            {
-                *pane_sandbox = Some(sandbox_id.clone());
+        for pane_id in tab.layout.pane_ids() {
+            if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
+                if let PaneContent::Terminal {
+                    sandbox_id: pane_sandbox,
+                    ..
+                } = &mut pane.content
+                {
+                    if pane_sandbox.is_none() {
+                        *pane_sandbox = Some(sandbox_id.clone());
+                    }
+                }
             }
         }
     }
 
-    let already_connected = terminal_manager
-        .try_lock()
-        .map(|guard| guard.is_connected(pane_id))
-        .unwrap_or(false);
+    let pane_ids_to_connect = app
+        .active_tab()
+        .map(|tab| tab.layout.pane_ids())
+        .unwrap_or_default();
 
-    if already_connected {
-        app.pending_connect = None;
-        return;
+    for pane_id in pane_ids_to_connect {
+        connect_pane_to_sandbox(app, terminal_manager, &sandbox_id, pane_id);
     }
-
-    connect_active_pane_to_sandbox(app, terminal_manager, &sandbox_id);
     app.pending_connect = None;
 }
 
