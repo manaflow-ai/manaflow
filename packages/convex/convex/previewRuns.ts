@@ -613,3 +613,62 @@ export const createManual = authMutation({
     return { previewRunId: runId, reused: false };
   },
 });
+
+import { query } from "./_generated/server";
+
+/**
+ * Get the latest screenshot set for a PR by repo and PR number.
+ * This is a public query that can be used by the heatmap diff viewer.
+ * Returns the most recent screenshot set with URLs for all images.
+ */
+export const getLatestScreenshotSetByPr = query({
+  args: {
+    repoFullName: v.string(),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const normalizedRepo = normalizeRepoFullName(args.repoFullName);
+
+    // Find the most recent preview run for this PR with a screenshot set
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_repo_pr", (q) =>
+        q.eq("repoFullName", normalizedRepo).eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .take(10);
+
+    // Find the first run that has a completed screenshot set
+    for (const run of runs) {
+      if (!run.screenshotSetId) {
+        continue;
+      }
+
+      const screenshotSet = await ctx.db.get(run.screenshotSetId);
+      if (!screenshotSet || screenshotSet.status !== "completed") {
+        continue;
+      }
+
+      // Get URLs for all screenshots
+      const imagesWithUrls = await Promise.all(
+        screenshotSet.images.map(async (image) => {
+          const url = await ctx.storage.getUrl(image.storageId);
+          return {
+            ...image,
+            url: url ?? undefined,
+          };
+        }),
+      );
+
+      return {
+        ...screenshotSet,
+        images: imagesWithUrls,
+        previewRunId: run._id,
+        headSha: run.headSha,
+        prUrl: run.prUrl,
+      };
+    }
+
+    return null;
+  },
+});

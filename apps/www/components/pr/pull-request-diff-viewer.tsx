@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { ScreenshotPreviewGallery } from "./screenshot-preview-gallery";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -2248,6 +2249,12 @@ export function PullRequestDiffViewer({
           </div>
 
           <div className="flex-1 min-w-0 space-y-3">
+            {typeof prNumber === "number" && Number.isFinite(prNumber) && (
+              <ScreenshotPreviewGallery
+                repoFullName={repoFullName}
+                prNumber={prNumber}
+              />
+            )}
             {thresholdedFileEntries.map(
               ({ entry, review, diffHeatmap, streamState }) => {
                 const isFocusedFile =
