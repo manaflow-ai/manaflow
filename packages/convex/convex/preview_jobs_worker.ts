@@ -1175,7 +1175,7 @@ export async function runPreviewJob(
           morphClient,
           instanceId: instance.id,
           repoDir,
-          windowName: "devserver",
+          windowName: "dev",
           scriptContent: environment.devScript,
           previewRunId,
         });
