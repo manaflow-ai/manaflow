@@ -223,6 +223,103 @@ function openCenteredPopup(
   return window.open(url, name, features);
 }
 
+/**
+ * Mock PR Comment Example - shows what the cmux-agent bot comment looks like
+ */
+function MockPRCommentExample() {
+  const mockScreenshots = [
+    { name: "Bitbucket waitlist modal", description: "Empty form with email input" },
+    { name: "GitLab waitlist modal (filled)", description: "Form with email entered" },
+    { name: "GitLab waitlist modal (success)", description: "Successful submission" },
+    { name: "Preview dashboard", description: "Provider buttons view" },
+  ];
+
+  return (
+    <div className="pt-10 w-full">
+      <Section title="Example: What you'll see on your PRs">
+        <div className="rounded-lg border border-white/10 bg-white/[0.02] overflow-hidden">
+          {/* Comment header */}
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-white/[0.02]">
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center text-xs font-bold text-white">
+              CA
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-white">cmux-agent</span>
+              <span className="text-xs px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-300">bot</span>
+              <span className="text-xs text-neutral-500">commented now</span>
+            </div>
+          </div>
+
+          {/* Comment body */}
+          <div className="px-4 py-4">
+            <div className="flex items-center gap-2 pb-3">
+              <Camera className="h-4 w-4 text-emerald-400" />
+              <span className="text-sm font-medium text-white">
+                Preview screenshots captured for commit{" "}
+                <code className="text-xs bg-neutral-800 px-1.5 py-0.5 rounded font-mono text-emerald-400">
+                  5fc6367
+                </code>
+              </span>
+            </div>
+
+            {/* Screenshot grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pb-4">
+              {mockScreenshots.map((screenshot, index) => (
+                <div
+                  key={index}
+                  className="group relative aspect-[4/3] rounded-md border border-white/10 bg-neutral-900 overflow-hidden cursor-pointer hover:border-white/20 transition-colors"
+                >
+                  {/* Placeholder content */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-2">
+                    <div className="w-full h-full rounded bg-gradient-to-br from-neutral-800 to-neutral-900 flex items-center justify-center">
+                      <Camera className="h-6 w-6 text-neutral-600" />
+                    </div>
+                  </div>
+                  {/* Label overlay */}
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                    <p className="text-[10px] text-neutral-300 truncate">{screenshot.name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Action links */}
+            <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5">
+              <span className="text-xs text-neutral-500">Quick links:</span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open Workspace
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Dev Browser
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Diff Heatmap
+              </button>
+            </div>
+
+            {/* Expiry note */}
+            <p className="text-[10px] text-neutral-600 pt-3">
+              Environment expires in 1 hour
+            </p>
+          </div>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
 // Create a stable QueryClient instance for the preview dashboard
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -1168,6 +1265,9 @@ function PreviewDashboardInner({
           </Section>
         </div>
       </div>
+
+      {/* Example PR Comment Section */}
+      <MockPRCommentExample />
 
       {configPendingDelete && (
         <div
