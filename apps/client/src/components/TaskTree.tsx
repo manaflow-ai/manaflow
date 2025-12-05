@@ -1377,7 +1377,8 @@ function TaskRunTreeInner({
   );
 
   // Generate VSCode URL if available
-  const hasActiveVSCode = run.vscode?.status === "running";
+  const hasActiveVSCode =
+    run.vscode?.status === "running" || Boolean(isLocalWorkspaceRunEntry);
   const vscodeUrl = useMemo(
     () => (hasActiveVSCode && run.vscode?.url) || null,
     [hasActiveVSCode, run]
