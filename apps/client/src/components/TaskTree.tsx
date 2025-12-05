@@ -1418,14 +1418,15 @@ function TaskRunTreeInner({
     });
   }, [resumeWorkspace, run._id, teamSlugOrId]);
 
-  const shouldRenderDiffLink = true;
+  const isLocalWorkspaceRun = run.isLocalWorkspace === true;
+  const shouldRenderDiffLink = !isLocalWorkspaceRun;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
-  const shouldRenderPullRequestLink = Boolean(
+  const shouldRenderPullRequestLink = !isLocalWorkspaceRun && Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
       run.pullRequests?.some((pr) => pr.url)
   );
-  const shouldRenderPreviewLink = previewServices.length > 0;
+  const shouldRenderPreviewLink = !isLocalWorkspaceRun && previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;
   const hasPortActions = portActions.length > 0;
   const canCopyBranch = Boolean(copyRunBranch);
@@ -1592,6 +1593,7 @@ function TaskRunTreeInner({
         isExpanded={isExpanded}
         hasActiveVSCode={hasActiveVSCode}
         hasChildren={hasChildren}
+        isLocalWorkspaceRun={isLocalWorkspaceRun}
         shouldRenderBrowserLink={shouldRenderBrowserLink}
         shouldRenderTerminalLink={shouldRenderTerminalLink}
         shouldRenderPullRequestLink={shouldRenderPullRequestLink}
@@ -1706,6 +1708,7 @@ interface TaskRunDetailsProps {
   isExpanded: boolean;
   hasActiveVSCode: boolean;
   hasChildren: boolean;
+  isLocalWorkspaceRun: boolean;
   shouldRenderBrowserLink: boolean;
   shouldRenderTerminalLink: boolean;
   shouldRenderPullRequestLink: boolean;
@@ -1730,6 +1733,7 @@ function TaskRunDetails({
   isExpanded,
   hasActiveVSCode,
   hasChildren,
+  isLocalWorkspaceRun,
   shouldRenderBrowserLink,
   shouldRenderTerminalLink,
   shouldRenderPullRequestLink,
@@ -1938,13 +1942,15 @@ function TaskRunDetails({
         />
       ) : null}
 
-      <TaskRunDetailLink
-        to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
-        params={{ teamSlugOrId, taskId, runId: run._id }}
-        icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
-        label="Git diff"
-        indentLevel={indentLevel}
-      />
+      {!isLocalWorkspaceRun && (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Git diff"
+          indentLevel={indentLevel}
+        />
+      )}
 
       {shouldRenderBrowserLink ? (
         <TaskRunDetailLink
@@ -1976,8 +1982,8 @@ function TaskRunDetails({
         />
       ) : null}
 
-      {/* Hide preview ports and custom previews for preview screenshot jobs */}
-      {!run.isPreviewJob && (
+      {/* Hide preview ports and custom previews for preview screenshot jobs and local workspaces */}
+      {!run.isPreviewJob && !isLocalWorkspaceRun && (
         <>
           {previewServices.map((service) => (
             <div key={service.port} className="relative group mt-px">
