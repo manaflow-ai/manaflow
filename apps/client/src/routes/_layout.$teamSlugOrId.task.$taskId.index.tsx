@@ -128,8 +128,19 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
         : taskRuns[0];
 
+      const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
       const rawBrowserUrl =
-        selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+        selectedRun?.vscode?.url ?? rawWorkspaceUrl ?? null;
+
+      // Preload both VSCode and browser iframes in parallel
+      if (selectedRun && rawWorkspaceUrl) {
+        const workspaceUrl = toProxyWorkspaceUrl(rawWorkspaceUrl, undefined);
+        void preloadTaskRunIframes([
+          { url: workspaceUrl, taskRunId: selectedRun._id },
+        ]).catch((error) => {
+          console.error("Failed to preload VSCode iframe", error);
+        });
+      }
       if (selectedRun && rawBrowserUrl) {
         const vncUrl = toMorphVncUrl(rawBrowserUrl);
         if (vncUrl) {
@@ -140,8 +151,6 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
           );
         }
       }
-
-      const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
       if (!rawWorkspaceUrl) {
         return;
       }

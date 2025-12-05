@@ -1376,7 +1376,7 @@ function TaskRunTreeInner({
     runMetaIcon
   );
 
-  // Generate VSCode URL if available
+  // Generate VSCode URL if available - used for "Open with" actions
   const hasActiveVSCode = run.vscode?.status === "running";
   const vscodeUrl = useMemo(
     () => (hasActiveVSCode && run.vscode?.url) || null,
@@ -1418,25 +1418,14 @@ function TaskRunTreeInner({
     });
   }, [resumeWorkspace, run._id, teamSlugOrId]);
 
-  const shouldRenderDiffLink = true;
-  const shouldRenderBrowserLink = run.vscode?.provider === "morph";
-  const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
       run.pullRequests?.some((pr) => pr.url)
   );
-  const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;
   const hasPortActions = portActions.length > 0;
   const canCopyBranch = Boolean(copyRunBranch);
-  const hasCollapsibleContent =
-    hasChildren ||
-    hasActiveVSCode ||
-    shouldRenderDiffLink ||
-    shouldRenderBrowserLink ||
-    shouldRenderTerminalLink ||
-    shouldRenderPullRequestLink ||
-    shouldRenderPreviewLink;
+  const hasCollapsibleContent = true;
   const [isRunLinkFocusVisible, setIsRunLinkFocusVisible] = useState(false);
   const handleRunLinkFocus = useCallback(
     (event: FocusEvent<HTMLAnchorElement>) => {
@@ -1590,16 +1579,14 @@ function TaskRunTreeInner({
         taskId={taskId}
         teamSlugOrId={teamSlugOrId}
         isExpanded={isExpanded}
-        hasActiveVSCode={hasActiveVSCode}
         hasChildren={hasChildren}
-        shouldRenderBrowserLink={shouldRenderBrowserLink}
-        shouldRenderTerminalLink={shouldRenderTerminalLink}
         shouldRenderPullRequestLink={shouldRenderPullRequestLink}
         previewServices={previewServices}
         customPreviews={run.customPreviews || []}
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
+        isLocalWorkspace={Boolean(isLocalWorkspaceRunEntry)}
       />
     </div>
   );
@@ -1645,7 +1632,7 @@ function TaskRunDetailLink({
         <span className="text-neutral-600 dark:text-neutral-400">{label}</span>
       </span>
       {trailing ? (
-        <span className="ml-2 flex shrink-0 items-center">{trailing}</span>
+        <span className="pr-0.5 flex shrink-0 items-center">{trailing}</span>
       ) : null}
     </Link>
   );
@@ -1704,10 +1691,7 @@ interface TaskRunDetailsProps {
   taskId: Id<"tasks">;
   teamSlugOrId: string;
   isExpanded: boolean;
-  hasActiveVSCode: boolean;
   hasChildren: boolean;
-  shouldRenderBrowserLink: boolean;
-  shouldRenderTerminalLink: boolean;
   shouldRenderPullRequestLink: boolean;
   previewServices: PreviewService[];
   customPreviews: Array<{
@@ -1720,6 +1704,7 @@ interface TaskRunDetailsProps {
   };
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
+  isLocalWorkspace: boolean;
 }
 
 function TaskRunDetails({
@@ -1728,16 +1713,14 @@ function TaskRunDetails({
   taskId,
   teamSlugOrId,
   isExpanded,
-  hasActiveVSCode,
   hasChildren,
-  shouldRenderBrowserLink,
-  shouldRenderTerminalLink,
   shouldRenderPullRequestLink,
   previewServices,
   customPreviews,
   environmentError,
   onArchiveToggle,
   showRunNumbers,
+  isLocalWorkspace,
 }: TaskRunDetailsProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1919,25 +1902,35 @@ function TaskRunDetails({
     </Tooltip>
   ) : null;
 
+  // Determine loading state - show spinner when VSCode is not yet running
+  const isVSCodeReady = run.vscode?.status === "running";
+  const loadingIndicator = !isVSCodeReady ? (
+    <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+  ) : null;
+
+  // For VSCode, combine environment error with loading indicator
+  const vscodeTrailing =
+    environmentErrorIndicator || (!isVSCodeReady ? loadingIndicator : null);
+
   return (
     <Fragment>
-      {hasActiveVSCode ? (
-        <TaskRunDetailLink
-          to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
-          params={{
-            teamSlugOrId,
-            taskId,
-            runId: run._id,
-          }}
-          icon={
-            <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
-          }
-          label="VS Code"
-          indentLevel={indentLevel}
-          trailing={environmentErrorIndicator}
-        />
-      ) : null}
+      {/* VSCode - always show for all workspaces */}
+      <TaskRunDetailLink
+        to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+        params={{
+          teamSlugOrId,
+          taskId,
+          runId: run._id,
+        }}
+        icon={
+          <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
+        }
+        label="VS Code"
+        indentLevel={indentLevel}
+        trailing={vscodeTrailing}
+      />
 
+      {/* Git diff - always show for all workspaces */}
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
         params={{ teamSlugOrId, taskId, runId: run._id }}
@@ -1946,23 +1939,27 @@ function TaskRunDetails({
         indentLevel={indentLevel}
       />
 
-      {shouldRenderBrowserLink ? (
+      {/* Browser - only for cloud workspaces (not local) */}
+      {!isLocalWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
           params={{ teamSlugOrId, taskId, runId: run._id }}
           icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Browser"
           indentLevel={indentLevel}
+          trailing={loadingIndicator}
         />
       ) : null}
 
-      {shouldRenderTerminalLink ? (
+      {/* Terminals - only for cloud workspaces (not local) */}
+      {!isLocalWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
           params={{ teamSlugOrId, taskId, runId: run._id }}
           icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Terminals"
           indentLevel={indentLevel}
+          trailing={loadingIndicator}
         />
       ) : null}
 
@@ -1989,7 +1986,9 @@ function TaskRunDetails({
                   runId: run._id,
                   previewId: `${service.port}`,
                 }}
-                icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+                icon={
+                  <ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />
+                }
                 label={`Preview (port ${service.port})`}
                 indentLevel={indentLevel}
                 className="pr-10"
@@ -2023,7 +2022,11 @@ function TaskRunDetails({
                       <Dropdown.Arrow />
                       <Dropdown.Item
                         onClick={() => {
-                          window.open(service.url, "_blank", "noopener,noreferrer");
+                          window.open(
+                            service.url,
+                            "_blank",
+                            "noopener,noreferrer"
+                          );
                         }}
                         className="flex items-center gap-2"
                       >
@@ -2047,7 +2050,9 @@ function TaskRunDetails({
                   runId: run._id,
                   previewId: String(index),
                 }}
-                icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+                icon={
+                  <ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />
+                }
                 label={preview.url}
                 indentLevel={indentLevel}
                 className="pr-10"
@@ -2081,7 +2086,11 @@ function TaskRunDetails({
                       <Dropdown.Arrow />
                       <Dropdown.Item
                         onClick={() => {
-                          window.open(preview.url, "_blank", "noopener,noreferrer");
+                          window.open(
+                            preview.url,
+                            "_blank",
+                            "noopener,noreferrer"
+                          );
                         }}
                         className="flex items-center gap-2"
                       >
@@ -2089,7 +2098,9 @@ function TaskRunDetails({
                         Open in new tab
                       </Dropdown.Item>
                       <Dropdown.Item
-                        onClick={() => handleRemovePreview(index, currentPreviewId)}
+                        onClick={() =>
+                          handleRemovePreview(index, currentPreviewId)
+                        }
                         className="flex items-center gap-2 text-red-600 dark:text-red-400"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
