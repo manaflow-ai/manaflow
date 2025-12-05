@@ -24,7 +24,7 @@ export const configureGitIdentity = async (
   identity: { name: string; email: string }
 ) => {
   const gitCfgRes = await instance.exec(
-    `bash -lc "git config --global user.name ${singleQuote(identity.name)} && git config --global user.email ${singleQuote(identity.email)} && git config --global init.defaultBranch main && echo NAME:$(git config --global --get user.name) && echo EMAIL:$(git config --global --get user.email) || true"`
+    `bash -lc "git config --global user.name ${singleQuote(identity.name)} && git config --global user.email ${singleQuote(identity.email)} && git config --global init.defaultBranch main && git config --global push.autoSetupRemote true && echo NAME:$(git config --global --get user.name) && echo EMAIL:$(git config --global --get user.email) || true"`
   );
   if (gitCfgRes.exit_code !== 0) {
     console.error(

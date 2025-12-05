@@ -28,9 +28,17 @@ describe("normalizeOrigin", () => {
     );
   });
 
+  it("adds https:// prefix when protocol is missing", () => {
+    expect(normalizeOrigin("cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeOrigin("example.vercel.app")).toBe(
+      "https://example.vercel.app"
+    );
+  });
+
   it("returns trimmed origin when parsing fails", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(normalizeOrigin(" not-a-url ")).toBe("not-a-url");
+    // Use invalid characters that can't form a valid URL even with https://
+    expect(normalizeOrigin(" :invalid: ")).toBe(":invalid:");
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

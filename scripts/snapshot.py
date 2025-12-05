@@ -1246,7 +1246,7 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
         DEBIAN_FRONTEND=noninteractive apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             ca-certificates curl wget jq git gnupg lsb-release \
-            tar unzip xz-utils zip bzip2 gzip htop
+            tar unzip xz-utils zip bzip2 gzip htop lsof
         
         # Setup GitHub CLI repository
         install -m 0755 -d /usr/share/keyrings

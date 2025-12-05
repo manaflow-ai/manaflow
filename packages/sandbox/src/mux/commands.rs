@@ -79,6 +79,7 @@ pub enum MuxCommand {
     // Terminal utilities
     EnableDeltaPager,
     DisableDeltaPager,
+    CopyScrollback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +159,7 @@ impl MuxCommand {
             // Terminal utilities
             MuxCommand::EnableDeltaPager,
             MuxCommand::DisableDeltaPager,
+            MuxCommand::CopyScrollback,
         ]
     }
 
@@ -222,6 +224,7 @@ impl MuxCommand {
             MuxCommand::ScrollToBottom => "Scroll to Bottom",
             MuxCommand::EnableDeltaPager => "Enable Delta Pager",
             MuxCommand::DisableDeltaPager => "Disable Delta Pager",
+            MuxCommand::CopyScrollback => "Copy Scrollback",
         }
     }
 
@@ -255,6 +258,7 @@ impl MuxCommand {
             MuxCommand::ScrollToBottom => &["end", "bottom"],
             MuxCommand::EnableDeltaPager => &["git diff", "syntax highlighting", "pretty diff"],
             MuxCommand::DisableDeltaPager => &["git diff", "plain diff", "default pager"],
+            MuxCommand::CopyScrollback => &["copy", "clipboard", "terminal output", "history"],
             _ => &[],
         }
     }
@@ -320,6 +324,7 @@ impl MuxCommand {
             MuxCommand::ScrollToBottom => "Scroll to the bottom",
             MuxCommand::EnableDeltaPager => "Use delta for syntax-highlighted git diffs",
             MuxCommand::DisableDeltaPager => "Use default pager for git diffs",
+            MuxCommand::CopyScrollback => "Copy entire terminal scrollback to clipboard",
         }
     }
 
@@ -389,7 +394,9 @@ impl MuxCommand {
             | MuxCommand::ScrollToTop
             | MuxCommand::ScrollToBottom => "General",
 
-            MuxCommand::EnableDeltaPager | MuxCommand::DisableDeltaPager => "Terminal",
+            MuxCommand::EnableDeltaPager
+            | MuxCommand::DisableDeltaPager
+            | MuxCommand::CopyScrollback => "Terminal",
         }
     }
 
@@ -489,7 +496,9 @@ impl MuxCommand {
 
             // Sandbox management - use Alt
             MuxCommand::NewSandbox => Some((KeyModifiers::ALT, KeyCode::Char('n'))),
-            MuxCommand::DeleteSandbox => None, // No default keybinding, access via command palette
+            MuxCommand::DeleteSandbox => {
+                Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('X')))
+            }
             MuxCommand::RefreshSandboxes => Some((KeyModifiers::ALT, KeyCode::Char('R'))), // Alt+Shift+R
 
             // Session - use Alt
@@ -515,6 +524,7 @@ impl MuxCommand {
             // Terminal utilities - access via command palette only
             MuxCommand::EnableDeltaPager => None,
             MuxCommand::DisableDeltaPager => None,
+            MuxCommand::CopyScrollback => None,
         }
     }
 
@@ -628,6 +638,12 @@ impl MuxCommand {
                 KeyCode::Char('d') => return Some(MuxCommand::SplitVertical),
                 KeyCode::Char('D') => return Some(MuxCommand::SplitHorizontal),
                 _ => {}
+            }
+
+            // Alt+X (uppercase, meaning Alt+Shift+X) for delete sandbox
+            // Handle this specially because macOS may report Alt+Shift+X as just Alt with 'X'
+            if keycode == KeyCode::Char('X') {
+                return Some(MuxCommand::DeleteSandbox);
             }
         }
 

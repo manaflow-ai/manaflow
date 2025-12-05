@@ -26,6 +26,16 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip-base";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 
@@ -1169,62 +1179,59 @@ function PreviewDashboardInner({
         </div>
       </div>
 
-      {configPendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
-          onClick={() => {
-            if (updatingConfigId === configPendingDelete.id) return;
+      <AlertDialog
+        open={configPendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && updatingConfigId !== configPendingDelete?.id) {
             handleCancelDelete();
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-red-500/10 p-2 text-red-400">
-                <Trash2 className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-white">
-                  Delete configuration?
-                </h3>
-                <p className="pt-1 text-sm text-neutral-400">
-                  Are you sure you want to remove{" "}
-                  <span className="text-white">
-                    {configPendingDelete.repoFullName}
-                  </span>{" "}
-                  from preview.new? This stops screenshot previews for this
-                  repository.
-                </p>
-              </div>
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="rounded-full bg-red-500/10 p-2 text-red-400">
+              <Trash2 className="h-5 w-5" />
             </div>
-            {configError && (
-              <p className="pt-3 text-sm text-red-400">{configError}</p>
-            )}
-            <div className="pt-5 flex justify-end gap-3">
+            <div className="flex-1">
+              <AlertDialogTitle>Delete configuration?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to remove{" "}
+                <span className="text-white">
+                  {configPendingDelete?.repoFullName}
+                </span>{" "}
+                from preview.new? This stops screenshot previews for this
+                repository.
+              </AlertDialogDescription>
+            </div>
+          </AlertDialogHeader>
+          {configError && (
+            <p className="pt-3 text-sm text-red-400">{configError}</p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
               <Button
-                onClick={handleCancelDelete}
-                disabled={updatingConfigId === configPendingDelete.id}
+                disabled={updatingConfigId === configPendingDelete?.id}
                 variant="secondary"
               >
                 Cancel
               </Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
               <Button
                 onClick={() => void handleDeleteConfig()}
-                disabled={updatingConfigId === configPendingDelete.id}
+                disabled={updatingConfigId === configPendingDelete?.id}
                 variant="destructive"
               >
-                {updatingConfigId === configPendingDelete.id ? (
+                {updatingConfigId === configPendingDelete?.id ? (
                   <Loader2 className="pr-2 h-4 w-4 animate-spin" />
                 ) : (
                   "Delete"
                 )}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

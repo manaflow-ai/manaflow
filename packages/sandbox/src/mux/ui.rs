@@ -125,7 +125,7 @@ fn render_sidebar(f: &mut Frame, app: &MuxApp, area: Rect) {
 
     let mut lines: Vec<Line<'_>> = Vec::new();
     for (idx, sandbox) in app.sidebar.sandboxes.iter().enumerate() {
-        let is_selected = idx == app.sidebar.selected_index;
+        let is_selected = idx == app.sidebar.selected_index();
 
         let status_icon = Sidebar::status_icon(&sandbox.status);
         let status_color = Sidebar::status_color(&sandbox.status);

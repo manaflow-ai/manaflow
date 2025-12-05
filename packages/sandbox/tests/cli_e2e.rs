@@ -72,6 +72,7 @@ impl SandboxService for MockService {
                 sandbox_ip: "10.201.0.2".into(),
                 cidr: 30,
             },
+            correlation_id: None,
         };
         let mut guard = self.sandboxes.lock().await;
         guard.push(summary.clone());

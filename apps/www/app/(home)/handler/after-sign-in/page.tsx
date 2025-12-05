@@ -83,11 +83,12 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
     hasAccessToken: !!stackAccessToken,
   });
 
-  // If no return URL in query params, this is a client component that will check sessionStorage
-  // For OAuth popup flow, the callback URL is stored in sessionStorage
+  // If no return URL in query params, check sessionStorage first (for OAuth popup flow),
+  // then fall back to Electron deep link (default for desktop users)
   if (!afterAuthReturnToRaw) {
-    // Return a client component that checks sessionStorage
-    return <CheckSessionStorageRedirect fallbackPath="/" />;
+    // Return a client component that checks sessionStorage, with electron deeplink as fallback
+    const electronFallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessToken);
+    return <CheckSessionStorageRedirect fallbackPath="/" electronFallbackHref={electronFallbackHref} />;
   }
 
   // Handle Electron deep link redirects
