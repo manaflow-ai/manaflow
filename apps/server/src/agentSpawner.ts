@@ -68,7 +68,6 @@ export async function spawnAgent(
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
-  // Declare taskRunId outside try block so it's accessible in catch for error reporting
   let taskRunId: Id<"taskRuns"> | null = null;
 
   try {
@@ -97,7 +96,6 @@ export async function spawnAgent(
         environmentId: options.environmentId,
       });
     taskRunId = createdTaskRunId;
-    // After this point, taskRunId is guaranteed to be non-null
     const runId = taskRunId;
 
     // Fetch the task to get image storage IDs

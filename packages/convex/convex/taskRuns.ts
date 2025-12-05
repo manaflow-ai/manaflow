@@ -203,22 +203,12 @@ async function collectRunSubtreeIds(
   return Array.from(visited);
 }
 
-/**
- * After a task run status changes, check if all runs are terminal and update the task accordingly.
- *
- * Logic:
- * - If some runs are still pending/running, do nothing (wait for them)
- * - If all runs are terminal (completed/failed/skipped):
- *   - If ALL failed/skipped (none completed): mark task as failed
- *   - If at least one completed: mark task as completed (crown evaluation handles picking winner)
- */
 async function updateTaskStatusFromRuns(
   ctx: MutationCtx,
   taskId: Id<"tasks">,
   teamId: string,
   userId: string,
 ): Promise<void> {
-  // Query all runs for this task (only root-level runs, not children)
   const allRuns = await ctx.db
     .query("taskRuns")
     .withIndex("by_task", (q) => q.eq("taskId", taskId))
@@ -226,7 +216,6 @@ async function updateTaskStatusFromRuns(
       q.and(
         q.eq(q.field("teamId"), teamId),
         q.eq(q.field("userId"), userId),
-        // Only consider root runs (no parent) for task status
         q.eq(q.field("parentRunId"), undefined),
       ),
     )
@@ -236,18 +225,15 @@ async function updateTaskStatusFromRuns(
     return;
   }
 
-  // Check if all runs are in a terminal state
   const terminalStatuses = ["completed", "failed", "skipped"];
   const allTerminal = allRuns.every((run) =>
     terminalStatuses.includes(run.status),
   );
 
   if (!allTerminal) {
-    // Some runs are still pending/running, don't update task yet
     return;
   }
 
-  // All runs are terminal, aggregate the status
   const completedRuns = allRuns.filter((run) => run.status === "completed");
   const failedRuns = allRuns.filter((run) => run.status === "failed");
 
@@ -256,7 +242,6 @@ async function updateTaskStatusFromRuns(
     return;
   }
 
-  // Don't update if task is already completed
   if (task.isCompleted) {
     return;
   }
@@ -264,7 +249,6 @@ async function updateTaskStatusFromRuns(
   const now = Date.now();
 
   if (completedRuns.length === 0) {
-    // ALL runs failed or skipped - no successful runs to crown
     const errorMessages = failedRuns
       .map((run) => run.errorMessage)
       .filter(Boolean);
@@ -280,9 +264,6 @@ async function updateTaskStatusFromRuns(
       updatedAt: now,
     });
   } else {
-    // At least one run completed successfully
-    // For single run: just mark completed
-    // For multiple runs: mark completed, crown evaluation will pick winner
     await ctx.db.patch(taskId, {
       isCompleted: true,
       updatedAt: now,
@@ -550,7 +531,6 @@ export const updateStatus = internalMutation({
 
     await ctx.db.patch(args.id, updates);
 
-    // After updating to a terminal status, check if we should update the task status
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
     }
@@ -860,7 +840,6 @@ export const updateStatusPublic = authMutation({
 
     await ctx.db.patch(args.id, updates);
 
-    // After updating to a terminal status, check if we should update the task status
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
     }
@@ -1046,12 +1025,10 @@ export const complete = authMutation({
       updatedAt: now,
     });
 
-    // After marking this run as completed, check if we should update the task status
     await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
   },
 });
 
-// Mark a task run as failed with an error message
 export const fail = authMutation({
   args: {
     teamSlugOrId: v.string(),
@@ -1075,7 +1052,6 @@ export const fail = authMutation({
       updatedAt: now,
     });
 
-    // After marking this run as failed, check if we should update the task status
     await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
   },
 });
@@ -1215,14 +1191,12 @@ export const workerComplete = internalMutation({
       updatedAt: now,
     });
 
-    // After marking this run as completed, check if we should update the task status
     await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
 
     return run;
   },
 });
 
-// Get all active VSCode instances
 export const getActiveVSCodeInstances = authQuery({
   args: { teamSlugOrId: v.string() },
   handler: async (ctx, args) => {
