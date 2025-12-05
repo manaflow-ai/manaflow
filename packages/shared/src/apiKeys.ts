@@ -47,3 +47,10 @@ export const XAI_API_KEY: AgentConfigApiKey = {
   displayName: "xAI API Key",
   description: "API key for xAI Grok models",
 };
+
+export const CLAUDE_CODE_OAUTH_TOKEN: AgentConfigApiKey = {
+  envVar: "CLAUDE_CODE_OAUTH_TOKEN",
+  displayName: "Claude Code OAuth Token",
+  description:
+    "OAuth token from 'claude setup-token'. Takes precedence over ANTHROPIC_API_KEY.",
+};
