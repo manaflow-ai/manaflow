@@ -3,101 +3,6 @@
   "updatedAt": "2025-12-04T06:13:45Z",
   "presets": [
     {
-      "presetId": "4vcpu_16gb_48gb",
-      "label": "Standard workspace",
-      "cpu": "4 vCPU",
-      "memory": "16 GB RAM",
-      "disk": "48 GB SSD",
-      "versions": [
-        {
-          "version": 1,
-          "snapshotId": "snapshot_ytlhlcfm",
-          "capturedAt": "2025-11-18T01:16:45Z"
-        },
-        {
-          "version": 2,
-          "snapshotId": "snapshot_yvodwo7a",
-          "capturedAt": "2025-11-18T02:03:35Z"
-        },
-        {
-          "version": 3,
-          "snapshotId": "snapshot_i2v6nwzf",
-          "capturedAt": "2025-11-18T06:44:29Z"
-        },
-        {
-          "version": 4,
-          "snapshotId": "snapshot_svdf7qmg",
-          "capturedAt": "2025-11-23T09:45:47Z"
-        },
-        {
-          "version": 5,
-          "snapshotId": "snapshot_4l1fzyvr",
-          "capturedAt": "2025-11-26T20:11:45Z"
-        },
-        {
-          "version": 6,
-          "snapshotId": "snapshot_of44b6xs",
-          "capturedAt": "2025-11-29T07:57:23Z"
-        },
-        {
-          "version": 7,
-          "snapshotId": "snapshot_wpcxzz6p",
-          "capturedAt": "2025-11-29T21:23:40Z"
-        },
-        {
-          "version": 8,
-          "snapshotId": "snapshot_u00k1p82",
-          "capturedAt": "2025-11-29T22:00:34Z"
-        },
-        {
-          "version": 9,
-          "snapshotId": "snapshot_bxgzvjun",
-          "capturedAt": "2025-12-01T06:19:30Z"
-        },
-        {
-          "version": 10,
-          "snapshotId": "snapshot_75gexwe9",
-          "capturedAt": "2025-12-02T02:01:34Z"
-        },
-        {
-          "version": 11,
-          "snapshotId": "snapshot_r8vql9h8",
-          "capturedAt": "2025-12-02T22:40:18Z"
-        },
-        {
-          "version": 12,
-          "snapshotId": "snapshot_xrlir8y6",
-          "capturedAt": "2025-12-02T23:03:02Z"
-        },
-        {
-          "version": 13,
-          "snapshotId": "snapshot_6b7swr45",
-          "capturedAt": "2025-12-03T08:44:36Z"
-        },
-        {
-          "version": 14,
-          "snapshotId": "snapshot_hszt8v6s",
-          "capturedAt": "2025-12-04T01:19:39Z"
-        },
-        {
-          "version": 15,
-          "snapshotId": "snapshot_6az195xq",
-          "capturedAt": "2025-12-04T01:41:29Z"
-        },
-        {
-          "version": 16,
-          "snapshotId": "snapshot_g6va110f",
-          "capturedAt": "2025-12-04T02:56:35Z"
-        },
-        {
-          "version": 17,
-          "snapshotId": "snapshot_mpzw0j37",
-          "capturedAt": "2025-12-04T06:13:17Z"
-        }
-      ],
-      "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
-    },
-    {
       "presetId": "8vcpu_32gb_48gb",
       "label": "Performance workspace",
       "cpu": "8 vCPU",
@@ -191,6 +96,101 @@
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
+    },
+    {
+      "presetId": "4vcpu_16gb_48gb",
+      "label": "Standard workspace",
+      "cpu": "4 vCPU",
+      "memory": "16 GB RAM",
+      "disk": "48 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_ytlhlcfm",
+          "capturedAt": "2025-11-18T01:16:45Z"
+        },
+        {
+          "version": 2,
+          "snapshotId": "snapshot_yvodwo7a",
+          "capturedAt": "2025-11-18T02:03:35Z"
+        },
+        {
+          "version": 3,
+          "snapshotId": "snapshot_i2v6nwzf",
+          "capturedAt": "2025-11-18T06:44:29Z"
+        },
+        {
+          "version": 4,
+          "snapshotId": "snapshot_svdf7qmg",
+          "capturedAt": "2025-11-23T09:45:47Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_4l1fzyvr",
+          "capturedAt": "2025-11-26T20:11:45Z"
+        },
+        {
+          "version": 6,
+          "snapshotId": "snapshot_of44b6xs",
+          "capturedAt": "2025-11-29T07:57:23Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "snapshot_wpcxzz6p",
+          "capturedAt": "2025-11-29T21:23:40Z"
+        },
+        {
+          "version": 8,
+          "snapshotId": "snapshot_u00k1p82",
+          "capturedAt": "2025-11-29T22:00:34Z"
+        },
+        {
+          "version": 9,
+          "snapshotId": "snapshot_bxgzvjun",
+          "capturedAt": "2025-12-01T06:19:30Z"
+        },
+        {
+          "version": 10,
+          "snapshotId": "snapshot_75gexwe9",
+          "capturedAt": "2025-12-02T02:01:34Z"
+        },
+        {
+          "version": 11,
+          "snapshotId": "snapshot_r8vql9h8",
+          "capturedAt": "2025-12-02T22:40:18Z"
+        },
+        {
+          "version": 12,
+          "snapshotId": "snapshot_xrlir8y6",
+          "capturedAt": "2025-12-02T23:03:02Z"
+        },
+        {
+          "version": 13,
+          "snapshotId": "snapshot_6b7swr45",
+          "capturedAt": "2025-12-03T08:44:36Z"
+        },
+        {
+          "version": 14,
+          "snapshotId": "snapshot_hszt8v6s",
+          "capturedAt": "2025-12-04T01:19:39Z"
+        },
+        {
+          "version": 15,
+          "snapshotId": "snapshot_6az195xq",
+          "capturedAt": "2025-12-04T01:41:29Z"
+        },
+        {
+          "version": 16,
+          "snapshotId": "snapshot_g6va110f",
+          "capturedAt": "2025-12-04T02:56:35Z"
+        },
+        {
+          "version": 17,
+          "snapshotId": "snapshot_mpzw0j37",
+          "capturedAt": "2025-12-04T06:13:17Z"
+        }
+      ],
+      "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
     },
     {
       "presetId": "6vcpu_24gb_48gb",
