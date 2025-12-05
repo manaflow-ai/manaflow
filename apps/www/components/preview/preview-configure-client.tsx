@@ -495,11 +495,13 @@ export function PreviewConfigureClient({
 
         setFrameworkPreset(result.framework);
         setDetectedPackageManager(result.packageManager);
-        // Only set scripts if user hasn't edited them
-        if (!hasUserEditedScripts) {
-          setMaintenanceScript(result.maintenanceScript);
-          setDevScript(result.devScript);
-        }
+        // Only set scripts if user hasn't already filled them in
+        setMaintenanceScript((current) =>
+          current.trim().length === 0 ? result.maintenanceScript : current
+        );
+        setDevScript((current) =>
+          current.trim().length === 0 ? result.devScript : current
+        );
       } catch (error) {
         console.error("Failed to detect framework:", error);
       } finally {
@@ -514,7 +516,7 @@ export function PreviewConfigureClient({
     return () => {
       cancelled = true;
     };
-  }, [repo, hasInitialScripts, hasUserEditedScripts]);
+  }, [repo, hasInitialScripts]);
 
   const persistentIframeManager = iframeManager;
 
