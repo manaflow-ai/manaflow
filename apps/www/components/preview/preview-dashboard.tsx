@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useId } from "react";
 import {
-  ArrowLeft,
   Camera,
   CheckCircle2,
   ChevronDown,
@@ -3020,14 +3019,6 @@ function PreviewDashboardInner({
     <div className="w-full max-w-5xl px-6 py-10 font-sans">
       {/* Header */}
       <div className="pb-10">
-        <Link
-          href="https://cmux.dev"
-          className="inline-flex items-center gap-2 text-sm text-neutral-400 transition hover:text-white pb-5"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Back to cmux</span>
-        </Link>
-
         <h1 className="text-3xl font-semibold tracking-tight text-white pb-2">
           Screenshot previews for GitHub PRs
         </h1>
