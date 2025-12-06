@@ -538,6 +538,14 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             );
 
             if (previewConfig) {
+              // Skip if preview config is disabled or paused
+              if (previewConfig.status === "disabled" || previewConfig.status === "paused") {
+                console.log("[preview-jobs] Preview config is disabled/paused, skipping", {
+                  repoFullName,
+                  previewConfigId: previewConfig._id,
+                  status: previewConfig.status,
+                });
+              } else {
               const prNumber = Number(prPayload.pull_request?.number ?? 0);
               const prUrl = prPayload.pull_request?.html_url ?? null;
               const headSha = prPayload.pull_request?.head?.sha ?? null;
@@ -664,6 +672,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     error,
                   });
                 }
+              }
               }
             } else {
               console.log("[preview-jobs] No preview config found for repo", {
