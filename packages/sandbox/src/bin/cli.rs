@@ -2571,7 +2571,12 @@ fn format_bytes(bytes: u64) -> String {
 
 /// Get the container name for sandbox server
 fn get_container_name() -> String {
-    std::env::var("CMUX_CONTAINER_NAME").unwrap_or_else(|_| DMUX_DEFAULT_CONTAINER.to_string())
+    let default_container = if is_dmux() {
+        DMUX_DEFAULT_CONTAINER
+    } else {
+        "cmux-sandbox-dev-run"
+    };
+    std::env::var("CONTAINER_NAME").unwrap_or_else(|_| default_container.to_string())
 }
 
 /// Scan the sandbox data volume for directories and return info about each
