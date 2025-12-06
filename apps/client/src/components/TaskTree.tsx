@@ -806,11 +806,14 @@ function TaskTreeInner({
       }
     }
 
-    return task.isCompleted ? (
-      <CheckCircle className="w-3 h-3 text-green-500" />
-    ) : (
-      <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />
-    );
+    if (task.isCompleted) {
+      // If crown evaluation errored (all runs failed), show red X
+      if (task.crownEvaluationStatus === "error") {
+        return <XCircle className="w-3 h-3 text-red-500" />;
+      }
+      return <CheckCircle className="w-3 h-3 text-green-500" />;
+    }
+    return <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />;
   })();
 
   const shouldShowTaskArchiveOverlay =
