@@ -411,14 +411,15 @@ export const postPreviewComment = internalAction({
       const commentSections: string[] = ["## Preview Screenshots"];
 
       // Build links row (under the heading)
+      // Use HTML anchor tags with target="_blank" to open links in new tabs
       const linkParts: string[] = [];
       if (workspaceUrl) {
-        linkParts.push(`[Open Workspace (1 hr expiry)](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
+        linkParts.push(`<a href="${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace" target="_blank">Open Workspace (1 hr expiry)</a>`);
       }
       if (devServerUrl) {
-        linkParts.push(`[Open Dev Browser (1 hr expiry)](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
+        linkParts.push(`<a href="${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser" target="_blank">Open Dev Browser (1 hr expiry)</a>`);
       }
-      linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap)`);
+      linkParts.push(`<a href="https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap" target="_blank">Open Diff Heatmap</a>`);
 
       if (linkParts.length > 0) {
         commentSections.push(linkParts.join(" · "));
