@@ -931,6 +931,51 @@ export const getById = internalQuery({
   },
 });
 
+/**
+ * Find a taskRun that has screenshots and matches the given branch and repo.
+ * Used when a PR is opened to find existing cmux tasks that already captured screenshots.
+ * Returns the most recent matching taskRun with screenshots, or null if none found.
+ */
+export const findWithScreenshotsByBranchAndRepo = internalQuery({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+    branchName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Normalize repo name for comparison
+    const normalizedRepo = args.repoFullName.trim().replace(/\.git$/i, "").toLowerCase();
+
+    // Query recent taskRuns for this team that have screenshots
+    // We use the by_team_user index and filter by other criteria
+    // This is not the most efficient query, but it's acceptable for this use case
+    const recentRuns = await ctx.db
+      .query("taskRuns")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("teamId"), args.teamId),
+          q.neq(q.field("latestScreenshotSetId"), undefined),
+          q.eq(q.field("newBranch"), args.branchName)
+        )
+      )
+      .order("desc")
+      .take(10);
+
+    // Find the first taskRun whose task has a matching projectFullName (repo)
+    for (const run of recentRuns) {
+      const task = await ctx.db.get(run.taskId);
+      if (task?.projectFullName) {
+        const taskRepo = task.projectFullName.trim().replace(/\.git$/i, "").toLowerCase();
+        if (taskRepo === normalizedRepo) {
+          return run;
+        }
+      }
+    }
+
+    return null;
+  },
+});
+
 export const updateStatusPublic = authMutation({
   args: {
     teamSlugOrId: v.string(),

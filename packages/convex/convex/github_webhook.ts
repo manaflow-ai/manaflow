@@ -15,6 +15,7 @@ import { hmacSha256, safeEqualHex, sha256Hex } from "../_shared/crypto";
 import { bytesToHex } from "../_shared/encoding";
 import { streamInstallationRepositories } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 
 const DEBUG_FLAGS = {
@@ -604,49 +605,93 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       );
                     }
                   } else {
-                    // Create task and taskRun for screenshot collection
-                    // The existing worker infrastructure will pick this up and process it
-                    const taskId = await _ctx.runMutation(
-                      internal.tasks.createForPreview,
-                      {
-                        teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                    // Check if there's an existing cmux task with screenshots for this branch
+                    // This handles the case where a user started a task from cmux, collected screenshots,
+                    // and then later opened a PR for the branch
+                    let taskRunId: Id<"taskRuns"> | null = null;
+                    let taskId: Id<"tasks"> | null = null;
+                    let reusingExistingTask = false;
+
+                    if (headRef) {
+                      const existingTaskRun = await _ctx.runQuery(
+                        internal.taskRuns.findWithScreenshotsByBranchAndRepo,
+                        {
+                          teamId: previewConfig.teamId,
+                          repoFullName,
+                          branchName: headRef,
+                        },
+                      );
+
+                      if (existingTaskRun) {
+                        console.log("[preview-jobs] Found existing cmux task with screenshots for branch", {
+                          runId,
+                          existingTaskRunId: existingTaskRun._id,
+                          existingTaskId: existingTaskRun.taskId,
+                          screenshotSetId: existingTaskRun.latestScreenshotSetId,
+                          branchName: headRef,
+                        });
+
+                        taskRunId = existingTaskRun._id;
+                        taskId = existingTaskRun.taskId;
+                        reusingExistingTask = true;
+
+                        // Link the existing taskRun to the preview run
+                        await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
+                          previewRunId: runId,
+                          taskRunId,
+                        });
+                      }
+                    }
+
+                    if (!taskRunId) {
+                      // No existing task with screenshots found, create new task and taskRun
+                      // The existing worker infrastructure will pick this up and process it
+                      taskId = await _ctx.runMutation(
+                        internal.tasks.createForPreview,
+                        {
+                          teamId: previewConfig.teamId,
+                          userId: previewConfig.createdByUserId,
+                          previewRunId: runId,
+                          repoFullName,
+                          prNumber,
+                          prUrl,
+                          headSha,
+                          baseBranch: previewConfig.repoDefaultBranch,
+                        },
+                      );
+
+                      const result = await _ctx.runMutation(
+                        internal.taskRuns.createForPreview,
+                        {
+                          taskId,
+                          teamId: previewConfig.teamId,
+                          userId: previewConfig.createdByUserId,
+                          prUrl,
+                          environmentId: previewConfig.environmentId,
+                          newBranch: headRef,
+                        },
+                      );
+
+                      taskRunId = result.taskRunId;
+
+                      // Link the taskRun to the preview run
+                      await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
                         previewRunId: runId,
+                        taskRunId,
+                      });
+
+                      console.log("[preview-jobs] Task and taskRun created", {
+                        runId,
+                        taskId,
+                        taskRunId,
                         repoFullName,
                         prNumber,
-                        prUrl,
-                        headSha,
-                        baseBranch: previewConfig.repoDefaultBranch,
-                      },
-                    );
-
-                    const { taskRunId } = await _ctx.runMutation(
-                      internal.taskRuns.createForPreview,
-                      {
-                        taskId,
-                        teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
-                        prUrl,
-                        environmentId: previewConfig.environmentId,
-                        newBranch: headRef,
-                      },
-                    );
-
-                    // Link the taskRun to the preview run
-                    await _ctx.runMutation(internal.previewRuns.linkTaskRun, {
-                      previewRunId: runId,
-                      taskRunId,
-                    });
-
-                    console.log("[preview-jobs] Task and taskRun created", {
-                      runId,
-                      taskId,
-                      taskRunId,
-                      repoFullName,
-                      prNumber,
-                    });
+                      });
+                    }
 
                     // Trigger the preview job dispatch
+                    // If we're reusing an existing task with screenshots, runPreviewJob will
+                    // detect the screenshots and skip the Morph instance launch
                     await _ctx.scheduler.runAfter(
                       0,
                       internal.preview_jobs.requestDispatch,
@@ -655,6 +700,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
 
                     console.log("[preview-jobs] Preview job dispatch scheduled", {
                       runId,
+                      reusingExistingTask,
                     });
                   }
                 } catch (error) {

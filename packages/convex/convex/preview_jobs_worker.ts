@@ -668,6 +668,79 @@ export async function runPreviewJob(
   const { run, config } = payload;
   let taskRunId: Id<"taskRuns"> | null = run.taskRunId ?? null;
 
+  // Check if the linked taskRun already has screenshots
+  // This happens when a task was started from cmux and already collected screenshots
+  // In this case, we skip the expensive Morph instance launch and just post the GitHub comment
+  if (taskRunId) {
+    const existingTaskRun = await ctx.runQuery(internal.taskRuns.getById, { id: taskRunId });
+    if (existingTaskRun?.latestScreenshotSetId) {
+      console.log("[preview-jobs] TaskRun already has screenshots, skipping Morph instance launch", {
+        previewRunId,
+        taskRunId,
+        screenshotSetId: existingTaskRun.latestScreenshotSetId,
+      });
+
+      // Update preview run with the existing screenshot set
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId,
+        status: "completed",
+        screenshotSetId: existingTaskRun.latestScreenshotSetId,
+      });
+
+      // Post GitHub comment if we have installation ID
+      if (run.repoInstallationId) {
+        const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+          teamId: run.teamId,
+        });
+        const teamSlug = team?.slug ?? run.teamId;
+        const workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${existingTaskRun.taskId}`;
+        const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${existingTaskRun.taskId}/run/${taskRunId}/browser`;
+
+        try {
+          const commentResult = await ctx.runAction(
+            internal.github_pr_comments.postPreviewComment,
+            {
+              installationId: run.repoInstallationId,
+              repoFullName: run.repoFullName,
+              prNumber: run.prNumber,
+              screenshotSetId: existingTaskRun.latestScreenshotSetId,
+              previewRunId,
+              workspaceUrl,
+              devServerUrl,
+            }
+          );
+
+          if (commentResult.ok) {
+            console.log("[preview-jobs] Successfully posted GitHub comment for existing screenshots", {
+              previewRunId,
+              taskRunId,
+              commentUrl: commentResult.commentUrl,
+            });
+          } else {
+            console.error("[preview-jobs] Failed to post GitHub comment for existing screenshots", {
+              previewRunId,
+              taskRunId,
+              error: commentResult.error,
+            });
+          }
+        } catch (error) {
+          console.error("[preview-jobs] Error posting GitHub comment for existing screenshots", {
+            previewRunId,
+            taskRunId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else {
+        console.log("[preview-jobs] No GitHub installation ID, skipping comment for existing screenshots", {
+          previewRunId,
+          taskRunId,
+        });
+      }
+
+      return;
+    }
+  }
+
   if (!config.environmentId) {
     console.warn("[preview-jobs] Preview config missing environmentId; skipping run", {
       previewRunId,
