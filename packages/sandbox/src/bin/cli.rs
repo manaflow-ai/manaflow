@@ -2769,8 +2769,7 @@ async fn handle_prune_volumes(
     );
 
     // Determine mode: interactive TUI, --all, or simple prompt
-    let use_interactive =
-        args.interactive || (!args.all && std::io::stdin().is_terminal() && orphaned.len() > 1);
+    let use_interactive = args.interactive || (!args.all && std::io::stdin().is_terminal());
 
     let to_delete: Vec<&OrphanedDir> = if args.all {
         orphaned.clone()
