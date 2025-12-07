@@ -250,6 +250,14 @@ export default defineSchema({
       v.object({
         maintenanceScript: v.string(),
         devScript: v.string(),
+        envVars: v.optional(
+          v.array(
+            v.object({
+              key: v.string(),
+              value: v.string(),
+            })
+          )
+        ),
       })
     ),
   })

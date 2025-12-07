@@ -31,14 +31,6 @@ function SaveIcon({ className }: { className?: string }) {
   );
 }
 
-function CheckIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
-}
-
 function LoaderIcon({ className }: { className?: string }) {
   return (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -84,25 +76,21 @@ function ConfigureFlyout({ repoId, repoName }: { repoId: Id<"repos">; repoName: 
               Set up scripts and environment variables.
             </p>
           </div>
-          {/* Save button - only show when there are changes or saving */}
-          {(saveState.hasChanges || saveState.saving || saveState.saved) && (
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saveState.saving || !saveState.hasChanges}
-              className="flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-blue-400 hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-              title={saveState.saved ? "Saved" : "Save changes"}
-            >
-              {saveState.saving ? (
-                <LoaderIcon className="h-3.5 w-3.5 animate-spin" />
-              ) : saveState.saved ? (
-                <CheckIcon className="h-3.5 w-3.5" />
-              ) : (
-                <SaveIcon className="h-3.5 w-3.5" />
-              )}
-              <span>{saveState.saving ? "Saving" : saveState.saved ? "Saved" : "Save"}</span>
-            </button>
-          )}
+          {/* Save button - always visible, disabled when no changes */}
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saveState.saving || !saveState.hasChanges}
+            className="flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-blue-400 hover:bg-neutral-800 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed text-sm"
+            title={saveState.hasChanges ? "Save changes" : "No changes to save"}
+          >
+            {saveState.saving ? (
+              <LoaderIcon className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <SaveIcon className="h-3.5 w-3.5" />
+            )}
+            <span>{saveState.saving ? "Saving..." : saveState.hasChanges ? "Save" : "Saved"}</span>
+          </button>
         </div>
       </div>
       {/* Scrollable content */}

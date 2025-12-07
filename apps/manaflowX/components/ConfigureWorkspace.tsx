@@ -123,12 +123,81 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
   const [devOpen, setDevOpen] = useState(true);
   const [envOpen, setEnvOpen] = useState(true);
 
+  // Track which value input is currently focused (to show it even in hidden mode)
+  const [focusedValueIndex, setFocusedValueIndex] = useState<number | null>(null);
+
+  // Parse .env content and add to env vars
+  const parseEnvContent = useCallback((content: string) => {
+    const lines = content.split("\n");
+    const newVars: EnvVar[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Skip empty lines and comments
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      // Match KEY=VALUE pattern (handle quotes)
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (match) {
+        const key = match[1];
+        let value = match[2];
+        // Remove surrounding quotes if present
+        if ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        newVars.push({ key, value });
+      }
+    }
+
+    return newVars;
+  }, []);
+
+  // Handle paste in key input - detect .env content
+  const handleKeyPaste = useCallback((index: number, e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = e.clipboardData.getData("text");
+
+    // Check if this looks like .env content (multiple lines or KEY=VALUE format)
+    if (pastedText.includes("\n") || pastedText.match(/^[A-Za-z_][A-Za-z0-9_]*=.+/)) {
+      e.preventDefault();
+      const parsedVars = parseEnvContent(pastedText);
+
+      if (parsedVars.length > 0) {
+        // Replace current row and add new ones
+        const newEnvVars = [...envVars];
+        newEnvVars.splice(index, 1, ...parsedVars);
+        // Remove any trailing empty rows, but keep at least one
+        while (newEnvVars.length > 1 &&
+               newEnvVars[newEnvVars.length - 1].key === "" &&
+               newEnvVars[newEnvVars.length - 1].value === "") {
+          newEnvVars.pop();
+        }
+        setEnvVars(newEnvVars);
+        setHasChanges(true);
+        setSaved(false);
+      }
+    }
+  }, [envVars, parseEnvContent]);
+
   // Load from existing repo scripts
   useEffect(() => {
     if (repo?.scripts) {
       setMaintenanceScript(repo.scripts.maintenanceScript || "");
       setDevScript(repo.scripts.devScript || "");
+      if (repo.scripts.envVars && repo.scripts.envVars.length > 0) {
+        setEnvVars(repo.scripts.envVars);
+      } else {
+        setEnvVars([{ key: "", value: "" }]);
+      }
+    } else {
+      // Reset to defaults when no scripts exist
+      setMaintenanceScript("");
+      setDevScript("");
+      setEnvVars([{ key: "", value: "" }]);
     }
+    // Reset change tracking when loading new data
+    setHasChanges(false);
+    setSaved(false);
   }, [repo?.scripts]);
 
   // Track changes
@@ -171,11 +240,16 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
+      // Filter out empty env vars before saving
+      const filteredEnvVars = envVars.filter(
+        (env) => env.key.trim() !== "" || env.value.trim() !== ""
+      );
       await updateRepoScripts({
         repoId,
         scripts: {
           maintenanceScript,
           devScript,
+          envVars: filteredEnvVars.length > 0 ? filteredEnvVars : undefined,
         },
       });
       setHasChanges(false);
@@ -185,7 +259,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
     } finally {
       setSaving(false);
     }
-  }, [repoId, maintenanceScript, devScript, updateRepoScripts]);
+  }, [repoId, maintenanceScript, devScript, envVars, updateRepoScripts]);
 
   // Expose save state and function via ref
   useImperativeHandle(ref, () => ({
@@ -282,26 +356,28 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
               Injected when scripts run. Paste from .env files.
             </p>
           </div>
-          <ChevronDownIcon
-            className={`h-4 w-4 text-neutral-500 transition-transform shrink-0 ml-2 ${
-              envOpen ? "" : "-rotate-90"
-            }`}
-          />
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            {/* Reveal button - stop propagation to prevent toggle */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowValues(!showValues);
+              }}
+              className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+            >
+              <EyeIcon className="h-3.5 w-3.5" />
+              <span>{showValues ? "Hide" : "Reveal"}</span>
+            </button>
+            <ChevronDownIcon
+              className={`h-4 w-4 text-neutral-500 transition-transform ${
+                envOpen ? "" : "-rotate-90"
+              }`}
+            />
+          </div>
         </button>
         {envOpen && (
           <div className="mt-2">
-            {/* Reveal button */}
-            <div className="flex justify-end mb-2">
-              <button
-                type="button"
-                onClick={() => setShowValues(!showValues)}
-                className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
-              >
-                <EyeIcon className="h-3.5 w-3.5" />
-                <span>{showValues ? "Hide" : "Reveal"}</span>
-              </button>
-            </div>
-
             {/* Table header */}
             <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2 mb-2 text-xs text-neutral-500">
               <span>Key</span>
@@ -322,15 +398,18 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
                     onChange={(e) =>
                       handleEnvVarChange(index, "key", e.target.value)
                     }
+                    onPaste={(e) => handleKeyPaste(index, e)}
                     placeholder="EXAMPLE_KEY"
                     className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                   />
                   <input
-                    type={showValues ? "text" : "password"}
+                    type={showValues || focusedValueIndex === index ? "text" : "password"}
                     value={envVar.value}
                     onChange={(e) =>
                       handleEnvVarChange(index, "value", e.target.value)
                     }
+                    onFocus={() => setFocusedValueIndex(index)}
+                    onBlur={() => setFocusedValueIndex(null)}
                     placeholder="secret-value"
                     className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                   />

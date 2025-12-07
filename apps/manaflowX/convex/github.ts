@@ -327,6 +327,14 @@ export const updateRepoScripts = mutation({
     scripts: v.object({
       maintenanceScript: v.string(),
       devScript: v.string(),
+      envVars: v.optional(
+        v.array(
+          v.object({
+            key: v.string(),
+            value: v.string(),
+          })
+        )
+      ),
     }),
   },
   handler: async (ctx, { repoId, scripts }) => {
