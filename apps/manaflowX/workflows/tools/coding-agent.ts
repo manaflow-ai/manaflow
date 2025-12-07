@@ -8,6 +8,7 @@ import { dirname, join } from "path";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { fetchInstallationAccessToken } from "../../convex/_shared/githubApp";
 
 // =============================================================================
 // Hash Function (must match convex/codingAgent.ts)
@@ -77,6 +78,112 @@ async function createJWT(payload: Record<string, unknown>, secret: string): Prom
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 // =============================================================================
+// Repository Cloning Helpers
+// =============================================================================
+
+interface RepoCloneConfig {
+  gitRemote: string;           // e.g., "https://github.com/owner/repo.git"
+  branch: string;              // branch to checkout
+  installationId?: number;     // GitHub App installation ID for private repos
+}
+
+// Get GitHub access token for cloning private repos
+async function getGitHubAccessToken(installationId: number): Promise<string | null> {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_PRIVATE_KEY;
+
+  if (!appId || !privateKey) {
+    console.warn("[coding-agent] GitHub App credentials not configured");
+    return null;
+  }
+
+  return fetchInstallationAccessToken(installationId, appId, privateKey);
+}
+
+// Build authenticated git remote URL
+function buildAuthenticatedRemoteUrl(gitRemote: string, accessToken: string): string {
+  // Convert https://github.com/owner/repo.git to https://x-access-token:TOKEN@github.com/owner/repo.git
+  const url = new URL(gitRemote);
+  url.username = "x-access-token";
+  url.password = accessToken;
+  return url.toString();
+}
+
+// Clone repository and checkout branch in the VM
+async function cloneRepositoryInVM(
+  instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> },
+  config: RepoCloneConfig
+): Promise<void> {
+  const { gitRemote, branch, installationId } = config;
+  const workspacePath = "/workspace";
+
+  console.log(`[coding-agent] Cloning repository: ${gitRemote} branch: ${branch}`);
+
+  // Get authenticated URL if we have an installation ID
+  let cloneUrl = gitRemote;
+  if (installationId) {
+    const accessToken = await getGitHubAccessToken(installationId);
+    if (accessToken) {
+      cloneUrl = buildAuthenticatedRemoteUrl(gitRemote, accessToken);
+      console.log(`[coding-agent] Using authenticated clone URL`);
+    } else {
+      console.warn(`[coding-agent] Could not get access token, attempting public clone`);
+    }
+  }
+
+  // Remove existing workspace contents (the VM may have a placeholder)
+  await instance.exec(`rm -rf ${workspacePath}/*`);
+
+  // Clone with depth 1 (shallow clone for speed)
+  // Pattern from cmux: git clone --depth 1 "${repoUrl}" "${originPath}"
+  const cloneCmd = `git clone --depth 1 "${cloneUrl}" ${workspacePath}`;
+  const cloneResult = await instance.exec(cloneCmd);
+  if (cloneResult.stderr && cloneResult.stderr.includes("fatal:")) {
+    throw new Error(`Failed to clone repository: ${cloneResult.stderr}`);
+  }
+  console.log(`[coding-agent] Clone completed`);
+
+  // Configure git safe directory
+  // Pattern from cmux: git config --global --add safe.directory /workspace
+  await instance.exec(`git config --global --add safe.directory ${workspacePath}`);
+
+  // Set remote HEAD
+  // Pattern from cmux: git remote set-head origin -a
+  await instance.exec(`cd ${workspacePath} && git remote set-head origin -a`);
+
+  // Fetch and checkout the specified branch
+  // Pattern from cmux: git fetch --depth 1 origin +refs/heads/${branch}:refs/remotes/origin/${branch}
+  // Pattern from cmux: git checkout -B ${branch} origin/${branch}
+  if (branch !== "main" && branch !== "master") {
+    console.log(`[coding-agent] Fetching and checking out branch: ${branch}`);
+
+    // Fetch the specific branch
+    const fetchCmd = `cd ${workspacePath} && git fetch --depth 1 origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"`;
+    await instance.exec(fetchCmd);
+
+    // Checkout the branch (create local tracking branch)
+    const checkoutCmd = `cd ${workspacePath} && git checkout -B "${branch}" "origin/${branch}"`;
+    const checkoutResult = await instance.exec(checkoutCmd);
+    if (checkoutResult.stderr && checkoutResult.stderr.includes("fatal:")) {
+      throw new Error(`Failed to checkout branch ${branch}: ${checkoutResult.stderr}`);
+    }
+  } else {
+    // For main/master, just ensure we're on the default branch
+    const defaultBranchResult = await instance.exec(
+      `cd ${workspacePath} && git rev-parse --abbrev-ref HEAD`
+    );
+    console.log(`[coding-agent] On branch: ${defaultBranchResult.stdout.trim()}`);
+  }
+
+  // Pull latest changes (for safety, in case the branch was partially cloned)
+  // Pattern from cmux: git pull --ff-only --depth 1 origin ${branch}
+  const pullCmd = `cd ${workspacePath} && git pull --ff-only --depth 1 origin "${branch}" 2>/dev/null || true`;
+  await instance.exec(pullCmd);
+
+  console.log(`[coding-agent] Repository ready at ${workspacePath}`);
+}
+
+// =============================================================================
 // Coding Agent Tool - Delegates tasks to OpenCode running in Morph VMs
 // =============================================================================
 
@@ -99,6 +206,7 @@ function getLatestSnapshotId(): string {
 // Spawn a Morph VM instance and return the OpenCode URL
 async function spawnCodingVM(options?: {
   onReady?: (instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> }) => Promise<void>;
+  repo?: RepoCloneConfig;
 }): Promise<{
   instanceId: string;
   url: string;
@@ -122,6 +230,11 @@ async function spawnCodingVM(options?: {
   // Run onReady callback if provided (e.g., to write config files)
   if (options?.onReady) {
     await options.onReady(instance);
+  }
+
+  // Clone repository if configuration provided
+  if (options?.repo) {
+    await cloneRepositoryInVM(instance, options.repo);
   }
 
   const service = instance.networking.httpServices.find(
@@ -203,8 +316,29 @@ The agent will complete the task autonomously and return the results.`,
       .describe(
         "Which agent mode to use: 'build' for coding tasks, 'plan' for read-only analysis, 'general' for general questions"
       ),
+    // Repository configuration for cloning
+    repo: z
+      .object({
+        gitRemote: z
+          .string()
+          .describe("Git remote URL, e.g., 'https://github.com/owner/repo.git'"),
+        branch: z
+          .string()
+          .describe("Branch to checkout after cloning"),
+        installationId: z
+          .number()
+          .optional()
+          .describe("GitHub App installation ID for private repos"),
+      })
+      .optional()
+      .describe("Repository to clone into the VM workspace. If not provided, no repository will be cloned."),
   }),
-  execute: async ({ task, context, agent }: { task: string; context?: string; agent: "build" | "plan" | "general" }) => {
+  execute: async ({ task, context, agent, repo }: {
+    task: string;
+    context?: string;
+    agent: "build" | "plan" | "general";
+    repo?: { gitRemote: string; branch: string; installationId?: number };
+  }) => {
     let vm: Awaited<ReturnType<typeof spawnCodingVM>> | null = null;
     let convexSessionId: string | null = null;
 
@@ -265,6 +399,8 @@ The agent will complete the task autonomously and return the results.`,
             console.log(`[coding-agent] Wrote JWT config to VM`);
           }
         },
+        // Pass repository config for cloning
+        repo: repo,
       });
 
       // Create OpenCode client using the official SDK
