@@ -6,6 +6,7 @@ import Link from "next/link";
 import { api } from "../convex/_generated/api";
 import { useState } from "react";
 import { Id } from "../convex/_generated/dataModel";
+import { SessionsByPost } from "../components/SessionView";
 
 type Post = {
   _id: Id<"posts">;
@@ -199,6 +200,11 @@ function ThreadPanel({
           />
         )}
 
+        {/* Show AI sessions for this post */}
+        <div className="px-4">
+          <SessionsByPost postId={thread.root._id} />
+        </div>
+
         {thread.replies.length > 0 && (
           <div className="pl-4">
             {thread.replies.map((reply) => (
@@ -227,7 +233,6 @@ function ThreadPanel({
 export default function Home() {
   const user = useUser();
   const data = useQuery(api.posts.listPosts, { limit: 20 });
-  const createPost = useMutation(api.posts.createPost);
   const [content, setContent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedThread, setSelectedThread] = useState<Id<"posts"> | null>(null);
@@ -236,7 +241,15 @@ export default function Home() {
     if (!content.trim()) return;
     setIsSubmitting(true);
     try {
-      await createPost({ content });
+      // Call the workflow API to create post and generate AI reply
+      const response = await fetch("/api/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to create post");
+      }
       setContent("");
     } catch (error) {
       console.error("Failed to create post:", error);
@@ -336,7 +349,7 @@ export default function Home() {
 
         {/* Thread Panel - Right Column */}
         {selectedThread && (
-          <aside className="w-[400px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
+          <aside className="w-[550px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
             <ThreadPanel
               postId={selectedThread}
               onClose={() => setSelectedThread(null)}

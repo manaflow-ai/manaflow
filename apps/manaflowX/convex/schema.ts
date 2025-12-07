@@ -258,4 +258,162 @@ export default defineSchema({
   })
     .index("by_user_unread", ["userId", "read", "createdAt"])
     .index("by_user", ["userId", "createdAt"]),
+
+  // ---------------------------------------------------------------------------
+  // SESSIONS (AI conversation container)
+  // ---------------------------------------------------------------------------
+  // Groups a series of turns (messages) into a logical conversation
+
+  sessions: defineTable({
+    // Source of the session
+    source: v.union(
+      v.literal("api"), // Vercel AI SDK / API calls
+      v.literal("opencode"), // OpenCode / Claude Code
+      v.literal("workflow") // Internal workflow
+    ),
+
+    // Links to higher-level entities
+    postId: v.optional(v.id("posts")), // If this session produced a post
+    workflowRunId: v.optional(v.string()), // Workflow run ID
+
+    // Status
+    status: v.union(
+      v.literal("active"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+
+    // Model/agent info
+    model: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    agent: v.optional(v.string()),
+
+    // Aggregated token usage
+    tokens: v.optional(
+      v.object({
+        input: v.number(),
+        output: v.number(),
+        reasoning: v.optional(v.number()),
+        cacheRead: v.optional(v.number()),
+        cacheWrite: v.optional(v.number()),
+      })
+    ),
+
+    // Cost (in cents)
+    cost: v.optional(v.number()),
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_post", ["postId"])
+    .index("by_status", ["status", "createdAt"])
+    .index("by_created", ["createdAt"]),
+
+  // ---------------------------------------------------------------------------
+  // TURNS (AI messages with inline parts)
+  // ---------------------------------------------------------------------------
+  // Individual messages in a session, with parts for streaming content
+
+  turns: defineTable({
+    sessionId: v.id("sessions"),
+
+    // Role
+    role: v.union(
+      v.literal("user"),
+      v.literal("assistant"),
+      v.literal("system"),
+      v.literal("tool")
+    ),
+
+    // For tool role turns
+    toolCallId: v.optional(v.string()),
+    toolName: v.optional(v.string()),
+
+    // Status (for streaming)
+    status: v.union(
+      v.literal("pending"),
+      v.literal("streaming"),
+      v.literal("complete"),
+      v.literal("error")
+    ),
+
+    // Inline parts array - granular content pieces
+    parts: v.array(
+      v.object({
+        type: v.union(
+          v.literal("text"),
+          v.literal("reasoning"),
+          v.literal("tool_call"),
+          v.literal("tool_result"),
+          v.literal("file"),
+          v.literal("step_start"),
+          v.literal("step_finish"),
+          v.literal("error")
+        ),
+
+        // Text content (for text, reasoning, error types)
+        text: v.optional(v.string()),
+
+        // Tool call fields
+        toolCallId: v.optional(v.string()),
+        toolName: v.optional(v.string()),
+        toolInput: v.optional(v.any()),
+        toolOutput: v.optional(v.string()),
+        toolStatus: v.optional(
+          v.union(
+            v.literal("pending"),
+            v.literal("running"),
+            v.literal("completed"),
+            v.literal("error")
+          )
+        ),
+
+        // File fields
+        fileUrl: v.optional(v.string()),
+        fileMime: v.optional(v.string()),
+        fileName: v.optional(v.string()),
+
+        // Step token usage (for step_finish)
+        stepTokens: v.optional(
+          v.object({
+            input: v.number(),
+            output: v.number(),
+          })
+        ),
+
+        // Part state
+        isComplete: v.boolean(),
+      })
+    ),
+
+    // Error info (if status is error)
+    error: v.optional(
+      v.object({
+        name: v.string(),
+        message: v.string(),
+      })
+    ),
+
+    // Per-turn token usage
+    tokens: v.optional(
+      v.object({
+        input: v.number(),
+        output: v.number(),
+      })
+    ),
+
+    // Finish reason (for assistant turns)
+    finishReason: v.optional(v.string()),
+
+    // Ordering within session
+    order: v.number(),
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_session", ["sessionId", "order"])
+    .index("by_session_created", ["sessionId", "createdAt"]),
 });
