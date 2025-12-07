@@ -2,10 +2,8 @@ import { tool } from "ai";
 import { z } from "zod";
 import { MorphCloudClient } from "morphcloud";
 import { createOpencodeClient } from "@opencode-ai/sdk";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 import { ConvexHttpClient } from "convex/browser";
+import { getLatestSnapshotId } from "./vm-snapshots";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 
@@ -151,21 +149,6 @@ function updateProgress(
 // =============================================================================
 // Browser Agent Tool - Uses OpenCode with Chrome DevTools MCP
 // =============================================================================
-
-// Load VM snapshot configuration
-function loadVmSnapshots() {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const snapshotsPath = join(__dirname, "../../sandbox/vm-snapshots.json");
-  return JSON.parse(readFileSync(snapshotsPath, "utf-8"));
-}
-
-function getLatestSnapshotId(): string {
-  const snapshotsData = loadVmSnapshots();
-  const preset = snapshotsData.presets[0];
-  const latestVersion = preset.versions[preset.versions.length - 1];
-  return latestVersion.snapshotId;
-}
 
 // Get or spawn a Morph VM instance with browser capabilities
 async function getOrSpawnBrowserVM(options?: {
