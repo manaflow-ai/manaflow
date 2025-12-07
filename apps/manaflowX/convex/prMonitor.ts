@@ -7,6 +7,18 @@ import { xai } from "@ai-sdk/xai";
 import { generateObject } from "ai";
 import { z } from "zod";
 
+// Default system prompt for Grok PR selection
+const DEFAULT_GROK_SYSTEM_PROMPT = `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
+
+Consider:
+- Is it a significant feature or important bug fix?
+- Does the title suggest something notable?
+- Is it from an active/interesting project?
+- Avoid drafts unless they look really interesting
+- Prefer PRs with meaningful labels (bug, feature, enhancement) over chores/docs
+
+Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`;
+
 // GitHub PR type from API
 type GitHubPR = {
   number: number;
@@ -101,6 +113,13 @@ export const testFetchAndPostPR = action({
     const alreadyPostedUrls = extractPRUrlsFromPosts(recentPosts);
     console.log(`[prMonitor] Found ${alreadyPostedUrls.size} recently posted PR URLs to avoid`);
 
+    // Get custom system prompt or use default
+    const customPrompt = await ctx.runQuery(
+      internal.github.getAlgorithmTextSettingInternal,
+      { key: "grokSystemPrompt" }
+    );
+    const systemPrompt = customPrompt || DEFAULT_GROK_SYSTEM_PROMPT;
+
     // Group repos by installation ID
     const reposByInstallation = new Map<number, typeof repos>();
     for (const repo of repos) {
@@ -176,23 +195,14 @@ export const testFetchAndPostPR = action({
         reasoning: z.string().describe("Brief explanation of why this PR is interesting"),
         tweetContent: z.string().describe("The tweet/post content to share about this PR. Should be engaging and concise. Include the PR title and repo name. Do NOT include the URL - it will be added automatically."),
       }),
-      prompt: `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
+      prompt: `${systemPrompt}
 
 IMPORTANT: Do NOT select PRs that have already been posted. PRs marked with "alreadyPosted: true" MUST be skipped.
 
 ${alreadyPostedList.length > 0 ? `Recently posted PR URLs to AVOID:\n${alreadyPostedList.join('\n')}\n` : ''}
 
-Consider:
-- Is it a significant feature or important bug fix?
-- Does the title suggest something notable?
-- Is it from an active/interesting project?
-- Avoid drafts unless they look really interesting
-- Prefer PRs with meaningful labels (bug, feature, enhancement) over chores/docs
-
 PRs to evaluate:
-${JSON.stringify(prSummaries, null, 2)}
-
-Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
+${JSON.stringify(prSummaries, null, 2)}`,
     });
 
     const selectedIndex = result.object.selectedIndex;
@@ -281,6 +291,13 @@ export const cronFetchAndPostPR = internalAction({
     const alreadyPostedUrls = extractPRUrlsFromPosts(recentPosts);
     console.log(`[prMonitor] Found ${alreadyPostedUrls.size} recently posted PR URLs to avoid`);
 
+    // Get custom system prompt or use default
+    const customPrompt = await ctx.runQuery(
+      internal.github.getAlgorithmTextSettingInternal,
+      { key: "grokSystemPrompt" }
+    );
+    const systemPrompt = customPrompt || DEFAULT_GROK_SYSTEM_PROMPT;
+
     // Group repos by installation ID
     const reposByInstallation = new Map<number, typeof repos>();
     for (const repo of repos) {
@@ -357,23 +374,14 @@ export const cronFetchAndPostPR = internalAction({
         reasoning: z.string().describe("Brief explanation of why this PR is interesting"),
         tweetContent: z.string().describe("The tweet/post content to share about this PR. Should be engaging and concise. Include the PR title and repo name. Do NOT include the URL - it will be added automatically."),
       }),
-      prompt: `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
+      prompt: `${systemPrompt}
 
 IMPORTANT: Do NOT select PRs that have already been posted. PRs marked with "alreadyPosted: true" MUST be skipped.
 
 ${alreadyPostedList.length > 0 ? `Recently posted PR URLs to AVOID:\n${alreadyPostedList.join('\n')}\n` : ''}
 
-Consider:
-- Is it a significant feature or important bug fix?
-- Does the title suggest something notable?
-- Is it from an active/interesting project?
-- Avoid drafts unless they look really interesting
-- Prefer PRs with meaningful labels (bug, feature, enhancement) over chores/docs
-
 PRs to evaluate:
-${JSON.stringify(prSummaries, null, 2)}
-
-Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
+${JSON.stringify(prSummaries, null, 2)}`,
     });
 
     const selectedIndex = result.object.selectedIndex;

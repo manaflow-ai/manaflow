@@ -3,10 +3,21 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
-const apps = [
+const tabs = [
+  {
+    id: "general",
+    href: "/algorithm",
+    label: "General",
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
+  },
   {
     id: "github",
-    href: "/algorithm",
+    href: "/algorithm/github",
     label: "GitHub",
     icon: (
       <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -14,13 +25,6 @@ const apps = [
       </svg>
     ),
   },
-  // Future apps can be added here
-  // {
-  //   id: "twitter",
-  //   href: "/algorithm/twitter",
-  //   label: "Twitter",
-  //   icon: <TwitterIcon />,
-  // },
 ]
 
 export default function AlgorithmLayout({
@@ -35,27 +39,27 @@ export default function AlgorithmLayout({
       {/* Header */}
       <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-sm border-b border-gray-800">
         <div className="px-4 py-4">
-          <h1 className="text-xl font-bold">Apps</h1>
+          <h1 className="text-xl font-bold">Algorithm</h1>
         </div>
 
-        {/* App tabs */}
+        {/* Tabs */}
         <div className="flex px-4 gap-1">
-          {apps.map((app) => {
-            const isActive = app.href === "/algorithm"
+          {tabs.map((tab) => {
+            const isActive = tab.href === "/algorithm"
               ? pathname === "/algorithm"
-              : pathname.startsWith(app.href)
+              : pathname.startsWith(tab.href)
             return (
               <Link
-                key={app.id}
-                href={app.href}
+                key={tab.id}
+                href={tab.href}
                 className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                   isActive
                     ? "border-blue-500 text-white"
                     : "border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-900/50"
                 }`}
               >
-                {app.icon}
-                {app.label}
+                {tab.icon}
+                {tab.label}
               </Link>
             )
           })}

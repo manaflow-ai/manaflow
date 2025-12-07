@@ -557,3 +557,58 @@ export const toggleAlgorithmSetting = mutation({
     }
   },
 });
+
+// ---------------------------------------------------------------------------
+// ALGORITHM TEXT SETTINGS
+// ---------------------------------------------------------------------------
+
+// Get algorithm text setting by key
+export const getAlgorithmTextSetting = query({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmTextSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    return setting?.value ?? null;
+  },
+});
+
+// Internal query to get algorithm text setting (for cron job)
+export const getAlgorithmTextSettingInternal = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmTextSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    return setting?.value ?? null;
+  },
+});
+
+// Set algorithm text setting
+export const setAlgorithmTextSetting = mutation({
+  args: { key: v.string(), value: v.string() },
+  handler: async (ctx, { key, value }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const existing = await ctx.db
+      .query("algorithmTextSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    const now = Date.now();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { value, updatedAt: now });
+    } else {
+      await ctx.db.insert("algorithmTextSettings", {
+        key,
+        value,
+        updatedAt: now,
+      });
+    }
+    return { value };
+  },
+});

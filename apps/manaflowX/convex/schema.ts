@@ -854,4 +854,14 @@ export default defineSchema({
     value: v.boolean(), // Setting value
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
+
+  // ---------------------------------------------------------------------------
+  // ALGORITHM TEXT SETTINGS (text-based settings like prompts)
+  // ---------------------------------------------------------------------------
+
+  algorithmTextSettings: defineTable({
+    key: v.string(), // Setting key (e.g., "grokSystemPrompt")
+    value: v.string(), // Text value
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
 });

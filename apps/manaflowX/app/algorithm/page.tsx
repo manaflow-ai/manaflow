@@ -1,149 +1,52 @@
 "use client"
 
-import { useQuery, useMutation, useAction } from "convex/react"
+import { useQuery, useMutation } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
-import { useState, useCallback, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { api } from "../../convex/_generated/api"
-import { Id } from "../../convex/_generated/dataModel"
 
-function formatTimeAgo(timestamp: number | undefined): string {
-  if (!timestamp) return "Never"
-  const seconds = Math.floor((Date.now() - timestamp) / 1000)
-
-  if (seconds < 60) return "Just now"
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`
-  return new Date(timestamp).toLocaleDateString()
-}
-
-function RepoRow({
-  repo,
-  onToggle,
-}: {
-  repo: {
-    _id: Id<"repos">
-    fullName: string
-    org: string
-    name: string
-    visibility?: "public" | "private"
-    lastPushedAt?: number
-    isMonitored?: boolean
-  }
-  onToggle: () => void
-}) {
-  const isMonitored = repo.isMonitored ?? false
-
-  return (
-    <div className="flex items-center justify-between py-3 px-4 hover:bg-gray-900/50 transition-colors">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
-          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-          </svg>
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-white truncate">{repo.fullName}</span>
-            {repo.visibility === "private" && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded flex-shrink-0">
-                private
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-gray-500">{formatTimeAgo(repo.lastPushedAt)}</p>
-        </div>
-      </div>
-      <button
-        onClick={onToggle}
-        className={`w-10 h-5 rounded-full transition-colors relative flex-shrink-0 ${
-          isMonitored ? "bg-blue-600" : "bg-gray-700"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-            isMonitored ? "left-5" : "left-0.5"
-          }`}
-        />
-      </button>
-    </div>
-  )
-}
-
-function GitHubContent() {
+function GeneralContent() {
   const user = useUser()
-  const repos = useQuery(api.github.getReposSortedByActivity)
-  const monitoredRepos = useQuery(api.github.getMonitoredRepos)
-  const toggleMonitoring = useMutation(api.github.toggleRepoMonitoring)
-  const testFetchPR = useAction(api.prMonitor.testFetchAndPostPR)
-  const mintState = useMutation(api.github_app.mintInstallState)
+  const grokSystemPrompt = useQuery(api.github.getAlgorithmTextSetting, { key: "grokSystemPrompt" })
+  const setAlgorithmTextSetting = useMutation(api.github.setAlgorithmTextSetting)
 
-  // Algorithm settings
-  const prMonitorEnabled = useQuery(api.github.getAlgorithmSetting, { key: "prMonitorEnabled" })
-  const toggleAlgorithmSetting = useMutation(api.github.toggleAlgorithmSetting)
+  const [promptValue, setPromptValue] = useState("")
+  const [isSaving, setIsSaving] = useState(false)
+  const [hasChanges, setHasChanges] = useState(false)
 
-  const [testStatus, setTestStatus] = useState<{
-    loading: boolean
-    result?: { success: boolean; message: string; pr?: { title: string; url: string; repo: string } }
-  }>({ loading: false })
+  const defaultPrompt = `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
 
-  // GitHub App installation
-  const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
-  const installNewUrl = githubAppSlug
-    ? `https://github.com/apps/${githubAppSlug}/installations/new`
-    : null
+Consider:
+- Is it a significant feature or important bug fix?
+- Does the title suggest something notable?
+- Is it from an active/interesting project?
+- Avoid drafts unless they look really interesting
+- Prefer PRs with meaningful labels (bug, feature, enhancement) over chores/docs
 
-  const handleInstallApp = useCallback(async () => {
-    if (!installNewUrl) {
-      alert("GitHub App not configured")
-      return
-    }
+Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`
 
-    try {
-      const returnUrl = window.location.href
-      const { state } = await mintState({ returnUrl })
-      const sep = installNewUrl.includes("?") ? "&" : "?"
-      const url = `${installNewUrl}${sep}state=${encodeURIComponent(state)}`
-
-      // Open in a centered popup
-      const width = 980
-      const height = 780
-      const left = Math.max(0, (window.outerWidth - width) / 2 + window.screenX)
-      const top = Math.max(0, (window.outerHeight - height) / 2 + window.screenY)
-      const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
-
-      window.open(url, "github-install", features)
-    } catch (err) {
-      console.error("Failed to start GitHub install:", err)
-      alert("Failed to start installation. Please try again.")
-    }
-  }, [installNewUrl, mintState])
-
-  // Listen for popup completion
+  // Initialize prompt value when data loads
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const expectedOrigin = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
-      if (event.origin !== expectedOrigin) return
-      // Convex queries will auto-update
+    if (grokSystemPrompt !== undefined) {
+      setPromptValue(grokSystemPrompt || defaultPrompt)
     }
-    window.addEventListener("message", handleMessage)
-    return () => window.removeEventListener("message", handleMessage)
-  }, [])
+  }, [grokSystemPrompt, defaultPrompt])
 
-  const handleTestFetch = async () => {
-    setTestStatus({ loading: true })
+  const handleChange = (value: string) => {
+    setPromptValue(value)
+    setHasChanges(value !== (grokSystemPrompt || defaultPrompt))
+  }
+
+  const handleSave = async () => {
+    setIsSaving(true)
     try {
-      const result = await testFetchPR()
-      setTestStatus({ loading: false, result })
+      await setAlgorithmTextSetting({ key: "grokSystemPrompt", value: promptValue })
+      setHasChanges(false)
     } catch (error) {
-      setTestStatus({
-        loading: false,
-        result: {
-          success: false,
-          message: error instanceof Error ? error.message : "Unknown error",
-        },
-      })
+      console.error("Failed to save prompt:", error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -163,140 +66,38 @@ function GitHubContent() {
     )
   }
 
-  if (!repos) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="flex items-center gap-2 text-gray-400">
-          <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
-          <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" style={{ animationDelay: "0.2s" }} />
-          <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" style={{ animationDelay: "0.4s" }} />
-        </div>
-      </div>
-    )
-  }
-
-  const monitoredCount = monitoredRepos?.length ?? 0
-
   return (
-    <div className="max-w-2xl mx-auto">
-      {/* Auto-Post Control */}
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-white">PR Auto-Post</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Post interesting PRs to feed every minute
-            </p>
-          </div>
+    <div className="flex flex-col h-[calc(100vh-120px)]">
+      {/* Grok System Prompt */}
+      <div className="p-4 flex flex-col flex-1">
+        <div className="mb-3">
+          <h3 className="font-medium text-white">Grok System Prompt</h3>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Customize how Grok selects and writes about content
+          </p>
+        </div>
+
+        <textarea
+          value={promptValue}
+          onChange={(e) => handleChange(e.target.value)}
+          className="w-full flex-1 bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+          placeholder="Enter the system prompt for Grok..."
+        />
+
+        <div className="flex justify-end mt-3">
           <button
-            onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
-            disabled={monitoredCount === 0}
-            className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed ${
-              prMonitorEnabled ? "bg-blue-600" : "bg-gray-700"
-            }`}
+            onClick={handleSave}
+            disabled={isSaving || !hasChanges || !promptValue.trim()}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            <span
-              className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                prMonitorEnabled ? "left-6" : "left-1"
-              }`}
-            />
+            {isSaving ? "Saving..." : "Save"}
           </button>
         </div>
-
-        {prMonitorEnabled && (
-          <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            Active
-          </div>
-        )}
-      </div>
-
-      {/* Manual Test */}
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-white">Manual Post</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Fetch and post a PR now
-            </p>
-          </div>
-          <button
-            onClick={handleTestFetch}
-            disabled={testStatus.loading || monitoredCount === 0}
-            className="px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {testStatus.loading ? "Posting..." : "Post PR"}
-          </button>
-        </div>
-
-        {testStatus.result && (
-          <div className={`mt-3 text-sm ${testStatus.result.success ? "text-green-400" : "text-red-400"}`}>
-            {testStatus.result.message}
-          </div>
-        )}
-      </div>
-
-      {/* Repositories */}
-      <div>
-        <div className="px-4 py-3 border-b border-gray-800">
-          <div className="flex items-center justify-between">
-            <h3 className="font-medium text-white">Repositories</h3>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-500">
-                {monitoredCount} of {repos.length} monitored
-              </span>
-              {installNewUrl && (
-                <button
-                  onClick={handleInstallApp}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-sm text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add repos
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {repos.length === 0 ? (
-          <div className="p-8 text-center">
-            <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-gray-800 flex items-center justify-center">
-              <svg className="w-6 h-6 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-              </svg>
-            </div>
-            <p className="text-gray-400 mb-1">No repositories connected</p>
-            <p className="text-sm text-gray-500 mb-4">Connect your GitHub account to get started</p>
-            {installNewUrl && (
-              <button
-                onClick={handleInstallApp}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-white text-black font-medium rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                </svg>
-                Connect GitHub
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-800/50">
-            {repos.map((repo) => (
-              <RepoRow
-                key={repo._id}
-                repo={repo}
-                onToggle={() => toggleMonitoring({ repoId: repo._id })}
-              />
-            ))}
-          </div>
-        )}
       </div>
     </div>
   )
 }
 
-export default function GitHubPage() {
-  return <GitHubContent />
+export default function GeneralPage() {
+  return <GeneralContent />
 }
