@@ -1,4 +1,10 @@
 import { MorphCloudClient } from "morphcloud";
+import { readFileSync, writeFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const client = new MorphCloudClient({
   apiKey: process.env.MORPH_API_KEY!,
@@ -188,9 +194,41 @@ EOF`);
   const glibcVerify = await instance.exec("ldd --version | head -1");
   console.log("Glibc version:", glibcVerify.stdout);
 
-  // Create workspace directory
-  console.log("Creating workspace directory...");
+  // Install global CLI tools
+  console.log("Installing global CLI tools...");
+  const globalInstall = await instance.exec(
+    "bun add -g @anthropic-ai/claude-code @openai/codex-cli @openai/codex-sdk @google/gemini-cli@preview",
+    { timeout: 300000 }
+  );
+  console.log("Global install stdout:", globalInstall.stdout);
+  if (globalInstall.stderr) console.log("Global install stderr:", globalInstall.stderr);
+
+  // Copy grok-code binary and symlink to PATH
+  console.log("Setting up grok-code binary...");
+  await instance.exec("mkdir -p /root/grok-code");
+  const ssh = await instance.ssh();
+  const grokBinaryPath = join(__dirname, "worker/grok-code/vendor/linux-x64/grok");
+  await ssh.putFile(grokBinaryPath, "/root/grok-code/grok");
+  await instance.exec("chmod +x /root/grok-code/grok");
+  await instance.exec("ln -sf /root/grok-code/grok /usr/local/bin/grok");
+  const grokVerify = await instance.exec("which grok && grok --version 2>&1 || echo 'grok installed'");
+  console.log("Grok verify:", grokVerify.stdout);
+  ssh.dispose();
+
+  // Create workspace directory and plugin directory
+  console.log("Creating workspace and plugin directories...");
   await instance.exec("mkdir -p /root/workspace");
+  await instance.exec("mkdir -p /root/workspace/.opencode/plugin");
+  await instance.exec("mkdir -p /root/.xagi");
+
+  // Copy the Convex sync plugin
+  console.log("Installing OpenCode Convex sync plugin...");
+  const pluginPath = join(__dirname, "opencode-plugin/convex-sync.ts");
+  const pluginSsh = await instance.ssh();
+  await pluginSsh.putFile(pluginPath, "/root/workspace/.opencode/plugin/convex-sync.ts");
+  pluginSsh.dispose();
+  const pluginVerify = await instance.exec("cat /root/workspace/.opencode/plugin/convex-sync.ts | head -20");
+  console.log("Plugin installed:", pluginVerify.stdout ? "OK" : "Failed");
 
   // Pre-fetch models.json to avoid Bun macro issue
   console.log("Pre-fetching models.json...");
@@ -235,6 +273,38 @@ EOF`);
   const finalSnapshot = await instance.snapshot();
   console.log(`\n=== FINAL SNAPSHOT ===`);
   console.log(`Snapshot ID: ${finalSnapshot.id}`);
+
+  // Update vm-snapshots.json
+  console.log("Updating vm-snapshots.json...");
+  const snapshotsPath = join(__dirname, "vm-snapshots.json");
+  const snapshotsData = JSON.parse(readFileSync(snapshotsPath, "utf-8"));
+
+  const presetId = "6vcpu_24gb_48gb";
+  let preset = snapshotsData.presets.find((p: { presetId: string }) => p.presetId === presetId);
+
+  if (!preset) {
+    preset = {
+      presetId,
+      label: "Standard workspace",
+      cpu: "6 vCPU",
+      memory: "24 GB RAM",
+      disk: "48 GB SSD",
+      versions: [],
+      description: "Great default for day-to-day work. Balanced CPU, memory, and storage.",
+    };
+    snapshotsData.presets.push(preset);
+  }
+
+  const newVersion = {
+    version: preset.versions.length + 1,
+    snapshotId: finalSnapshot.id,
+    capturedAt: new Date().toISOString(),
+  };
+  preset.versions.push(newVersion);
+  snapshotsData.updatedAt = new Date().toISOString();
+
+  writeFileSync(snapshotsPath, JSON.stringify(snapshotsData, null, 2));
+  console.log(`Added version ${newVersion.version} with snapshot ${finalSnapshot.id}`);
 
   // Get all services
   console.log(`\n=== SERVICES ===`);

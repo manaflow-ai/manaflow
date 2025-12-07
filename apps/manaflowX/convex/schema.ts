@@ -776,4 +776,43 @@ export default defineSchema({
     .index("by_session", ["sessionId", "order"])
     .index("by_session_created", ["sessionId", "createdAt"])
     .index("by_uuid", ["uuid"]),
+
+  // ---------------------------------------------------------------------------
+  // CODING AGENT TOOL CALL MAPPINGS
+  // ---------------------------------------------------------------------------
+  // Links parent workflow tool calls to coding agent sessions
+  // This enables the UI to show "View session" immediately when the tool starts
+
+  codingAgentToolCalls: defineTable({
+    // The AI SDK tool call ID from the parent workflow
+    toolCallId: v.string(),
+
+    // The parent session ID (workflow session)
+    parentSessionId: v.id("sessions"),
+
+    // The coding agent session ID (filled in when session is created)
+    codingAgentSessionId: v.optional(v.id("sessions")),
+
+    // Task hash for matching (hash of task text)
+    taskHash: v.string(),
+
+    // JWT secret for this invocation (stored for HTTP endpoint verification)
+    jwtSecret: v.optional(v.string()),
+
+    // Status
+    status: v.union(
+      v.literal("pending"), // Tool call started, waiting for session
+      v.literal("linked"), // Session created and linked
+      v.literal("completed"), // Tool finished
+      v.literal("failed") // Tool failed
+    ),
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_tool_call", ["toolCallId"])
+    .index("by_task_hash", ["taskHash"])
+    .index("by_parent_session", ["parentSessionId"])
+    .index("by_coding_agent_session", ["codingAgentSessionId"]),
 });

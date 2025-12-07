@@ -4,7 +4,7 @@ import { useQuery } from "convex/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
-import { Suspense, useState, useCallback } from "react"
+import { Suspense, useState, useCallback, useMemo } from "react"
 
 type Issue = {
   _id: Id<"issues">
@@ -153,49 +153,79 @@ function IssueCard({
   )
 }
 
+// Tree node type - computed structure
+type TreeNode = {
+  issue: IssueWithGraph
+  children: TreeNode[]
+}
+
+// Build tree structure from flat list (computed once, no mutation during render)
+function buildTree(issues: IssueWithGraph[]): TreeNode[] {
+  // Use string keys for the map since dependency issueIds are strings
+  const issueMap = new Map<string, IssueWithGraph>(issues.map((i) => [i._id as string, i]))
+  const rendered = new Set<string>()
+
+  // Root issues = not blocked by anything in our list
+  const rootIssues = issues.filter((i) => {
+    const blockingDeps = i.blockedBy.filter(b => b.type === "blocks" && issueMap.has(b.issueId))
+    return blockingDeps.length === 0
+  })
+
+  function buildNode(issue: IssueWithGraph): TreeNode | null {
+    if (rendered.has(issue._id as string)) return null
+    rendered.add(issue._id as string)
+
+    const children: TreeNode[] = []
+    for (const blocked of issue.blocks) {
+      const child = issueMap.get(blocked.issueId)
+      if (child) {
+        const node = buildNode(child)
+        if (node) children.push(node)
+      }
+    }
+
+    return { issue, children }
+  }
+
+  const tree: TreeNode[] = []
+  for (const issue of rootIssues) {
+    const node = buildNode(issue)
+    if (node) tree.push(node)
+  }
+
+  // If no blocking structure, return all as flat roots
+  if (tree.length === 0) {
+    return issues.map((issue) => ({ issue, children: [] }))
+  }
+
+  return tree
+}
+
 // File-tree style: blocked issues nest under their blockers
 function IssueTreeNode({
-  issue,
-  issueMap,
+  node,
   expandedNodes,
   toggleExpand,
   onSelect,
   selectedId,
   depth = 0,
-  renderedIds,
 }: {
-  issue: IssueWithGraph
-  issueMap: Record<string, IssueWithGraph>
+  node: TreeNode
   expandedNodes: Set<string>
   toggleExpand: (id: string) => void
   onSelect: (id: Id<"issues">) => void
   selectedId: Id<"issues"> | null
   depth?: number
-  renderedIds: Set<string>
 }) {
-  // Prevent infinite loops / duplicates
-  if (renderedIds.has(issue._id)) {
-    console.log("Skipping duplicate", issue._id)
-    return null
-  }
-  renderedIds.add(issue._id)
-
-  console.log("Rendering issue", issue.shortId, issue.title)
-
+  const { issue, children } = node
   const isExpanded = expandedNodes.has(issue._id)
   const isSelected = selectedId === issue._id
-
-  // Issues this one blocks (they depend on this being done first)
-  const blockedIssues = issue.blocks
-    .map(b => issueMap[b.issueId])
-    .filter((i): i is IssueWithGraph => i != null && !renderedIds.has(i._id))
-
-  const hasChildren = blockedIssues.length > 0
+  const hasChildren = children.length > 0
 
   return (
     <div>
       <div
-        className={`group flex items-center h-7 hover:bg-gray-800/50 cursor-pointer ${
+        className={`group flex items-center py-1.5 hover:bg-gray-800/50 cursor-pointer ${
           isSelected ? "bg-gray-800/70" : ""
         }`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
@@ -222,62 +252,43 @@ function IssueTreeNode({
           )}
         </button>
 
-        {/* Checkbox */}
-        <div
-          className={`w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center ml-1 ${
-            issue.status === "closed"
-              ? "bg-gray-600 border-gray-600"
-              : issue.status === "in_progress"
-                ? "border-blue-500 bg-blue-500/20"
-                : "border-gray-600"
-          }`}
-        >
-          {issue.status === "closed" && (
-            <svg className="w-2.5 h-2.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-        </div>
+        {/* ID */}
+        <span className="text-sm text-gray-500 ml-1 font-mono">
+          {issue.shortId}
+        </span>
 
         {/* Priority indicator */}
         {issue.priority <= 1 && issue.status !== "closed" && (
-          <div className={`flex items-center gap-0.5 ml-1 ${
+          <div className={`flex items-center gap-0.5 ml-1.5 w-4 h-4 justify-center ${
             issue.priority === 0 ? "text-red-400" : "text-orange-400"
           }`}>
             {[...Array(issue.priority === 0 ? 3 : 2)].map((_, i) => (
-              <div key={i} className="w-0.5 h-2.5 bg-current rounded-full" style={{ height: `${6 + i * 2}px` }} />
+              <div key={i} className="w-[2px] bg-current rounded-full" style={{ height: `${6 + i * 2}px` }} />
             ))}
           </div>
         )}
 
         {/* Title */}
         <span
-          className={`text-[13px] ml-2 truncate ${
+          className={`text-base font-medium ml-1.5 truncate ${
             issue.status === "closed" ? "text-gray-500 line-through" : "text-gray-300"
           }`}
         >
           {issue.title}
         </span>
-
-        {/* ID on hover */}
-        <span className="text-[11px] text-gray-600 ml-auto pr-2 opacity-0 group-hover:opacity-100">
-          {issue.shortId}
-        </span>
       </div>
 
       {/* Blocked issues (nested underneath) */}
       {isExpanded &&
-        blockedIssues.map((blocked) => (
+        children.map((child) => (
           <IssueTreeNode
-            key={blocked._id}
-            issue={blocked}
-            issueMap={issueMap}
+            key={child.issue._id}
+            node={child}
             expandedNodes={expandedNodes}
             toggleExpand={toggleExpand}
             onSelect={onSelect}
             selectedId={selectedId}
             depth={depth + 1}
-            renderedIds={renderedIds}
           />
         ))}
     </div>
@@ -293,7 +304,10 @@ function IssueTreeView({
   onSelect: (id: Id<"issues">) => void
   selectedId: Id<"issues"> | null
 }) {
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set())
+  // Start with all nodes expanded
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() =>
+    new Set(issues.map(i => i._id as string))
+  )
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedNodes((prev) => {
@@ -307,37 +321,22 @@ function IssueTreeView({
     })
   }, [])
 
-  const issueMap = Object.fromEntries(issues.map((i) => [i._id, i])) as Record<string, IssueWithGraph>
-
-  // Root issues = issues that are not blocked by anything
-  const rootIssues = issues.filter((i) => {
-    const blockingDeps = i.blockedBy.filter(b => b.type === "blocks")
-    return blockingDeps.length === 0
-  })
-
-  // If no blocking deps exist, just show all issues flat
-  const displayIssues = rootIssues.length > 0 ? rootIssues : issues
-
-  // Use a ref for tracking rendered IDs to avoid mutation during render
-  const renderedIdsRef = { current: new Set<string>() }
-
-  console.log("IssueTreeView", { issuesCount: issues.length, displayCount: displayIssues.length, rootCount: rootIssues.length })
+  // Build tree structure once (no mutation during render)
+  const tree = useMemo(() => buildTree(issues), [issues])
 
   return (
     <div className="py-1">
       {issues.length === 0 ? (
         <div className="p-8 text-center text-gray-500 text-sm">No issues found.</div>
       ) : (
-        displayIssues.map((issue) => (
+        tree.map((node) => (
           <IssueTreeNode
-            key={issue._id}
-            issue={issue}
-            issueMap={issueMap}
+            key={node.issue._id}
+            node={node}
             expandedNodes={expandedNodes}
             toggleExpand={toggleExpand}
             onSelect={onSelect}
             selectedId={selectedId}
-            renderedIds={renderedIdsRef.current}
           />
         ))
       )}
@@ -622,12 +621,6 @@ function IssuesContent() {
     issues = issues.filter((i) => i.type === typeFilter)
   }
 
-  console.log("IssuesContent state", {
-    viewMode,
-    statusFilter,
-    graphData: graphData ? { issuesCount: graphData.issues?.length, keys: Object.keys(graphData) } : "undefined",
-  })
-
   const loading =
     viewMode === "tree"
       ? !graphData
@@ -638,7 +631,7 @@ function IssuesContent() {
   return (
     <div className="h-screen overflow-hidden">
       <div className="flex justify-center h-full">
-        <main className="w-full max-w-[800px] border-x border-gray-800 h-full flex flex-col">
+        <main className="w-full max-w-[1200px] border-x border-gray-800 h-full flex flex-col">
           {/* Header */}
           <div className="flex-shrink-0 bg-black/80 backdrop-blur-md border-b border-gray-800 z-10">
             <div className="px-4 pt-4 pb-2 flex justify-between items-center">

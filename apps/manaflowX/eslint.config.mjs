@@ -5,7 +5,7 @@ import convexPlugin from "@convex-dev/eslint-plugin";
 
 export default defineConfig([
   {
-    ignores: ["app/.well-known/**"],
+    ignores: ["app/.well-known/**", "sandbox/worker/grok-code/**"],
   },
   ...nextCoreWebVitals,
   ...nextTypescript,

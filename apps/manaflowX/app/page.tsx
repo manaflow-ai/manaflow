@@ -9,8 +9,7 @@ import { api } from "../convex/_generated/api"
 import { useState, useCallback, Suspense } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
-import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
-import { ConnectXButton } from "@/components/ConnectXButton"
+import { CodingAgentSession } from "./components/CodingAgentSession"
 
 type Post = {
   _id: Id<"posts">
@@ -155,10 +154,12 @@ function ThreadPanel({
   postId,
   onClose,
   onSelectPost,
+  onCodingAgentSessionSelect,
 }: {
   postId: Id<"posts">
   onClose: () => void
   onSelectPost: (postId: Id<"posts">) => void
+  onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId })
   const createPost = useMutation(api.posts.createPost)
@@ -260,7 +261,10 @@ function ThreadPanel({
 
         {/* Show AI sessions for the focused post */}
         <div className="px-4">
-          <SessionsByPost postId={postId} />
+          <SessionsByPost
+            postId={postId}
+            onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+          />
         </div>
 
         {/* Render nested replies */}
@@ -277,6 +281,7 @@ function HomeContent() {
   const data = useQuery(api.posts.listPosts, { limit: 20 })
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [selectedCodingAgentSession, setSelectedCodingAgentSession] = useState<Id<"sessions"> | null>(null)
 
   // Get selected post from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
@@ -418,6 +423,17 @@ function HomeContent() {
               postId={selectedThread}
               onClose={() => setSelectedThread(null)}
               onSelectPost={setSelectedThread}
+              onCodingAgentSessionSelect={setSelectedCodingAgentSession}
+            />
+          </aside>
+        )}
+
+        {/* Coding Agent Session Panel - Third Column */}
+        {selectedCodingAgentSession && (
+          <aside className="w-[500px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+            <CodingAgentSession
+              sessionId={selectedCodingAgentSession}
+              onClose={() => setSelectedCodingAgentSession(null)}
             />
           </aside>
         )}

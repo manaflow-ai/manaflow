@@ -11,6 +11,7 @@ import {
   exchangeTwitterCode,
   fetchTwitterUser,
 } from "./_shared/twitterApi";
+import { Id } from "./_generated/dataModel";
 
 const http = httpRouter();
 
@@ -452,6 +453,219 @@ http.route({
     );
 
     return popupResponse(true, returnUrl);
+  }),
+});
+
+// =============================================================================
+// OpenCode Hook Types (mirrors @opencode-ai/sdk event types)
+// =============================================================================
+
+/** JWT payload for coding agent authentication */
+interface CodingAgentJwtPayload {
+  sessionId: string;
+  iat: number;
+  exp: number;
+}
+
+/** OpenCode hook event body */
+interface OpenCodeHookEventBody {
+  event: string;
+  data: OpenCodeEventData;
+}
+
+/** OpenCode event data (union of possible event payloads) */
+interface OpenCodeEventData {
+  // session.created / session.updated
+  session?: {
+    id?: string;
+    title?: string;
+  };
+  sessionID?: string;
+  // message.updated
+  info?: OpenCodeMessageInfo;
+  // session.error
+  error?: unknown;
+}
+
+/** OpenCode message info from message.updated event */
+interface OpenCodeMessageInfo {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  parts: OpenCodeMessagePart[];
+}
+
+/** OpenCode message part */
+interface OpenCodeMessagePart {
+  type: string;
+  text?: string;
+  synthetic?: boolean;
+  ignored?: boolean;
+  id?: string;
+  tool?: string;
+  input?: unknown;
+  title?: string;
+  state?: {
+    status?: string;
+    output?: string;
+    error?: string;
+  };
+  time?: { start?: number; end?: number };
+  mime?: string;
+  filename?: string;
+  url?: string;
+  source?: unknown;
+  finish?: string;
+  cost?: number;
+  tokens?: {
+    input: number;
+    output: number;
+    reasoning?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+}
+
+/**
+ * OpenCode Hook Endpoint
+ * Receives events from the OpenCode plugin running in Morph VMs.
+ * URL: https://your-convex-url.convex.site/opencode_hook
+ *
+ * The plugin sends events with a JWT that contains the session ID.
+ * We verify the JWT signature and then process the event.
+ */
+http.route({
+  path: "/opencode_hook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      // Get JWT from Authorization header
+      const authHeader = request.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Missing or invalid Authorization header" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const token = authHeader.slice(7); // Remove "Bearer " prefix
+
+      // Parse JWT (simple HS256) - first decode payload to get session ID
+      const parts = token.split(".");
+      if (parts.length !== 3) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Invalid token format" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const [headerB64, payloadB64, signatureB64] = parts;
+
+      // Decode payload first to get session ID
+      const payloadBytes = base64urlToBytes(payloadB64!);
+      const payloadStr = new TextDecoder().decode(payloadBytes);
+      const payload = JSON.parse(payloadStr) as CodingAgentJwtPayload;
+      const sessionId = payload.sessionId as Id<"sessions">;
+
+      // Look up the JWT secret for this session from the database
+      const jwtSecret = await ctx.runQuery(internal.codingAgent.getJwtSecretForSessionInternal, {
+        sessionId,
+      });
+
+      if (!jwtSecret) {
+        console.error("[opencode_hook] No JWT secret found for session:", sessionId);
+        return new Response(
+          JSON.stringify({ success: false, error: "Session not found or not configured" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      // Now verify the signature
+      const signatureInput = `${headerB64}.${payloadB64}`;
+      const expectedSig = await hmacSha256(jwtSecret, signatureInput);
+      const expectedSigB64 = base64urlFromBytes(new Uint8Array(expectedSig));
+
+      if (expectedSigB64 !== signatureB64) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Invalid token signature" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      // Check expiration
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.exp < now) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Token expired" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      // Parse the event body
+      const body = await request.json() as OpenCodeHookEventBody;
+      const { event, data } = body;
+      console.log(`[opencode_hook] Received event: ${event} for session: ${sessionId}`);
+
+      // Handle different event types
+      switch (event) {
+        case "session.created":
+        case "session.updated": {
+          // Update session with external session ID
+          if (data.session) {
+            await ctx.runMutation(internal.codingAgent.updateSessionFromHook, {
+              sessionId,
+              externalSessionId: data.session.id,
+            });
+          }
+          break;
+        }
+
+        case "message.updated": {
+          // Upsert the message as a turn
+          if (data.info) {
+            await ctx.runMutation(internal.codingAgent.upsertTurnFromHook, {
+              sessionId,
+              externalMessageId: data.info.id,
+              role: data.info.role,
+              parts: data.info.parts || [],
+              status: "streaming",
+            });
+          }
+          break;
+        }
+
+        case "session.idle": {
+          // Mark session as completed
+          await ctx.runMutation(internal.codingAgent.updateSessionFromHook, {
+            sessionId,
+            status: "completed",
+          });
+          break;
+        }
+
+        case "session.error": {
+          // Mark session as failed
+          await ctx.runMutation(internal.codingAgent.updateSessionFromHook, {
+            sessionId,
+            status: "failed",
+          });
+          break;
+        }
+
+        default:
+          console.log(`[opencode_hook] Unhandled event type: ${event}`);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      console.error("[opencode_hook] Error:", error);
+      return new Response(
+        JSON.stringify({ success: false, error: "Internal server error" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
   }),
 });
 
