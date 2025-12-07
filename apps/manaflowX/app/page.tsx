@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
 import { embeddableComponents } from "../components/EmbeddableComponents"
-import { useState, useCallback, Suspense, useRef, useEffect } from "react"
+import { useState, useCallback, Suspense, useRef, useEffect, useMemo } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
@@ -532,13 +532,16 @@ function HomeContent() {
 
   // Get posts based on active tab (compute before hooks)
   const recentPosts = recentData?.posts ?? []
-  const curatedItems: CuratedItem[] =
-    curatedData?.items
-      .filter((item: CuratedItem) => item.post !== null)
-      .map((item: CuratedItem) => ({
-        post: item.post,
-        parentPost: item.parentPost,
-      })) ?? []
+  const curatedItems: CuratedItem[] = useMemo(
+    () =>
+      curatedData?.items
+        .filter((item: CuratedItem) => item.post !== null)
+        .map((item: CuratedItem) => ({
+          post: item.post,
+          parentPost: item.parentPost,
+        })) ?? [],
+    [curatedData?.items],
+  )
 
   // Optimistic posts rendered separately at top of "for you" feed
   const optimisticPosts: Post[] =
