@@ -42,6 +42,8 @@ export interface SearchableSelectProps {
   searchPlaceholder?: string;
   /** Section label shown above the options list (e.g. "Repositories") */
   sectionLabel?: string;
+  /** Whether to close the dropdown after selecting an option in singleSelect mode (default: true) */
+  closeOnSelect?: boolean;
 }
 
 function normalizeOptions(options: SelectOption[]): SelectOptionObject[] {
@@ -126,6 +128,7 @@ const SearchableSelect = forwardRef<
     footer,
     searchPlaceholder = "Search...",
     sectionLabel,
+    closeOnSelect = true,
   },
   ref
 ) {
@@ -210,7 +213,9 @@ const SearchableSelect = forwardRef<
       setSearch("");
       if (singleSelect) {
         onChange([val]);
-        setOpen(false);
+        if (closeOnSelect) {
+          setOpen(false);
+        }
         return;
       }
       // Toggle selection for multi-select
@@ -220,7 +225,7 @@ const SearchableSelect = forwardRef<
         onChange([...value, val]);
       }
     },
-    [onChange, singleSelect, value]
+    [onChange, singleSelect, value, closeOnSelect]
   );
 
   return (
