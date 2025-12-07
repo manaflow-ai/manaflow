@@ -13,6 +13,7 @@
     "workflow:web": "bunx workflow web"
   },
   "dependencies": {
+    "@stackframe/stack": "^2.8.54",
     "convex": "^1.29.3",
     "next": "16.0.7",
     "react": "^19.2.1",

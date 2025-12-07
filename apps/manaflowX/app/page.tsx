@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery, useAction } from "convex/react";
+import { useUser } from "@stackframe/stack";
+import Link from "next/link";
 import { api } from "../convex/_generated/api";
 import { useState } from "react";
 
@@ -14,6 +16,7 @@ async function triggerSignupWorkflow(email: string) {
 }
 
 export default function Home() {
+  const user = useUser();
   const data = useQuery(api.myFunctions.listTasks, { limit: 20 });
   const startWorkflow = useAction(api.actions.startWorkflow);
   const [content, setContent] = useState("");
@@ -60,8 +63,16 @@ export default function Home() {
     <div className="min-h-screen bg-black text-white">
       <main className="max-w-[600px] mx-auto border-x border-gray-800 min-h-screen">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 p-4">
+        <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 p-4 flex justify-between items-center">
           <h1 className="text-xl font-bold">Home</h1>
+          {!user ? (
+            <Link
+              href="/sign-in"
+              className="bg-white text-black font-bold py-1.5 px-4 rounded-full hover:bg-gray-200 transition-colors"
+            >
+              Sign in
+            </Link>
+          ) : null}
         </div>
 
         {/* Input Area */}
