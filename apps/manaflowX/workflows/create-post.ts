@@ -1,17 +1,9 @@
 import { FatalError, sleep, createWebhook } from "workflow"
-import { createOpencode } from "@opencode-ai/sdk"
 
 export async function handleCreatePost(content: string) {
   "use workflow"
 
   const post = await createPost(content)
-
-  const { client } = await createOpencode({
-    // model: "opencode/grok-code",
-    config: {
-      model: "opencode/grok-code",
-    },
-  })
 
   await notifyFollowers(post)
   await sleep("5s") // Pause for 5s - doesn't consume any resources
