@@ -43,7 +43,7 @@ function PostCard({
   return (
     <div
       onClick={onClick}
-      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${
+      className={`p-4 border-t border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${
         isReply ? "border-l border-gray-700" : ""
       } ${isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""}`}
     >
@@ -222,7 +222,7 @@ function ThreadPanel({
     if (replies.length === 0) return null
 
     return (
-      <div className="ml-4 border-l border-gray-800">
+      <div className="ml-4">
         {replies.map((reply) => (
           <div key={reply._id} className="pl-4">
             <PostCard
