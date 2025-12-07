@@ -15,8 +15,11 @@
   "dependencies": {
     "@ai-sdk/xai": "^2.0.39",
     "@opencode-ai/sdk": "^1.0.134",
+    "@radix-ui/react-popover": "^1.1.15",
     "@stackframe/stack": "^2.8.54",
     "ai": "^5.0.108",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "convex": "^1.29.3",
     "morphcloud": "^0.0.20",
     "next": "16.0.7",
