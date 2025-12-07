@@ -397,8 +397,8 @@ const SearchableSelect = forwardRef<
                   value={search}
                   onValueChange={setSearch}
                   className={clsx(
-                    "w-full rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white",
-                    "placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    "w-full bg-transparent px-1 py-1 text-sm text-white",
+                    "placeholder-neutral-500 focus:outline-none"
                   )}
                 />
               </div>

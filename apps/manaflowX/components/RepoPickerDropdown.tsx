@@ -236,7 +236,7 @@ export function RepoPickerDropdown({
       className={className}
       loading={repos === undefined}
       showSearch
-      searchPlaceholder="Search or paste a repo link..."
+      searchPlaceholder="Search for a GitHub repo..."
       footer={footer}
       sectionLabel="Repositories"
       closeOnSelect={false}
