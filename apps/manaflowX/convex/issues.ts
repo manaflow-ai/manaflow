@@ -331,6 +331,10 @@ export const createIssue = mutation({
     installationId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    // Get user ID from auth (optional - issues can be created without auth)
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject;
+
     const now = Date.now();
     let shortId: string;
 
@@ -354,6 +358,7 @@ export const createIssue = mutation({
 
     const issueId = await ctx.db.insert("issues", {
       shortId,
+      userId, // Owner of the issue (from auth)
       title: args.title,
       description: args.description,
       status: "open",
@@ -1088,6 +1093,30 @@ export const listIssuesWithDependencies = query({
 });
 
 // =============================================================================
+// LIST ISSUES BY USER (for issue-solver-polling)
+// =============================================================================
+
+// List open issues for a specific user (public query for external polling services)
+export const listOpenIssuesForUser = query({
+  args: {
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+
+    const issues = await ctx.db
+      .query("issues")
+      .withIndex("by_userId_status", (q) =>
+        q.eq("userId", args.userId).eq("status", "open")
+      )
+      .take(limit);
+
+    return issues;
+  },
+});
+
+// =============================================================================
 // CLAIM ISSUE FOR PROCESSING (atomic operation to prevent duplicates)
 // =============================================================================
 
@@ -1169,6 +1198,8 @@ export const createIssueFromGitHub = internalMutation({
     gitRemote: v.string(),
     gitBranch: v.string(),
     installationId: v.optional(v.number()),
+    // Owner of the issue (user who owns the repo)
+    userId: v.string(),
   },
   handler: async (ctx, args) => {
     // Check for existing issue with same GitHub repo and issue number
@@ -1189,6 +1220,7 @@ export const createIssueFromGitHub = internalMutation({
 
     const issueId = await ctx.db.insert("issues", {
       shortId,
+      userId: args.userId, // Owner of the issue
       title: args.title,
       description: args.description,
       status: "open",

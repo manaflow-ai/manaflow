@@ -522,7 +522,10 @@ export const getMonitoredReposWithInstallation = internalQuery({
           installationId = connection?.installationId ?? undefined;
         }
         return {
-          ...repo,
+          fullName: repo.fullName,
+          gitRemote: repo.gitRemote,
+          defaultBranch: repo.defaultBranch,
+          userId: repo.userId, // Owner of the repo
           installationId,
         };
       })
@@ -602,6 +605,35 @@ export const getUsersWithAlgorithmEnabled = internalQuery({
       .collect();
 
     return settings.map((s) => s.userId);
+  },
+});
+
+// Public query to check if any user has algorithm enabled (for external polling services)
+export const isAlgorithmEnabledGlobally = query({
+  args: {},
+  handler: async (ctx) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .filter((q) => q.eq(q.field("enabled"), true))
+      .first();
+
+    return { enabled: setting !== null };
+  },
+});
+
+// Public query to get all enabled users with their settings (for issue-solver-polling)
+export const getEnabledUsersWithSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    const settings = await ctx.db
+      .query("algorithmSettings")
+      .filter((q) => q.eq(q.field("enabled"), true))
+      .collect();
+
+    return settings.map((s) => ({
+      userId: s.userId,
+      prompt: s.prompt ?? null,
+    }));
   },
 });
 

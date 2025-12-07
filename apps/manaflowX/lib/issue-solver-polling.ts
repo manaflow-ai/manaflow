@@ -24,6 +24,7 @@ interface RepoConfig {
 interface Issue {
   _id: string;
   shortId: string;
+  userId?: string; // Owner of the issue
   title: string;
   description?: string;
   status: string;
@@ -34,6 +35,11 @@ interface Issue {
   gitRemote?: string;
   gitBranch?: string;
   installationId?: number;
+}
+
+interface EnabledUser {
+  userId: string;
+  prompt: string | null;
 }
 
 // Use Grok to select the best issue to work on
@@ -105,27 +111,36 @@ async function processOpenIssues() {
 
     const convex = new ConvexHttpClient(convexUrl);
 
-    // Check if any user has the algorithm enabled
-    const settings = await convex.query(api.github.getAlgorithmSettings, {});
-    if (!settings.enabled) {
+    // Get all users who have algorithm enabled
+    const enabledUsers = await convex.query(api.github.getEnabledUsersWithSettings, {}) as EnabledUser[];
+    if (enabledUsers.length === 0) {
       // No user has algorithm enabled, skip this tick
       return;
     }
 
-    // Get ALL open issues - Grok will decide which one to work on
-    const openIssues = await convex.query(api.issues.listIssues, {
+    const enabledUserIds = new Set(enabledUsers.map(u => u.userId));
+    console.log(`[issue-solver] ${enabledUsers.length} users have algorithm enabled`);
+
+    // Get ALL open issues
+    const allOpenIssues = await convex.query(api.issues.listIssues, {
       status: "open",
       limit: 50,
-    });
+    }) as Issue[];
+
+    // Filter to only issues owned by users who have algorithm enabled
+    const openIssues = allOpenIssues.filter(issue =>
+      issue.userId && enabledUserIds.has(issue.userId)
+    );
 
     if (openIssues.length === 0) {
+      // No issues for enabled users, skip
       return;
     }
 
-    console.log(`[issue-solver] Found ${openIssues.length} open issues, asking Grok to select one`);
+    console.log(`[issue-solver] Found ${openIssues.length} open issues for enabled users, asking Grok to select one`);
 
     // Use Grok to select the best issue
-    const selectedIssue = await selectIssueWithGrok(openIssues as Issue[]);
+    const selectedIssue = await selectIssueWithGrok(openIssues);
     if (!selectedIssue) {
       console.log("[issue-solver] No issue selected");
       return;

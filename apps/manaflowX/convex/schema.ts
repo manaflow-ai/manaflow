@@ -91,6 +91,9 @@ export default defineSchema({
     // Human-readable short ID (like bd-a1b2)
     shortId: v.string(),
 
+    // Owner (Stack Auth user ID) - determines which user's algorithm processes this
+    userId: v.optional(v.string()),
+
     // Content
     title: v.string(),
     description: v.optional(v.string()),
@@ -150,7 +153,8 @@ export default defineSchema({
     .index("by_assignee", ["assignee", "status"])
     .index("by_parent", ["parentIssue"])
     .index("by_type", ["type", "status"])
-    .index("by_github_issue", ["githubRepo", "githubIssueNumber"]),
+    .index("by_github_issue", ["githubRepo", "githubIssueNumber"])
+    .index("by_userId_status", ["userId", "status"]),
 
   // ---------------------------------------------------------------------------
   // DEPENDENCIES (issue relationships, Beads-style)

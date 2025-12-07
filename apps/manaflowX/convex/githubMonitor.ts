@@ -157,6 +157,7 @@ type MonitoredRepo = {
   fullName: string;
   gitRemote: string;
   defaultBranch?: string;
+  userId: string; // Owner of the repo
   installationId: number;
 };
 
@@ -218,8 +219,8 @@ async function runAlgorithm(ctx: any): Promise<{
   }
 
   // Collect all PRs and Issues
-  const allPRs: Array<{ pr: GitHubPR; repoFullName: string; gitRemote: string; defaultBranch?: string; installationId: number }> = [];
-  const allIssues: Array<{ issue: GitHubIssue; repoFullName: string; gitRemote: string; defaultBranch?: string; installationId: number }> = [];
+  const allPRs: Array<{ pr: GitHubPR; repoFullName: string; gitRemote: string; defaultBranch?: string; userId: string; installationId: number }> = [];
+  const allIssues: Array<{ issue: GitHubIssue; repoFullName: string; gitRemote: string; defaultBranch?: string; userId: string; installationId: number }> = [];
 
   for (const [installationId, installationRepos] of reposByInstallation) {
     // Get access token for this installation
@@ -254,6 +255,7 @@ async function runAlgorithm(ctx: any): Promise<{
           repoFullName: repo.fullName,
           gitRemote: repo.gitRemote,
           defaultBranch: repo.defaultBranch,
+          userId: repo.userId,
           installationId,
         });
       }
@@ -264,6 +266,7 @@ async function runAlgorithm(ctx: any): Promise<{
           repoFullName: repo.fullName,
           gitRemote: repo.gitRemote,
           defaultBranch: repo.defaultBranch,
+          userId: repo.userId,
           installationId,
         });
       }
@@ -381,7 +384,7 @@ Decide: Should you post about a PR or start solving an issue? Pick the most inte
     }
 
     const selected = allIssues[selectedIssueIndex];
-    const { issue, repoFullName, gitRemote, defaultBranch, installationId } = selected;
+    const { issue, repoFullName, gitRemote, defaultBranch, userId, installationId } = selected;
 
     console.log(`[algorithm] Grok chose to solve issue #${issue.number}: ${reasoning}`);
 
@@ -421,6 +424,8 @@ Decide: Should you post about a PR or start solving an issue? Pick the most inte
         gitRemote,
         gitBranch: defaultBranch || "main",
         installationId,
+        // Owner of the issue (same as repo owner)
+        userId,
       });
 
       shortId = result.shortId;
