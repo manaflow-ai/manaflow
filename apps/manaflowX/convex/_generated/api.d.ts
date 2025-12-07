@@ -23,6 +23,8 @@ import type * as http from "../http.js";
 import type * as issues from "../issues.js";
 import type * as posts from "../posts.js";
 import type * as sessions from "../sessions.js";
+import type * as tweetFeed from "../tweetFeed.js";
+import type * as tweetFeedDb from "../tweetFeedDb.js";
 import type * as twitter from "../twitter.js";
 import type * as users from "../users.js";
 import type * as workflowQueue from "../workflowQueue.js";
@@ -49,6 +51,8 @@ declare const fullApi: ApiFromModules<{
   issues: typeof issues;
   posts: typeof posts;
   sessions: typeof sessions;
+  tweetFeed: typeof tweetFeed;
+  tweetFeedDb: typeof tweetFeedDb;
   twitter: typeof twitter;
   users: typeof users;
   workflowQueue: typeof workflowQueue;

@@ -23,6 +23,13 @@ function GeneralContent() {
     result?: { success: boolean; message: string; pr?: { title: string; url: string; repo: string } }
   }>({ loading: false })
 
+  // X Feed controls
+  const testXFeed = useAction(api.tweetFeed.testTweetFeed)
+  const [xTestStatus, setXTestStatus] = useState<{
+    loading: boolean
+    result?: { success: boolean; message: string; tweet?: { text: string; author: string; url: string } }
+  }>({ loading: false })
+
   // Poaster prompt state
   const [poasterPromptValue, setPoasterPromptValue] = useState("")
   const [isPoasterSaving, setIsPoasterSaving] = useState(false)
@@ -122,6 +129,22 @@ Select posts that help users see what's ready to ship. Return an empty array if 
       setTestStatus({ loading: false, result })
     } catch (error) {
       setTestStatus({
+        loading: false,
+        result: {
+          success: false,
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      })
+    }
+  }
+
+  const handleTestXFeed = async () => {
+    setXTestStatus({ loading: true })
+    try {
+      const result = await testXFeed()
+      setXTestStatus({ loading: false, result })
+    } catch (error) {
+      setXTestStatus({
         loading: false,
         result: {
           success: false,
@@ -281,6 +304,56 @@ Select posts that help users see what's ready to ship. Return an empty array if 
             </button>
           </div>
         </div>
+      </div>
+
+      {/* X Feed Section */}
+      <div className="p-4 border-t border-border">
+        <h2 className="text-lg font-semibold text-foreground mb-1">X Feed</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Imports interesting developer tweets from X to populate the feed. Enabled automatically when Auto Mode is on.
+        </p>
+
+        {/* X Feed Status */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-medium text-foreground">Status</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              X feed runs automatically when Auto Mode is enabled
+            </p>
+          </div>
+          <div className={`px-3 py-1.5 text-sm rounded-lg ${isEnabled ? "bg-blue-600/20 text-blue-400" : "bg-muted text-muted-foreground"}`}>
+            {isEnabled ? "Active" : "Inactive"}
+          </div>
+        </div>
+
+        {/* Test X Feed */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-medium text-foreground">Test Import</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Search X and import one tweet now
+            </p>
+          </div>
+          <button
+            onClick={handleTestXFeed}
+            disabled={xTestStatus.loading}
+            className="px-3 py-1.5 bg-card text-foreground text-sm rounded-lg hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {xTestStatus.loading ? "Searching..." : "Test"}
+          </button>
+        </div>
+
+        {xTestStatus.result && (
+          <div className={`mb-4 text-sm ${xTestStatus.result.success ? "text-green-400" : "text-red-400"}`}>
+            {xTestStatus.result.message}
+            {xTestStatus.result.tweet && (
+              <div className="mt-2 p-2 bg-muted rounded text-muted-foreground">
+                <div className="font-medium text-foreground">{xTestStatus.result.tweet.author}</div>
+                <div className="text-xs mt-1">{xTestStatus.result.tweet.text}</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

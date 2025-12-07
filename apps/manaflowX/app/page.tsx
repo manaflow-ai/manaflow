@@ -20,8 +20,25 @@ import { CodingAgentSession } from "./components/CodingAgentSession"
 import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
 import { GrokIcon } from "@/components/GrokIcon"
+import { XIcon } from "@/components/XIcon"
 import { IssueDetailPanel } from "@/components/IssueDetailPanel"
 import TextareaAutosize from "react-textarea-autosize"
+import Image from "next/image"
+
+type TweetSource = {
+  tweetId: string
+  tweetUrl: string
+  authorUsername: string
+  authorName: string
+  authorProfileImageUrl?: string
+  metrics?: {
+    likes: number
+    retweets: number
+    replies: number
+    views?: number
+  }
+  mediaUrls?: string[]
+}
 
 type Post = {
   _id: Id<"posts">
@@ -33,6 +50,7 @@ type Post = {
   replyCount: number
   createdAt: number
   updatedAt: number
+  tweetSource?: TweetSource
 }
 
 type FeedTab = "for_you" | "recent"
@@ -40,6 +58,17 @@ type FeedTab = "for_you" | "recent"
 type CuratedItem = {
   post: Post | null
   parentPost?: Post | null
+}
+
+// Helper to format numbers for display (e.g., 1500 -> 1.5K)
+function formatNumber(num: number): string {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(1).replace(/\.0$/, "") + "M"
+  }
+  if (num >= 1000) {
+    return (num / 1000).toFixed(1).replace(/\.0$/, "") + "K"
+  }
+  return num.toString()
 }
 
 function PostCard({
@@ -62,6 +91,7 @@ function PostCard({
   const [isExpanded, setIsExpanded] = useState(false)
   const [needsClamp, setNeedsClamp] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const isTweet = !!post.tweetSource
 
   useEffect(() => {
     const el = contentRef.current
@@ -88,6 +118,34 @@ function PostCard({
     return () => observer.disconnect()
   }, [post.content])
 
+  // Render avatar based on post type
+  const renderAvatar = () => {
+    if (isTweet && post.tweetSource) {
+      // Tweet post - show profile image or X icon
+      if (post.tweetSource.authorProfileImageUrl) {
+        return (
+          <Image
+            src={post.tweetSource.authorProfileImageUrl}
+            alt={post.tweetSource.authorName}
+            width={40}
+            height={40}
+            className="w-10 h-10 rounded-full object-cover"
+            unoptimized
+          />
+        )
+      }
+      return <XIcon className="w-10 h-10" size={32} />
+    }
+    if (post.author === "Grok") {
+      return <GrokIcon className="w-10 h-10" size={32} />
+    }
+    return (
+      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold">
+        {post.author[0].toUpperCase()}
+      </div>
+    )
+  }
+
   return (
     <div
       onClick={onClick}
@@ -97,13 +155,7 @@ function PostCard({
         <div className="flex-shrink-0 flex flex-col items-center">
           {/* Thread line coming from parent above */}
           {showThreadLineAbove && <div className="w-0.5 bg-border h-4 mb-1" />}
-          {post.author === "Grok" ? (
-            <GrokIcon className="w-10 h-10" size={32} />
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold">
-              {post.author[0].toUpperCase()}
-            </div>
-          )}
+          {renderAvatar()}
           {/* Thread line connecting to reply below */}
           {showThreadLine && (
             <div className="w-0.5 bg-border flex-grow mt-1 min-h-[8px]" />
@@ -113,9 +165,21 @@ function PostCard({
           className={`flex-grow min-w-0 ${showThreadLineAbove ? "pt-4" : ""} ${showThreadLine ? "pb-4" : ""}`}
         >
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="font-bold hover:underline">
-              {post.author === "Assistant" ? "Grok" : post.author}
-            </span>
+            {isTweet && post.tweetSource ? (
+              <>
+                <span className="font-bold hover:underline">
+                  {post.tweetSource.authorName}
+                </span>
+                <span className="text-muted-foreground text-sm">
+                  @{post.tweetSource.authorUsername}
+                </span>
+                <XIcon className="w-4 h-4 opacity-60" size={16} />
+              </>
+            ) : (
+              <span className="font-bold hover:underline">
+                {post.author === "Assistant" ? "Grok" : post.author}
+              </span>
+            )}
             <span className="text-muted-foreground text-sm">
               · {new Date(post.createdAt).toLocaleString()}
             </span>
@@ -145,6 +209,38 @@ function PostCard({
             </button>
           )}
           <div className="flex gap-4 text-muted-foreground text-sm">
+            {/* Tweet metrics */}
+            {isTweet && post.tweetSource?.metrics && (
+              <>
+                <span className="flex items-center gap-1" title="Replies">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  {formatNumber(post.tweetSource.metrics.replies)}
+                </span>
+                <span className="flex items-center gap-1" title="Retweets">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {formatNumber(post.tweetSource.metrics.retweets)}
+                </span>
+                <span className="flex items-center gap-1" title="Likes">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                  {formatNumber(post.tweetSource.metrics.likes)}
+                </span>
+                {post.tweetSource.metrics.views && (
+                  <span className="flex items-center gap-1" title="Views">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    {formatNumber(post.tweetSource.metrics.views)}
+                  </span>
+                )}
+              </>
+            )}
             <button
               onClick={(e) => {
                 e.stopPropagation()

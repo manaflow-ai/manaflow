@@ -13,4 +13,7 @@ crons.interval(
 // Run curator every minute to surface interesting posts
 crons.interval("curator", { minutes: 1 }, internal.curator.runCurator);
 
+// Run tweet feed every minute to import interesting X/Twitter content
+crons.interval("tweet-feed", { minutes: 1 }, internal.tweetFeed.runTweetFeed);
+
 export default crons;

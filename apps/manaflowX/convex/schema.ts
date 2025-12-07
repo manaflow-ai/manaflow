@@ -69,6 +69,26 @@ export default defineSchema({
     // Optional link to issue
     issue: v.optional(v.id("issues")),
 
+    // Tweet source (for posts that are imported from X/Twitter)
+    tweetSource: v.optional(
+      v.object({
+        tweetId: v.string(), // Original tweet ID
+        tweetUrl: v.string(), // Link to original tweet
+        authorUsername: v.string(), // @username
+        authorName: v.string(), // Display name
+        authorProfileImageUrl: v.optional(v.string()),
+        metrics: v.optional(
+          v.object({
+            likes: v.number(),
+            retweets: v.number(),
+            replies: v.number(),
+            views: v.optional(v.number()),
+          })
+        ),
+        mediaUrls: v.optional(v.array(v.string())), // Images/videos from tweet
+      })
+    ),
+
     // Stats (denormalized)
     replyCount: v.number(),
 
