@@ -357,12 +357,14 @@ export default defineSchema({
   // SESSIONS (AI conversation container)
   // ---------------------------------------------------------------------------
   // Groups a series of turns (messages) into a logical conversation
+  // Supports: Vercel AI SDK, OpenCode SDK, Claude Agent SDK
 
   sessions: defineTable({
     // Source of the session
     source: v.union(
       v.literal("api"), // Vercel AI SDK / API calls
-      v.literal("opencode"), // OpenCode / Claude Code
+      v.literal("opencode"), // OpenCode SDK
+      v.literal("claude_agent"), // Claude Agent SDK
       v.literal("workflow") // Internal workflow
     ),
 
@@ -382,7 +384,7 @@ export default defineSchema({
     provider: v.optional(v.string()),
     agent: v.optional(v.string()),
 
-    // Aggregated token usage
+    // Aggregated token usage (enhanced for all SDKs)
     tokens: v.optional(
       v.object({
         input: v.number(),
@@ -396,6 +398,41 @@ export default defineSchema({
     // Cost (in cents)
     cost: v.optional(v.number()),
 
+    // -------------------------------------------------------------------------
+    // Claude Agent SDK specific fields
+    // -------------------------------------------------------------------------
+
+    // Per-model usage breakdown { [modelName: string]: ModelUsage }
+    modelUsage: v.optional(v.any()),
+
+    // Result tracking from SDKResultMessage
+    totalCostUsd: v.optional(v.number()),
+    numTurns: v.optional(v.number()),
+    durationMs: v.optional(v.number()),
+    durationApiMs: v.optional(v.number()),
+
+    // Permission mode used for the session
+    permissionMode: v.optional(v.string()),
+
+    // -------------------------------------------------------------------------
+    // OpenCode SDK specific fields
+    // -------------------------------------------------------------------------
+
+    // External session ID from OpenCode
+    externalSessionId: v.optional(v.string()),
+
+    // Session title (OpenCode)
+    title: v.optional(v.string()),
+
+    // Session summary with file diffs (OpenCode)
+    summary: v.optional(
+      v.object({
+        additions: v.optional(v.number()),
+        deletions: v.optional(v.number()),
+        files: v.optional(v.number()),
+      })
+    ),
+
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -403,12 +440,14 @@ export default defineSchema({
   })
     .index("by_post", ["postId"])
     .index("by_status", ["status", "createdAt"])
-    .index("by_created", ["createdAt"]),
+    .index("by_created", ["createdAt"])
+    .index("by_external_session", ["externalSessionId"]),
 
   // ---------------------------------------------------------------------------
   // TURNS (AI messages with inline parts)
   // ---------------------------------------------------------------------------
   // Individual messages in a session, with parts for streaming content
+  // Supports: Vercel AI SDK, OpenCode SDK, Claude Agent SDK
 
   turns: defineTable({
     sessionId: v.id("sessions"),
@@ -421,9 +460,32 @@ export default defineSchema({
       v.literal("tool")
     ),
 
+    // -------------------------------------------------------------------------
+    // Message type for SDK-specific message types
+    // -------------------------------------------------------------------------
+    // Claude Agent SDK: result, stream_event, tool_progress, auth_status
+    // OpenCode SDK: init, status, compact_boundary, hook_response
+    messageType: v.optional(
+      v.union(
+        // Claude Agent SDK message types
+        v.literal("result"), // SDKResultMessage
+        v.literal("stream_event"), // SDKPartialAssistantMessage
+        v.literal("tool_progress"), // SDKToolProgressMessage
+        v.literal("auth_status"), // SDKAuthStatusMessage
+        // OpenCode SDK / shared system message subtypes
+        v.literal("init"), // SDKSystemMessage (init)
+        v.literal("status"), // SDKStatusMessage
+        v.literal("compact_boundary"), // SDKCompactBoundaryMessage
+        v.literal("hook_response") // SDKHookResponseMessage
+      )
+    ),
+
     // For tool role turns
     toolCallId: v.optional(v.string()),
     toolName: v.optional(v.string()),
+
+    // Parent tool use ID (for nested tool calls - both SDKs)
+    parentToolUseId: v.optional(v.string()),
 
     // Status (for streaming)
     status: v.union(
@@ -433,24 +495,41 @@ export default defineSchema({
       v.literal("error")
     ),
 
-    // Inline parts array - granular content pieces
+    // -------------------------------------------------------------------------
+    // Inline parts array - granular content pieces (supports all SDKs)
+    // -------------------------------------------------------------------------
     parts: v.array(
       v.object({
         type: v.union(
+          // Core types (all SDKs)
           v.literal("text"),
-          v.literal("reasoning"),
+          v.literal("reasoning"), // thinking/reasoning blocks
           v.literal("tool_call"),
           v.literal("tool_result"),
           v.literal("file"),
           v.literal("step_start"),
           v.literal("step_finish"),
-          v.literal("error")
+          v.literal("error"),
+          // OpenCode SDK specific types
+          v.literal("snapshot"), // codebase snapshot state
+          v.literal("patch"), // file patches/diffs
+          v.literal("agent"), // which agent handled response
+          v.literal("retry"), // retry attempt tracking
+          v.literal("compaction"), // session compaction tracking
+          v.literal("subtask") // spawned sub-agent tasks
         ),
+
+        // Part identifier (OpenCode uses these)
+        partId: v.optional(v.string()),
 
         // Text content (for text, reasoning, error types)
         text: v.optional(v.string()),
 
-        // Tool call fields
+        // Text part flags (OpenCode SDK)
+        synthetic: v.optional(v.boolean()), // AI-generated vs original
+        ignored: v.optional(v.boolean()), // ignored parts
+
+        // Tool call fields - supports both SDKs
         toolCallId: v.optional(v.string()),
         toolName: v.optional(v.string()),
         toolInput: v.optional(v.any()),
@@ -463,43 +542,229 @@ export default defineSchema({
             v.literal("error")
           )
         ),
+        // OpenCode SDK tool fields
+        toolTitle: v.optional(v.string()), // human-readable title
+        toolError: v.optional(v.string()), // error message
+        toolAttachments: v.optional(
+          v.array(
+            v.object({
+              mime: v.string(),
+              filename: v.optional(v.string()),
+              url: v.string(),
+            })
+          )
+        ),
 
-        // File fields
+        // File fields (both SDKs)
         fileUrl: v.optional(v.string()),
         fileMime: v.optional(v.string()),
         fileName: v.optional(v.string()),
+        fileSource: v.optional(v.any()), // FileSource | SymbolSource (OpenCode)
 
-        // Step token usage (for step_finish)
+        // Step finish fields (OpenCode SDK - enhanced)
+        finishReason: v.optional(v.string()),
+        stepCost: v.optional(v.number()),
         stepTokens: v.optional(
           v.object({
             input: v.number(),
             output: v.number(),
+            reasoning: v.optional(v.number()),
+            cacheRead: v.optional(v.number()),
+            cacheWrite: v.optional(v.number()),
           })
         ),
+
+        // Snapshot fields (OpenCode SDK)
+        snapshot: v.optional(v.string()),
+
+        // Patch fields (OpenCode SDK)
+        patchHash: v.optional(v.string()),
+        patchFiles: v.optional(v.array(v.string())),
+
+        // Agent part fields (OpenCode SDK)
+        agentName: v.optional(v.string()),
+        agentSource: v.optional(
+          v.object({
+            value: v.string(),
+            start: v.number(),
+            end: v.number(),
+          })
+        ),
+
+        // Retry fields (OpenCode SDK)
+        retryAttempt: v.optional(v.number()),
+        retryError: v.optional(v.any()),
+
+        // Compaction fields (OpenCode SDK)
+        compactionAuto: v.optional(v.boolean()),
+
+        // Subtask fields (OpenCode SDK)
+        subtaskPrompt: v.optional(v.string()),
+        subtaskDescription: v.optional(v.string()),
+        subtaskAgent: v.optional(v.string()),
+
+        // Universal timing (OpenCode SDK)
+        time: v.optional(
+          v.object({
+            start: v.optional(v.number()),
+            end: v.optional(v.number()),
+          })
+        ),
+
+        // Generic metadata (both SDKs)
+        metadata: v.optional(v.any()),
 
         // Part state
         isComplete: v.boolean(),
       })
     ),
 
-    // Error info (if status is error)
+    // Error info (if status is error) - enhanced for Claude Agent SDK
     error: v.optional(
       v.object({
         name: v.string(),
         message: v.string(),
+        // Claude Agent SDK error types
+        type: v.optional(
+          v.union(
+            v.literal("authentication_failed"),
+            v.literal("billing_error"),
+            v.literal("rate_limit"),
+            v.literal("invalid_request"),
+            v.literal("server_error"),
+            v.literal("unknown")
+          )
+        ),
       })
     ),
 
-    // Per-turn token usage
+    // Per-turn token usage - enhanced for both SDKs
     tokens: v.optional(
       v.object({
         input: v.number(),
         output: v.number(),
+        reasoning: v.optional(v.number()),
+        cacheRead: v.optional(v.number()),
+        cacheWrite: v.optional(v.number()),
       })
     ),
 
+    // Per-model usage breakdown (Claude Agent SDK)
+    modelUsage: v.optional(v.any()), // { [modelName: string]: ModelUsage }
+
     // Finish reason (for assistant turns)
     finishReason: v.optional(v.string()),
+
+    // Cost tracking (both SDKs)
+    cost: v.optional(v.number()), // in USD
+
+    // -------------------------------------------------------------------------
+    // Claude Agent SDK specific fields
+    // -------------------------------------------------------------------------
+
+    // UUID from SDK
+    uuid: v.optional(v.string()),
+
+    // Message flags
+    isSynthetic: v.optional(v.boolean()), // system-generated message
+    isReplay: v.optional(v.boolean()), // replayed message
+
+    // Tool use result JSON (for user messages responding to tool calls)
+    toolUseResult: v.optional(v.any()),
+
+    // Result message fields (SDKResultMessage)
+    resultSubtype: v.optional(
+      v.union(
+        v.literal("success"),
+        v.literal("error_during_execution"),
+        v.literal("error_max_turns"),
+        v.literal("error_max_budget_usd"),
+        v.literal("error_max_structured_output_retries")
+      )
+    ),
+    resultText: v.optional(v.string()), // final result text
+    structuredOutput: v.optional(v.any()), // structured output if requested
+    durationMs: v.optional(v.number()), // execution duration
+    durationApiMs: v.optional(v.number()), // API call duration
+    numTurns: v.optional(v.number()), // number of turns
+    permissionDenials: v.optional(
+      v.array(
+        v.object({
+          toolName: v.string(),
+          toolUseId: v.string(),
+          toolInput: v.any(),
+        })
+      )
+    ),
+    errors: v.optional(v.array(v.string())), // error messages
+
+    // System init message fields (SDKSystemMessage)
+    systemInit: v.optional(
+      v.object({
+        agents: v.optional(v.array(v.string())),
+        claudeCodeVersion: v.optional(v.string()),
+        cwd: v.optional(v.string()),
+        tools: v.optional(v.array(v.string())),
+        mcpServers: v.optional(
+          v.array(
+            v.object({
+              name: v.string(),
+              status: v.string(),
+            })
+          )
+        ),
+        model: v.optional(v.string()),
+        permissionMode: v.optional(v.string()),
+        slashCommands: v.optional(v.array(v.string())),
+      })
+    ),
+
+    // Status message fields (SDKStatusMessage)
+    systemStatus: v.optional(v.string()), // "compacting" | null
+
+    // Compact boundary fields (SDKCompactBoundaryMessage)
+    compactMetadata: v.optional(
+      v.object({
+        trigger: v.union(v.literal("manual"), v.literal("auto")),
+        preTokens: v.number(),
+      })
+    ),
+
+    // Hook response fields (SDKHookResponseMessage)
+    hookResponse: v.optional(
+      v.object({
+        hookName: v.string(),
+        hookEvent: v.string(),
+        stdout: v.string(),
+        stderr: v.string(),
+        exitCode: v.optional(v.number()),
+      })
+    ),
+
+    // Tool progress fields (SDKToolProgressMessage)
+    toolProgress: v.optional(
+      v.object({
+        toolUseId: v.string(),
+        toolName: v.string(),
+        elapsedTimeSeconds: v.number(),
+      })
+    ),
+
+    // Auth status fields (SDKAuthStatusMessage)
+    authStatus: v.optional(
+      v.object({
+        isAuthenticating: v.boolean(),
+        output: v.array(v.string()),
+        error: v.optional(v.string()),
+      })
+    ),
+
+    // -------------------------------------------------------------------------
+    // OpenCode SDK specific fields
+    // -------------------------------------------------------------------------
+
+    // External message ID from OpenCode
+    externalMessageId: v.optional(v.string()),
 
     // Ordering within session
     order: v.number(),
@@ -509,5 +774,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_session", ["sessionId", "order"])
-    .index("by_session_created", ["sessionId", "createdAt"]),
+    .index("by_session_created", ["sessionId", "createdAt"])
+    .index("by_uuid", ["uuid"]),
 });

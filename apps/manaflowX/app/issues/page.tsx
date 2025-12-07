@@ -153,7 +153,7 @@ function IssueCard({
   )
 }
 
-// Tree view item component
+// File-tree style: blocked issues nest under their blockers
 function IssueTreeNode({
   issue,
   issueMap,
@@ -162,174 +162,124 @@ function IssueTreeNode({
   onSelect,
   selectedId,
   depth = 0,
+  renderedIds,
 }: {
   issue: IssueWithGraph
-  issueMap: Record<string, Issue>
+  issueMap: Record<string, IssueWithGraph>
   expandedNodes: Set<string>
   toggleExpand: (id: string) => void
   onSelect: (id: Id<"issues">) => void
   selectedId: Id<"issues"> | null
   depth?: number
+  renderedIds: Set<string>
 }) {
+  // Prevent infinite loops / duplicates
+  if (renderedIds.has(issue._id)) {
+    console.log("Skipping duplicate", issue._id)
+    return null
+  }
+  renderedIds.add(issue._id)
+
+  console.log("Rendering issue", issue.shortId, issue.title)
+
   const isExpanded = expandedNodes.has(issue._id)
-  const hasChildren = issue.children.length > 0
-  const isBlocking = issue.blocks.length > 0
   const isSelected = selectedId === issue._id
 
-  // Get open blockers
-  const openBlockers = issue.blockedBy.filter((b) => {
-    const blocker = issueMap[b.issueId]
-    return b.type === "blocks" && blocker && blocker.status !== "closed"
-  })
+  // Issues this one blocks (they depend on this being done first)
+  const blockedIssues = issue.blocks
+    .map(b => issueMap[b.issueId])
+    .filter((i): i is IssueWithGraph => i != null && !renderedIds.has(i._id))
+
+  const hasChildren = blockedIssues.length > 0
 
   return (
     <div>
       <div
-        className={`flex items-center gap-2 py-2 px-3 hover:bg-gray-900/50 cursor-pointer transition-colors ${
-          isSelected ? "bg-gray-900/70 border-l-2 border-l-blue-500" : ""
+        className={`group flex items-center h-7 hover:bg-gray-800/50 cursor-pointer ${
+          isSelected ? "bg-gray-800/70" : ""
         }`}
-        style={{ paddingLeft: `${depth * 20 + 12}px` }}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={() => onSelect(issue._id)}
       >
-        {/* Expand/collapse toggle */}
+        {/* Expand/collapse */}
         <button
           onClick={(e) => {
             e.stopPropagation()
-            toggleExpand(issue._id)
+            if (hasChildren) toggleExpand(issue._id)
           }}
-          className={`w-5 h-5 flex items-center justify-center rounded hover:bg-gray-700 transition-colors ${
-            hasChildren ? "text-gray-400" : "text-transparent"
-          }`}
+          className="w-4 h-4 flex items-center justify-center flex-shrink-0 text-gray-600"
         >
-          {hasChildren && (
+          {hasChildren ? (
             <svg
               className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`}
               fill="currentColor"
               viewBox="0 0 20 20"
             >
-              <path
-                fillRule="evenodd"
-                d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                clipRule="evenodd"
-              />
+              <path d="M6 6L14 10L6 14V6Z" />
             </svg>
+          ) : (
+            <span className="w-1 h-1 rounded-full bg-gray-700" />
           )}
         </button>
 
-        {/* Status indicator */}
+        {/* Checkbox */}
         <div
-          className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          className={`w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center ml-1 ${
             issue.status === "closed"
-              ? "bg-gray-500"
+              ? "bg-gray-600 border-gray-600"
               : issue.status === "in_progress"
-                ? "bg-yellow-400"
-                : openBlockers.length > 0
-                  ? "bg-red-400"
-                  : "bg-green-400"
+                ? "border-blue-500 bg-blue-500/20"
+                : "border-gray-600"
           }`}
-        />
+        >
+          {issue.status === "closed" && (
+            <svg className="w-2.5 h-2.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
 
-        {/* Type icon */}
-        <span className="flex-shrink-0">{typeIcons[issue.type]}</span>
-
-        {/* Short ID */}
-        <span className="text-gray-500 text-sm font-mono flex-shrink-0">
-          {issue.shortId}
-        </span>
+        {/* Priority indicator */}
+        {issue.priority <= 1 && issue.status !== "closed" && (
+          <div className={`flex items-center gap-0.5 ml-1 ${
+            issue.priority === 0 ? "text-red-400" : "text-orange-400"
+          }`}>
+            {[...Array(issue.priority === 0 ? 3 : 2)].map((_, i) => (
+              <div key={i} className="w-0.5 h-2.5 bg-current rounded-full" style={{ height: `${6 + i * 2}px` }} />
+            ))}
+          </div>
+        )}
 
         {/* Title */}
         <span
-          className={`truncate ${
-            issue.status === "closed" ? "text-gray-500 line-through" : "text-white"
+          className={`text-[13px] ml-2 truncate ${
+            issue.status === "closed" ? "text-gray-500 line-through" : "text-gray-300"
           }`}
         >
           {issue.title}
         </span>
 
-        {/* Badges */}
-        <div className="flex items-center gap-1 ml-auto flex-shrink-0">
-          {openBlockers.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 flex items-center gap-1">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              {openBlockers.length}
-            </span>
-          )}
-          {isBlocking && issue.status !== "closed" && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">
-              →{issue.blocks.length}
-            </span>
-          )}
-          {hasChildren && (
-            <span className="text-xs text-gray-500">{issue.children.length}</span>
-          )}
-        </div>
+        {/* ID on hover */}
+        <span className="text-[11px] text-gray-600 ml-auto pr-2 opacity-0 group-hover:opacity-100">
+          {issue.shortId}
+        </span>
       </div>
 
-      {/* Blockers (shown inline when expanded) */}
-      {isExpanded && openBlockers.length > 0 && (
-        <div
-          className="border-l border-red-500/30 ml-4"
-          style={{ marginLeft: `${depth * 20 + 24}px` }}
-        >
-          <div className="text-xs text-red-400 px-3 py-1 bg-red-500/5">
-            Blocked by:
-          </div>
-          {openBlockers.map((blocker) => {
-            const blockerIssue = issueMap[blocker.issueId]
-            if (!blockerIssue) return null
-            return (
-              <div
-                key={blocker.issueId}
-                className="flex items-center gap-2 py-1.5 px-3 hover:bg-gray-900/30 cursor-pointer text-sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onSelect(blocker.issueId as Id<"issues">)
-                }}
-              >
-                <svg className="w-3 h-3 text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                <span className="text-gray-500 font-mono">{blockerIssue.shortId}</span>
-                <span className={`truncate ${blockerIssue.status === "closed" ? "text-gray-500" : "text-gray-300"}`}>
-                  {blockerIssue.title}
-                </span>
-                <span className={`text-xs px-1.5 py-0.5 rounded ml-auto ${statusColors[blockerIssue.status]}`}>
-                  {blockerIssue.status}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Children */}
+      {/* Blocked issues (nested underneath) */}
       {isExpanded &&
-        issue.children.map((childId) => {
-          const childIssue = issueMap[childId] as IssueWithGraph | undefined
-          if (!childIssue) return null
-          return (
-            <IssueTreeNode
-              key={childId}
-              issue={childIssue}
-              issueMap={issueMap}
-              expandedNodes={expandedNodes}
-              toggleExpand={toggleExpand}
-              onSelect={onSelect}
-              selectedId={selectedId}
-              depth={depth + 1}
-            />
-          )
-        })}
+        blockedIssues.map((blocked) => (
+          <IssueTreeNode
+            key={blocked._id}
+            issue={blocked}
+            issueMap={issueMap}
+            expandedNodes={expandedNodes}
+            toggleExpand={toggleExpand}
+            onSelect={onSelect}
+            selectedId={selectedId}
+            depth={depth + 1}
+            renderedIds={renderedIds}
+          />
+        ))}
     </div>
   )
 }
@@ -343,12 +293,7 @@ function IssueTreeView({
   onSelect: (id: Id<"issues">) => void
   selectedId: Id<"issues"> | null
 }) {
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
-    // Start with top-level items expanded
-    const initial = new Set<string>()
-    issues.filter((i) => !i.parentIssue).forEach((i) => initial.add(i._id))
-    return initial
-  })
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set())
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedNodes((prev) => {
@@ -362,26 +307,37 @@ function IssueTreeView({
     })
   }, [])
 
-  // Get root issues (no parent)
-  const rootIssues = issues.filter((i) => !i.parentIssue)
+  const issueMap = Object.fromEntries(issues.map((i) => [i._id, i])) as Record<string, IssueWithGraph>
 
-  // Build a proper issue map that includes the graph data
-  const fullIssueMap = Object.fromEntries(issues.map((i) => [i._id, i]))
+  // Root issues = issues that are not blocked by anything
+  const rootIssues = issues.filter((i) => {
+    const blockingDeps = i.blockedBy.filter(b => b.type === "blocks")
+    return blockingDeps.length === 0
+  })
+
+  // If no blocking deps exist, just show all issues flat
+  const displayIssues = rootIssues.length > 0 ? rootIssues : issues
+
+  // Use a ref for tracking rendered IDs to avoid mutation during render
+  const renderedIdsRef = { current: new Set<string>() }
+
+  console.log("IssueTreeView", { issuesCount: issues.length, displayCount: displayIssues.length, rootCount: rootIssues.length })
 
   return (
-    <div className="py-2">
-      {rootIssues.length === 0 ? (
-        <div className="p-8 text-center text-gray-500">No issues found.</div>
+    <div className="py-1">
+      {issues.length === 0 ? (
+        <div className="p-8 text-center text-gray-500 text-sm">No issues found.</div>
       ) : (
-        rootIssues.map((issue) => (
+        displayIssues.map((issue) => (
           <IssueTreeNode
             key={issue._id}
             issue={issue}
-            issueMap={fullIssueMap}
+            issueMap={issueMap}
             expandedNodes={expandedNodes}
             toggleExpand={toggleExpand}
             onSelect={onSelect}
             selectedId={selectedId}
+            renderedIds={renderedIdsRef.current}
           />
         ))
       )}
@@ -666,6 +622,12 @@ function IssuesContent() {
     issues = issues.filter((i) => i.type === typeFilter)
   }
 
+  console.log("IssuesContent state", {
+    viewMode,
+    statusFilter,
+    graphData: graphData ? { issuesCount: graphData.issues?.length, keys: Object.keys(graphData) } : "undefined",
+  })
+
   const loading =
     viewMode === "tree"
       ? !graphData
@@ -679,38 +641,47 @@ function IssuesContent() {
         <main className="w-full max-w-[800px] border-x border-gray-800 h-full flex flex-col">
           {/* Header */}
           <div className="flex-shrink-0 bg-black/80 backdrop-blur-md border-b border-gray-800 z-10">
-            <div className="p-4 flex justify-between items-center">
-              <h1 className="text-xl font-bold">Issues</h1>
-              <div className="flex items-center gap-4">
+            <div className="px-4 pt-4 pb-2 flex justify-between items-center">
+              <h1 className="text-base font-semibold text-white">Issues</h1>
+              <div className="flex items-center gap-3">
                 {issueStats && (
-                  <div className="flex gap-4 text-sm text-gray-500">
-                    <span>{issueStats.byStatus.open} open</span>
-                    <span>{issueStats.readyCount} ready</span>
-                    <span>{issueStats.blockedCount} blocked</span>
+                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <span className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                      {issueStats.byStatus.open}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      {issueStats.readyCount}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                      {issueStats.blockedCount}
+                    </span>
                   </div>
                 )}
                 {/* View mode toggle */}
-                <div className="flex gap-1 bg-gray-800 rounded-lg p-0.5">
+                <div className="flex items-center rounded-md bg-gray-900 p-0.5">
                   <button
                     onClick={() => updateFilter("view", "tree")}
-                    className={`p-1.5 rounded transition-colors ${
-                      viewMode === "tree" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-white"
+                    className={`p-1 rounded transition-colors ${
+                      viewMode === "tree" ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"
                     }`}
                     title="Tree view"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
                     </svg>
                   </button>
                   <button
                     onClick={() => updateFilter("view", "list")}
-                    className={`p-1.5 rounded transition-colors ${
-                      viewMode === "list" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-white"
+                    className={`p-1 rounded transition-colors ${
+                      viewMode === "list" ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"
                     }`}
                     title="Card view"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
                     </svg>
                   </button>
                 </div>
@@ -722,7 +693,7 @@ function IssuesContent() {
               {/* Status filter tabs */}
               <div className="flex items-center">
                 {(["all", "open", "in_progress", "closed"] as StatusFilter[]).map(
-                  (status, idx) => (
+                  (status) => (
                     <button
                       key={status}
                       onClick={() => updateFilter("status", status)}
