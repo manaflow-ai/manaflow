@@ -5,9 +5,15 @@ import { useUser } from "@stackframe/stack";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../convex/_generated/api";
+<<<<<<< HEAD
 import { useState, useCallback, Suspense } from "react";
 import { Id } from "../convex/_generated/dataModel";
 import { SessionsByPost } from "../components/SessionView";
+=======
+import { useState } from "react";
+import { RepoPickerDropdown } from "@/components/RepoPickerDropdown";
+import { ConnectXButton } from "@/components/ConnectXButton";
+>>>>>>> 9c7a9b3c282bebb545a5dcdbbbda791be7151e07
 
 type Post = {
   _id: Id<"posts">;
@@ -94,6 +100,7 @@ function ReplyComposer({
 }) {
   const [content, setContent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!content.trim()) return;
@@ -397,9 +404,94 @@ function HomeContent() {
               onClose={() => setSelectedThread(null)}
               onSelectPost={setSelectedThread}
             />
+<<<<<<< HEAD
           </aside>
         )}
       </div>
+=======
+            <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
+              <div className="flex gap-2 items-center">
+                {/* Repo picker dropdown */}
+                {user && (
+                  <RepoPickerDropdown
+                    selectedRepo={selectedRepo}
+                    onRepoSelect={setSelectedRepo}
+                  />
+                )}
+                {/* Connect X account button */}
+                {user && <ConnectXButton />}
+              </div>
+              <button
+                disabled={!content.trim() || isSubmitting}
+                onClick={handleSubmit}
+                className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-1.5 px-4 rounded-full transition-colors"
+              >
+                {isSubmitting ? "Posting..." : "Post"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Feed */}
+        <div>
+          {tasks.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              No tasks yet. Start a workflow above!
+            </div>
+          ) : (
+            tasks.map((task) => (
+              <div
+                key={task._id}
+                className="p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer"
+              >
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0">
+                    <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-xs">
+                      TASK
+                    </div>
+                  </div>
+                  <div className="flex-grow">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-bold hover:underline">
+                        {task.type}
+                      </span>
+                      <span className="text-gray-500 text-sm">
+                        · {new Date(task.createdAt).toLocaleDateString()}
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full ml-auto ${
+                          task.priority === "critical"
+                            ? "bg-red-900 text-red-200"
+                            : task.priority === "high"
+                              ? "bg-orange-900 text-orange-200"
+                              : "bg-gray-800 text-gray-300"
+                        }`}
+                      >
+                        {task.priority}
+                      </span>
+                    </div>
+                    <p className="text-gray-200 whitespace-pre-wrap mb-2">
+                      {task.content}
+                    </p>
+                    <div className="flex justify-between text-gray-500 text-sm max-w-md">
+                      <span className="hover:text-blue-400 transition-colors">
+                        {task.replyCount} replies
+                      </span>
+                      <span className="hover:text-green-400 transition-colors">
+                        {task.descendantCount} descendants
+                      </span>
+                      <span className="hover:text-pink-400 transition-colors">
+                        {task.reactionCount} reactions
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </main>
+>>>>>>> 9c7a9b3c282bebb545a5dcdbbbda791be7151e07
     </div>
   );
 }
