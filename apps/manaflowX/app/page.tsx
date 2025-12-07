@@ -36,6 +36,7 @@ type CuratedItem = {
 function PostCard({
   post,
   onReply,
+  onMerge,
   onClick,
   isSelected = false,
   showThreadLine = false,
@@ -43,6 +44,7 @@ function PostCard({
 }: {
   post: Post
   onReply: () => void
+  onMerge?: () => void
   onClick?: () => void
   isSelected?: boolean
   showThreadLine?: boolean // Line going down from avatar (parent post)
@@ -137,6 +139,30 @@ function PostCard({
             </button>
             {post.replyCount > 0 && (
               <span className="text-gray-400">{post.replyCount} replies</span>
+            )}
+            {onMerge && post.replyTo && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onMerge()
+                }}
+                className="hover:text-green-400 transition-colors flex items-center gap-1 ml-auto"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                  />
+                </svg>
+                Merge
+              </button>
             )}
           </div>
         </div>
@@ -587,6 +613,33 @@ function HomeContent() {
     }
   }
 
+  const handleMerge = async (post: Post) => {
+    const mergeInstructions = `Merge the PR for this thread. Follow these steps:
+
+1. First, merge main into this branch and fix any conflicts that arise
+2. Run the CI checks and ensure all GitHub Actions pass
+3. Use the gh CLI to merge the PR (e.g., \`gh pr merge --squash\`)
+
+Make sure all checks pass before merging. If there are any failing checks, fix them first.`
+
+    try {
+      const response = await fetch("/api/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: mergeInstructions, replyTo: post._id }),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to create merge post")
+      }
+      const result = await response.json()
+      if (result.postId) {
+        setSelectedThread(result.postId as Id<"posts">)
+      }
+    } catch (error) {
+      console.error("Failed to create merge post:", error)
+    }
+  }
+
   if (!recentData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -713,6 +766,7 @@ function HomeContent() {
               post={post}
               onClick={() => setSelectedThread(post._id)}
               onReply={() => setSelectedThread(post._id)}
+              onMerge={() => handleMerge(post)}
               isSelected={selectedThread === post._id}
             />
           ))}
@@ -737,6 +791,7 @@ function HomeContent() {
                         post={item.parentPost}
                         onClick={() => setSelectedThread(item.parentPost!._id)}
                         onReply={() => setSelectedThread(item.parentPost!._id)}
+                        onMerge={() => handleMerge(item.parentPost!)}
                         isSelected={selectedThread === item.parentPost!._id}
                         showThreadLine
                       />
@@ -745,6 +800,7 @@ function HomeContent() {
                       post={post}
                       onClick={() => setSelectedThread(post._id)}
                       onReply={() => setSelectedThread(post._id)}
+                      onMerge={() => handleMerge(post)}
                       isSelected={selectedThread === post._id}
                       showThreadLineAbove={hasParent}
                     />
