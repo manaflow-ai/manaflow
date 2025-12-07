@@ -3,6 +3,7 @@
 import { useQuery, useMutation } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
+import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
@@ -47,9 +48,19 @@ function PostCard({
     >
       <div className="flex gap-3">
         <div className="flex-shrink-0">
-          <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
-            {post.author[0].toUpperCase()}
-          </div>
+          {post.author === "Grok" ? (
+            <Image
+              src="/image.png"
+              alt="Grok"
+              width={40}
+              height={40}
+              className="rounded-full"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
+              {post.author[0].toUpperCase()}
+            </div>
+          )}
         </div>
         <div className="flex-grow min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
