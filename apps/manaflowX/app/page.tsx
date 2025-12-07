@@ -278,7 +278,7 @@ function ThreadPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="h-[60px] px-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
+      <div className="h-[55px] px-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
         <h2 className="text-lg font-bold">Thread</h2>
         <button
           onClick={onClose}

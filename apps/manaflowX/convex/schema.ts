@@ -867,7 +867,8 @@ export default defineSchema({
   algorithmSettings: defineTable({
     userId: v.string(), // Stack Auth user ID
     enabled: v.boolean(), // Whether the autonomous agent is enabled for this user
-    prompt: v.optional(v.string()), // Custom system prompt for the agent
+    prompt: v.optional(v.string()), // Custom system prompt for Poaster (GitHub algorithm)
+    curatorPrompt: v.optional(v.string()), // Custom system prompt for Curator (feed curation)
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
 

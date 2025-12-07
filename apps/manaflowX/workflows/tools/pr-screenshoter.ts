@@ -287,10 +287,13 @@ async function cloneAndCheckoutPR(
 // VM Spawning
 // =============================================================================
 
-async function spawnPRReviewVM(): Promise<{
+async function getOrSpawnPRReviewVM(options?: {
+  vmInstanceId?: string; // If provided, connect to existing VM instead of spawning new one
+}): Promise<{
   instanceId: string;
   url: string;
   vncUrl: string;
+  isExisting: boolean; // Whether we connected to an existing VM
   instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> };
   cleanup: () => Promise<void>;
 }> {
@@ -300,14 +303,26 @@ async function spawnPRReviewVM(): Promise<{
   }
 
   const client = new MorphCloudClient({ apiKey });
-  const snapshotId = getLatestSnapshotId();
 
-  console.log(`[pr-screenshoter] Starting VM from snapshot: ${snapshotId}`);
-  const instance = await client.instances.start({ snapshotId });
-  console.log(`[pr-screenshoter] Instance created: ${instance.id}`);
+  let instance;
+  let isExisting = false;
 
-  console.log(`[pr-screenshoter] Waiting for instance to be ready...`);
-  await instance.waitUntilReady(60);
+  if (options?.vmInstanceId) {
+    // Connect to existing VM
+    console.log(`[pr-screenshoter] Connecting to existing VM: ${options.vmInstanceId}`);
+    instance = await client.instances.get({ instanceId: options.vmInstanceId });
+    isExisting = true;
+    console.log(`[pr-screenshoter] Connected to existing instance: ${instance.id}`);
+  } else {
+    // Spawn new VM
+    const snapshotId = getLatestSnapshotId();
+    console.log(`[pr-screenshoter] Starting VM from snapshot: ${snapshotId}`);
+    instance = await client.instances.start({ snapshotId });
+    console.log(`[pr-screenshoter] Instance created: ${instance.id}`);
+
+    console.log(`[pr-screenshoter] Waiting for instance to be ready...`);
+    await instance.waitUntilReady(60);
+  }
 
   // Wait for Chrome DevTools Protocol to be ready
   console.log(`[pr-screenshoter] Waiting for Chrome DevTools Protocol...`);
@@ -332,7 +347,9 @@ async function spawnPRReviewVM(): Promise<{
   );
 
   if (!opencodeService) {
-    await client.instances.stop({ instanceId: instance.id });
+    if (!isExisting) {
+      await client.instances.stop({ instanceId: instance.id });
+    }
     throw new Error("OpenCode service (port-4096) not found on VM");
   }
 
@@ -345,10 +362,16 @@ async function spawnPRReviewVM(): Promise<{
     instanceId: instance.id,
     url: opencodeService.url,
     vncUrl: vncService?.url ?? "",
+    isExisting,
     instance,
     cleanup: async () => {
-      console.log(`[pr-screenshoter] Stopping VM: ${instance.id}`);
-      await client.instances.stop({ instanceId: instance.id });
+      // Only cleanup if we spawned a new VM
+      if (!isExisting) {
+        console.log(`[pr-screenshoter] Stopping VM: ${instance.id}`);
+        await client.instances.stop({ instanceId: instance.id });
+      } else {
+        console.log(`[pr-screenshoter] Keeping existing VM: ${instance.id}`);
+      }
     },
   };
 }
@@ -510,18 +533,32 @@ The tool returns whether UI changes exist and provides screenshot URLs if applic
       .describe(
         "Custom command to install dependencies (e.g., 'bun install', 'npm install'). If not provided, the agent will try to detect it."
       ),
+    vmInstanceId: z
+      .string()
+      .optional()
+      .describe(
+        "Morph VM instance ID to connect to. If provided, reuses an existing VM instead of spawning a new one."
+      ),
+    path: z
+      .string()
+      .optional()
+      .describe(
+        "Working directory path for the OpenCode session. If provided, the session will use this directory."
+      ),
   }),
   execute: async (
-    { pullRequestUrl, branch, installationId, devCommand, installCommand }: {
+    { pullRequestUrl, branch, installationId, devCommand, installCommand, vmInstanceId, path }: {
       pullRequestUrl: string;
       branch: string;
       installationId?: number;
       devCommand?: string;
       installCommand?: string;
+      vmInstanceId?: string;
+      path?: string;
     },
     { toolCallId }: { toolCallId: string }
   ) => {
-    let vm: Awaited<ReturnType<typeof spawnPRReviewVM>> | null = null;
+    let vm: Awaited<ReturnType<typeof getOrSpawnPRReviewVM>> | null = null;
     let convexSessionId: string | null = null;
 
     // Look up the parent session ID for progress updates
@@ -557,13 +594,16 @@ The tool returns whether UI changes exist and provides screenshot URLs if applic
       });
       console.log(`[pr-screenshoter] Created Convex session: ${convexSessionId}`);
 
-      // Update progress: Starting VM
-      updateProgress(parentSessionId, toolCallId, "starting_vm", "Starting screenshot VM...", {
+      // Update progress: Starting/Connecting VM
+      const vmProgressMsg = vmInstanceId ? "Connecting to existing VM..." : "Starting screenshot VM...";
+      updateProgress(parentSessionId, toolCallId, "starting_vm", vmProgressMsg, {
         sessionId: convexSessionId,
       });
 
-      // Spawn VM
-      vm = await spawnPRReviewVM();
+      // Get or spawn VM
+      vm = await getOrSpawnPRReviewVM({
+        vmInstanceId,
+      });
 
       // Write JWT config to VM
       if (jwtSecret && convexSiteUrl && convexSessionId) {
@@ -637,9 +677,10 @@ The tool returns whether UI changes exist and provides screenshot URLs if applic
         instanceId: vm.instanceId,
       });
 
-      // Create OpenCode client
+      // Create OpenCode client (with optional directory for path)
       const opencode = createOpencodeClient({
         baseUrl: vm.url,
+        ...(path && { directory: path }),
       });
 
       // Add the Chrome DevTools MCP server
@@ -793,6 +834,7 @@ gh pr view ${parsedPR.prNumber} --repo ${parsedPR.owner}/${parsedPR.repo} --json
         sessionId: session.id,
         convexSessionId,
         morphInstanceId: vm.instanceId,
+        path: session.directory, // Working directory path in the VM
         vncUrl: vm.vncUrl,
         pullRequest: {
           url: pullRequestUrl,
@@ -848,6 +890,8 @@ export type PRScreenshotInput = {
   installationId?: number;
   devCommand?: string;
   installCommand?: string;
+  vmInstanceId?: string;
+  path?: string;
 };
 
 export type PRScreenshotResult = {
@@ -855,6 +899,7 @@ export type PRScreenshotResult = {
   sessionId: string;
   convexSessionId: string;
   morphInstanceId: string;
+  path: string; // Working directory path in the VM
   vncUrl: string;
   pullRequest: {
     url: string;

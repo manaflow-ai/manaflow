@@ -25,6 +25,27 @@ const CURATION_WINDOW_MS = 24 * 60 * 60 * 1000; // Look at posts from last 24 ho
 const FEED_ITEM_TTL_MS = 48 * 60 * 60 * 1000; // Feed items expire after 48 hours
 const MAX_CURATED_PER_RUN = 10; // Max posts to curate per run
 
+const DEFAULT_CURATOR_PROMPT = `You are a feed curator focused on surfacing high-quality code changes ready for review and merging.
+
+Review these posts and select up to ${MAX_CURATED_PER_RUN} that are worth showing. Prioritize:
+- PRs and code changes that appear complete and ready to merge
+- PRs that need review attention (ready for eyes, not WIP)
+- Significant features or bug fixes that are polished
+- Code discussions showing finalized implementations
+- Posts about merged or nearly-merged contributions
+- Funny, clever, or genuinely interesting content that brings joy
+
+Deprioritize:
+- Work-in-progress or draft PRs
+- Early-stage explorations or experiments
+- Posts asking for help with incomplete code
+- Low effort or trivial changes
+- Off-topic or spam-like content
+
+For replies: If a reply indicates a PR is approved, ready to merge, or provides final review feedback, surface it.
+
+Select posts that help users see what's ready to ship. Return an empty array if none qualify.`;
+
 // -----------------------------------------------------------------------------
 // Internal queries for curation
 // -----------------------------------------------------------------------------
@@ -268,6 +289,13 @@ export const runCurator = internalAction({
       return { curated: 0 };
     }
 
+    // Get the first enabled user's algorithm settings to use their curator prompt
+    const algorithmSettings = await ctx.runQuery(
+      internal.github.getFirstEnabledAlgorithmSettings
+    );
+    const curatorPrompt = algorithmSettings?.curatorPrompt || DEFAULT_CURATOR_PROMPT;
+    console.log(`[Curator] Using ${algorithmSettings?.curatorPrompt ? "custom" : "default"} curator prompt`);
+
     // Get existing globally curated post IDs to avoid duplicates
     const existingPostIds = await ctx.runQuery(
       internal.curator.getGloballyCuratedPostIds,
@@ -369,26 +397,10 @@ export const runCurator = internalAction({
             )
             .describe("Posts to surface to the user, most interesting first"),
         }),
-        prompt: `You are a feed curator. Your job is to select the most interesting and valuable posts to show users.
-
-Review these posts and select up to ${MAX_CURATED_PER_RUN} that are worth showing. Consider:
-- Technical content, code discussions, and insightful analysis
-- Important updates or announcements
-- Engaging discussions (replies with good context)
-- Posts with engagement (reactions, replies)
-- Recency (newer posts are generally more relevant)
-
-For replies: If a reply is interesting, consider it WITH its parent context. A great reply to an important topic should be surfaced.
-
-Skip posts that are:
-- Low effort or trivial
-- Duplicate information
-- Off-topic or spam-like
+        prompt: `${curatorPrompt}
 
 Posts to evaluate:
-${JSON.stringify(postSummaries, null, 2)}
-
-Select the most interesting posts. Return an empty array if none are worth surfacing.`,
+${JSON.stringify(postSummaries, null, 2)}`,
       });
 
       // Write feed items for selected posts (globally, no userId)

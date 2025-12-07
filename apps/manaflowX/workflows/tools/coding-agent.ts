@@ -282,13 +282,17 @@ async function cloneRepositoryInVM(
 // Coding Agent Tool - Delegates tasks to OpenCode running in Morph VMs
 // =============================================================================
 
-// Spawn a Morph VM instance and return the OpenCode URL
-async function spawnCodingVM(options?: {
+// Get or spawn a Morph VM instance and return the OpenCode URL
+async function getOrSpawnCodingVM(options?: {
+  vmInstanceId?: string; // If provided, connect to existing VM instead of spawning new one
   onReady?: (instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> }) => Promise<void>;
   repo?: RepoCloneConfig;
 }): Promise<{
   instanceId: string;
   url: string;
+  vncUrl: string;
+  isExisting: boolean; // Whether we connected to an existing VM
+  instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> };
   cleanup: () => Promise<void>;
 }> {
   const apiKey = process.env.MORPH_API_KEY;
@@ -297,42 +301,70 @@ async function spawnCodingVM(options?: {
   }
 
   const client = new MorphCloudClient({ apiKey });
-  const snapshotId = getLatestSnapshotId();
 
-  console.log(`[coding-agent] Starting VM from snapshot: ${snapshotId}`);
-  const instance = await client.instances.start({ snapshotId });
-  console.log(`[coding-agent] Instance created: ${instance.id}`);
+  let instance;
+  let isExisting = false;
 
-  console.log(`[coding-agent] Waiting for instance to be ready...`);
-  await instance.waitUntilReady(60); // Wait up to 60 seconds
+  if (options?.vmInstanceId) {
+    // Connect to existing VM
+    console.log(`[coding-agent] Connecting to existing VM: ${options.vmInstanceId}`);
+    instance = await client.instances.get({ instanceId: options.vmInstanceId });
+    isExisting = true;
+    console.log(`[coding-agent] Connected to existing instance: ${instance.id}`);
+  } else {
+    // Spawn new VM
+    const snapshotId = getLatestSnapshotId();
+    console.log(`[coding-agent] Starting VM from snapshot: ${snapshotId}`);
+    instance = await client.instances.start({ snapshotId });
+    console.log(`[coding-agent] Instance created: ${instance.id}`);
+
+    console.log(`[coding-agent] Waiting for instance to be ready...`);
+    await instance.waitUntilReady(60); // Wait up to 60 seconds
+  }
 
   // Run onReady callback if provided (e.g., to write config files)
   if (options?.onReady) {
     await options.onReady(instance);
   }
 
-  // Clone repository if configuration provided
+  // Clone repository if configuration provided (only for new VMs typically)
   if (options?.repo) {
     await cloneRepositoryInVM(instance, options.repo);
   }
 
-  const service = instance.networking.httpServices.find(
+  const opencodeService = instance.networking.httpServices.find(
     (s) => s.name === "port-4096"
   );
+  const vncService = instance.networking.httpServices.find(
+    (s) => s.name === "novnc"
+  );
 
-  if (!service) {
-    await client.instances.stop({ instanceId: instance.id });
+  if (!opencodeService) {
+    if (!isExisting) {
+      await client.instances.stop({ instanceId: instance.id });
+    }
     throw new Error("OpenCode service (port-4096) not found on VM");
   }
 
-  console.log(`[coding-agent] VM ready at: ${service.url}`);
+  console.log(`[coding-agent] VM ready at: ${opencodeService.url}`);
+  if (vncService) {
+    console.log(`[coding-agent] VNC available at: ${vncService.url}`);
+  }
 
   return {
     instanceId: instance.id,
-    url: service.url,
+    url: opencodeService.url,
+    vncUrl: vncService?.url ?? "",
+    isExisting,
+    instance,
     cleanup: async () => {
-      console.log(`[coding-agent] Stopping VM: ${instance.id}`);
-      await client.instances.stop({ instanceId: instance.id });
+      // Only cleanup if we spawned a new VM
+      if (!isExisting) {
+        console.log(`[coding-agent] Stopping VM: ${instance.id}`);
+        await client.instances.stop({ instanceId: instance.id });
+      } else {
+        console.log(`[coding-agent] Keeping existing VM: ${instance.id}`);
+      }
     },
   };
 }
@@ -417,18 +449,32 @@ The agent will complete the task autonomously and return the results.`,
       .describe(
         "Command to install dependencies (e.g., 'bun install', 'npm install'). If provided, the agent will run this after cloning the repository."
       ),
+    vmInstanceId: z
+      .string()
+      .optional()
+      .describe(
+        "Morph VM instance ID to connect to. If provided, reuses an existing VM instead of spawning a new one."
+      ),
+    path: z
+      .string()
+      .optional()
+      .describe(
+        "Working directory path for the OpenCode session. If provided, the session will use this directory."
+      ),
   }),
   execute: async (
-    { task, context, agent, repo, installCommand }: {
+    { task, context, agent, repo, installCommand, vmInstanceId, path }: {
       task: string;
       context?: string;
       agent: "build" | "plan" | "general";
       repo?: { gitRemote: string; branch: string; installationId?: number };
       installCommand?: string;
+      vmInstanceId?: string;
+      path?: string;
     },
     { toolCallId }: { toolCallId: string }
   ) => {
-    let vm: Awaited<ReturnType<typeof spawnCodingVM>> | null = null;
+    let vm: Awaited<ReturnType<typeof getOrSpawnCodingVM>> | null = null;
     let convexSessionId: string | null = null;
 
     // Look up the parent session ID for progress updates
@@ -464,13 +510,15 @@ The agent will complete the task autonomously and return the results.`,
       });
       console.log(`[coding-agent] Created Convex session: ${convexSessionId}`);
 
-      // Update progress: Session created, now starting VM (non-blocking)
-      updateProgress(parentSessionId, toolCallId, "starting_vm", "Starting sandboxed VM...", {
+      // Update progress: Session created, now starting/connecting VM (non-blocking)
+      const vmProgressMsg = vmInstanceId ? "Connecting to existing VM..." : "Starting sandboxed VM...";
+      updateProgress(parentSessionId, toolCallId, "starting_vm", vmProgressMsg, {
         sessionId: convexSessionId,
       });
 
-      // Spawn a VM with JWT config written before OpenCode starts
-      vm = await spawnCodingVM({
+      // Get or spawn a VM with JWT config written before OpenCode starts
+      vm = await getOrSpawnCodingVM({
+        vmInstanceId,
         onReady: async (instance) => {
           if (jwtSecret && convexSiteUrl && convexSessionId) {
             // Create JWT with session ID
@@ -535,9 +583,10 @@ The agent will complete the task autonomously and return the results.`,
         instanceId: vm.instanceId,
       });
 
-      // Create OpenCode client using the official SDK
+      // Create OpenCode client using the official SDK (with optional directory for path)
       const opencode = createOpencodeClient({
         baseUrl: vm.url,
+        ...(path && { directory: path }),
       });
 
       // Create a session
@@ -620,6 +669,7 @@ ${installCommand}
         convexSessionId, // Include Convex session ID for UI linking
         morphInstanceId: vm.instanceId, // VM instance ID for debugging (URL derived as https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
         path: session.directory, // Working directory path in the VM
+        vncUrl: vm.vncUrl, // VNC URL for visual debugging
         response: textResponse,
         toolsUsed: toolsSummary,
         tokens: response.info.tokens,
@@ -640,6 +690,7 @@ ${installCommand}
       return {
         success: false,
         convexSessionId, // Include even on error for debugging
+        vncUrl: vm?.vncUrl, // Include VNC URL even on error for debugging
         error: error instanceof Error ? error.message : String(error),
       };
     } finally {

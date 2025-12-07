@@ -4,12 +4,14 @@ import { useQuery, useMutation, useAction } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
 import { useState, useEffect } from "react"
+import TextareaAutosize from "react-textarea-autosize"
 import { api } from "../../convex/_generated/api"
 
 function GeneralContent() {
   const user = useUser()
   const algorithmSettings = useQuery(api.github.getAlgorithmSettings)
   const setAlgorithmPrompt = useMutation(api.github.setAlgorithmPrompt)
+  const setCuratorPrompt = useMutation(api.github.setCuratorPrompt)
   const toggleAlgorithmEnabled = useMutation(api.github.toggleAlgorithmEnabled)
 
   // Algorithm controls
@@ -21,11 +23,17 @@ function GeneralContent() {
     result?: { success: boolean; message: string; pr?: { title: string; url: string; repo: string } }
   }>({ loading: false })
 
-  const [promptValue, setPromptValue] = useState("")
-  const [isSaving, setIsSaving] = useState(false)
-  const [hasChanges, setHasChanges] = useState(false)
+  // Poaster prompt state
+  const [poasterPromptValue, setPoasterPromptValue] = useState("")
+  const [isPoasterSaving, setIsPoasterSaving] = useState(false)
+  const [hasPoasterChanges, setHasPoasterChanges] = useState(false)
 
-  const defaultPrompt = `You are curating a developer feed and deciding how to engage with the codebase. You have two options:
+  // Curator prompt state
+  const [curatorPromptValue, setCuratorPromptValue] = useState("")
+  const [isCuratorSaving, setIsCuratorSaving] = useState(false)
+  const [hasCuratorChanges, setHasCuratorChanges] = useState(false)
+
+  const defaultPoasterPrompt = `You are curating a developer feed and deciding how to engage with the codebase. You have two options:
 
 1. **Post about a PR** - Share an interesting Pull Request with the community
 2. **Solve an Issue** - Pick an issue to work on and delegate to a coding agent
@@ -44,27 +52,66 @@ For Issues, look for:
 
 Pick the most interesting item from whichever category you choose. Write engaging content that makes developers want to check it out.`
 
-  // Initialize prompt value when data loads
+  const defaultCuratorPrompt = `You are a feed curator focused on surfacing high-quality code changes ready for review and merging.
+
+Review these posts and select up to 10 that are worth showing. Prioritize:
+- PRs and code changes that appear complete and ready to merge
+- PRs that need review attention (ready for eyes, not WIP)
+- Significant features or bug fixes that are polished
+- Code discussions showing finalized implementations
+- Posts about merged or nearly-merged contributions
+- Funny, clever, or genuinely interesting content that brings joy
+
+Deprioritize:
+- Work-in-progress or draft PRs
+- Early-stage explorations or experiments
+- Posts asking for help with incomplete code
+- Low effort or trivial changes
+- Off-topic or spam-like content
+
+For replies: If a reply indicates a PR is approved, ready to merge, or provides final review feedback, surface it.
+
+Select posts that help users see what's ready to ship. Return an empty array if none qualify.`
+
+  // Initialize prompt values when data loads
   useEffect(() => {
     if (algorithmSettings !== undefined) {
-      setPromptValue(algorithmSettings.prompt || defaultPrompt)
+      setPoasterPromptValue(algorithmSettings.prompt || defaultPoasterPrompt)
+      setCuratorPromptValue(algorithmSettings.curatorPrompt || defaultCuratorPrompt)
     }
-  }, [algorithmSettings, defaultPrompt])
+  }, [algorithmSettings, defaultPoasterPrompt, defaultCuratorPrompt])
 
-  const handleChange = (value: string) => {
-    setPromptValue(value)
-    setHasChanges(value !== (algorithmSettings?.prompt || defaultPrompt))
+  const handlePoasterChange = (value: string) => {
+    setPoasterPromptValue(value)
+    setHasPoasterChanges(value !== (algorithmSettings?.prompt || defaultPoasterPrompt))
   }
 
-  const handleSave = async () => {
-    setIsSaving(true)
+  const handleCuratorChange = (value: string) => {
+    setCuratorPromptValue(value)
+    setHasCuratorChanges(value !== (algorithmSettings?.curatorPrompt || defaultCuratorPrompt))
+  }
+
+  const handlePoasterSave = async () => {
+    setIsPoasterSaving(true)
     try {
-      await setAlgorithmPrompt({ prompt: promptValue })
-      setHasChanges(false)
+      await setAlgorithmPrompt({ prompt: poasterPromptValue })
+      setHasPoasterChanges(false)
     } catch (error) {
-      console.error("Failed to save prompt:", error)
+      console.error("Failed to save Poaster prompt:", error)
     } finally {
-      setIsSaving(false)
+      setIsPoasterSaving(false)
+    }
+  }
+
+  const handleCuratorSave = async () => {
+    setIsCuratorSaving(true)
+    try {
+      await setCuratorPrompt({ prompt: curatorPromptValue })
+      setHasCuratorChanges(false)
+    } catch (error) {
+      console.error("Failed to save Curator prompt:", error)
+    } finally {
+      setIsCuratorSaving(false)
     }
   }
 
@@ -105,11 +152,17 @@ Pick the most interesting item from whichever category you choose. Write engagin
 
   return (
     <div className="max-w-2xl mx-auto">
-      {/* Auto Algorithm Control */}
+      {/* Poaster Section */}
       <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-white mb-1">Poaster</h2>
+        <p className="text-sm text-gray-400 mb-4">
+          Monitors your GitHub repos and autonomously posts about interesting PRs or delegates issues to coding agents.
+        </p>
+
+        {/* Auto Algorithm Control */}
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-medium text-white">Auto Algorithm</h3>
+            <h3 className="font-medium text-white">Auto Mode</h3>
             <p className="text-sm text-gray-500 mt-0.5">
               Post about PRs or solve issues automatically
             </p>
@@ -130,24 +183,22 @@ Pick the most interesting item from whichever category you choose. Write engagin
         </div>
 
         {isEnabled && (
-          <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
+          <div className="mb-4 flex items-center gap-2 text-sm text-blue-400">
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
             Active
           </div>
         )}
 
         {monitoredCount === 0 && (
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="mb-4 text-sm text-gray-500">
             Enable monitoring on repos in the GitHub tab first
           </p>
         )}
-      </div>
 
-      {/* Run Algorithm */}
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between">
+        {/* Run Algorithm */}
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-medium text-white">Run Algorithm</h3>
+            <h3 className="font-medium text-white">Run Manually</h3>
             <p className="text-sm text-gray-500 mt-0.5">
               Post about a PR or start solving an issue now
             </p>
@@ -162,37 +213,73 @@ Pick the most interesting item from whichever category you choose. Write engagin
         </div>
 
         {testStatus.result && (
-          <div className={`mt-3 text-sm ${testStatus.result.success ? "text-green-400" : "text-red-400"}`}>
+          <div className={`mb-4 text-sm ${testStatus.result.success ? "text-green-400" : "text-red-400"}`}>
             {testStatus.result.message}
           </div>
         )}
+
+        {/* Poaster System Prompt */}
+        <div>
+          <div className="mb-3">
+            <h3 className="font-medium text-white">System Prompt</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Customize how Poaster selects PRs and issues to engage with
+            </p>
+          </div>
+
+          <TextareaAutosize
+            value={poasterPromptValue}
+            onChange={(e) => handlePoasterChange(e.target.value)}
+            minRows={6}
+            className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+            placeholder="Enter the system prompt for Poaster..."
+          />
+
+          <div className="flex justify-end mt-3">
+            <button
+              onClick={handlePoasterSave}
+              disabled={isPoasterSaving || !hasPoasterChanges || !poasterPromptValue.trim()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isPoasterSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Grok System Prompt */}
+      {/* Curator Section */}
       <div className="p-4">
-        <div className="mb-3">
-          <h3 className="font-medium text-white">Grok System Prompt</h3>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Customize how Grok selects and writes about content
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold text-white mb-1">Curator</h2>
+        <p className="text-sm text-gray-400 mb-4">
+          Scans recent posts and replies, using AI to surface the most interesting content to the curated feed.
+        </p>
 
-        <textarea
-          value={promptValue}
-          onChange={(e) => handleChange(e.target.value)}
-          rows={12}
-          className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
-          placeholder="Enter the system prompt for Grok..."
-        />
+        {/* Curator System Prompt */}
+        <div>
+          <div className="mb-3">
+            <h3 className="font-medium text-white">System Prompt</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Customize how Curator evaluates and selects posts for the feed
+            </p>
+          </div>
 
-        <div className="flex justify-end mt-3">
-          <button
-            onClick={handleSave}
-            disabled={isSaving || !hasChanges || !promptValue.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isSaving ? "Saving..." : "Save"}
-          </button>
+          <TextareaAutosize
+            value={curatorPromptValue}
+            onChange={(e) => handleCuratorChange(e.target.value)}
+            minRows={6}
+            className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+            placeholder="Enter the system prompt for Curator..."
+          />
+
+          <div className="flex justify-end mt-3">
+            <button
+              onClick={handleCuratorSave}
+              disabled={isCuratorSaving || !hasCuratorChanges || !curatorPromptValue.trim()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isCuratorSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

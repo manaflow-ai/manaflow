@@ -30,6 +30,7 @@
     "opencode-ai": "^1.0.134",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "react-textarea-autosize": "^8.5.9",
     "streamdown": "^1.6.10",
     "workflow": "^4.0.1-beta.28"
   },

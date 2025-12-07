@@ -564,7 +564,7 @@ export const getAlgorithmSettings = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { enabled: false, prompt: null };
+    if (!identity) return { enabled: false, prompt: null, curatorPrompt: null };
 
     const userId = identity.subject;
     const setting = await ctx.db
@@ -575,6 +575,7 @@ export const getAlgorithmSettings = query({
     return {
       enabled: setting?.enabled ?? false,
       prompt: setting?.prompt ?? null,
+      curatorPrompt: setting?.curatorPrompt ?? null,
     };
   },
 });
@@ -652,6 +653,7 @@ export const getFirstEnabledAlgorithmSettings = internalQuery({
       userId: setting.userId,
       enabled: setting.enabled,
       prompt: setting.prompt ?? null,
+      curatorPrompt: setting.curatorPrompt ?? null,
     };
   },
 });
@@ -710,6 +712,35 @@ export const setAlgorithmPrompt = mutation({
         userId,
         enabled: false,
         prompt,
+        updatedAt: now,
+      });
+    }
+    return { prompt };
+  },
+});
+
+// Set curator prompt
+export const setCuratorPrompt = mutation({
+  args: { prompt: v.string() },
+  handler: async (ctx, { prompt }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const userId = identity.subject;
+    const now = Date.now();
+
+    const existing = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { curatorPrompt: prompt, updatedAt: now });
+    } else {
+      await ctx.db.insert("algorithmSettings", {
+        userId,
+        enabled: false,
+        curatorPrompt: prompt,
         updatedAt: now,
       });
     }

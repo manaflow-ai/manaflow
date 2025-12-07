@@ -304,7 +304,7 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
   return (
     <div className="h-full flex flex-col bg-black">
       {/* Header */}
-      <div className="flex-shrink-0 h-[60px] px-4 border-b border-gray-800 bg-black/80 backdrop-blur-md flex items-center">
+      <div className="flex-shrink-0 h-[55px] px-4 border-b border-gray-800 bg-black/80 backdrop-blur-md flex items-center">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
             <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
