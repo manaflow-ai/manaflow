@@ -84,11 +84,14 @@ EOF`);
 vncserver -kill :1 2>/dev/null || true
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 
-# Start VNC server on display :1
-vncserver :1 -geometry 1920x1080 -depth 24
+# Start VNC server on display :1 with logging
+vncserver :1 -geometry 1920x1080 -depth 24 2>&1 | tee -a /root/vncserver.log &
 
-# Start websockify for noVNC (port 6080 -> VNC port 5901)
-websockify --web=/usr/share/novnc/ 6080 localhost:5901 &
+# Give VNC server time to start
+sleep 2
+
+# Start websockify for noVNC (port 6080 -> VNC port 5901) with logging
+websockify --web=/usr/share/novnc/ 6080 localhost:5901 >> /root/websockify.log 2>&1 &
 echo $! > /root/websockify.pid
 echo "noVNC started on port 6080"
 EOF`);
