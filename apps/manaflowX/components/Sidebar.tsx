@@ -52,7 +52,7 @@ export function Sidebar() {
   const pathname = usePathname()
 
   return (
-    <aside className="w-[68px] xl:w-[275px] h-screen sticky top-0 flex flex-col border-r border-gray-800 py-2 px-2 xl:px-4">
+    <aside className="w-[68px] 2xl:w-[275px] shrink-0 h-screen sticky top-0 flex flex-col border-r border-gray-800 py-2 px-2 2xl:px-4">
       <nav className="flex flex-col gap-1 mt-2">
         {navItems.map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
@@ -69,7 +69,7 @@ export function Sidebar() {
               <span className={isActive ? "text-white" : "text-gray-400"}>
                 {item.icon}
               </span>
-              <span className={`hidden xl:block text-xl ${isActive ? "text-white" : "text-gray-400"}`}>
+              <span className={`hidden 2xl:block text-xl ${isActive ? "text-white" : "text-gray-400"}`}>
                 {item.label}
               </span>
             </Link>

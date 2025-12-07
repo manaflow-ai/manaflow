@@ -64,8 +64,19 @@ async function createJWT(payload: Record<string, unknown>, secret: string): Prom
   return `${headerB64}.${payloadB64}.${signatureB64}`;
 }
 
-// Initialize Convex client
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+// Lazily initialize Convex client to avoid errors when module is loaded in environments
+// where NEXT_PUBLIC_CONVEX_URL is not set (e.g., Convex's module analysis phase)
+let _convex: ConvexHttpClient | null = null;
+function getConvexClient(): ConvexHttpClient {
+  if (!_convex) {
+    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
+    if (!url) {
+      throw new Error("NEXT_PUBLIC_CONVEX_URL environment variable is required");
+    }
+    _convex = new ConvexHttpClient(url);
+  }
+  return _convex;
+}
 
 // =============================================================================
 // Background Progress Queue
@@ -97,7 +108,7 @@ class ProgressQueue {
     while (this.queue.length > 0) {
       const update = this.queue.shift()!;
       try {
-        await convex.mutation(api.sessions.updateToolProgress, {
+        await getConvexClient().mutation(api.sessions.updateToolProgress, {
           sessionId: update.parentSessionId,
           toolCallId: update.toolCallId,
           progress: {
@@ -514,7 +525,7 @@ The tool returns whether UI changes exist and provides screenshot URLs if applic
     let convexSessionId: string | null = null;
 
     // Look up the parent session ID for progress updates
-    const parentSessionId = await convex.query(api.codingAgent.getParentSessionForToolCall, {
+    const parentSessionId = await getConvexClient().query(api.codingAgent.getParentSessionForToolCall, {
       toolCallId,
     });
 
@@ -537,7 +548,7 @@ The tool returns whether UI changes exist and provides screenshot URLs if applic
       updateProgress(parentSessionId, toolCallId, "creating_session", "Creating tracking session...");
 
       // Create a session in Convex
-      convexSessionId = await convex.mutation(api.codingAgent.createCodingAgentSession, {
+      convexSessionId = await getConvexClient().mutation(api.codingAgent.createCodingAgentSession, {
         toolCallId,
         task: `PR Screenshot Review: ${pullRequestUrl}`,
         context: `Branch: ${branch}`,
@@ -599,7 +610,7 @@ The tool returns whether UI changes exist and provides screenshot URLs if applic
       }
 
       // Update session with the Morph instance ID
-      await convex.mutation(api.codingAgent.updateCodingAgentSessionInstance, {
+      await getConvexClient().mutation(api.codingAgent.updateCodingAgentSessionInstance, {
         sessionId: convexSessionId as Id<"sessions">,
         morphInstanceId: vm.instanceId,
       });
@@ -829,3 +840,54 @@ gh pr view ${parsedPR.prNumber} --repo ${parsedPR.owner}/${parsedPR.repo} --json
 export const prScreenshoterTools = {
   pullRequestScreenshoter: pullRequestScreenshoterTool,
 };
+
+// Export types for direct function call
+export type PRScreenshotInput = {
+  pullRequestUrl: string;
+  branch: string;
+  installationId?: number;
+  devCommand?: string;
+  installCommand?: string;
+};
+
+export type PRScreenshotResult = {
+  success: true;
+  sessionId: string;
+  convexSessionId: string;
+  morphInstanceId: string;
+  vncUrl: string;
+  pullRequest: {
+    url: string;
+    owner: string;
+    repo: string;
+    number: number;
+    branch: string;
+  };
+  response: string;
+  toolsUsed: string[];
+  tokens: { input: number; output: number };
+  cost: number;
+} | {
+  success: false;
+  convexSessionId: string | null;
+  vncUrl?: string;
+  error: string;
+};
+
+// Direct function export for calling from Convex actions
+export async function screenshotPullRequest(
+  input: PRScreenshotInput,
+  toolCallId: string
+): Promise<PRScreenshotResult> {
+  // The tool's execute function is the implementation
+  // We access it via the tool's parameters property
+  const execute = pullRequestScreenshoterTool.execute;
+  if (!execute) {
+    return {
+      success: false,
+      convexSessionId: null,
+      error: "Tool execute function not found",
+    };
+  }
+  return execute(input, { toolCallId, messages: [] }) as Promise<PRScreenshotResult>;
+}

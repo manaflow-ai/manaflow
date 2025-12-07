@@ -347,18 +347,19 @@ export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionP
           </div>
         </div>
 
+      </div>
+
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto">
         {!morphInstanceId && (
-          <div className="mt-2 flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
+          <div className="m-4 flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
             <svg className="w-4 h-4 text-yellow-400 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span className="text-xs text-gray-400">Waiting for VM to start...</span>
           </div>
         )}
-      </div>
 
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto">
         {/* Iframe Viewers - Live Browser, Opencode, VS Code */}
         {morphInstanceId && (
           <>

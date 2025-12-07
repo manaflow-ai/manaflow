@@ -411,13 +411,20 @@ The agent will complete the task autonomously and return the results.`,
       })
       .optional()
       .describe("Repository to clone into the VM workspace. If not provided, no repository will be cloned."),
+    installCommand: z
+      .string()
+      .optional()
+      .describe(
+        "Command to install dependencies (e.g., 'bun install', 'npm install'). If provided, the agent will run this after cloning the repository."
+      ),
   }),
   execute: async (
-    { task, context, agent, repo }: {
+    { task, context, agent, repo, installCommand }: {
       task: string;
       context?: string;
       agent: "build" | "plan" | "general";
       repo?: { gitRemote: string; branch: string; installationId?: number };
+      installCommand?: string;
     },
     { toolCallId }: { toolCallId: string }
   ) => {
@@ -548,9 +555,25 @@ The agent will complete the task autonomously and return the results.`,
       console.log(`[coding-agent] Created OpenCode session: ${session.id}`);
 
       // Build the prompt
-      const fullPrompt = context
-        ? `${task}\n\nContext:\n${context}`
-        : task;
+      let fullPrompt = "";
+
+      // Add install command instructions if provided
+      if (installCommand) {
+        fullPrompt += `## Setup Instructions
+
+Before starting the task, install dependencies by running:
+\`\`\`bash
+${installCommand}
+\`\`\`
+
+`;
+      }
+
+      fullPrompt += task;
+
+      if (context) {
+        fullPrompt += `\n\nContext:\n${context}`;
+      }
 
       // Update progress: Sending task (non-blocking)
       updateProgress(parentSessionId, toolCallId, "sending_task", "Sending task to coding agent...", {

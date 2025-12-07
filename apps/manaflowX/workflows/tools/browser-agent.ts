@@ -314,14 +314,35 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
       .describe(
         "Working directory path for the OpenCode session. If provided, the session will use this directory. Useful when reusing a VM from delegateToCodingAgent."
       ),
+    devCommand: z
+      .string()
+      .optional()
+      .describe(
+        "Command to start the dev server (e.g., 'npm run dev', 'bun dev'). If provided, the agent will start this in a tmux pane and wait for it to be ready before proceeding."
+      ),
+    installCommand: z
+      .string()
+      .optional()
+      .describe(
+        "Command to install dependencies (e.g., 'bun install', 'npm install'). If provided, the agent will run this before starting the dev server."
+      ),
+    devServerPort: z
+      .number()
+      .optional()
+      .describe(
+        "Port the dev server runs on (default: 3000). Used to verify the server is ready via curl."
+      ),
   }),
   execute: async (
-    { task, context, startUrl, vmInstanceId, path }: {
+    { task, context, startUrl, vmInstanceId, path, devCommand, installCommand, devServerPort }: {
       task: string;
       context?: string;
       startUrl?: string;
       vmInstanceId?: string;
       path?: string;
+      devCommand?: string;
+      installCommand?: string;
+      devServerPort?: number;
     },
     { toolCallId }: { toolCallId: string }
   ) => {
@@ -495,6 +516,7 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
       console.log(`[browser-agent] Created OpenCode session: ${session.id}`);
 
       // Build the prompt with browser-specific instructions
+      const port = devServerPort || 3000;
       let fullPrompt = `You have access to a Chrome browser via the Chrome DevTools MCP.
 
 Available browser tools:
@@ -524,8 +546,59 @@ This allows the user to see visual proof of the completed task.
 
 `;
 
+      // Add dev server setup instructions if devCommand is provided
+      if (devCommand || installCommand) {
+        fullPrompt += `## Dev Server Setup
+
+Before starting the browser task, you need to ensure the dev server is running.
+
+`;
+        if (installCommand) {
+          fullPrompt += `### Step 1: Install Dependencies
+Run the install command:
+\`\`\`bash
+${installCommand}
+\`\`\`
+
+`;
+        }
+
+        if (devCommand) {
+          fullPrompt += `### Step ${installCommand ? '2' : '1'}: Start Dev Server in tmux
+First, check if dev server is already running by listing tmux panes:
+\`\`\`bash
+tmux list-panes -a -F "#{pane_id}: #{pane_current_command}" 2>/dev/null || echo "No tmux sessions"
+\`\`\`
+
+If the dev server is NOT already running, start it in a new tmux pane:
+\`\`\`bash
+tmux new-window -n devserver -d "${devCommand}"
+\`\`\`
+
+### Step ${installCommand ? '3' : '2'}: Verify Server is Ready
+Wait for the dev server to be ready by polling with curl:
+\`\`\`bash
+for i in {1..30}; do
+  status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${port} 2>/dev/null)
+  if [ "$status" = "200" ] || [ "$status" = "304" ]; then
+    echo "Dev server ready (HTTP $status)"
+    break
+  fi
+  echo "Waiting for dev server... (attempt $i/30)"
+  sleep 2
+done
+\`\`\`
+
+Only proceed with the browser task once the dev server returns HTTP 200 or 304.
+
+`;
+        }
+      }
+
       if (startUrl) {
         fullPrompt += `First, navigate to: ${startUrl}\n\n`;
+      } else if (devCommand) {
+        fullPrompt += `Once the dev server is ready, navigate to: http://localhost:${port}\n\n`;
       }
 
       fullPrompt += `Task: ${task}`;

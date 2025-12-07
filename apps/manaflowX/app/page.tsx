@@ -12,7 +12,6 @@ import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
 import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
-import { ConnectXButton } from "@/components/ConnectXButton"
 import { GrokIcon } from "@/components/GrokIcon"
 
 type Post = {
@@ -32,20 +31,16 @@ function PostCard({
   onReply,
   onClick,
   isSelected = false,
-  isReply = false,
 }: {
   post: Post
   onReply: () => void
   onClick?: () => void
   isSelected?: boolean
-  isReply?: boolean
 }) {
   return (
     <div
       onClick={onClick}
-      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${
-        isReply ? "border-l border-gray-700" : ""
-      } ${isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""}`}
+      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""}`}
     >
       <div className="flex gap-3">
         <div className="flex-shrink-0">
@@ -277,12 +272,11 @@ function ThreadPanel({
 
         {/* Render replies with linear indent */}
         {allReplies.map((reply) => (
-          <div key={reply._id} className="pl-6 border-l border-gray-800 ml-4">
+          <div key={reply._id}>
             <PostCard
               post={reply}
               onReply={() => setReplyingTo(reply)}
               onClick={() => onSelectPost(reply._id)}
-              isReply
               isSelected={reply._id === postId}
             />
             {replyingTo?._id === reply._id && (
@@ -292,11 +286,13 @@ function ThreadPanel({
                 onSubmit={handleReply}
               />
             )}
-            <SessionsByPost
-              postId={reply._id}
-              onCodingAgentSessionSelect={onCodingAgentSessionSelect}
-              onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
-            />
+            <div className="px-4">
+              <SessionsByPost
+                postId={reply._id}
+                onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+                onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -427,7 +423,7 @@ function HomeContent() {
       <div className="flex justify-center">
         {/* Main Feed Column */}
         <main
-          className={`w-full max-w-[600px] border-x border-gray-800 min-h-screen`}
+          className={`w-full sm:min-w-[450px] max-w-[666px] shrink sm:border-x border-gray-800 min-h-screen`}
         >
           <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 h-[60px] px-4 flex justify-between items-center">
             <h1 className="text-xl font-bold">Feed</h1>
@@ -473,8 +469,6 @@ function HomeContent() {
                     onRepoSelect={setSelectedRepo}
                   />
                 )}
-                {/* Connect X account button */}
-                {user && <ConnectXButton />}
               </div>
               <button
                 disabled={!content.trim() || isSubmitting}
@@ -507,7 +501,7 @@ function HomeContent() {
 
         {/* Thread Panel - Right Column */}
         {selectedThread && (
-          <aside className="w-[550px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
+          <aside className="w-[550px] shrink-0 border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
             <ThreadPanel
               postId={selectedThread}
               onClose={() => setSelectedThread(null)}
@@ -520,7 +514,7 @@ function HomeContent() {
 
         {/* Coding Agent Session Panel - Third Column */}
         {selectedCodingAgentSession && !selectedBrowserAgentSession && (
-          <aside className="w-[500px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+          <aside className="w-[500px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <CodingAgentSession
               sessionId={selectedCodingAgentSession}
               onClose={() => setSelectedCodingAgentSession(null)}
@@ -530,7 +524,7 @@ function HomeContent() {
 
         {/* Browser Agent Session Panel - Third Column (takes precedence over coding agent) */}
         {selectedBrowserAgentSession && (
-          <aside className="w-[600px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+          <aside className="w-[600px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <BrowserAgentSession
               sessionId={selectedBrowserAgentSession}
               onClose={() => setSelectedBrowserAgentSession(null)}

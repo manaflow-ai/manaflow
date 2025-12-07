@@ -32,7 +32,7 @@ const client = new MorphCloudClient({
 
   // Install git and basic dependencies
   console.log("Installing git and basic dependencies...");
-  await instance.exec("apt-get update && apt-get install -y git curl wget gnupg2 ca-certificates", {
+  await instance.exec("apt-get update && apt-get install -y git curl wget gnupg2 ca-certificates tmux", {
     timeout: 120000,
   });
 

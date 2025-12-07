@@ -1,20 +1,20 @@
-import type { Metadata } from "next";
-import { StackProvider, StackTheme } from "@stackframe/stack";
-import { stackClientApp } from "../stack/client";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import ConvexClientProvider from "@/components/ConvexClientProvider";
-import { AppShell } from "@/components/AppShell";
+import type { Metadata } from "next"
+import { StackProvider, StackTheme } from "@stackframe/stack"
+import { stackClientApp } from "../stack/client"
+import { Geist, Geist_Mono } from "next/font/google"
+import "./globals.css"
+import ConvexClientProvider from "@/components/ConvexClientProvider"
+import { AppShell } from "@/components/AppShell"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
-});
+})
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
-});
+})
 
 export const metadata: Metadata = {
   title: "xagi",
@@ -22,18 +22,16 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.svg",
   },
-};
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <StackProvider app={stackClientApp}>
           <StackTheme>
             <ConvexClientProvider>
@@ -43,5 +41,5 @@ export default function RootLayout({
         </StackProvider>
       </body>
     </html>
-  );
+  )
 }
