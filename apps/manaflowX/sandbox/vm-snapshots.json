@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2025-12-07T09:32:00.000Z",
+  "presets": [
+    {
+      "presetId": "6vcpu_24gb_48gb",
+      "label": "Standard workspace",
+      "cpu": "6 vCPU",
+      "memory": "24 GB RAM",
+      "disk": "48 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_f1qfq204",
+          "capturedAt": "2025-12-06T00:00:00Z"
+        },
+        {
+          "version": 2,
+          "snapshotId": "snapshot_2s1vpc1x",
+          "capturedAt": "2025-12-07T07:27:52.482Z"
+        },
+        {
+          "version": 3,
+          "snapshotId": "snapshot_p8c2is5y",
+          "capturedAt": "2025-12-07T08:08:41.853Z"
+        },
+        {
+          "version": 4,
+          "snapshotId": "snapshot_ip3ziorm",
+          "capturedAt": "2025-12-07T08:45:00.000Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_36q6ly8o",
+          "capturedAt": "2025-12-07T09:32:00.000Z"
+        }
+      ],
+      "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
+    }
+  ]
+}

@@ -38,6 +38,8 @@
   ],
   "exclude": [
     "node_modules",
-    "dev-docs"
+    "dev-docs",
+    "sandbox/worker/grok-code",
+    "sandbox/opencode-plugin"
   ]
 }

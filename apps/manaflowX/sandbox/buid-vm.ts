@@ -1,4 +1,10 @@
 import { MorphCloudClient } from "morphcloud";
+import { readFileSync, writeFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const client = new MorphCloudClient({
   apiKey: process.env.MORPH_API_KEY!,
@@ -54,6 +60,34 @@ const client = new MorphCloudClient({
   console.log("Clone stdout:", cloneResult.stdout);
   if (cloneResult.stderr) console.log("Clone stderr:", cloneResult.stderr);
 
+  // Patch terminal.tsx to fix WebSocket URL double-slash bug
+  // The original code does: sdk.url + `/pty/...` which when sdk.url="/" creates "//pty/..."
+  // The browser interprets "//pty/..." as a protocol-relative URL with hostname "pty"
+  console.log("Patching terminal.tsx for WebSocket URL fix...");
+  await instance.exec(`cat > /tmp/ws-fix.patch << 'PATCH'
+--- a/packages/desktop/src/components/terminal.tsx
++++ b/packages/desktop/src/components/terminal.tsx
+@@ -25,7 +25,12 @@ export const Terminal = (props: TerminalProps) => {
+   onMount(async () => {
+     ghostty = await Ghostty.load()
+
+-    ws = new WebSocket(sdk.url + \`/pty/\${local.pty.id}/connect?directory=\${encodeURIComponent(sdk.directory)}\`)
++    // Construct WebSocket URL properly, handling both absolute and relative URLs
++    const baseUrl = sdk.url.replace(/\\/$/, "") // Remove trailing slash if present
++    const path = \`/pty/\${local.pty.id}/connect?directory=\${encodeURIComponent(sdk.directory)}\`
++    // Convert http(s) to ws(s) for absolute URLs, keep relative URLs as-is
++    const wsUrl = baseUrl.startsWith("http") ? baseUrl.replace(/^http/, "ws") + path : baseUrl + path
++    ws = new WebSocket(wsUrl)
+     term = new Term({
+       cursorBlink: true,
+       fontSize: 14,
+PATCH`);
+  const patchResult = await instance.exec("cd /root/opencode && git apply /tmp/ws-fix.patch 2>&1 || echo 'Patch failed'");
+  console.log("Patch result:", patchResult.stdout || "Applied successfully");
+  // Verify patch
+  const patchVerify = await instance.exec("grep -n 'baseUrl' /root/opencode/packages/desktop/src/components/terminal.tsx | head -3");
+  console.log("Patch verify:", patchVerify.stdout || "No match found");
+
   // Install opencode dependencies
   console.log("Installing opencode dependencies...");
   const installDeps = await instance.exec("cd /root/opencode && bun install", {
@@ -62,10 +96,72 @@ const client = new MorphCloudClient({
   console.log("Install deps stdout:", installDeps.stdout);
   if (installDeps.stderr) console.log("Install deps stderr:", installDeps.stderr);
 
-  // Build opencode to resolve macros
-  console.log("Building opencode...");
+  // Build desktop package with our WebSocket fix
+  console.log("Building desktop package...");
+  const desktopBuildResult = await instance.exec(
+    "cd /root/opencode/packages/desktop && bun run build",
+    { timeout: 300000 }
+  );
+  console.log("Desktop build stdout:", desktopBuildResult.stdout);
+  if (desktopBuildResult.stderr) console.log("Desktop build stderr:", desktopBuildResult.stderr);
+
+  // Patch server.ts to serve static files from local desktop build instead of proxying
+  console.log("Patching server.ts to serve local desktop build...");
+  // Use bun to do the replacement with proper string handling
+  await instance.exec(`cat > /tmp/patch-server.ts << 'PATCHTS'
+const path = '/root/opencode/packages/opencode/src/server/server.ts';
+let content = await Bun.file(path).text();
+
+// Add import at top if not already present
+if (!content.includes('serveStatic')) {
+  content = 'import { serveStatic } from "hono/bun"\\n' + content;
+}
+
+// Find and replace the proxy block
+// Looking for: .all("/*", async (c) => { ... return proxy(...desktop.dev.opencode...) ... })
+const proxyBlockStart = content.indexOf('.all("/*", async (c) => {');
+if (proxyBlockStart !== -1) {
+  // Find the matching closing }) by counting braces
+  let braceCount = 0;
+  let started = false;
+  let endPos = proxyBlockStart;
+  for (let i = proxyBlockStart; i < content.length; i++) {
+    if (content[i] === '{') {
+      braceCount++;
+      started = true;
+    } else if (content[i] === '}') {
+      braceCount--;
+      if (started && braceCount === 0) {
+        // Found matching }, but we need the trailing )
+        endPos = i + 1;
+        if (content[i + 1] === ')') endPos = i + 2;
+        break;
+      }
+    }
+  }
+
+  const before = content.substring(0, proxyBlockStart);
+  const after = content.substring(endPos);
+  content = before + '.get("/*", serveStatic({ root: "/root/opencode/packages/desktop/dist" }))' + after;
+  console.log('Replaced proxy block with serveStatic');
+} else {
+  console.log('Warning: proxy block not found');
+}
+
+await Bun.write(path, content);
+console.log('Patched server.ts');
+PATCHTS`);
+  const patchServerResult = await instance.exec("bun /tmp/patch-server.ts 2>&1");
+  console.log("Server patch result:", patchServerResult.stdout);
+
+  // Verify the patch
+  const serverPatchVerify = await instance.exec("grep -n 'serveStatic\\|desktop.dev.opencode' /root/opencode/packages/opencode/src/server/server.ts | tail -5");
+  console.log("Server patch verify:", serverPatchVerify.stdout);
+
+  // Build opencode CLI binary (after patching server)
+  console.log("Building opencode CLI...");
   const buildResult = await instance.exec(
-    "cd /root/opencode/packages/opencode && bun run build",
+    "cd /root/opencode/packages/opencode && bun run build --single",
     { timeout: 300000 }
   );
   console.log("Build stdout:", buildResult.stdout);
@@ -98,9 +194,41 @@ EOF`);
   const glibcVerify = await instance.exec("ldd --version | head -1");
   console.log("Glibc version:", glibcVerify.stdout);
 
-  // Create workspace directory
-  console.log("Creating workspace directory...");
+  // Install global CLI tools
+  console.log("Installing global CLI tools...");
+  const globalInstall = await instance.exec(
+    "bun add -g @anthropic-ai/claude-code @openai/codex-cli @openai/codex-sdk @google/gemini-cli@preview",
+    { timeout: 300000 }
+  );
+  console.log("Global install stdout:", globalInstall.stdout);
+  if (globalInstall.stderr) console.log("Global install stderr:", globalInstall.stderr);
+
+  // Copy grok-code binary and symlink to PATH
+  console.log("Setting up grok-code binary...");
+  await instance.exec("mkdir -p /root/grok-code");
+  const ssh = await instance.ssh();
+  const grokBinaryPath = join(__dirname, "worker/grok-code/vendor/linux-x64/grok");
+  await ssh.putFile(grokBinaryPath, "/root/grok-code/grok");
+  await instance.exec("chmod +x /root/grok-code/grok");
+  await instance.exec("ln -sf /root/grok-code/grok /usr/local/bin/grok");
+  const grokVerify = await instance.exec("which grok && grok --version 2>&1 || echo 'grok installed'");
+  console.log("Grok verify:", grokVerify.stdout);
+  ssh.dispose();
+
+  // Create workspace directory and plugin directory
+  console.log("Creating workspace and plugin directories...");
   await instance.exec("mkdir -p /root/workspace");
+  await instance.exec("mkdir -p /root/workspace/.opencode/plugin");
+  await instance.exec("mkdir -p /root/.xagi");
+
+  // Copy the Convex sync plugin
+  console.log("Installing OpenCode Convex sync plugin...");
+  const pluginPath = join(__dirname, "opencode-plugin/convex-sync.ts");
+  const pluginSsh = await instance.ssh();
+  await pluginSsh.putFile(pluginPath, "/root/workspace/.opencode/plugin/convex-sync.ts");
+  pluginSsh.dispose();
+  const pluginVerify = await instance.exec("cat /root/workspace/.opencode/plugin/convex-sync.ts | head -20");
+  console.log("Plugin installed:", pluginVerify.stdout ? "OK" : "Failed");
 
   // Pre-fetch models.json to avoid Bun macro issue
   console.log("Pre-fetching models.json...");
@@ -115,7 +243,7 @@ EOF`);
 cd /root/workspace
 export OPENCODE_CONFIG_CONTENT='{"model":"opencode/grok-code"}'
 export BUN_PTY_LIB="/root/opencode/node_modules/.bun/bun-pty@0.4.2/node_modules/bun-pty/rust-pty/target/release/librust_pty.so"
-nohup /root/opencode/packages/opencode/dist/opencode serve --hostname=0.0.0.0 --port=4096 > /root/server.log 2>&1 &
+nohup /root/opencode/packages/opencode/dist/opencode-linux-x64/bin/opencode serve --hostname=0.0.0.0 --port=4096 > /root/server.log 2>&1 &
 echo $! > /root/server.pid
 EOF`);
   await instance.exec("chmod +x /root/start-server.sh");
@@ -145,6 +273,38 @@ EOF`);
   const finalSnapshot = await instance.snapshot();
   console.log(`\n=== FINAL SNAPSHOT ===`);
   console.log(`Snapshot ID: ${finalSnapshot.id}`);
+
+  // Update vm-snapshots.json
+  console.log("Updating vm-snapshots.json...");
+  const snapshotsPath = join(__dirname, "vm-snapshots.json");
+  const snapshotsData = JSON.parse(readFileSync(snapshotsPath, "utf-8"));
+
+  const presetId = "6vcpu_24gb_48gb";
+  let preset = snapshotsData.presets.find((p: { presetId: string }) => p.presetId === presetId);
+
+  if (!preset) {
+    preset = {
+      presetId,
+      label: "Standard workspace",
+      cpu: "6 vCPU",
+      memory: "24 GB RAM",
+      disk: "48 GB SSD",
+      versions: [],
+      description: "Great default for day-to-day work. Balanced CPU, memory, and storage.",
+    };
+    snapshotsData.presets.push(preset);
+  }
+
+  const newVersion = {
+    version: preset.versions.length + 1,
+    snapshotId: finalSnapshot.id,
+    capturedAt: new Date().toISOString(),
+  };
+  preset.versions.push(newVersion);
+  snapshotsData.updatedAt = new Date().toISOString();
+
+  writeFileSync(snapshotsPath, JSON.stringify(snapshotsData, null, 2));
+  console.log(`Added version ${newVersion.version} with snapshot ${finalSnapshot.id}`);
 
   // Get all services
   console.log(`\n=== SERVICES ===`);

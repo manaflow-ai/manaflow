@@ -4,7 +4,7 @@ import { streamText, stepCountIs } from "ai"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "../convex/_generated/api"
 import { Id } from "../convex/_generated/dataModel"
-import { issueTools } from "./tools"
+import { issueTools, codingAgentTools } from "./tools"
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
@@ -93,9 +93,10 @@ async function generateStreamingReply(post: {
     status: "streaming",
   })
 
-  // Only use issue tools - don't let the agent create posts (it would create duplicates)
+  // Issue tools + coding agent tools - don't let the agent create posts (it would create duplicates)
   const allTools = {
     ...issueTools,
+    ...codingAgentTools,
   }
 
   let currentParts: TurnPart[] = []
@@ -106,16 +107,18 @@ async function generateStreamingReply(post: {
   try {
     const result = streamText({
       model: xai("grok-4-1-fast-non-reasoning"),
-      system: `You are an AI assistant with access to an issue tracking system and a post activity stream.
+      system: `You are an AI assistant with access to an issue tracking system, a post activity stream, and coding agents.
 
 You can:
 - Create, update, close, and search issues
 - Track dependencies between issues
 - Find ready work (issues with no blockers)
 - Create and reply to posts in the activity stream
+- Delegate coding tasks to a remote coding agent (use delegateToCodingAgent)
 
 When users mention bugs, features, tasks, or work items, consider creating or updating issues.
 When users ask about status or progress, use the issue tools to look up information.
+When users ask you to write code, run tests, modify files, or perform any coding task, use the delegateToCodingAgent tool.
 
 Keep responses concise and helpful.`,
       prompt: `Respond to this post:\n\n${post.content}`,
@@ -226,6 +229,18 @@ Keep responses concise and helpful.`,
             turnId: assistantTurnId,
             parts: currentParts,
           })
+
+          // Register coding agent tool calls for immediate UI linking
+          if (chunk.toolName === "delegateToCodingAgent") {
+            const input = chunk.input as { task?: string }
+            if (input.task) {
+              await convex.mutation(api.codingAgent.registerCodingAgentToolCall, {
+                toolCallId: chunk.toolCallId,
+                parentSessionId: sessionId,
+                task: input.task,
+              })
+            }
+          }
         } else if (chunk.type === "tool-result") {
           // Find the tool call part and update it
           const toolCallIndex = currentParts.findIndex(
