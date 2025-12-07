@@ -19,6 +19,7 @@ import type * as github_app from "../github_app.js";
 import type * as http from "../http.js";
 import type * as issues from "../issues.js";
 import type * as posts from "../posts.js";
+import type * as prMonitor from "../prMonitor.js";
 import type * as sessions from "../sessions.js";
 import type * as twitter from "../twitter.js";
 import type * as users from "../users.js";
@@ -41,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   issues: typeof issues;
   posts: typeof posts;
+  prMonitor: typeof prMonitor;
   sessions: typeof sessions;
   twitter: typeof twitter;
   users: typeof users;

@@ -384,3 +384,89 @@ export const getRepoById = query({
     return repo;
   },
 });
+
+// ---------------------------------------------------------------------------
+// ALGORITHM MONITORING
+// ---------------------------------------------------------------------------
+
+// Get all repos sorted by lastPushedAt (most active first)
+export const getReposSortedByActivity = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const userId = identity.subject;
+    const repos = await ctx.db
+      .query("repos")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+
+    // Sort by lastPushedAt descending (most recent first)
+    return repos.sort((a, b) => {
+      const aTime = a.lastPushedAt ?? 0;
+      const bTime = b.lastPushedAt ?? 0;
+      return bTime - aTime;
+    });
+  },
+});
+
+// Get only monitored repos
+export const getMonitoredRepos = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const userId = identity.subject;
+    const repos = await ctx.db
+      .query("repos")
+      .withIndex("by_userId_monitored", (q) =>
+        q.eq("userId", userId).eq("isMonitored", true)
+      )
+      .collect();
+
+    // Sort by lastPushedAt descending (most active first)
+    return repos.sort((a, b) => {
+      const aTime = a.lastPushedAt ?? 0;
+      const bTime = b.lastPushedAt ?? 0;
+      return bTime - aTime;
+    });
+  },
+});
+
+// Toggle monitoring for a repo
+export const toggleRepoMonitoring = mutation({
+  args: { repoId: v.id("repos") },
+  handler: async (ctx, { repoId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const repo = await ctx.db.get(repoId);
+    if (!repo) throw new Error("Repo not found");
+    if (repo.userId !== identity.subject) throw new Error("Not authorized");
+
+    const newValue = !repo.isMonitored;
+    await ctx.db.patch(repoId, { isMonitored: newValue });
+    return { isMonitored: newValue };
+  },
+});
+
+// Set monitoring for a repo explicitly
+export const setRepoMonitoring = mutation({
+  args: {
+    repoId: v.id("repos"),
+    isMonitored: v.boolean(),
+  },
+  handler: async (ctx, { repoId, isMonitored }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const repo = await ctx.db.get(repoId);
+    if (!repo) throw new Error("Repo not found");
+    if (repo.userId !== identity.subject) throw new Error("Not authorized");
+
+    await ctx.db.patch(repoId, { isMonitored });
+    return { isMonitored };
+  },
+});

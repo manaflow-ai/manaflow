@@ -253,11 +253,15 @@ export default defineSchema({
         devScript: v.string(),
       })
     ),
+    // Algorithm monitoring
+    isMonitored: v.optional(v.boolean()), // Whether to monitor this repo for PRs
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
     .index("by_userId", ["userId"])
-    .index("by_fullName", ["fullName"]),
+    .index("by_fullName", ["fullName"])
+    .index("by_userId_monitored", ["userId", "isMonitored"])
+    .index("by_userId_lastPushed", ["userId", "lastPushedAt"]),
 
   // ---------------------------------------------------------------------------
   // PROVIDER CONNECTIONS (GitHub App installations)
