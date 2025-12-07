@@ -14,7 +14,7 @@ export default function XPage() {
           <h2 className="text-lg font-semibold mb-3">Sign in to continue</h2>
           <Link
             href="/sign-in"
-            className="inline-flex items-center gap-2 bg-white text-black font-medium py-2 px-4 rounded-lg hover:bg-gray-200 transition-colors"
+            className="inline-flex items-center gap-2 bg-foreground text-background font-medium py-2 px-4 rounded-lg hover:bg-foreground/90 transition-colors"
           >
             Sign in
           </Link>

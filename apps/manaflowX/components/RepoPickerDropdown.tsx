@@ -72,16 +72,16 @@ function ConfigureFlyout({ repoId, repoName }: { repoId: Id<"repos">; repoName: 
   }, []);
 
   return (
-    <div className="w-[520px] max-h-[500px] flex flex-col bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl">
+    <div className="w-[520px] max-h-[500px] flex flex-col bg-card border border-border rounded-lg shadow-xl">
       {/* Fixed header with save button */}
-      <div className="shrink-0 px-4 py-3 border-b border-neutral-800">
+      <div className="shrink-0 px-4 py-3 border-b border-border">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-medium text-neutral-200">
+            <h3 className="text-sm font-medium text-foreground">
               Configure workspace for{" "}
-              <span className="text-neutral-400">{repoName}</span>
+              <span className="text-muted-foreground">{repoName}</span>
             </h3>
-            <p className="text-xs text-neutral-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Set up scripts and environment variables.
             </p>
           </div>
@@ -90,7 +90,7 @@ function ConfigureFlyout({ repoId, repoName }: { repoId: Id<"repos">; repoName: 
             type="button"
             onClick={handleSave}
             disabled={saveState.saving || !saveState.hasChanges}
-            className="flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-blue-400 hover:bg-neutral-800 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed text-sm"
+            className="flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-blue-400 hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent disabled:cursor-not-allowed text-sm"
             title={saveState.hasChanges ? "Save changes" : "No changes to save"}
           >
             {saveState.saving ? (
@@ -150,7 +150,7 @@ export function RepoPickerDropdown({
     return sorted.map((repo) => ({
       label: repo.fullName,
       value: repo.fullName,
-      icon: <GitHubIcon className="h-4 w-4 text-neutral-400" />,
+      icon: <GitHubIcon className="h-4 w-4 text-muted-foreground" />,
     }));
   }, [repos]);
 
@@ -211,9 +211,9 @@ export function RepoPickerDropdown({
       <button
         type="button"
         onClick={handleInstallApp}
-        className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-200 rounded-md hover:bg-neutral-800 transition-colors"
+        className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-foreground rounded-md hover:bg-accent transition-colors"
       >
-        <PlusIcon className="w-4 h-4 text-neutral-400" />
+        <PlusIcon className="w-4 h-4 text-muted-foreground" />
         <span className="select-none">Add repos from GitHub</span>
       </button>
     </div>

@@ -429,9 +429,7 @@ function TurnView({
       <div className="flex gap-3">
         <div className="flex-shrink-0 pl-2">
           {isAssistant ? (
-            <div className="w-8 h-8 rounded-full bg-background border border-border flex items-center justify-center">
-              <GrokIcon size={20} className="text-foreground" />
-            </div>
+            <GrokIcon size={32} />
           ) : (
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
               isUser ? "bg-blue-600" : "bg-muted"
@@ -442,7 +440,7 @@ function TurnView({
         </div>
         <div className="flex-grow min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-sm capitalize">{turn.role === "assistant" ? "Grok" : turn.role}</span>
+            <span className="font-semibold text-sm capitalize">{turn.role === "assistant" ? "Grok" : turn.role}</span>
             {isStreaming && (
               <span className="text-xs text-blue-400 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />

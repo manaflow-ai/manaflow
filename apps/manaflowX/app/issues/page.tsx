@@ -228,7 +228,7 @@ function IssueTreeNode({
         className={`group flex items-center py-1.5 hover:bg-accent/50 cursor-pointer ${
           isSelected ? "bg-accent/70" : ""
         }`}
-        style={{ paddingLeft: "8px" }}
+        style={{ paddingLeft: `${8 + depth * 20}px` }}
         onClick={() => onSelect(issue._id)}
       >
         {/* Expand/collapse */}

@@ -109,7 +109,7 @@ export function ConnectXButton({ className = "" }: ConnectXButtonProps) {
     return (
       <div className={`flex flex-col gap-1 ${className}`}>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full bg-neutral-800 text-neutral-200">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full bg-card text-foreground">
             {xUserInfo?.profile_image_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -127,7 +127,7 @@ export function ConnectXButton({ className = "" }: ConnectXButtonProps) {
           <button
             onClick={handleTestConnection}
             disabled={isTesting}
-            className="text-xs text-neutral-400 hover:text-blue-400 transition-colors disabled:opacity-50"
+            className="text-xs text-muted-foreground hover:text-blue-500 transition-colors disabled:opacity-50"
           >
             {isTesting ? "Testing..." : "Test API"}
           </button>
@@ -148,7 +148,7 @@ export function ConnectXButton({ className = "" }: ConnectXButtonProps) {
     <button
       onClick={handleConnect}
       disabled={isConnecting}
-      className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-full bg-card hover:bg-accent text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
     >
       <XIcon className="w-4 h-4" />
       <span>{isConnecting ? "Connecting..." : "Connect X Account"}</span>

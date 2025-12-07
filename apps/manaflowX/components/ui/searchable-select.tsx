@@ -1,8 +1,8 @@
-"use client";
+"use client"
 
-import * as Popover from "@radix-ui/react-popover";
-import { Command } from "cmdk";
-import clsx from "clsx";
+import * as Popover from "@radix-ui/react-popover"
+import { Command } from "cmdk"
+import clsx from "clsx"
 import {
   forwardRef,
   useCallback,
@@ -12,47 +12,47 @@ import {
   useRef,
   useState,
   type ReactNode,
-} from "react";
+} from "react"
 
 export interface SelectOptionObject {
-  label: string;
-  value: string;
-  icon?: ReactNode;
+  label: string
+  value: string
+  icon?: ReactNode
 }
 
-export type SelectOption = string | SelectOptionObject;
+export type SelectOption = string | SelectOptionObject
 
 export type SearchableSelectHandle = {
-  open: () => void;
-  close: () => void;
-};
+  open: () => void
+  close: () => void
+}
 
 export interface SearchableSelectProps {
-  options: SelectOption[];
-  value: string[];
-  onChange: (value: string[]) => void;
-  placeholder?: string;
-  singleSelect?: boolean;
-  className?: string;
-  loading?: boolean;
-  showSearch?: boolean;
-  disabled?: boolean;
-  leftIcon?: ReactNode;
-  header?: ReactNode;
-  footer?: ReactNode;
-  searchPlaceholder?: string;
+  options: SelectOption[]
+  value: string[]
+  onChange: (value: string[]) => void
+  placeholder?: string
+  singleSelect?: boolean
+  className?: string
+  loading?: boolean
+  showSearch?: boolean
+  disabled?: boolean
+  leftIcon?: ReactNode
+  header?: ReactNode
+  footer?: ReactNode
+  searchPlaceholder?: string
   /** Section label shown above the options list (e.g. "Repositories") */
-  sectionLabel?: string;
+  sectionLabel?: string
   /** Whether to close the dropdown after selecting an option in singleSelect mode (default: true) */
-  closeOnSelect?: boolean;
+  closeOnSelect?: boolean
   /** Render a flyout panel when hovering over an option */
-  renderOptionFlyout?: (value: string) => ReactNode;
+  renderOptionFlyout?: (value: string) => ReactNode
 }
 
 function normalizeOptions(options: SelectOption[]): SelectOptionObject[] {
   return options.map((o) =>
-    typeof o === "string" ? { label: o, value: o } : o
-  );
+    typeof o === "string" ? { label: o, value: o } : o,
+  )
 }
 
 // Lucide icons as inline SVGs to avoid import issues
@@ -72,7 +72,7 @@ function CheckIcon({ className }: { className?: string }) {
     >
       <path d="M20 6 9 17l-5-5" />
     </svg>
-  );
+  )
 }
 
 function ChevronDownIcon({ className }: { className?: string }) {
@@ -91,7 +91,7 @@ function ChevronDownIcon({ className }: { className?: string }) {
     >
       <path d="m6 9 6 6 6-6" />
     </svg>
-  );
+  )
 }
 
 function ChevronRightIcon({ className }: { className?: string }) {
@@ -110,7 +110,7 @@ function ChevronRightIcon({ className }: { className?: string }) {
     >
       <path d="m9 18 6-6-6-6" />
     </svg>
-  );
+  )
 }
 
 function LoaderIcon({ className }: { className?: string }) {
@@ -129,7 +129,7 @@ function LoaderIcon({ className }: { className?: string }) {
     >
       <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
-  );
+  )
 }
 
 const SearchableSelect = forwardRef<
@@ -154,112 +154,129 @@ const SearchableSelect = forwardRef<
     closeOnSelect = true,
     renderOptionFlyout,
   },
-  ref
+  ref,
 ) {
-  const normOptions = useMemo(() => normalizeOptions(options), [options]);
+  const normOptions = useMemo(() => normalizeOptions(options), [options])
 
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const [search, setSearch] = useState("");
-  const [hoveredOption, setHoveredOption] = useState<string | null>(null);
-  const [flyoutOffset, setFlyoutOffset] = useState(0);
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const [search, setSearch] = useState("")
+  const [hoveredOption, setHoveredOption] = useState<string | null>(null)
+  const [flyoutOffset, setFlyoutOffset] = useState(0)
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
 
   // Flyout height constant (must match ConfigureFlyout max-h)
-  const FLYOUT_HEIGHT = 500;
-  const VIEWPORT_PADDING = 16;
+  const FLYOUT_HEIGHT = 500
+  const VIEWPORT_PADDING = 16
 
   // Close on Escape
   useEffect(() => {
-    if (!open) return;
+    if (!open) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+      if (e.key === "Escape") setOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [open])
 
   // Calculate safe flyout offset that keeps it within viewport
-  const calculateSafeOffset = useCallback((desiredOffset: number) => {
-    const dropdownContainer = dropdownRef.current;
-    if (!dropdownContainer) return desiredOffset;
+  const calculateSafeOffset = useCallback(
+    (desiredOffset: number) => {
+      const dropdownContainer = dropdownRef.current
+      if (!dropdownContainer) return desiredOffset
 
-    const dropdownRect = dropdownContainer.getBoundingClientRect();
-    // Max offset that keeps flyout within viewport
-    const maxSafeOffset = Math.max(0, window.innerHeight - dropdownRect.top - FLYOUT_HEIGHT - VIEWPORT_PADDING);
-    // Also don't let it go below the dropdown itself
-    const maxDropdownOffset = dropdownRect.height - 40;
+      const dropdownRect = dropdownContainer.getBoundingClientRect()
+      // Max offset that keeps flyout within viewport
+      const maxSafeOffset = Math.max(
+        0,
+        window.innerHeight -
+          dropdownRect.top -
+          FLYOUT_HEIGHT -
+          VIEWPORT_PADDING,
+      )
+      // Also don't let it go below the dropdown itself
+      const maxDropdownOffset = dropdownRect.height - 40
 
-    return Math.max(0, Math.min(desiredOffset, maxSafeOffset, maxDropdownOffset));
-  }, [FLYOUT_HEIGHT, VIEWPORT_PADDING]);
+      return Math.max(
+        0,
+        Math.min(desiredOffset, maxSafeOffset, maxDropdownOffset),
+      )
+    },
+    [FLYOUT_HEIGHT, VIEWPORT_PADDING],
+  )
 
   // Calculate offset for selected item - update whenever selection changes or dropdown opens
   useEffect(() => {
-    if (!open || value.length === 0) return;
+    if (!open || value.length === 0) return
 
-    let scrollListener: (() => void) | null = null;
-    let listEl: Element | null = null;
+    let scrollListener: (() => void) | null = null
+    let listEl: Element | null = null
 
     const updateOffset = () => {
-      const dropdownContainer = dropdownRef.current;
-      if (!dropdownContainer) return;
+      const dropdownContainer = dropdownRef.current
+      if (!dropdownContainer) return
 
-      const selectedItem = dropdownContainer.querySelector(`[data-selected-value="${value[0]}"]`);
+      const selectedItem = dropdownContainer.querySelector(
+        `[data-selected-value="${value[0]}"]`,
+      )
       if (selectedItem) {
-        const dropdownRect = dropdownContainer.getBoundingClientRect();
-        const itemRect = selectedItem.getBoundingClientRect();
-        const desiredOffset = itemRect.top - dropdownRect.top;
-        setFlyoutOffset(calculateSafeOffset(desiredOffset));
+        const dropdownRect = dropdownContainer.getBoundingClientRect()
+        const itemRect = selectedItem.getBoundingClientRect()
+        const desiredOffset = itemRect.top - dropdownRect.top
+        setFlyoutOffset(calculateSafeOffset(desiredOffset))
       }
 
       // Set up scroll listener if not already done
       if (!scrollListener) {
-        listEl = dropdownContainer.querySelector('[cmdk-list]');
+        listEl = dropdownContainer.querySelector("[cmdk-list]")
         if (listEl) {
-          scrollListener = updateOffset;
-          listEl.addEventListener('scroll', scrollListener);
+          scrollListener = updateOffset
+          listEl.addEventListener("scroll", scrollListener)
         }
       }
-    };
+    }
 
     // Run multiple times to ensure DOM is ready
-    const timer1 = setTimeout(updateOffset, 0);
-    const timer2 = setTimeout(updateOffset, 50);
-    const timer3 = setTimeout(updateOffset, 100);
+    const timer1 = setTimeout(updateOffset, 0)
+    const timer2 = setTimeout(updateOffset, 50)
+    const timer3 = setTimeout(updateOffset, 100)
 
     return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+      clearTimeout(timer3)
       if (listEl && scrollListener) {
-        listEl.removeEventListener('scroll', scrollListener);
+        listEl.removeEventListener("scroll", scrollListener)
       }
-    };
-  }, [open, value, calculateSafeOffset]);
+    }
+  }, [open, value, calculateSafeOffset])
 
   // Handle open state changes
   const handleOpenChange = useCallback((newOpen: boolean) => {
-    setOpen(newOpen);
+    setOpen(newOpen)
     if (!newOpen) {
-      setHoveredOption(null);
+      setHoveredOption(null)
     }
-  }, []);
+  }, [])
 
   // Handle hover on option - only track hover and update offset if nothing selected
-  const handleOptionHover = useCallback((optValue: string, event: React.MouseEvent) => {
-    setHoveredOption(optValue);
-    // Only update offset on hover if nothing is selected yet
-    if (value.length === 0) {
-      const target = event.currentTarget as HTMLElement;
-      const dropdownContainer = dropdownRef.current;
-      if (dropdownContainer && target) {
-        const dropdownRect = dropdownContainer.getBoundingClientRect();
-        const itemRect = target.getBoundingClientRect();
-        const desiredOffset = itemRect.top - dropdownRect.top;
-        setFlyoutOffset(calculateSafeOffset(desiredOffset));
+  const handleOptionHover = useCallback(
+    (optValue: string, event: React.MouseEvent) => {
+      setHoveredOption(optValue)
+      // Only update offset on hover if nothing is selected yet
+      if (value.length === 0) {
+        const target = event.currentTarget as HTMLElement
+        const dropdownContainer = dropdownRef.current
+        if (dropdownContainer && target) {
+          const dropdownRect = dropdownContainer.getBoundingClientRect()
+          const itemRect = target.getBoundingClientRect()
+          const desiredOffset = itemRect.top - dropdownRect.top
+          setFlyoutOffset(calculateSafeOffset(desiredOffset))
+        }
       }
-    }
-  }, [value.length, calculateSafeOffset]);
+    },
+    [value.length, calculateSafeOffset],
+  )
 
   // Display content for trigger button
   const displayContent = useMemo(() => {
@@ -269,19 +286,19 @@ const SearchableSelect = forwardRef<
           <LoaderIcon className="h-4 w-4 animate-spin" />
           <span>Loading...</span>
         </span>
-      );
+      )
     }
     if (value.length === 0) {
       return (
         <span className="text-muted-foreground truncate select-none">
           {placeholder}
         </span>
-      );
+      )
     }
     if (value.length === 1) {
-      const selectedVal = value[0];
-      const selectedOpt = normOptions.find((o) => o.value === selectedVal);
-      const label = selectedOpt?.label ?? selectedVal;
+      const selectedVal = value[0]
+      const selectedOpt = normOptions.find((o) => o.value === selectedVal)
+      const label = selectedOpt?.label ?? selectedVal
       return (
         <span className="inline-flex items-center gap-2">
           {selectedOpt?.icon ? (
@@ -291,64 +308,64 @@ const SearchableSelect = forwardRef<
           ) : null}
           <span className="truncate select-none">{label}</span>
         </span>
-      );
+      )
     }
     return (
       <span className="truncate select-none">{`${value.length} selected`}</span>
-    );
-  }, [loading, normOptions, placeholder, value]);
+    )
+  }, [loading, normOptions, placeholder, value])
 
   // Filter options by search
   const filteredOptions = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return normOptions;
+    const q = search.trim().toLowerCase()
+    if (!q) return normOptions
     return normOptions.filter((o) =>
-      `${o.label} ${o.value}`.toLowerCase().includes(q)
-    );
-  }, [normOptions, search]);
+      `${o.label} ${o.value}`.toLowerCase().includes(q),
+    )
+  }, [normOptions, search])
 
   useImperativeHandle(
     ref,
     () => ({
       open: () => {
-        setSearch("");
-        setOpen(true);
+        setSearch("")
+        setOpen(true)
       },
       close: () => {
-        setOpen(false);
+        setOpen(false)
       },
     }),
-    []
-  );
+    [],
+  )
 
   const onSelectValue = useCallback(
     (val: string): void => {
-      setSearch("");
+      setSearch("")
       if (singleSelect) {
         // Toggle selection - if already selected, unselect it
         if (value.includes(val)) {
-          onChange([]);
+          onChange([])
         } else {
-          onChange([val]);
+          onChange([val])
         }
         if (closeOnSelect) {
-          setOpen(false);
+          setOpen(false)
         }
-        return;
+        return
       }
       // Toggle selection for multi-select
       if (value.includes(val)) {
-        onChange(value.filter((v) => v !== val));
+        onChange(value.filter((v) => v !== val))
       } else {
-        onChange([...value, val]);
+        onChange([...value, val])
       }
     },
-    [onChange, singleSelect, value, closeOnSelect]
-  );
+    [onChange, singleSelect, value, closeOnSelect],
+  )
 
   // Get flyout content: if something is selected, always show that; otherwise show hovered
-  const flyoutTarget = value.length > 0 ? value[0] : hoveredOption;
-  const flyoutContent = flyoutTarget ? renderOptionFlyout?.(flyoutTarget) : null;
+  const flyoutTarget = value.length > 0 ? value[0] : hoveredOption
+  const flyoutContent = flyoutTarget ? renderOptionFlyout?.(flyoutTarget) : null
 
   return (
     <Popover.Root open={open} onOpenChange={handleOpenChange}>
@@ -362,7 +379,7 @@ const SearchableSelect = forwardRef<
             "hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
             "disabled:cursor-not-allowed disabled:opacity-60",
             "aria-expanded:bg-accent/50",
-            className
+            className,
           )}
         >
           <span className="flex-1 min-w-0 text-left text-[13.5px] inline-flex items-center gap-1.5 pr-1">
@@ -387,115 +404,112 @@ const SearchableSelect = forwardRef<
           <div
             ref={dropdownRef}
             className={clsx(
-              "rounded-lg border border-border bg-card p-0 shadow-xl w-[300px]",
-              "data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
+              "rounded-lg overflow-hidden border border-border bg-card p-0 shadow-xl w-[300px]",
+              "data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
             )}
           >
-          <Command loop shouldFilter={false} className="text-[13.5px]">
-            {showSearch ? (
-              <div className="border-b border-border p-2">
-                <Command.Input
-                  placeholder={searchPlaceholder}
-                  value={search}
-                  onValueChange={setSearch}
-                  className={clsx(
-                    "w-full bg-transparent px-1 py-1 text-sm text-foreground",
-                    "placeholder-muted-foreground focus:outline-none"
-                  )}
-                />
-              </div>
+            <Command loop shouldFilter={false} className="text-[13.5px]">
+              {showSearch ? (
+                <div className="border-b border-border px-2 py-1">
+                  <Command.Input
+                    placeholder={searchPlaceholder}
+                    value={search}
+                    onValueChange={setSearch}
+                    className={clsx(
+                      "w-full bg-transparent px-1 py-1 text-sm text-foreground",
+                      "placeholder-muted-foreground focus:outline-none",
+                    )}
+                  />
+                </div>
+              ) : null}
+              {header ? (
+                <div className="border-b border-border">{header}</div>
+              ) : null}
+              {loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <LoaderIcon className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  {sectionLabel ? (
+                    <div className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground select-none">
+                      {sectionLabel}
+                    </div>
+                  ) : null}
+                  <Command.List className="max-h-72 overflow-y-auto p-1">
+                    {filteredOptions.length === 0 ? (
+                      <Command.Empty className="px-3 py-4 text-center text-muted-foreground">
+                        No results found
+                      </Command.Empty>
+                    ) : (
+                      filteredOptions.map((opt) => {
+                        const isSelected = value.includes(opt.value)
+                        // Show chevron only when this item's flyout is actually visible
+                        // Flyout shows for: selected item, or hovered item when nothing selected
+                        const showChevron =
+                          renderOptionFlyout &&
+                          (isSelected ||
+                            (hoveredOption === opt.value && value.length === 0))
+                        return (
+                          <Command.Item
+                            key={opt.value}
+                            value={`${opt.label} ${opt.value}`}
+                            onSelect={() => onSelectValue(opt.value)}
+                            onMouseEnter={(e) =>
+                              handleOptionHover(opt.value, e)
+                            }
+                            data-selected-value={
+                              isSelected ? opt.value : undefined
+                            }
+                            className={clsx(
+                              "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                              "text-foreground hover:bg-accent/50 transition-colors",
+                              "data-[selected=true]:bg-accent/50",
+                              isSelected && "bg-accent/50",
+                            )}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              {opt.icon ? (
+                                <span className="shrink-0 inline-flex items-center justify-center">
+                                  {opt.icon}
+                                </span>
+                              ) : null}
+                              <span className="truncate select-none">
+                                {opt.label}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {isSelected ? (
+                                <CheckIcon className="h-4 w-4 text-foreground shrink-0" />
+                              ) : null}
+                              {showChevron ? (
+                                <ChevronRightIcon className="h-3 w-3 text-muted-foreground shrink-0" />
+                              ) : null}
+                            </div>
+                          </Command.Item>
+                        )
+                      })
+                    )}
+                  </Command.List>
+                </>
+              )}
+            </Command>
+            {footer ? (
+              <div className="border-t border-border bg-card">{footer}</div>
             ) : null}
-            {header ? (
-              <div className="border-b border-border">
-                {header}
-              </div>
-            ) : null}
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <LoaderIcon className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <>
-                {sectionLabel ? (
-                  <div className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground select-none">
-                    {sectionLabel}
-                  </div>
-                ) : null}
-                <Command.List className="max-h-[18rem] overflow-y-auto p-1">
-                {filteredOptions.length === 0 ? (
-                  <Command.Empty className="px-3 py-4 text-center text-muted-foreground">
-                    No options found
-                  </Command.Empty>
-                ) : (
-                  filteredOptions.map((opt) => {
-                    const isSelected = value.includes(opt.value);
-                    // Show chevron only when this item's flyout is actually visible
-                    // Flyout shows for: selected item, or hovered item when nothing selected
-                    const showChevron = renderOptionFlyout && (
-                      isSelected ||
-                      (hoveredOption === opt.value && value.length === 0)
-                    );
-                    return (
-                      <Command.Item
-                        key={opt.value}
-                        value={`${opt.label} ${opt.value}`}
-                        onSelect={() => onSelectValue(opt.value)}
-                        onMouseEnter={(e) => handleOptionHover(opt.value, e)}
-                        data-selected-value={isSelected ? opt.value : undefined}
-                        className={clsx(
-                          "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                          "text-foreground hover:bg-accent/50 transition-colors",
-                          "data-[selected=true]:bg-accent/50",
-                          isSelected && "bg-accent/50"
-                        )}
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          {opt.icon ? (
-                            <span className="shrink-0 inline-flex items-center justify-center">
-                              {opt.icon}
-                            </span>
-                          ) : null}
-                          <span className="truncate select-none">
-                            {opt.label}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {isSelected ? (
-                            <CheckIcon className="h-4 w-4 text-foreground shrink-0" />
-                          ) : null}
-                          {showChevron ? (
-                            <ChevronRightIcon className="h-3 w-3 text-muted-foreground shrink-0" />
-                          ) : null}
-                        </div>
-                      </Command.Item>
-                    );
-                  })
-                )}
-              </Command.List>
-              </>
-            )}
-          </Command>
-          {footer ? (
-            <div className="border-t border-border bg-card">
-              {footer}
-            </div>
-          ) : null}
           </div>
 
           {/* Flyout panel - rendered next to the dropdown, aligned with hovered item */}
           {flyoutContent && (
-            <div
-              className="shrink-0"
-              style={{ marginTop: flyoutOffset }}
-            >
+            <div className="shrink-0" style={{ marginTop: flyoutOffset }}>
               {flyoutContent}
             </div>
           )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
-  );
-});
+  )
+})
 
-export { SearchableSelect };
-export default SearchableSelect;
+export { SearchableSelect }
+export default SearchableSelect

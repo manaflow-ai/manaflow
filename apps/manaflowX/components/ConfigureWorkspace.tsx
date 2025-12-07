@@ -370,18 +370,18 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
         <button
           type="button"
           onClick={() => setMaintenanceOpen(!maintenanceOpen)}
-          className="w-full px-1 py-2 flex items-center justify-between hover:bg-neutral-800/30 transition-colors rounded"
+          className="w-full px-1 py-2 flex items-center justify-between hover:bg-accent/30 transition-colors rounded"
         >
           <div className="text-left">
-            <h4 className="text-sm font-medium text-neutral-200">
+            <h4 className="text-sm font-medium text-foreground">
               Maintenance script
             </h4>
-            <p className="text-xs text-neutral-500 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Runs once after cloning. Install dependencies here.
             </p>
           </div>
           <ChevronDownIcon
-            className={`h-4 w-4 text-neutral-500 transition-transform shrink-0 ml-2 ${
+            className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ml-2 ${
               maintenanceOpen ? "" : "-rotate-90"
             }`}
           />
@@ -395,7 +395,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
               }
               placeholder={"# e.g.\npnpm install\nuv sync"}
               rows={3}
-              className="w-full bg-neutral-950 border border-neutral-800 rounded-md p-3 text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-muted border border-border rounded-md p-3 text-foreground placeholder-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
         )}
@@ -406,18 +406,18 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
         <button
           type="button"
           onClick={() => setDevOpen(!devOpen)}
-          className="w-full px-1 py-2 flex items-center justify-between hover:bg-neutral-800/30 transition-colors rounded"
+          className="w-full px-1 py-2 flex items-center justify-between hover:bg-accent/30 transition-colors rounded"
         >
           <div className="text-left">
-            <h4 className="text-sm font-medium text-neutral-200">
+            <h4 className="text-sm font-medium text-foreground">
               Dev script
             </h4>
-            <p className="text-xs text-neutral-500 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Start dev servers or watch files.
             </p>
           </div>
           <ChevronDownIcon
-            className={`h-4 w-4 text-neutral-500 transition-transform shrink-0 ml-2 ${
+            className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ml-2 ${
               devOpen ? "" : "-rotate-90"
             }`}
           />
@@ -429,7 +429,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
               onChange={(e) => handleScriptChange(setDevScript)(e.target.value)}
               placeholder={"# e.g.\nnpm run dev"}
               rows={2}
-              className="w-full bg-neutral-950 border border-neutral-800 rounded-md p-3 text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-muted border border-border rounded-md p-3 text-foreground placeholder-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
         )}
@@ -441,12 +441,12 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
           <button
             type="button"
             onClick={() => setEnvOpen(!envOpen)}
-            className="flex-1 text-left hover:bg-neutral-800/30 transition-colors rounded -m-1 p-1"
+            className="flex-1 text-left hover:bg-accent/30 transition-colors rounded -m-1 p-1"
           >
-            <h4 className="text-sm font-medium text-neutral-200">
+            <h4 className="text-sm font-medium text-foreground">
               Environment variables
             </h4>
-            <p className="text-xs text-neutral-500 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Injected when scripts run. Paste from .env files.
             </p>
           </button>
@@ -455,7 +455,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
             <button
               type="button"
               onClick={() => setShowValues(!showValues)}
-              className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               {showValues ? <EyeOffIcon className="h-3.5 w-3.5" /> : <EyeIcon className="h-3.5 w-3.5" />}
               <span>{showValues ? "Hide" : "Reveal"}</span>
@@ -463,10 +463,10 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
             <button
               type="button"
               onClick={() => setEnvOpen(!envOpen)}
-              className="p-1 -m-1 hover:bg-neutral-800/30 rounded transition-colors"
+              className="p-1 -m-1 hover:bg-accent/30 rounded transition-colors"
             >
               <ChevronDownIcon
-                className={`h-4 w-4 text-neutral-500 transition-transform ${
+                className={`h-4 w-4 text-muted-foreground transition-transform ${
                   envOpen ? "" : "-rotate-90"
                 }`}
               />
@@ -477,13 +477,13 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
           <div className="mt-2">
             {loadingEnvVars ? (
               <div className="flex items-center justify-center py-6">
-                <LoaderIcon className="h-5 w-5 animate-spin text-neutral-500" />
-                <span className="ml-2 text-sm text-neutral-500">Loading...</span>
+                <LoaderIcon className="h-5 w-5 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-sm text-muted-foreground">Loading...</span>
               </div>
             ) : (
               <>
                 {/* Table header */}
-                <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2 mb-2 text-xs text-neutral-500">
+                <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2 mb-2 text-xs text-muted-foreground">
                   <span>Key</span>
                   <span>Value</span>
                   <span className="w-7"></span>
@@ -504,7 +504,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
                         }
                         onPaste={(e) => handleKeyPaste(index, e)}
                         placeholder="EXAMPLE_KEY"
-                        className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full bg-card border border-border rounded px-2.5 py-1.5 text-sm text-foreground placeholder-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                       />
                       <input
                         type={showValues || focusedValueIndex === index ? "text" : "password"}
@@ -515,12 +515,12 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
                         onFocus={() => setFocusedValueIndex(index)}
                         onBlur={() => setFocusedValueIndex(null)}
                         placeholder="secret-value"
-                        className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full bg-card border border-border rounded px-2.5 py-1.5 text-sm text-foreground placeholder-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                       />
                       <button
                         type="button"
                         onClick={() => removeEnvVar(index)}
-                        className="p-1.5 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 rounded transition-colors"
+                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
                       >
                         <MinusIcon className="h-4 w-4" />
                       </button>
@@ -532,7 +532,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
                 <button
                   type="button"
                   onClick={addEnvVar}
-                  className="flex items-center gap-1.5 mt-3 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                  className="flex items-center gap-1.5 mt-3 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <PlusIcon className="h-4 w-4" />
                   <span>Add variable</span>
