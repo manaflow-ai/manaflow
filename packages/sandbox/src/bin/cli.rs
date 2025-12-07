@@ -2159,7 +2159,13 @@ async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<
 async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyhow::Result<()> {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     use crossterm::execute;
-    use crossterm::terminal::{Clear, ClearType};
+    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::layout::{Constraint, Direction, Layout};
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
+    use ratatui::Terminal;
     use std::io::Write;
 
     // If --volumes flag is set, prune orphaned directories from the filesystem
@@ -2207,142 +2213,201 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
         // --all or --older-than: select all matching sandboxes
         filtered_sandboxes
     } else if use_interactive {
-        // Interactive TUI mode
+        // Interactive TUI mode with proper ratatui
         let mut selected: Vec<bool> = vec![false; filtered_sandboxes.len()];
         let mut cursor = 0usize;
-        let mut sort_by_age = false; // false = by index, true = by age (oldest first)
+        let mut sort_by_age = true; // true = by age (oldest first, default), false = by index
 
+        // Setup terminal with alternate screen
         enable_raw_mode()?;
-        let _guard = RawModeGuard::new().ok();
+        let mut stdout = std::io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
 
-        loop {
-            // Clear screen and draw
-            execute!(std::io::stdout(), Clear(ClearType::All))?;
-            print!("\x1b[H"); // Move cursor to top-left
+        let result: Result<Vec<&SandboxSummary>, anyhow::Error> = (|| {
+            loop {
+                // Get display order
+                let mut display_order: Vec<usize> = (0..filtered_sandboxes.len()).collect();
+                if sort_by_age {
+                    display_order.sort_by(|&a, &b| {
+                        filtered_sandboxes[a]
+                            .created_at
+                            .cmp(&filtered_sandboxes[b].created_at)
+                    });
+                }
 
-            println!("\x1b[1mSandbox Pruner\x1b[0m - Select sandboxes to delete\n");
-            println!(
-                "  \x1b[90mj/k or ↑/↓: navigate | Space: toggle | a: select all | n: select none\x1b[0m"
-            );
-            println!(
-                "  \x1b[90ms: sort by {} | Enter: confirm | q/Esc: cancel\x1b[0m\n",
-                if sort_by_age { "index" } else { "age" }
-            );
+                let selected_count = selected.iter().filter(|&&s| s).count();
 
-            // Get display order
-            let mut display_order: Vec<usize> = (0..filtered_sandboxes.len()).collect();
-            if sort_by_age {
-                display_order.sort_by(|&a, &b| {
-                    filtered_sandboxes[a]
-                        .created_at
-                        .cmp(&filtered_sandboxes[b].created_at)
-                });
-            }
+                terminal.draw(|f| {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3), // Title
+                            Constraint::Length(2), // Help
+                            Constraint::Min(5),    // Table
+                            Constraint::Length(2), // Status
+                        ])
+                        .split(f.area());
 
-            println!(
-                "  \x1b[1m{:>3}  {:<5} {:<20} {:<10} AGE\x1b[0m",
-                "", "IDX", "NAME", "STATUS"
-            );
-            println!(
-                "  {:->3}  {:->5} {:->20} {:->10} {:->15}",
-                "", "", "", "", ""
-            );
+                    // Title
+                    let title = Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            "Sandbox Pruner",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" - Select sandboxes to delete"),
+                    ]))
+                    .block(Block::default().borders(Borders::BOTTOM));
+                    f.render_widget(title, chunks[0]);
 
-            for (display_idx, &sandbox_idx) in display_order.iter().enumerate() {
-                let sandbox = filtered_sandboxes[sandbox_idx];
-                let is_selected = selected[sandbox_idx];
-                let is_cursor = display_idx == cursor;
+                    // Help text
+                    let sort_hint = if sort_by_age { "index" } else { "age" };
+                    let help = Paragraph::new(Line::from(vec![
+                        Span::styled("j/k ↑/↓", Style::default().fg(Color::DarkGray)),
+                        Span::raw(": navigate  "),
+                        Span::styled("Space", Style::default().fg(Color::DarkGray)),
+                        Span::raw(": toggle  "),
+                        Span::styled("a", Style::default().fg(Color::DarkGray)),
+                        Span::raw(": all  "),
+                        Span::styled("n", Style::default().fg(Color::DarkGray)),
+                        Span::raw(": none  "),
+                        Span::styled("s", Style::default().fg(Color::DarkGray)),
+                        Span::raw(format!(": sort by {}  ", sort_hint)),
+                        Span::styled("Enter", Style::default().fg(Color::DarkGray)),
+                        Span::raw(": confirm  "),
+                        Span::styled("q/Esc", Style::default().fg(Color::DarkGray)),
+                        Span::raw(": cancel"),
+                    ]));
+                    f.render_widget(help, chunks[1]);
 
-                let checkbox = if is_selected { "[x]" } else { "[ ]" };
-                let cursor_indicator = if is_cursor { ">" } else { " " };
-                let highlight = if is_cursor { "\x1b[7m" } else { "" }; // reverse video
-                let reset = if is_cursor { "\x1b[0m" } else { "" };
+                    // Build table rows
+                    let rows: Vec<Row> = display_order
+                        .iter()
+                        .enumerate()
+                        .map(|(display_idx, &sandbox_idx)| {
+                            let sandbox = filtered_sandboxes[sandbox_idx];
+                            let is_selected = selected[sandbox_idx];
+                            let is_cursor = display_idx == cursor;
 
-                let status_color = match sandbox.status {
-                    cmux_sandbox::models::SandboxStatus::Running => "\x1b[32m",
-                    cmux_sandbox::models::SandboxStatus::Exited => "\x1b[33m",
-                    cmux_sandbox::models::SandboxStatus::Failed => "\x1b[31m",
-                    _ => "\x1b[90m",
-                };
+                            let checkbox = if is_selected { "[x]" } else { "[ ]" };
+                            let age = format_age(now - sandbox.created_at);
+                            let created = sandbox.created_at.format("%Y-%m-%d %H:%M").to_string();
 
-                let age = format_age(now - sandbox.created_at);
+                            let row_style = if is_cursor {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
 
-                println!(
-                    "{}{} {} {:<5} {:<20} {}{:<10}\x1b[0m {}{}",
-                    highlight,
-                    cursor_indicator,
-                    checkbox,
-                    sandbox.index,
-                    truncate_str(&sandbox.name, 20),
-                    status_color,
-                    format!("{:?}", sandbox.status),
-                    age,
-                    reset
-                );
-            }
+                            Row::new(vec![
+                                checkbox.to_string(),
+                                sandbox.index.to_string(),
+                                truncate_str(&sandbox.name, 20).to_string(),
+                                format!("{:?}", sandbox.status),
+                                created,
+                                age,
+                            ])
+                            .style(row_style)
+                            .height(1)
+                        })
+                        .collect();
 
-            let selected_count = selected.iter().filter(|&&s| s).count();
-            println!(
-                "\n  \x1b[1m{} sandbox{} selected\x1b[0m",
-                selected_count,
-                if selected_count == 1 { "" } else { "es" }
-            );
+                    let header = Row::new(vec!["", "IDX", "NAME", "STATUS", "CREATED", "AGE"])
+                        .style(Style::default().add_modifier(Modifier::BOLD))
+                        .height(1);
 
-            std::io::stdout().flush()?;
+                    let table = Table::new(
+                        rows,
+                        [
+                            Constraint::Length(4),  // checkbox
+                            Constraint::Length(5),  // index
+                            Constraint::Length(22), // name
+                            Constraint::Length(12), // status
+                            Constraint::Length(18), // created
+                            Constraint::Length(12), // age
+                        ],
+                    )
+                    .header(header)
+                    .block(Block::default().borders(Borders::NONE));
+                    f.render_widget(table, chunks[2]);
 
-            // Handle input
-            if event::poll(std::time::Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    match (key.code, key.modifiers) {
-                        (KeyCode::Char('q'), _)
-                        | (KeyCode::Esc, _)
-                        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            disable_raw_mode()?;
-                            println!("\nCancelled.");
-                            return Ok(());
-                        }
-                        (KeyCode::Enter, _) => {
-                            break;
-                        }
-                        (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
-                            cursor = cursor.saturating_sub(1);
-                        }
-                        (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
-                            if cursor < filtered_sandboxes.len() - 1 {
-                                cursor += 1;
+                    // Status line
+                    let status = Paragraph::new(Line::from(vec![Span::styled(
+                        format!(
+                            "{} sandbox{} selected",
+                            selected_count,
+                            if selected_count == 1 { "" } else { "es" }
+                        ),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )]));
+                    f.render_widget(status, chunks[3]);
+                })?;
+
+                // Handle input
+                if event::poll(std::time::Duration::from_millis(100))? {
+                    if let Event::Key(key) = event::read()? {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Char('q'), _)
+                            | (KeyCode::Esc, _)
+                            | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                                return Err(anyhow::anyhow!("Cancelled"));
                             }
+                            (KeyCode::Enter, _) => {
+                                break;
+                            }
+                            (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                                cursor = cursor.saturating_sub(1);
+                            }
+                            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                                if cursor < filtered_sandboxes.len() - 1 {
+                                    cursor += 1;
+                                }
+                            }
+                            (KeyCode::Char(' '), _) => {
+                                let sandbox_idx = display_order[cursor];
+                                selected[sandbox_idx] = !selected[sandbox_idx];
+                            }
+                            (KeyCode::Char('a'), _) => {
+                                selected.fill(true);
+                            }
+                            (KeyCode::Char('n'), _) => {
+                                selected.fill(false);
+                            }
+                            (KeyCode::Char('s'), _) => {
+                                sort_by_age = !sort_by_age;
+                                cursor = 0; // Reset cursor on sort change
+                            }
+                            _ => {}
                         }
-                        (KeyCode::Char(' '), _) => {
-                            let sandbox_idx = display_order[cursor];
-                            selected[sandbox_idx] = !selected[sandbox_idx];
-                        }
-                        (KeyCode::Char('a'), _) => {
-                            selected.fill(true);
-                        }
-                        (KeyCode::Char('n'), _) => {
-                            selected.fill(false);
-                        }
-                        (KeyCode::Char('s'), _) => {
-                            sort_by_age = !sort_by_age;
-                            cursor = 0; // Reset cursor on sort change
-                        }
-                        _ => {}
                     }
                 }
             }
-        }
 
+            // Collect selected sandboxes
+            Ok(filtered_sandboxes
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| selected[*i])
+                .map(|(_, s)| *s)
+                .collect())
+        })();
+
+        // Cleanup terminal
         disable_raw_mode()?;
-        execute!(std::io::stdout(), Clear(ClearType::All))?;
-        print!("\x1b[H");
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
 
-        // Collect selected sandboxes
-        filtered_sandboxes
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| selected[*i])
-            .map(|(_, s)| *s)
-            .collect()
+        match result {
+            Ok(selected_sandboxes) => selected_sandboxes,
+            Err(e) => {
+                if e.to_string() == "Cancelled" {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        }
     } else {
         // Simple non-interactive prompt
         print_sandbox_table(&filtered_sandboxes, now);
