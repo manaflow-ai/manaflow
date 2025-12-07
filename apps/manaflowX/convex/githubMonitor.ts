@@ -22,19 +22,28 @@ For PRs (post_pr), look for:
 - PRs that look ready to merge or need review
 - Interesting technical changes
 - Backend or non-visual changes
+- PRs with valuable comment discussions (check keyCommentInsights)
+- PRs that already have screenshots in the description (hasScreenshots: true) - you can reference these!
 
 For PRs with Screenshots (screenshot_pr), look for:
 - PRs with UI/frontend changes (check the changedFiles field for .tsx, .jsx, .css, .vue, .svelte files)
 - Visual component updates
 - Design system changes
 - PRs where "hasUiFiles: true" - these are good candidates for screenshots
+- PREFER PRs that already have screenshots (hasScreenshots: true) - use the existing screenshots instead of capturing new ones
 
 For Issues, look for:
 - Tractable bugs or features that can realistically be solved
 - Well-defined issues with clear requirements
 - Issues that would provide clear value when fixed
 
-Pick the most interesting item from whichever category you choose. Write engaging content that makes developers want to check it out.`;
+LEVERAGING PR INSIGHTS:
+- Use the "description" field to understand what the PR is about
+- Check "keyCommentInsights" for valuable discussion points and context from reviewers
+- If "hasScreenshots" is true, the PR author provided screenshots - prefer selecting these PRs and include the best screenshot in your post
+- The "screenshots" array contains image URLs from the PR description and comments - pick the most relevant one to include
+
+Pick the most interesting item from whichever category you choose. Write engaging content that makes developers want to check it out. If the PR has screenshots, mention what the visual changes show.`;
 
 // GitHub PR type from API
 type GitHubPR = {
@@ -91,6 +100,18 @@ type GitHubPRFile = {
   changes: number;
 };
 
+// GitHub PR comment type
+type GitHubPRComment = {
+  id: number;
+  body: string;
+  user: {
+    login: string;
+  };
+  created_at: string;
+  updated_at: string;
+};
+
+
 // UI file patterns for detecting frontend changes
 const UI_FILE_PATTERNS = [
   /\.(tsx|jsx|vue|svelte)$/,
@@ -106,6 +127,76 @@ function hasUiChanges(files: string[]): boolean {
   return files.some((file) =>
     UI_FILE_PATTERNS.some((pattern) => pattern.test(file))
   );
+}
+
+// Extract image URLs from markdown text (PR description or comments)
+function extractImagesFromMarkdown(text: string | null): string[] {
+  if (!text) return [];
+  const images: string[] = [];
+
+  // Match markdown images: ![alt](url)
+  const markdownImageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  let match;
+  while ((match = markdownImageRegex.exec(text)) !== null) {
+    const url = match[2];
+
+    // Skip Vercel status icons (ready/error/building badges)
+    if (url.includes('vercel.com/static/status/')) {
+      continue;
+    }
+
+    // Only include image URLs (filter out non-image links)
+    if (url.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i) ||
+        url.includes('user-images.githubusercontent.com') ||
+        url.includes('github.com') && url.includes('/assets/') ||
+        url.includes('.convex.cloud/api/storage/')) {
+      images.push(url);
+    }
+  }
+
+  // Match HTML img tags: <img src="url">
+  const htmlImageRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+  while ((match = htmlImageRegex.exec(text)) !== null) {
+    const url = match[1];
+
+    // Skip Vercel status icons
+    if (url.includes('vercel.com/static/status/')) {
+      continue;
+    }
+
+    images.push(url);
+  }
+
+  return images;
+}
+
+// Extract key insights from PR comments (summarized)
+function extractCommentInsights(comments: GitHubPRComment[]): {
+  totalComments: number;
+  keyInsights: string[];
+  allImages: string[];
+} {
+  const keyInsights: string[] = [];
+  const allImages: string[] = [];
+
+  for (const comment of comments) {
+    // Extract images from comment
+    const images = extractImagesFromMarkdown(comment.body);
+    allImages.push(...images);
+
+    // Extract meaningful insights (skip short comments, reactions)
+    if (comment.body && comment.body.length > 50) {
+      // Take first 200 chars of substantive comments
+      const insight = `@${comment.user.login}: ${comment.body.slice(0, 200)}${comment.body.length > 200 ? '...' : ''}`;
+      keyInsights.push(insight);
+    }
+  }
+
+  return {
+    totalComments: comments.length,
+    keyInsights: keyInsights.slice(0, 3), // Limit to top 3 insights
+    allImages,
+  };
 }
 
 // Fetch changed files for a PR
@@ -133,6 +224,33 @@ async function fetchPRFiles(
   }
 
   return (await response.json()) as GitHubPRFile[];
+}
+
+// Fetch PR comments (issue comments on the PR)
+async function fetchPRComments(
+  fullName: string,
+  prNumber: number,
+  accessToken: string
+): Promise<GitHubPRComment[]> {
+  const response = await fetch(
+    `https://api.github.com/repos/${fullName}/issues/${prNumber}/comments?per_page=50`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "xagi-algorithm",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    console.error(
+      `[algorithm] Failed to fetch comments for PR #${prNumber} in ${fullName}: ${response.status}`
+    );
+    return [];
+  }
+
+  return (await response.json()) as GitHubPRComment[];
 }
 
 // Fetch PRs from GitHub for a single repo
@@ -291,6 +409,13 @@ async function runAlgorithm(ctx: any): Promise<{
     installationId: number;
     changedFiles: string[];
     hasUiFiles: boolean;
+    // New fields for PR insights
+    descriptionImages: string[];
+    commentInsights: {
+      totalComments: number;
+      keyInsights: string[];
+      allImages: string[];
+    };
   }> = [];
   const allIssues: Array<{ issue: GitHubIssue; repoFullName: string; gitRemote: string; defaultBranch?: string; userId: string; installationId: number }> = [];
 
@@ -321,10 +446,20 @@ async function runAlgorithm(ctx: any): Promise<{
 
       console.log(`[algorithm] Found ${prs.length} PRs and ${issues.length} issues in ${repo.fullName}`);
 
-      // Fetch changed files for each PR to detect UI changes
+      // Fetch changed files and comments for each PR to detect UI changes and extract insights
       for (const pr of prs) {
-        const prFiles = await fetchPRFiles(repo.fullName, pr.number, accessToken);
+        const [prFiles, prComments] = await Promise.all([
+          fetchPRFiles(repo.fullName, pr.number, accessToken),
+          fetchPRComments(repo.fullName, pr.number, accessToken),
+        ]);
         const changedFiles = prFiles.map((f) => f.filename);
+
+        // Extract images from PR description
+        const descriptionImages = extractImagesFromMarkdown(pr.body);
+
+        // Extract insights and images from comments
+        const commentInsights = extractCommentInsights(prComments);
+
         allPRs.push({
           pr,
           repoFullName: repo.fullName,
@@ -334,6 +469,8 @@ async function runAlgorithm(ctx: any): Promise<{
           installationId,
           changedFiles,
           hasUiFiles: hasUiChanges(changedFiles),
+          descriptionImages,
+          commentInsights,
         });
       }
 
@@ -355,25 +492,35 @@ async function runAlgorithm(ctx: any): Promise<{
   }
 
   // Format PRs for Grok to evaluate
-  const prSummaries = allPRs.map((item, index) => ({
-    type: "pr" as const,
-    index,
-    repo: item.repoFullName,
-    number: item.pr.number,
-    title: item.pr.title,
-    description: item.pr.body?.slice(0, 500) || null,
-    url: item.pr.html_url,
-    author: item.pr.user.login,
-    labels: item.pr.labels.map((l) => l.name),
-    draft: item.pr.draft,
-    headBranch: item.pr.head.ref,
-    baseBranch: item.pr.base.ref,
-    createdAt: item.pr.created_at,
-    updatedAt: item.pr.updated_at,
-    alreadyPosted: alreadyPostedUrls.has(item.pr.html_url),
-    changedFiles: item.changedFiles.slice(0, 20), // Limit to 20 files for context
-    hasUiFiles: item.hasUiFiles,
-  }));
+  const prSummaries = allPRs.map((item, index) => {
+    // Combine all images from description and comments
+    const allImages = [...item.descriptionImages, ...item.commentInsights.allImages];
+
+    return {
+      type: "pr" as const,
+      index,
+      repo: item.repoFullName,
+      number: item.pr.number,
+      title: item.pr.title,
+      description: item.pr.body?.slice(0, 500) || null,
+      url: item.pr.html_url,
+      author: item.pr.user.login,
+      labels: item.pr.labels.map((l) => l.name),
+      draft: item.pr.draft,
+      headBranch: item.pr.head.ref,
+      baseBranch: item.pr.base.ref,
+      createdAt: item.pr.created_at,
+      updatedAt: item.pr.updated_at,
+      alreadyPosted: alreadyPostedUrls.has(item.pr.html_url),
+      changedFiles: item.changedFiles.slice(0, 20), // Limit to 20 files for context
+      hasUiFiles: item.hasUiFiles,
+      // New fields for PR insights
+      commentCount: item.commentInsights.totalComments,
+      keyCommentInsights: item.commentInsights.keyInsights,
+      screenshots: allImages.slice(0, 5), // Limit to 5 best screenshots
+      hasScreenshots: allImages.length > 0,
+    };
+  });
 
   // Format Issues for Grok to evaluate
   const issueSummaries = allIssues.map((item, index) => ({
@@ -402,14 +549,16 @@ async function runAlgorithm(ctx: any): Promise<{
       action: z.enum(["post_pr", "screenshot_pr", "solve_issue"]).describe("What action to take: post_pr for text-only PR posts, screenshot_pr for PRs with UI changes worth capturing, solve_issue for issues to delegate"),
       selectedPRIndex: z.number().optional().describe("If action is post_pr or screenshot_pr, the index of the PR"),
       selectedIssueIndex: z.number().optional().describe("If action is solve_issue, the index of the issue to solve"),
-      reasoning: z.string().describe("Brief explanation of why this action/item was chosen"),
-      postContent: z.string().describe("The content for the post. For PRs: an engaging tweet about the PR. For issues: a message announcing you're starting work on this issue. Do NOT include URLs - they will be added automatically."),
+      selectedScreenshotUrl: z.string().optional().describe("If the PR has screenshots (hasScreenshots: true), select the best screenshot URL from the 'screenshots' array to include in the post. This is the URL of an existing image from the PR."),
+      reasoning: z.string().describe("Brief explanation of why this action/item was chosen. If you're using an existing screenshot, mention what it shows."),
+      postContent: z.string().describe("The content for the post. For PRs: an engaging tweet about the PR. For issues: a message announcing you're starting work on this issue. Do NOT include URLs - they will be added automatically. If the PR has screenshots, describe what the visual changes show."),
     }),
     prompt: `${systemPrompt}
 
 IMPORTANT RULES:
 1. Do NOT select items marked with "alreadyPosted: true"
 2. Do NOT select GitHub issues that are already tracked internally (check "Internal Issues Being Tracked" below)
+3. If the PR has "hasScreenshots: true", select the best screenshot URL from the "screenshots" array to include in the post
 
 Internal Issues Being Tracked (DO NOT create duplicates):
 ${internalIssues.length > 0 ? JSON.stringify(internalIssues.map(i => ({
@@ -426,10 +575,10 @@ ${prSummaries.length > 0 ? JSON.stringify(prSummaries, null, 2) : "No open PRs a
 Available GitHub Issues:
 ${issueSummaries.length > 0 ? JSON.stringify(issueSummaries, null, 2) : "No open issues available"}
 
-Decide: Should you post about a PR (text only), screenshot a PR (with visuals), or start solving an issue? Pick the most interesting/valuable action. Use screenshot_pr for PRs with UI changes (hasUiFiles: true). NEVER pick a GitHub issue that's already in the internal issues list above.`,
+Decide: Should you post about a PR (text only), screenshot a PR (with visuals), or start solving an issue? Pick the most interesting/valuable action. Use screenshot_pr for PRs with UI changes (hasUiFiles: true). NEVER pick a GitHub issue that's already in the internal issues list above. If the PR already has screenshots, prefer using those over capturing new ones.`,
   });
 
-  const { action, selectedPRIndex, selectedIssueIndex, reasoning, postContent } = result.object;
+  const { action, selectedPRIndex, selectedIssueIndex, selectedScreenshotUrl, reasoning, postContent } = result.object;
 
   if (action === "post_pr") {
     // Validate PR index
@@ -440,8 +589,14 @@ Decide: Should you post about a PR (text only), screenshot a PR (with visuals), 
     const selected = allPRs[selectedPRIndex];
     const { pr, repoFullName } = selected;
 
-    // Create the post about the PR
-    const content = `${postContent}\n\n${pr.html_url}`;
+    // Create the post about the PR, optionally including a screenshot from the PR
+    let content = `${postContent}\n\n${pr.html_url}`;
+
+    // If Grok selected a screenshot from the PR, include it
+    if (selectedScreenshotUrl) {
+      content += `\n\n![PR Screenshot](${selectedScreenshotUrl})`;
+      console.log(`[algorithm] Including screenshot from PR: ${selectedScreenshotUrl}`);
+    }
 
     console.log(`[algorithm] Grok chose to post about PR #${pr.number}: ${reasoning}`);
 
@@ -452,9 +607,10 @@ Decide: Should you post about a PR (text only), screenshot a PR (with visuals), 
 
     return {
       success: true,
-      message: `Posted about PR #${pr.number}: ${reasoning}`,
+      message: `Posted about PR #${pr.number}${selectedScreenshotUrl ? ' with screenshot' : ''}: ${reasoning}`,
       action: "post_pr",
       pr: { title: pr.title, url: pr.html_url, repo: repoFullName },
+      screenshots: selectedScreenshotUrl ? [selectedScreenshotUrl] : undefined,
     };
   } else if (action === "screenshot_pr") {
     // Validate PR index
@@ -463,9 +619,36 @@ Decide: Should you post about a PR (text only), screenshot a PR (with visuals), 
     }
 
     const selected = allPRs[selectedPRIndex];
-    const { pr, repoFullName, installationId } = selected;
+    const { pr, repoFullName, installationId, descriptionImages, commentInsights } = selected;
+
+    // Combine all existing images from PR
+    const existingImages = [...descriptionImages, ...commentInsights.allImages];
 
     console.log(`[algorithm] Grok chose to screenshot PR #${pr.number}: ${reasoning}`);
+
+    // If Grok selected an existing screenshot or the PR already has screenshots, use those
+    if (selectedScreenshotUrl || existingImages.length > 0) {
+      const screenshotToUse = selectedScreenshotUrl || existingImages[0];
+      const content = `${postContent}\n\n${pr.html_url}\n\n![PR Screenshot](${screenshotToUse})`;
+
+      console.log(`[algorithm] Using existing screenshot from PR: ${screenshotToUse}`);
+
+      await ctx.runMutation(api.posts.createPost, {
+        content,
+        author: "Grok",
+      });
+
+      return {
+        success: true,
+        message: `Posted about PR #${pr.number} with existing screenshot: ${reasoning}`,
+        action: "screenshot_pr",
+        pr: { title: pr.title, url: pr.html_url, repo: repoFullName },
+        screenshots: [screenshotToUse],
+      };
+    }
+
+    // No existing screenshots - run the PR screenshoter tool to capture new ones
+    console.log(`[algorithm] No existing screenshots, running screenshoter tool`);
 
     // Generate a unique toolCallId for tracking
     const toolCallId = `algorithm-screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -510,7 +693,7 @@ Decide: Should you post about a PR (text only), screenshot a PR (with visuals), 
       content += "\n\n" + screenshotUrls.map((url, i) => `![Screenshot ${i + 1}](${url})`).join("\n");
     }
 
-    console.log(`[algorithm] Creating post with ${screenshotUrls.length} screenshots`);
+    console.log(`[algorithm] Creating post with ${screenshotUrls.length} captured screenshots`);
 
     await ctx.runMutation(api.posts.createPost, {
       content,
@@ -519,7 +702,7 @@ Decide: Should you post about a PR (text only), screenshot a PR (with visuals), 
 
     return {
       success: true,
-      message: `Posted about PR #${pr.number} with ${screenshotUrls.length} screenshots: ${reasoning}`,
+      message: `Posted about PR #${pr.number} with ${screenshotUrls.length} captured screenshots: ${reasoning}`,
       action: "screenshot_pr",
       pr: { title: pr.title, url: pr.html_url, repo: repoFullName },
       screenshots: screenshotUrls,
