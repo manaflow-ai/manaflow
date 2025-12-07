@@ -9,7 +9,7 @@
     "predev": "convex dev --until-success && convex dashboard",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint . --ignore-pattern \"convex/_generated/**\"",
+    "lint": "eslint . --ignore-pattern \"convex/_generated/**\" --ignore-pattern \"dev-docs/**\"",
     "workflow:web": "bunx workflow web"
   },
   "dependencies": {
