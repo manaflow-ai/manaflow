@@ -332,12 +332,13 @@ The agent will complete the task autonomously and return the results.`,
         error: error instanceof Error ? error.message : String(error),
       };
     } finally {
+      // TODO: Re-enable cleanup after debugging
       // Always cleanup the VM
-      if (vm) {
-        await vm.cleanup().catch((e) =>
-          console.error(`[coding-agent] Cleanup error:`, e)
-        );
-      }
+      // if (vm) {
+      //   await vm.cleanup().catch((e) =>
+      //     console.error(`[coding-agent] Cleanup error:`, e)
+      //   );
+      // }
     }
   },
 });
