@@ -303,88 +303,77 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
   return (
     <div className="h-full flex flex-col bg-black">
       {/* Header */}
-      <div className="flex-shrink-0 p-4 border-b border-gray-800 bg-black/80 backdrop-blur-md">
-        <div className="flex items-center justify-between mb-2">
+      <div className="flex-shrink-0 h-[60px] px-4 border-b border-gray-800 bg-black/80 backdrop-blur-md flex items-center">
+        <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
             <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
             </svg>
-            <span className="font-medium text-white">Coding Agent</span>
+            <span className="font-semibold text-white">Coding Agent</span>
+            {session.tokens && (
+              <span className="text-xs text-gray-500">
+                {session.tokens.input + session.tokens.output} tokens
+              </span>
+            )}
           </div>
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-white transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-xs px-2 py-0.5 rounded-full border ${statusColors[session.status]}`}>
-            {session.status}
-          </span>
-          {session.agent && (
-            <span className="text-xs text-gray-500">
-              Agent: {session.agent}
+          <div className="flex items-center gap-2">
+            <span className={`text-xs px-2 py-0.5 rounded-full border ${statusColors[session.status]}`}>
+              {session.status}
             </span>
-          )}
-          {session.tokens && (
-            <span className="text-xs text-gray-500">
-              {session.tokens.input + session.tokens.output} tokens
-            </span>
-          )}
-        </div>
-
-        {session.title && (
-          <div className="mt-2 text-sm text-gray-400 truncate">
-            {session.title}
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="text-gray-500 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
-        )}
-
+        </div>
       </div>
 
-      {/* Iframe Viewers - VM Workspace, VS Code, Live Browser */}
-      {session.morphInstanceId && (() => {
-        const instanceSlug = session.morphInstanceId.replace('_', '-')
-        const vmUrl = `https://port-4096-${instanceSlug}.http.cloud.morph.so`
-        const vncUrl = `https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`
-        const vscodeUrl = `https://code-server-${instanceSlug}.http.cloud.morph.so/?folder=/root/workspace`
-        return (
-          <>
-            <IframeViewer
-              url={vmUrl}
-              title="VM Workspace"
-              icon={WorkspaceIcon}
-              color="text-green-400"
-              isExpanded={workspaceExpanded}
-              onToggle={() => setWorkspaceExpanded(!workspaceExpanded)}
-            />
-            <IframeViewer
-              url={vscodeUrl}
-              title="VS Code"
-              icon={VSCodeIcon}
-              color="text-blue-400"
-              isExpanded={vscodeExpanded}
-              onToggle={() => setVscodeExpanded(!vscodeExpanded)}
-            />
-            <IframeViewer
-              url={vncUrl}
-              title="Live Browser View"
-              icon={VNCIcon}
-              color="text-cyan-400"
-              isExpanded={vncExpanded}
-              onToggle={() => setVncExpanded(!vncExpanded)}
-            />
-          </>
-        )
-      })()}
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Iframe Viewers - Opencode, VS Code, Live Browser */}
+        {session.morphInstanceId && (() => {
+          const instanceSlug = session.morphInstanceId.replace('_', '-')
+          const vmUrl = `https://port-4096-${instanceSlug}.http.cloud.morph.so`
+          const vncUrl = `https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`
+          const vscodeUrl = `https://code-server-${instanceSlug}.http.cloud.morph.so/?folder=/root/workspace`
+          return (
+            <>
+              <IframeViewer
+                url={vmUrl}
+                title="Opencode"
+                icon={WorkspaceIcon}
+                color="text-green-400"
+                isExpanded={workspaceExpanded}
+                onToggle={() => setWorkspaceExpanded(!workspaceExpanded)}
+              />
+              <IframeViewer
+                url={vscodeUrl}
+                title="VS Code"
+                icon={VSCodeIcon}
+                color="text-blue-400"
+                isExpanded={vscodeExpanded}
+                onToggle={() => setVscodeExpanded(!vscodeExpanded)}
+              />
+              <IframeViewer
+                url={vncUrl}
+                title="Live Browser View"
+                icon={VNCIcon}
+                color="text-cyan-400"
+                isExpanded={vncExpanded}
+                onToggle={() => setVncExpanded(!vncExpanded)}
+              />
+            </>
+          )
+        })()}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Messages */}
+        <div className="p-4 space-y-4">
         {turns.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <svg className="w-8 h-8 mb-2 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -397,6 +386,7 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
             <TurnMessage key={turn._id} turn={turn as Turn} />
           ))
         )}
+        </div>
       </div>
 
       {/* Footer with session info */}
