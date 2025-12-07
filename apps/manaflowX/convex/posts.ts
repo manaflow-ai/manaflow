@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 
 // =============================================================================
 // POSTS - Twitter-style activity stream
@@ -135,6 +135,25 @@ export const getPostsByIssue = query({
     const posts = await ctx.db
       .query("posts")
       .withIndex("by_issue", (q) => q.eq("issue", args.issueId))
+      .order("desc")
+      .take(limit);
+
+    return posts;
+  },
+});
+
+// Internal query to get recent Grok posts (for avoiding duplicates in PR monitor)
+export const getRecentGrokPosts = internalQuery({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+
+    // Get recent posts by Grok
+    const posts = await ctx.db
+      .query("posts")
+      .withIndex("by_author", (q) => q.eq("author", "Grok"))
       .order("desc")
       .take(limit);
 

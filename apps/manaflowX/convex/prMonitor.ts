@@ -59,6 +59,23 @@ async function fetchRepoPRs(
   return (await response.json()) as GitHubPR[];
 }
 
+// Extract PR URLs from post content
+function extractPRUrlsFromPosts(posts: Array<{ content: string }>): Set<string> {
+  const urls = new Set<string>();
+  const prUrlPattern = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/g;
+
+  for (const post of posts) {
+    const matches = post.content.match(prUrlPattern);
+    if (matches) {
+      for (const match of matches) {
+        urls.add(match);
+      }
+    }
+  }
+
+  return urls;
+}
+
 // Test action: Fetch PRs from monitored repos and post one to the feed
 export const testFetchAndPostPR = action({
   args: {},
@@ -78,6 +95,11 @@ export const testFetchAndPostPR = action({
     if (!appId || !privateKey) {
       return { success: false, message: "GitHub App credentials not configured" };
     }
+
+    // Get recent Grok posts to avoid duplicates
+    const recentPosts = await ctx.runQuery(internal.posts.getRecentGrokPosts, { limit: 10 });
+    const alreadyPostedUrls = extractPRUrlsFromPosts(recentPosts);
+    console.log(`[prMonitor] Found ${alreadyPostedUrls.size} recently posted PR URLs to avoid`);
 
     // Group repos by installation ID
     const reposByInstallation = new Map<number, typeof repos>();
@@ -130,6 +152,7 @@ export const testFetchAndPostPR = action({
       repo: item.repoFullName,
       number: item.pr.number,
       title: item.pr.title,
+      url: item.pr.html_url,
       author: item.pr.user.login,
       labels: item.pr.labels.map((l) => l.name),
       draft: item.pr.draft,
@@ -137,7 +160,11 @@ export const testFetchAndPostPR = action({
       baseBranch: item.pr.base.ref,
       createdAt: item.pr.created_at,
       updatedAt: item.pr.updated_at,
+      alreadyPosted: alreadyPostedUrls.has(item.pr.html_url),
     }));
+
+    // Build the list of already posted PRs for the prompt
+    const alreadyPostedList = Array.from(alreadyPostedUrls).slice(0, 20);
 
     console.log(`[prMonitor] Asking Grok to evaluate ${prSummaries.length} PRs`);
 
@@ -151,6 +178,10 @@ export const testFetchAndPostPR = action({
       }),
       prompt: `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
 
+IMPORTANT: Do NOT select PRs that have already been posted. PRs marked with "alreadyPosted: true" MUST be skipped.
+
+${alreadyPostedList.length > 0 ? `Recently posted PR URLs to AVOID:\n${alreadyPostedList.join('\n')}\n` : ''}
+
 Consider:
 - Is it a significant feature or important bug fix?
 - Does the title suggest something notable?
@@ -161,7 +192,7 @@ Consider:
 PRs to evaluate:
 ${JSON.stringify(prSummaries, null, 2)}
 
-Pick ONE PR and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
+Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
     });
 
     const selectedIndex = result.object.selectedIndex;
@@ -245,6 +276,11 @@ export const cronFetchAndPostPR = internalAction({
       return;
     }
 
+    // Get recent Grok posts to avoid duplicates
+    const recentPosts = await ctx.runQuery(internal.posts.getRecentGrokPosts, { limit: 10 });
+    const alreadyPostedUrls = extractPRUrlsFromPosts(recentPosts);
+    console.log(`[prMonitor] Found ${alreadyPostedUrls.size} recently posted PR URLs to avoid`);
+
     // Group repos by installation ID
     const reposByInstallation = new Map<number, typeof repos>();
     for (const repo of repos) {
@@ -297,6 +333,7 @@ export const cronFetchAndPostPR = internalAction({
       repo: item.repoFullName,
       number: item.pr.number,
       title: item.pr.title,
+      url: item.pr.html_url,
       author: item.pr.user.login,
       labels: item.pr.labels.map((l) => l.name),
       draft: item.pr.draft,
@@ -304,7 +341,11 @@ export const cronFetchAndPostPR = internalAction({
       baseBranch: item.pr.base.ref,
       createdAt: item.pr.created_at,
       updatedAt: item.pr.updated_at,
+      alreadyPosted: alreadyPostedUrls.has(item.pr.html_url),
     }));
+
+    // Build the list of already posted PRs for the prompt
+    const alreadyPostedList = Array.from(alreadyPostedUrls).slice(0, 20);
 
     console.log(`[prMonitor] Asking Grok to evaluate ${prSummaries.length} PRs`);
 
@@ -318,6 +359,10 @@ export const cronFetchAndPostPR = internalAction({
       }),
       prompt: `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
 
+IMPORTANT: Do NOT select PRs that have already been posted. PRs marked with "alreadyPosted: true" MUST be skipped.
+
+${alreadyPostedList.length > 0 ? `Recently posted PR URLs to AVOID:\n${alreadyPostedList.join('\n')}\n` : ''}
+
 Consider:
 - Is it a significant feature or important bug fix?
 - Does the title suggest something notable?
@@ -328,7 +373,7 @@ Consider:
 PRs to evaluate:
 ${JSON.stringify(prSummaries, null, 2)}
 
-Pick ONE PR and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
+Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
     });
 
     const selectedIndex = result.object.selectedIndex;

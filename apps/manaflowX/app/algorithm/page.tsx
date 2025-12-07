@@ -18,7 +18,7 @@ function formatTimeAgo(timestamp: number | undefined): string {
   return new Date(timestamp).toLocaleDateString()
 }
 
-function RepoCard({
+function RepoRow({
   repo,
   onToggle,
 }: {
@@ -36,43 +36,42 @@ function RepoCard({
   const isMonitored = repo.isMonitored ?? false
 
   return (
-    <div
-      className={`p-4 border rounded-lg transition-all ${
-        isMonitored
-          ? "border-blue-500 bg-blue-500/10"
-          : "border-gray-700 hover:border-gray-600"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
+    <div className="flex items-center justify-between py-3 px-4 hover:bg-gray-900/50 transition-colors">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
+          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+        </div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-white truncate">{repo.fullName}</h3>
+            <span className="font-medium text-white truncate">{repo.fullName}</span>
             {repo.visibility === "private" && (
-              <span className="text-xs px-1.5 py-0.5 bg-gray-700 text-gray-300 rounded">
+              <span className="text-[10px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded flex-shrink-0">
                 private
               </span>
             )}
           </div>
-          <p className="text-sm text-gray-400 mt-1">
-            Last push: {formatTimeAgo(repo.lastPushedAt)}
-          </p>
+          <p className="text-xs text-gray-500">{formatTimeAgo(repo.lastPushedAt)}</p>
         </div>
-        <button
-          onClick={onToggle}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            isMonitored
-              ? "bg-blue-500 text-white hover:bg-blue-600"
-              : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-          }`}
-        >
-          {isMonitored ? "Monitoring" : "Monitor"}
-        </button>
       </div>
+      <button
+        onClick={onToggle}
+        className={`w-10 h-5 rounded-full transition-colors relative flex-shrink-0 ${
+          isMonitored ? "bg-blue-600" : "bg-gray-700"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+            isMonitored ? "left-5" : "left-0.5"
+          }`}
+        />
+      </button>
     </div>
   )
 }
 
-function AlgorithmContent() {
+function GitHubContent() {
   const user = useUser()
   const repos = useQuery(api.github.getReposSortedByActivity)
   const monitoredRepos = useQuery(api.github.getMonitoredRepos)
@@ -106,12 +105,12 @@ function AlgorithmContent() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center">
-          <h2 className="text-xl font-bold mb-4">Sign in to manage Algorithm</h2>
+          <h2 className="text-lg font-semibold mb-3">Sign in to continue</h2>
           <Link
             href="/sign-in"
-            className="bg-white text-black font-bold py-2 px-6 rounded-full hover:bg-gray-200 transition-colors"
+            className="inline-flex items-center gap-2 bg-white text-black font-medium py-2 px-4 rounded-lg hover:bg-gray-200 transition-colors"
           >
             Sign in
           </Link>
@@ -122,18 +121,11 @@ function AlgorithmContent() {
 
   if (!repos) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-          <div
-            className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
-            style={{ animationDelay: "0.1s" }}
-          ></div>
-          <div
-            className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
-            style={{ animationDelay: "0.2s" }}
-          ></div>
-          <p className="ml-2 text-gray-400">Loading...</p>
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="flex items-center gap-2 text-gray-400">
+          <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
+          <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" style={{ animationDelay: "0.2s" }} />
+          <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" style={{ animationDelay: "0.4s" }} />
         </div>
       </div>
     )
@@ -142,163 +134,84 @@ function AlgorithmContent() {
   const monitoredCount = monitoredRepos?.length ?? 0
 
   return (
-    <div className="min-h-screen">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold mb-2">Algorithm</h1>
-          <p className="text-gray-400">
-            Select repositories to monitor for interesting PRs. The Algorithm will
-            curate your feed with PRs that are ready to merge.
-          </p>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-4 mb-8">
-          <div className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-            <p className="text-3xl font-bold text-white">{repos.length}</p>
-            <p className="text-sm text-gray-400">Total Repos</p>
-          </div>
-          <div className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-            <p className="text-3xl font-bold text-blue-400">{monitoredCount}</p>
-            <p className="text-sm text-gray-400">Monitored</p>
-          </div>
-        </div>
-
-        {/* Auto-Post Settings */}
-        <div className="mb-8 p-4 bg-gray-900 rounded-lg border border-gray-800">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-semibold text-white">GitHub PR Auto-Post</h2>
-              <p className="text-sm text-gray-400">
-                Automatically post interesting PRs to the feed every minute
-              </p>
-            </div>
-            <button
-              onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
-              disabled={monitoredCount === 0}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed ${
-                prMonitorEnabled ? "bg-blue-600" : "bg-gray-600"
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  prMonitorEnabled ? "translate-x-6" : "translate-x-1"
-                }`}
-              />
-            </button>
-          </div>
-
-          {prMonitorEnabled && (
-            <div className="p-3 rounded-lg bg-blue-900/20 border border-blue-700/50">
-              <p className="text-sm text-blue-400">
-                Auto-posting is enabled. Grok will curate and post PRs from monitored repos every minute.
-              </p>
-            </div>
-          )}
-
-          {monitoredCount === 0 && (
-            <p className="text-sm text-yellow-500 mt-2">
-              Select at least one repo to monitor first
+    <div className="max-w-2xl mx-auto">
+      {/* Auto-Post Control */}
+      <div className="p-4 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-white">PR Auto-Post</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Post interesting PRs to feed every minute
             </p>
-          )}
-        </div>
-
-        {/* Test PR Fetch */}
-        <div className="mb-8 p-4 bg-gray-900 rounded-lg border border-gray-800">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="font-semibold text-white">Test PR Fetch</h2>
-              <p className="text-sm text-gray-400">
-                Manually fetch PRs from monitored repos and post one to the feed
-              </p>
-            </div>
-            <button
-              onClick={handleTestFetch}
-              disabled={testStatus.loading || monitoredCount === 0}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {testStatus.loading ? "Fetching..." : "Fetch & Post PR"}
-            </button>
           </div>
-
-          {/* Result display */}
-          {testStatus.result && (
-            <div
-              className={`p-3 rounded-lg ${
-                testStatus.result.success
-                  ? "bg-green-900/30 border border-green-700"
-                  : "bg-red-900/30 border border-red-700"
+          <button
+            onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
+            disabled={monitoredCount === 0}
+            className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed ${
+              prMonitorEnabled ? "bg-blue-600" : "bg-gray-700"
+            }`}
+          >
+            <span
+              className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                prMonitorEnabled ? "left-6" : "left-1"
               }`}
-            >
-              <p
-                className={`text-sm ${
-                  testStatus.result.success ? "text-green-400" : "text-red-400"
-                }`}
-              >
-                {testStatus.result.message}
-              </p>
-              {testStatus.result.pr && (
-                <div className="mt-2 text-sm">
-                  <p className="text-gray-300">
-                    <strong>PR:</strong>{" "}
-                    <a
-                      href={testStatus.result.pr.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 hover:underline"
-                    >
-                      {testStatus.result.pr.title}
-                    </a>
-                  </p>
-                  <p className="text-gray-400">
-                    <strong>Repo:</strong> {testStatus.result.pr.repo}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {monitoredCount === 0 && (
-            <p className="text-sm text-yellow-500 mt-2">
-              Select at least one repo to monitor first
-            </p>
-          )}
+            />
+          </button>
         </div>
 
-        {/* Repo List */}
+        {prMonitorEnabled && (
+          <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+            Active
+          </div>
+        )}
+      </div>
+
+      {/* Manual Test */}
+      <div className="p-4 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-white">Manual Post</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Fetch and post a PR now
+            </p>
+          </div>
+          <button
+            onClick={handleTestFetch}
+            disabled={testStatus.loading || monitoredCount === 0}
+            className="px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {testStatus.loading ? "Posting..." : "Post PR"}
+          </button>
+        </div>
+
+        {testStatus.result && (
+          <div className={`mt-3 text-sm ${testStatus.result.success ? "text-green-400" : "text-red-400"}`}>
+            {testStatus.result.message}
+          </div>
+        )}
+      </div>
+
+      {/* Repositories */}
+      <div>
+        <div className="px-4 py-3 border-b border-gray-800">
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-white">Repositories</h3>
+            <span className="text-sm text-gray-500">
+              {monitoredCount} of {repos.length} monitored
+            </span>
+          </div>
+        </div>
+
         {repos.length === 0 ? (
-          <div className="text-center py-12 border border-gray-800 rounded-lg">
-            <svg
-              className="w-12 h-12 mx-auto text-gray-600 mb-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-              />
-            </svg>
-            <h3 className="text-lg font-semibold mb-2">No repositories</h3>
-            <p className="text-gray-400 mb-4">
-              Connect your GitHub account to see your repositories.
-            </p>
+          <div className="p-8 text-center text-gray-500">
+            <p>No repositories found.</p>
+            <p className="text-sm mt-1">Connect your GitHub account to get started.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">
-                Repositories
-                <span className="text-gray-400 font-normal ml-2">
-                  (sorted by recent activity)
-                </span>
-              </h2>
-            </div>
+          <div className="divide-y divide-gray-800/50">
             {repos.map((repo) => (
-              <RepoCard
+              <RepoRow
                 key={repo._id}
                 repo={repo}
                 onToggle={() => toggleMonitoring({ repoId: repo._id })}
@@ -311,6 +224,6 @@ function AlgorithmContent() {
   )
 }
 
-export default function AlgorithmPage() {
-  return <AlgorithmContent />
+export default function GitHubPage() {
+  return <GitHubContent />
 }
