@@ -8,6 +8,14 @@ import { issueTools, codingAgentTools } from "./tools"
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
+// Repo config passed from the API
+export interface RepoConfig {
+  fullName: string;
+  gitRemote: string;
+  branch: string;
+  installationId?: number;
+}
+
 type TurnPart = {
   type:
     | "text"
@@ -32,12 +40,13 @@ type TurnPart = {
 }
 
 // Generate an AI reply to an existing post
-export async function handleReplyToPost(postId: string, content: string) {
+export async function handleReplyToPost(postId: string, content: string, repoConfig?: RepoConfig) {
   "use workflow"
 
   const reply = await generateStreamingReply({
     id: postId as Id<"posts">,
     content,
+    repoConfig,
   })
 
   return {
@@ -51,6 +60,7 @@ export async function handleReplyToPost(postId: string, content: string) {
 async function generateStreamingReply(post: {
   id: Id<"posts">
   content: string
+  repoConfig?: RepoConfig
 }) {
   "use step"
   if (!post.content.trim()) {
@@ -58,6 +68,7 @@ async function generateStreamingReply(post: {
   }
 
   console.log(`Generating streaming reply for post: ${post.id}`)
+  console.log(`Repo config:`, post.repoConfig)
 
   // Create a session to track this AI conversation
   const sessionId = await convex.mutation(api.sessions.createSession, {
@@ -104,6 +115,29 @@ async function generateStreamingReply(post: {
   let totalInputTokens = 0
   let totalOutputTokens = 0
 
+  // Build system prompt - include repo context if available
+  const repoContext = post.repoConfig
+    ? `\n\nIMPORTANT: A repository has been selected for this task: ${post.repoConfig.fullName}
+When delegating to the coding agent, ALWAYS include the repo parameter:
+- gitRemote: "${post.repoConfig.gitRemote}"
+- branch: "${post.repoConfig.branch}"
+${post.repoConfig.installationId ? `- installationId: ${post.repoConfig.installationId}` : ""}`
+    : ""
+
+  // Build prompt - if repo is selected, automatically delegate to coding agent
+  const autoDelegate = post.repoConfig !== undefined
+  const prompt = autoDelegate
+    ? `The user has selected the repository "${post.repoConfig!.fullName}" and sent this message:
+
+${post.content}
+
+Since a repository is selected, delegate this task to the coding agent immediately. Use the delegateToCodingAgent tool with:
+- task: The user's request
+- context: Any relevant context about the task
+- agent: "build" (for coding tasks)
+- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }`
+    : `Respond to this post:\n\n${post.content}`
+
   try {
     const result = streamText({
       model: xai("grok-4-1-fast-non-reasoning"),
@@ -120,8 +154,8 @@ When users mention bugs, features, tasks, or work items, consider creating or up
 When users ask about status or progress, use the issue tools to look up information.
 When users ask you to write code, run tests, modify files, or perform any coding task, use the delegateToCodingAgent tool.
 
-Keep responses concise and helpful.`,
-      prompt: `Respond to this post:\n\n${post.content}`,
+Keep responses concise and helpful.${repoContext}`,
+      prompt,
       tools: allTools,
       stopWhen: stepCountIs(50),
       onStepFinish: async (event) => {

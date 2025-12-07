@@ -171,6 +171,14 @@ export const getProviderConnectionByInstallationId = internalQuery({
   },
 });
 
+// Get a provider connection by ID
+export const getConnectionById = query({
+  args: { connectionId: v.id("providerConnections") },
+  handler: async (ctx, { connectionId }) => {
+    return await ctx.db.get(connectionId);
+  },
+});
+
 // List provider connections for the current user
 export const listProviderConnections = query({
   args: {},

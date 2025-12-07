@@ -448,7 +448,6 @@ export default defineSchema({
         files: v.optional(v.number()),
       })
     ),
-
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),

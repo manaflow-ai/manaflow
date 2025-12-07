@@ -291,9 +291,9 @@ export const createCodingAgentSession = mutation({
       status: "active",
       agent: args.agent,
       title: `Task: ${args.task.slice(0, 50)}...`,
+      morphInstanceId: args.morphInstanceId,
       task: args.task, // Store full task for UI lookup
       jwtSecret: args.jwtSecret,
-      morphInstanceId: args.morphInstanceId,
       createdAt: now,
       updatedAt: now,
     });
@@ -301,7 +301,6 @@ export const createCodingAgentSession = mutation({
     return sessionId;
   },
 });
-
 
 /**
  * Internal mutation to upsert a turn from OpenCode hook events.
