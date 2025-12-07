@@ -2,13 +2,11 @@ import { tool } from "ai";
 import { z } from "zod";
 import { MorphCloudClient } from "morphcloud";
 import { createOpencodeClient } from "@opencode-ai/sdk";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { fetchInstallationAccessToken } from "../../convex/_shared/githubApp";
+import { getLatestSnapshotId } from "./vm-snapshots";
 
 // =============================================================================
 // Progress Stage Types
@@ -283,22 +281,6 @@ async function cloneRepositoryInVM(
 // =============================================================================
 // Coding Agent Tool - Delegates tasks to OpenCode running in Morph VMs
 // =============================================================================
-
-// Load VM snapshot configuration
-function loadVmSnapshots() {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const snapshotsPath = join(__dirname, "../../sandbox/vm-snapshots.json");
-  return JSON.parse(readFileSync(snapshotsPath, "utf-8"));
-}
-
-// Get the latest snapshot ID
-function getLatestSnapshotId(): string {
-  const snapshotsData = loadVmSnapshots();
-  const preset = snapshotsData.presets[0];
-  const latestVersion = preset.versions[preset.versions.length - 1];
-  return latestVersion.snapshotId;
-}
 
 // Spawn a Morph VM instance and return the OpenCode URL
 async function spawnCodingVM(options?: {
