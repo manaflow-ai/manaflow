@@ -2245,8 +2245,32 @@ Please address the issue mentioned in the comment above.`;
       try {
         const { repo } = GitHubFetchBranchesSchema.parse(data);
 
-        const { listRemoteBranches } = await import("./native/git.js");
-        const branches = await listRemoteBranches({ repoFullName: repo });
+        // Prefer native git implementation for branch listing
+        let branches: {
+          name: string;
+          lastCommitSha?: string;
+          lastActivityAt?: number;
+          isDefault?: boolean;
+        }[];
+
+        try {
+          const { listRemoteBranches } = await import("./native/git.js");
+          branches = await listRemoteBranches({ repoFullName: repo });
+        } catch (nativeError) {
+          // Fallback to GitHub API if native method fails (e.g., auth issues for private repos)
+          const nativeMsg =
+            nativeError instanceof Error
+              ? nativeError.message
+              : String(nativeError);
+          serverLogger.info(
+            `Native branch listing failed for ${repo}; falling back to GitHub API: ${nativeMsg}`
+          );
+          const { ghApi } = await import("./ghApi.js");
+          const apiBranches = await ghApi.getRepoBranchesWithActivity(repo);
+          // GitHub API doesn't provide isDefault, so we can't determine it here
+          branches = apiBranches.map((b) => ({ ...b, isDefault: undefined }));
+        }
+
         const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
 
         callback({
