@@ -1,46 +1,46 @@
-import { FatalError, sleep, createWebhook } from 'workflow'
+import { FatalError, sleep, createWebhook } from "workflow";
 
 export async function handleUserSignup(email: string) {
-  'use workflow'
+  "use workflow";
 
-  const user = await createUser(email)
-  await sendWelcomeEmail(user)
-  await sleep('5s') // Pause for 5s - doesn't consume any resources
+  const user = await createUser(email);
+  await sendWelcomeEmail(user);
+  await sleep("5s"); // Pause for 5s - doesn't consume any resources
 
-  const webhook = createWebhook()
-  console.log('Webhook URL:', webhook.url)
+  const webhook = createWebhook();
+  console.log("Webhook URL:", webhook.url);
 
   // Workflow pauses here until an HTTP request is received at webhook.url
-  await webhook
+  await webhook;
 
-  await sendOnboardingEmail(user)
+  await sendOnboardingEmail(user);
 
-  return { userId: user.id, status: 'onboarded' }
+  return { userId: user.id, status: "onboarded" };
 }
 
 async function createUser(email: string) {
-  'use step'
-  console.log(`Creating user with email: ${email}`)
+  "use step";
+  console.log(`Creating user with email: ${email}`);
   // Full Node.js access - database calls, APIs, etc.
-  return await Promise.resolve({ id: crypto.randomUUID(), email })
+  return await Promise.resolve({ id: crypto.randomUUID(), email });
 }
 
 async function sendWelcomeEmail(user: { id: string; email: string }) {
-  'use step'
-  console.log(`Sending welcome email to user: ${user.id}`)
+  "use step";
+  console.log(`Sending welcome email to user: ${user.id}`);
   if (Math.random() < 0.3) {
     // By default, steps will be retried for unhandled errors
-    throw new Error('Retryable!')
+    throw new Error("Retryable!");
   }
-  await Promise.resolve()
+  await Promise.resolve();
 }
 
 async function sendOnboardingEmail(user: { id: string; email: string }) {
-  'use step'
-  if (!user.email.includes('@')) {
+  "use step";
+  if (!user.email.includes("@")) {
     // To skip retrying, throw a FatalError instead
-    throw new FatalError('Invalid Email')
+    throw new FatalError("Invalid Email");
   }
-  console.log(`Sending onboarding email to user: ${user.id}`)
-  await Promise.resolve()
+  console.log(`Sending onboarding email to user: ${user.id}`);
+  await Promise.resolve();
 }
