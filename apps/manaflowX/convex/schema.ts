@@ -238,6 +238,70 @@ export default defineSchema({
     .index("by_task", ["taskId"]),
 
   // ---------------------------------------------------------------------------
+  // GITHUB REPOSITORIES
+  // ---------------------------------------------------------------------------
+
+  repos: defineTable({
+    fullName: v.string(), // e.g. "owner/repo"
+    org: v.string(), // owner or organization name
+    name: v.string(), // repository name
+    gitRemote: v.string(), // e.g. "https://github.com/owner/repo.git"
+    provider: v.optional(v.string()), // e.g. "github"
+    userId: v.string(), // Stack Auth user ID
+
+    // Provider metadata (GitHub App)
+    providerRepoId: v.optional(v.number()),
+    ownerLogin: v.optional(v.string()),
+    ownerType: v.optional(v.union(v.literal("User"), v.literal("Organization"))),
+    visibility: v.optional(v.union(v.literal("public"), v.literal("private"))),
+    defaultBranch: v.optional(v.string()),
+    connectionId: v.optional(v.id("providerConnections")),
+    lastSyncedAt: v.optional(v.number()),
+    lastPushedAt: v.optional(v.number()),
+  })
+    .index("by_org", ["org"])
+    .index("by_gitRemote", ["gitRemote"])
+    .index("by_userId", ["userId"])
+    .index("by_fullName", ["fullName"]),
+
+  // ---------------------------------------------------------------------------
+  // PROVIDER CONNECTIONS (GitHub App installations)
+  // ---------------------------------------------------------------------------
+
+  providerConnections: defineTable({
+    userId: v.optional(v.string()), // Stack Auth user ID
+    connectedByUserId: v.optional(v.string()),
+    type: v.literal("github_app"),
+    installationId: v.number(),
+    accountLogin: v.optional(v.string()), // org or user login
+    accountId: v.optional(v.number()),
+    accountType: v.optional(v.union(v.literal("User"), v.literal("Organization"))),
+    isActive: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_installationId", ["installationId"])
+    .index("by_userId", ["userId"]),
+
+  // ---------------------------------------------------------------------------
+  // INSTALL STATES (for GitHub App installation flow)
+  // ---------------------------------------------------------------------------
+
+  installStates: defineTable({
+    nonce: v.string(),
+    userId: v.string(),
+    iat: v.number(),
+    exp: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("used"),
+      v.literal("expired")
+    ),
+    createdAt: v.number(),
+    returnUrl: v.optional(v.string()),
+  }).index("by_nonce", ["nonce"]),
+
+  // ---------------------------------------------------------------------------
   // NOTIFICATIONS
   // ---------------------------------------------------------------------------
 
