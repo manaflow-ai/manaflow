@@ -60,7 +60,7 @@ const client = new MorphCloudClient({
   console.log("Setting up VNC...");
   await instance.exec("mkdir -p /root/.vnc");
 
-  // Create VNC xstartup script with Openbox
+  // Create VNC xstartup script with Openbox and Chrome auto-start
   await instance.exec(`cat > /root/.vnc/xstartup << 'EOF'
 #!/bin/bash
 export DISPLAY=:1
@@ -68,7 +68,40 @@ export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p $XDG_RUNTIME_DIR
 chmod 700 $XDG_RUNTIME_DIR
 xsetroot -solid "#2d2d2d"
-exec openbox
+
+# Start openbox in background
+openbox &
+
+# Wait for openbox to initialize
+sleep 2
+
+# Launch Chrome with all the flags to skip prompts
+/usr/bin/google-chrome-stable \
+  --no-sandbox \
+  --disable-dev-shm-usage \
+  --disable-gpu \
+  --disable-software-rasterizer \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-session-crashed-bubble \
+  --disable-default-apps \
+  --disable-sync \
+  --disable-translate \
+  --disable-infobars \
+  --disable-features=ChromeWhatsNewUI,AutofillServerCommunication,AutomationControlled \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=39382 \
+  --remote-allow-origins=* \
+  --test-type \
+  --start-maximized \
+  --window-position=0,0 \
+  --window-size=1920,1080 \
+  --user-data-dir=/root/.config/chrome \
+  --password-store=basic \
+  about:blank &
+
+# Keep the session alive
+wait
 EOF`);
   await instance.exec("chmod +x /root/.vnc/xstartup");
 
