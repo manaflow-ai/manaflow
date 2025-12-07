@@ -24,43 +24,108 @@ const client = new MorphCloudClient({
   await instance.waitUntilReady(30);
   console.log("Instance is ready!");
 
-  // Install opencode CLI
-  console.log("Installing opencode CLI...");
-  const installResult = await instance.exec(
-    "curl -fsSL https://opencode.ai/install | bash"
+  // Install git
+  console.log("Installing git...");
+  await instance.exec("apt-get update && apt-get install -y git", {
+    timeout: 120000,
+  });
+
+  // Install Bun 1.3.3 (required by opencode)
+  console.log("Installing Bun 1.3.3...");
+  const bunInstall = await instance.exec(
+    "curl -fsSL https://bun.sh/install | bash -s 'bun-v1.3.3'"
   );
-  console.log("Install stdout:", installResult.stdout);
-  if (installResult.stderr) console.log("Install stderr:", installResult.stderr);
+  console.log("Bun install stdout:", bunInstall.stdout);
 
-  // Symlink opencode to /usr/local/bin so it's in PATH
-  console.log("Symlinking opencode to /usr/local/bin...");
-  await instance.exec("ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode");
+  // Symlink bun to /usr/local/bin
+  console.log("Symlinking bun to /usr/local/bin...");
+  await instance.exec("ln -sf /root/.bun/bin/bun /usr/local/bin/bun");
 
-  // Verify
-  console.log("Verifying opencode installation...");
-  const verifyResult = await instance.exec("which opencode && opencode --version");
-  console.log("Verify result:", verifyResult.stdout);
-  if (verifyResult.stderr) console.log("Verify stderr:", verifyResult.stderr);
+  // Verify bun
+  const bunVerify = await instance.exec("which bun && bun --version");
+  console.log("Bun verify:", bunVerify.stdout);
 
-  // Upload the bun binary using SSH
-  console.log("Uploading xagi-server binary via SSH...");
-  const ssh = await instance.ssh();
-  const binaryPath = "./worker/xagi-server";
-  await ssh.putFile(binaryPath, "/root/xagi-server");
-  console.log("Binary uploaded!");
+  // Clone opencode repo
+  console.log("Cloning opencode repo...");
+  const cloneResult = await instance.exec(
+    "git clone --depth 1 --branch dev https://github.com/sst/opencode.git /root/opencode",
+    { timeout: 120000 }
+  );
+  console.log("Clone stdout:", cloneResult.stdout);
+  if (cloneResult.stderr) console.log("Clone stderr:", cloneResult.stderr);
 
-  // Make it executable
-  console.log("Making binary executable...");
-  await instance.exec("chmod +x /root/xagi-server");
+  // Install opencode dependencies
+  console.log("Installing opencode dependencies...");
+  const installDeps = await instance.exec("cd /root/opencode && bun install", {
+    timeout: 600000,
+  });
+  console.log("Install deps stdout:", installDeps.stdout);
+  if (installDeps.stderr) console.log("Install deps stderr:", installDeps.stderr);
 
-  // Run the server in the background using a proper nohup approach
-  console.log("Starting server...");
+  // Build opencode to resolve macros
+  console.log("Building opencode...");
+  const buildResult = await instance.exec(
+    "cd /root/opencode/packages/opencode && bun run build",
+    { timeout: 300000 }
+  );
+  console.log("Build stdout:", buildResult.stdout);
+  if (buildResult.stderr) console.log("Build stderr:", buildResult.stderr);
+
+  // Upgrade glibc to 2.39+ (needed for bun-pty native library)
+  console.log("Upgrading glibc...");
+  // Add testing repo for newer glibc
+  await instance.exec(`cat >> /etc/apt/sources.list << 'EOF'
+deb http://deb.debian.org/debian testing main
+EOF`);
+  // Pin to prefer stable but allow testing packages when needed
+  await instance.exec(`cat > /etc/apt/preferences.d/testing << 'EOF'
+Package: *
+Pin: release a=stable
+Pin-Priority: 700
+
+Package: *
+Pin: release a=testing
+Pin-Priority: 650
+EOF`);
+  const glibcUpgrade = await instance.exec(
+    "apt-get update && apt-get install -y -t testing libc6",
+    { timeout: 300000 }
+  );
+  console.log("Glibc upgrade stdout:", glibcUpgrade.stdout);
+  if (glibcUpgrade.stderr) console.log("Glibc upgrade stderr:", glibcUpgrade.stderr);
+
+  // Verify glibc version
+  const glibcVerify = await instance.exec("ldd --version | head -1");
+  console.log("Glibc version:", glibcVerify.stdout);
+
+  // Create workspace directory
+  console.log("Creating workspace directory...");
+  await instance.exec("mkdir -p /root/workspace");
+
+  // Pre-fetch models.json to avoid Bun macro issue
+  console.log("Pre-fetching models.json...");
   await instance.exec(
-    "nohup /root/xagi-server > /root/server.log 2>&1 &"
+    "mkdir -p /root/.cache/opencode && curl -s https://models.dev/api.json > /root/.cache/opencode/models.json"
   );
 
-  // Give server a moment to start
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  // Create a simple server script that runs opencode serve using built binary
+  console.log("Creating startup script...");
+  await instance.exec(`cat > /root/start-server.sh << 'EOF'
+#!/bin/bash
+cd /root/workspace
+export OPENCODE_CONFIG_CONTENT='{"model":"opencode/grok-code"}'
+export BUN_PTY_LIB="/root/opencode/node_modules/.bun/bun-pty@0.4.2/node_modules/bun-pty/rust-pty/target/release/librust_pty.so"
+nohup /root/opencode/packages/opencode/dist/opencode serve --hostname=0.0.0.0 --port=4096 > /root/server.log 2>&1 &
+echo $! > /root/server.pid
+EOF`);
+  await instance.exec("chmod +x /root/start-server.sh");
+
+  // Run the server
+  console.log("Starting server...");
+  await instance.exec("bash -c '/root/start-server.sh'");
+
+  // Give server time to start
+  await new Promise((resolve) => setTimeout(resolve, 10000));
   console.log("Server started!");
 
   // Check server log
@@ -75,25 +140,20 @@ const client = new MorphCloudClient({
   console.log(`Service URL: ${service.url}`);
   console.log(`Service name: ${service.name}`);
 
-  // Give it a moment to stabilize
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  // Create snapshot of the running instance
+  // Create snapshot
   console.log("Creating snapshot of running instance...");
   const finalSnapshot = await instance.snapshot();
   console.log(`\n=== FINAL SNAPSHOT ===`);
   console.log(`Snapshot ID: ${finalSnapshot.id}`);
 
-  // Get all services info from instance networking
+  // Get all services
   console.log(`\n=== SERVICES ===`);
-  // Refresh instance to get latest networking info
-  const refreshedInstance = await client.instances.get({ instanceId: instance.id });
+  const refreshedInstance = await client.instances.get({
+    instanceId: instance.id,
+  });
   for (const svc of refreshedInstance.networking.httpServices) {
     console.log(`- ${svc.name}: ${svc.url}`);
   }
-
-  // Close SSH connection
-  ssh.dispose();
 
   console.log("\nDone!");
 })();

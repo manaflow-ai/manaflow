@@ -16,7 +16,9 @@ import type * as actions from "../actions.js";
 import type * as github from "../github.js";
 import type * as github_app from "../github_app.js";
 import type * as http from "../http.js";
-import type * as myFunctions from "../myFunctions.js";
+import type * as issues from "../issues.js";
+import type * as posts from "../posts.js";
+import type * as sessions from "../sessions.js";
 import type * as twitter from "../twitter.js";
 import type * as users from "../users.js";
 
@@ -35,7 +37,9 @@ declare const fullApi: ApiFromModules<{
   github: typeof github;
   github_app: typeof github_app;
   http: typeof http;
-  myFunctions: typeof myFunctions;
+  issues: typeof issues;
+  posts: typeof posts;
+  sessions: typeof sessions;
   twitter: typeof twitter;
   users: typeof users;
 }>;

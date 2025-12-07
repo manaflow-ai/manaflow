@@ -1,47 +1,315 @@
-import { FatalError, sleep, createWebhook } from "workflow"
+import { FatalError } from "workflow"
+import { xai } from "@ai-sdk/xai"
+import { streamText, stepCountIs } from "ai"
+import { ConvexHttpClient } from "convex/browser"
+import { api } from "../convex/_generated/api"
+import { Id } from "../convex/_generated/dataModel"
+import { issueTools } from "./tools"
 
-export async function handleCreatePost(content: string) {
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
+
+type TurnPart = {
+  type:
+    | "text"
+    | "reasoning"
+    | "tool_call"
+    | "tool_result"
+    | "file"
+    | "step_start"
+    | "step_finish"
+    | "error"
+  text?: string
+  toolCallId?: string
+  toolName?: string
+  toolInput?: unknown
+  toolOutput?: string
+  toolStatus?: "pending" | "running" | "completed" | "error"
+  fileUrl?: string
+  fileMime?: string
+  fileName?: string
+  stepTokens?: { input: number; output: number }
+  isComplete: boolean
+}
+
+// Generate an AI reply to an existing post
+export async function handleReplyToPost(postId: string, content: string) {
   "use workflow"
 
-  const post = await createPost(content)
+  const reply = await generateStreamingReply({
+    id: postId as Id<"posts">,
+    content,
+  })
 
-  await notifyFollowers(post)
-  await sleep("5s") // Pause for 5s - doesn't consume any resources
-
-  const webhook = createWebhook()
-  console.log("Webhook URL:", webhook.url)
-
-  // Workflow pauses here until an HTTP request is received at webhook.url
-  await webhook
-
-  await processPostEngagement(post)
-
-  return { postId: post.id, status: "published" }
-}
-
-async function createPost(content: string) {
-  "use step"
-  console.log(`Creating post with content: ${content}`)
-  // Full Node.js access - database calls, APIs, etc.
-  return await Promise.resolve({ id: crypto.randomUUID(), content })
-}
-
-async function notifyFollowers(post: { id: string; content: string }) {
-  "use step"
-  console.log(`Notifying followers about post: ${post.id}`)
-  if (Math.random() < 0.3) {
-    // By default, steps will be retried for unhandled errors
-    throw new Error("Retryable!")
+  return {
+    postId,
+    replyPostId: reply.postId,
+    sessionId: reply.sessionId,
+    status: "published",
   }
-  await Promise.resolve()
 }
 
-async function processPostEngagement(post: { id: string; content: string }) {
+async function generateStreamingReply(post: {
+  id: Id<"posts">
+  content: string
+}) {
   "use step"
   if (!post.content.trim()) {
-    // To skip retrying, throw a FatalError instead
     throw new FatalError("Empty post content")
   }
-  console.log(`Processing engagement for post: ${post.id}`)
-  await Promise.resolve()
+
+  console.log(`Generating streaming reply for post: ${post.id}`)
+
+  // Create a session to track this AI conversation
+  const sessionId = await convex.mutation(api.sessions.createSession, {
+    source: "workflow",
+    postId: post.id,
+    model: "grok-4-1",
+    provider: "xai",
+    agent: "assistant",
+  })
+
+  // Create user turn (the original post content)
+  await convex.mutation(api.sessions.createTurn, {
+    sessionId,
+    role: "user",
+    parts: [
+      {
+        type: "text",
+        text: post.content,
+        isComplete: true,
+      },
+    ],
+  })
+
+  // Create assistant turn (will be updated as we stream)
+  const assistantTurnId = await convex.mutation(api.sessions.createTurn, {
+    sessionId,
+    role: "assistant",
+  })
+
+  // Update turn to streaming status
+  await convex.mutation(api.sessions.updateTurn, {
+    turnId: assistantTurnId,
+    status: "streaming",
+  })
+
+  // Only use issue tools - don't let the agent create posts (it would create duplicates)
+  const allTools = {
+    ...issueTools,
+  }
+
+  let currentParts: TurnPart[] = []
+  let currentTextPartIndex = -1
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
+
+  try {
+    const result = streamText({
+      model: xai("grok-4-1-fast-non-reasoning"),
+      system: `You are an AI assistant with access to an issue tracking system and a post activity stream.
+
+You can:
+- Create, update, close, and search issues
+- Track dependencies between issues
+- Find ready work (issues with no blockers)
+- Create and reply to posts in the activity stream
+
+When users mention bugs, features, tasks, or work items, consider creating or updating issues.
+When users ask about status or progress, use the issue tools to look up information.
+
+Keep responses concise and helpful.`,
+      prompt: `Respond to this post:\n\n${post.content}`,
+      tools: allTools,
+      stopWhen: stepCountIs(50),
+      onStepFinish: async (event) => {
+        // Update tokens
+        if (event.usage) {
+          totalInputTokens += event.usage.inputTokens ?? 0
+          totalOutputTokens += event.usage.outputTokens ?? 0
+        }
+
+        // Add step_finish part
+        currentParts.push({
+          type: "step_finish",
+          stepTokens: event.usage
+            ? {
+                input: event.usage.inputTokens ?? 0,
+                output: event.usage.outputTokens ?? 0,
+              }
+            : undefined,
+          isComplete: true,
+        })
+
+        await convex.mutation(api.sessions.updateTurn, {
+          turnId: assistantTurnId,
+          parts: currentParts,
+        })
+      },
+      onChunk: async (event) => {
+        const chunk = event.chunk
+
+        if (chunk.type === "text-delta") {
+          const textDelta = chunk.text
+
+          // Find or create text part
+          if (
+            currentTextPartIndex === -1 ||
+            currentParts[currentTextPartIndex]?.type !== "text"
+          ) {
+            currentTextPartIndex = currentParts.length
+            currentParts.push({
+              type: "text",
+              text: textDelta,
+              isComplete: false,
+            })
+          } else {
+            // Append to existing text part
+            currentParts[currentTextPartIndex] = {
+              ...currentParts[currentTextPartIndex],
+              text: (currentParts[currentTextPartIndex].text ?? "") + textDelta,
+            }
+          }
+
+          // Batch updates - only update every ~100 chars to reduce mutation frequency
+          const currentText = currentParts[currentTextPartIndex].text ?? ""
+          if (
+            currentText.length % 100 < textDelta.length ||
+            currentText.length < 50
+          ) {
+            await convex.mutation(api.sessions.updateTurn, {
+              turnId: assistantTurnId,
+              parts: currentParts,
+            })
+          }
+        } else if (chunk.type === "reasoning-delta") {
+          // Handle reasoning content
+          const lastPart = currentParts[currentParts.length - 1]
+          if (lastPart?.type === "reasoning" && !lastPart.isComplete) {
+            currentParts[currentParts.length - 1] = {
+              ...lastPart,
+              text: (lastPart.text ?? "") + chunk.text,
+            }
+          } else {
+            currentParts.push({
+              type: "reasoning",
+              text: chunk.text,
+              isComplete: false,
+            })
+          }
+
+          // Batch updates for reasoning too
+          await convex.mutation(api.sessions.updateTurn, {
+            turnId: assistantTurnId,
+            parts: currentParts,
+          })
+        } else if (chunk.type === "tool-call") {
+          // Mark any open text part as complete
+          if (currentTextPartIndex >= 0 && currentParts[currentTextPartIndex]) {
+            currentParts[currentTextPartIndex] = {
+              ...currentParts[currentTextPartIndex],
+              isComplete: true,
+            }
+          }
+          currentTextPartIndex = -1
+
+          // Add tool call part
+          currentParts.push({
+            type: "tool_call",
+            toolCallId: chunk.toolCallId,
+            toolName: chunk.toolName,
+            toolInput: chunk.input,
+            toolStatus: "pending",
+            isComplete: false,
+          })
+
+          await convex.mutation(api.sessions.updateTurn, {
+            turnId: assistantTurnId,
+            parts: currentParts,
+          })
+        } else if (chunk.type === "tool-result") {
+          // Find the tool call part and update it
+          const toolCallIndex = currentParts.findIndex(
+            (p) => p.type === "tool_call" && p.toolCallId === chunk.toolCallId,
+          )
+          if (toolCallIndex >= 0) {
+            const output = chunk.output
+            currentParts[toolCallIndex] = {
+              ...currentParts[toolCallIndex],
+              toolStatus: "completed",
+              toolOutput:
+                typeof output === "string" ? output : JSON.stringify(output),
+              isComplete: true,
+            }
+          }
+
+          await convex.mutation(api.sessions.updateTurn, {
+            turnId: assistantTurnId,
+            parts: currentParts,
+          })
+        }
+      },
+      onFinish: async (event) => {
+        // Mark any remaining parts as complete
+        currentParts = currentParts.map((p) => ({ ...p, isComplete: true }))
+
+        // Update turn with final state
+        await convex.mutation(api.sessions.updateTurn, {
+          turnId: assistantTurnId,
+          status: "complete",
+          parts: currentParts,
+          tokens: {
+            input: totalInputTokens,
+            output: totalOutputTokens,
+          },
+          finishReason: event.finishReason,
+        })
+
+        // Update session as completed
+        await convex.mutation(api.sessions.updateSession, {
+          sessionId,
+          status: "completed",
+          tokens: {
+            input: totalInputTokens,
+            output: totalOutputTokens,
+          },
+        })
+      },
+    })
+
+    // Consume the stream to trigger all callbacks
+    const finalText = await result.text
+
+    // Create a reply post with the generated text
+    const replyPostId = await convex.mutation(api.posts.createPost, {
+      content: finalText || "[No response generated]",
+      author: "Assistant",
+      replyTo: post.id,
+    })
+
+    console.log(`Generated streaming reply: ${finalText?.slice(0, 100)}...`)
+
+    return {
+      postId: replyPostId,
+      sessionId,
+      text: finalText,
+    }
+  } catch (error) {
+    // Update turn with error status
+    await convex.mutation(api.sessions.updateTurn, {
+      turnId: assistantTurnId,
+      status: "error",
+      error: {
+        name: error instanceof Error ? error.name : "Error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    })
+
+    // Update session as failed
+    await convex.mutation(api.sessions.updateSession, {
+      sessionId,
+      status: "failed",
+    })
+
+    throw error
+  }
 }

@@ -10,13 +10,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --ignore-pattern \"convex/_generated/**\" --ignore-pattern \"dev-docs/**\"",
-    "workflow:web": "bunx workflow web"
+    "workflow:web": "bunx workflow web",
+    "check": "bash scripts/check.sh"
   },
   "dependencies": {
     "@ai-sdk/xai": "^2.0.39",
     "@opencode-ai/sdk": "^1.0.134",
     "@radix-ui/react-popover": "^1.1.15",
     "@stackframe/stack": "^2.8.54",
+    "@workflow/ai": "^4.0.1-beta.28",
     "ai": "^5.0.108",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -26,6 +28,7 @@
     "opencode-ai": "^1.0.134",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "streamdown": "^1.6.10",
     "workflow": "^4.0.1-beta.28"
   },
   "devDependencies": {
@@ -34,6 +37,7 @@
     "@types/node": "^20.19.25",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native-preview": "^7.0.0-dev.20251206.1",
     "eslint": "^9.39.1",
     "eslint-config-next": "16.0.3",
     "npm-run-all2": "^8.0.4",
