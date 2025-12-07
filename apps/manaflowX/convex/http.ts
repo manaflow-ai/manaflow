@@ -7,6 +7,10 @@ import {
   fetchInstallationAccountInfo,
   fetchAllInstallationRepositories,
 } from "./_shared/githubApp";
+import {
+  exchangeTwitterCode,
+  fetchTwitterUser,
+} from "./_shared/twitterApi";
 
 const http = httpRouter();
 
@@ -306,6 +310,148 @@ http.route({
 
     // Notify opener window and close popup (or redirect if not in popup)
     return popupResponse(true, payload.returnUrl);
+  }),
+});
+
+/**
+ * Twitter OAuth 2.0 callback endpoint
+ * This handles the redirect after user authorizes on Twitter.
+ * URL: https://your-convex-url.convex.site/twitter_callback
+ * Reference: https://docs.x.com/resources/fundamentals/authentication/oauth-2-0/authorization-code
+ */
+http.route({
+  path: "/twitter_callback",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const error = url.searchParams.get("error");
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://localhost:3000";
+
+    // Helper to close popup and notify opener window
+    const popupResponse = (
+      success: boolean,
+      returnUrl?: string,
+      errorMessage?: string
+    ): Response => {
+      const targetUrl = new URL(returnUrl || "/", baseUrl).toString();
+      const html = `<!DOCTYPE html>
+<html>
+<head><title>Twitter OAuth</title></head>
+<body>
+<script>
+(function() {
+  var success = ${success};
+  var returnUrl = ${JSON.stringify(targetUrl)};
+  var errorMessage = ${JSON.stringify(errorMessage || null)};
+
+  if (window.opener) {
+    window.opener.postMessage({ type: 'twitter-oauth-complete', success: success, error: errorMessage }, ${JSON.stringify(baseUrl)});
+    window.close();
+  } else {
+    window.location.href = returnUrl;
+  }
+})();
+</script>
+<noscript><a href="${targetUrl}">Click here to continue</a></noscript>
+</body>
+</html>`;
+      return new Response(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    };
+
+    // Handle error from Twitter
+    if (error) {
+      console.error("[twitter_callback] OAuth error:", error);
+      return popupResponse(false, undefined, error);
+    }
+
+    if (!code || !state) {
+      return popupResponse(false, undefined, "Missing code or state");
+    }
+
+    // Validate and consume state
+    const stateRow = await ctx.runQuery(internal.twitter.getTwitterOAuthStateByState, {
+      state,
+    });
+
+    if (!stateRow || stateRow.status !== "pending") {
+      console.error("[twitter_callback] Invalid or already used state");
+      return popupResponse(false, undefined, "Invalid state");
+    }
+
+    const now = Date.now();
+    if (stateRow.exp < now) {
+      await ctx.runMutation(internal.twitter.consumeTwitterOAuthState, {
+        state,
+        expire: true,
+      });
+      return popupResponse(false, undefined, "State expired");
+    }
+
+    // Mark state as used and get code verifier
+    const consumeResult = await ctx.runMutation(internal.twitter.consumeTwitterOAuthState, {
+      state,
+    });
+
+    if (!consumeResult.ok) {
+      return popupResponse(false, undefined, "Failed to consume state");
+    }
+
+    const { codeVerifier, userId, returnUrl } = consumeResult;
+
+    // Get Twitter credentials from environment
+    const clientId = process.env.X_API_KEY;
+    const clientSecret = process.env.X_API_KEY_SECRET;
+    const redirectUri = `${process.env.CONVEX_SITE_URL || ""}/twitter_callback`;
+
+    if (!clientId || !clientSecret) {
+      console.error("[twitter_callback] Missing Twitter API credentials");
+      return popupResponse(false, returnUrl, "Server configuration error");
+    }
+
+    // Exchange code for tokens
+    const tokenResult = await exchangeTwitterCode({
+      code,
+      codeVerifier: codeVerifier!,
+      clientId,
+      clientSecret,
+      redirectUri,
+    });
+
+    if (!tokenResult.success) {
+      console.error("[twitter_callback] Token exchange failed:", tokenResult.error);
+      return popupResponse(false, returnUrl, "Failed to get access token");
+    }
+
+    // Fetch user info
+    const userResult = await fetchTwitterUser(tokenResult.accessToken);
+
+    if (!userResult.success) {
+      console.error("[twitter_callback] Failed to fetch user:", userResult.error);
+      return popupResponse(false, returnUrl, "Failed to fetch user info");
+    }
+
+    // Save connection to database
+    await ctx.runMutation(internal.twitter.upsertTwitterConnection, {
+      userId: userId!,
+      twitterUserId: userResult.user.id,
+      twitterUsername: userResult.user.username,
+      twitterName: userResult.user.name,
+      twitterProfileImageUrl: userResult.user.profile_image_url,
+      twitterAccessToken: tokenResult.accessToken,
+      twitterRefreshToken: tokenResult.refreshToken,
+      twitterTokenExpiresAt: tokenResult.expiresAt,
+    });
+
+    console.log(
+      `[twitter_callback] Successfully connected Twitter @${userResult.user.username} for user ${userId}`
+    );
+
+    return popupResponse(true, returnUrl);
   }),
 });
 

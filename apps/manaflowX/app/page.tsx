@@ -6,6 +6,7 @@ import Link from "next/link";
 import { api } from "../convex/_generated/api";
 import { useState } from "react";
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown";
+import { ConnectXButton } from "@/components/ConnectXButton";
 
 async function triggerPostWorkflow(content: string) {
   const response = await fetch("/api/post", {
@@ -107,6 +108,8 @@ export default function Home() {
                     onRepoSelect={setSelectedRepo}
                   />
                 )}
+                {/* Connect X account button */}
+                {user && <ConnectXButton />}
               </div>
               <button
                 disabled={!content.trim() || isSubmitting}

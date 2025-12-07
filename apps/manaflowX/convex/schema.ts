@@ -282,17 +282,28 @@ export default defineSchema({
   providerConnections: defineTable({
     userId: v.optional(v.string()), // Stack Auth user ID
     connectedByUserId: v.optional(v.string()),
-    type: v.literal("github_app"),
-    installationId: v.number(),
-    accountLogin: v.optional(v.string()), // org or user login
+    type: v.union(v.literal("github_app"), v.literal("twitter_oauth")),
+    // GitHub App fields
+    installationId: v.optional(v.number()),
+    accountLogin: v.optional(v.string()), // org or user login (GitHub) or username (Twitter)
     accountId: v.optional(v.number()),
     accountType: v.optional(v.union(v.literal("User"), v.literal("Organization"))),
+    // Twitter OAuth fields
+    twitterUserId: v.optional(v.string()),
+    twitterUsername: v.optional(v.string()),
+    twitterName: v.optional(v.string()),
+    twitterProfileImageUrl: v.optional(v.string()),
+    twitterAccessToken: v.optional(v.string()),
+    twitterRefreshToken: v.optional(v.string()),
+    twitterTokenExpiresAt: v.optional(v.number()),
     isActive: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_installationId", ["installationId"])
-    .index("by_userId", ["userId"]),
+    .index("by_userId", ["userId"])
+    .index("by_type_userId", ["type", "userId"])
+    .index("by_twitterUserId", ["twitterUserId"]),
 
   // ---------------------------------------------------------------------------
   // INSTALL STATES (for GitHub App installation flow)
@@ -311,6 +322,25 @@ export default defineSchema({
     createdAt: v.number(),
     returnUrl: v.optional(v.string()),
   }).index("by_nonce", ["nonce"]),
+
+  // ---------------------------------------------------------------------------
+  // TWITTER OAUTH STATES (for Twitter OAuth 2.0 PKCE flow)
+  // ---------------------------------------------------------------------------
+
+  twitterOAuthStates: defineTable({
+    state: v.string(),
+    codeVerifier: v.string(), // PKCE code verifier
+    userId: v.string(),
+    iat: v.number(),
+    exp: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("used"),
+      v.literal("expired")
+    ),
+    createdAt: v.number(),
+    returnUrl: v.optional(v.string()),
+  }).index("by_state", ["state"]),
 
   // ---------------------------------------------------------------------------
   // NOTIFICATIONS
