@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 import {
   IframeViewer,
   VNCIcon,
@@ -79,9 +80,37 @@ export function XEmbed({ type = "vscode", instance, url, title }: XEmbedProps) {
   )
 }
 
+// Custom image component to avoid hydration issues
+// Markdown renders images inside <p> tags, but div wrappers cause "div inside p" errors
+// Using span wrappers instead keeps the HTML valid
+interface MarkdownImageProps {
+  src?: string
+  alt?: string
+  node?: unknown
+}
+
+function MarkdownImage({ src, alt }: MarkdownImageProps) {
+  if (!src) return null
+
+  return (
+    <span className="block my-2">
+      <Image
+        src={src}
+        alt={alt || "Image"}
+        width={500}
+        height={300}
+        className="rounded-lg max-w-full h-auto"
+        unoptimized
+        style={{ display: "block" }}
+      />
+    </span>
+  )
+}
+
 // Export components map for Streamdown
 // These map HTML element names to React components
 // We use type assertion because x-embed is a custom element not in JSX.IntrinsicElements
 export const embeddableComponents = {
   "x-embed": XEmbed,
+  "img": MarkdownImage,
 } as Record<string, React.ComponentType<unknown>>
