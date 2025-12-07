@@ -67,13 +67,12 @@ const client = new MorphCloudClient({
   // Create VNC xstartup script with Openbox
   await instance.exec(`cat > /root/.vnc/xstartup << 'EOF'
 #!/bin/bash
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
+export DISPLAY=:1
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p $XDG_RUNTIME_DIR
 chmod 700 $XDG_RUNTIME_DIR
 xsetroot -solid "#2d2d2d"
-openbox-session &
+exec openbox
 EOF`);
   await instance.exec("chmod +x /root/.vnc/xstartup");
 
