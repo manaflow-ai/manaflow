@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 
 // =============================================================================
 // ISSUES - Beads-style persistent issue tracker
@@ -15,7 +16,11 @@ function generateShortId(): string {
   return `x-${hash}`;
 }
 
-// List issues
+// =============================================================================
+// QUERIES
+// =============================================================================
+
+// List issues with filters
 export const listIssues = query({
   args: {
     limit: v.optional(v.number()),
@@ -32,6 +37,9 @@ export const listIssues = query({
       )
     ),
     assignee: v.optional(v.string()),
+    label: v.optional(v.string()),
+    priorityMin: v.optional(v.number()),
+    priorityMax: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
@@ -52,14 +60,61 @@ export const listIssues = query({
       issuesQuery = ctx.db.query("issues").order("desc");
     }
 
-    const issues = await issuesQuery.take(limit);
+    const issues = await issuesQuery.take(limit * 2); // Fetch extra for filtering
 
-    // Filter by type if specified (secondary filter)
-    const filtered = args.type
-      ? issues.filter((i) => i.type === args.type)
-      : issues;
+    // Apply secondary filters
+    let filtered = issues;
 
-    return filtered;
+    if (args.type) {
+      filtered = filtered.filter((i) => i.type === args.type);
+    }
+    if (args.label) {
+      filtered = filtered.filter((i) => i.labels.includes(args.label!));
+    }
+    if (args.priorityMin !== undefined) {
+      filtered = filtered.filter((i) => i.priority >= args.priorityMin!);
+    }
+    if (args.priorityMax !== undefined) {
+      filtered = filtered.filter((i) => i.priority <= args.priorityMax!);
+    }
+
+    return filtered.slice(0, limit);
+  },
+});
+
+// Search issues by text
+export const searchIssues = query({
+  args: {
+    query: v.string(),
+    limit: v.optional(v.number()),
+    status: v.optional(
+      v.union(v.literal("open"), v.literal("in_progress"), v.literal("closed"))
+    ),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    const searchLower = args.query.toLowerCase();
+
+    let issuesQuery;
+    if (args.status) {
+      issuesQuery = ctx.db
+        .query("issues")
+        .withIndex("by_status", (q) => q.eq("status", args.status!));
+    } else {
+      issuesQuery = ctx.db.query("issues");
+    }
+
+    const allIssues = await issuesQuery.collect();
+
+    // Search in title and description
+    const matches = allIssues.filter((issue) => {
+      const titleMatch = issue.title.toLowerCase().includes(searchLower);
+      const descMatch = issue.description?.toLowerCase().includes(searchLower);
+      const shortIdMatch = issue.shortId.toLowerCase().includes(searchLower);
+      return titleMatch || descMatch || shortIdMatch;
+    });
+
+    return matches.slice(0, limit);
   },
 });
 
@@ -86,7 +141,6 @@ export const listReadyIssues = query({
     // Find issues that are blocked
     const blockedIssueIds = new Set<string>();
     for (const dep of blockingDeps) {
-      // Check if the blocker is still open
       const blocker = await ctx.db.get(dep.toIssue);
       if (blocker && blocker.status !== "closed") {
         blockedIssueIds.add(dep.fromIssue);
@@ -98,7 +152,6 @@ export const listReadyIssues = query({
       (issue) => !blockedIssueIds.has(issue._id)
     );
 
-    // Filter by assignee if specified
     if (args.assignee) {
       readyIssues = readyIssues.filter((i) => i.assignee === args.assignee);
     }
@@ -106,6 +159,153 @@ export const listReadyIssues = query({
     return readyIssues.slice(0, limit);
   },
 });
+
+// Get blocked issues (issues that have open blockers)
+export const listBlockedIssues = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+
+    // Get all open issues
+    const openIssues = await ctx.db
+      .query("issues")
+      .withIndex("by_status", (q) => q.eq("status", "open"))
+      .collect();
+
+    // Get all blocking dependencies
+    const allDeps = await ctx.db.query("dependencies").collect();
+    const blockingDeps = allDeps.filter((d) => d.type === "blocks");
+
+    // Find issues that are blocked and their blockers
+    const blockedIssues: Array<{
+      issue: (typeof openIssues)[0];
+      blockedBy: Array<{ dependency: (typeof blockingDeps)[0]; blocker: (typeof openIssues)[0] | null }>;
+    }> = [];
+
+    for (const issue of openIssues) {
+      const blockers = blockingDeps.filter((d) => d.fromIssue === issue._id);
+      const openBlockers = [];
+
+      for (const dep of blockers) {
+        const blocker = await ctx.db.get(dep.toIssue);
+        if (blocker && blocker.status !== "closed") {
+          openBlockers.push({ dependency: dep, blocker });
+        }
+      }
+
+      if (openBlockers.length > 0) {
+        blockedIssues.push({ issue, blockedBy: openBlockers });
+      }
+    }
+
+    return blockedIssues.slice(0, limit);
+  },
+});
+
+// Get a single issue with its events
+export const getIssue = query({
+  args: {
+    issueId: v.id("issues"),
+  },
+  handler: async (ctx, args) => {
+    const issue = await ctx.db.get(args.issueId);
+    if (!issue) return null;
+
+    const events = await ctx.db
+      .query("issueEvents")
+      .withIndex("by_issue", (q) => q.eq("issue", args.issueId))
+      .order("desc")
+      .take(50);
+
+    return { issue, events };
+  },
+});
+
+// Get issue by short ID
+export const getIssueByShortId = query({
+  args: {
+    shortId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const issue = await ctx.db
+      .query("issues")
+      .withIndex("by_shortId", (q) => q.eq("shortId", args.shortId))
+      .first();
+
+    return issue;
+  },
+});
+
+// Get issue statistics
+export const getIssueStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const allIssues = await ctx.db.query("issues").collect();
+
+    const byStatus = { open: 0, in_progress: 0, closed: 0 };
+    const byType = { bug: 0, feature: 0, task: 0, epic: 0, chore: 0 };
+    const byPriority = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    const labelCounts: Record<string, number> = {};
+
+    for (const issue of allIssues) {
+      byStatus[issue.status]++;
+      byType[issue.type]++;
+      byPriority[issue.priority as 0 | 1 | 2 | 3 | 4]++;
+      for (const label of issue.labels) {
+        labelCounts[label] = (labelCounts[label] || 0) + 1;
+      }
+    }
+
+    // Get ready count
+    const deps = await ctx.db.query("dependencies").collect();
+    const blockingDeps = deps.filter((d) => d.type === "blocks");
+    const blockedIds = new Set<string>();
+    for (const dep of blockingDeps) {
+      const blocker = await ctx.db.get(dep.toIssue);
+      if (blocker && blocker.status !== "closed") {
+        blockedIds.add(dep.fromIssue);
+      }
+    }
+    const readyCount = allIssues.filter(
+      (i) => i.status === "open" && !blockedIds.has(i._id)
+    ).length;
+
+    return {
+      total: allIssues.length,
+      byStatus,
+      byType,
+      byPriority,
+      labelCounts,
+      readyCount,
+      blockedCount: blockedIds.size,
+    };
+  },
+});
+
+// Get issue events (standalone query)
+export const listIssueEvents = query({
+  args: {
+    issueId: v.id("issues"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 100;
+
+    const events = await ctx.db
+      .query("issueEvents")
+      .withIndex("by_issue", (q) => q.eq("issue", args.issueId))
+      .order("desc")
+      .take(limit);
+
+    return events;
+  },
+});
+
+// =============================================================================
+// MUTATIONS
+// =============================================================================
 
 // Create an issue
 export const createIssue = mutation({
@@ -128,14 +328,32 @@ export const createIssue = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const shortId = generateShortId();
+    let shortId: string;
+
+    // If parent issue exists, generate hierarchical ID
+    if (args.parentIssue) {
+      const parent = await ctx.db.get(args.parentIssue);
+      if (parent) {
+        // Count existing children to determine next number
+        const children = await ctx.db
+          .query("issues")
+          .withIndex("by_parent", (q) => q.eq("parentIssue", args.parentIssue))
+          .collect();
+        const nextNum = children.length + 1;
+        shortId = `${parent.shortId}.${nextNum}`;
+      } else {
+        shortId = generateShortId();
+      }
+    } else {
+      shortId = generateShortId();
+    }
 
     const issueId = await ctx.db.insert("issues", {
       shortId,
       title: args.title,
       description: args.description,
       status: "open",
-      priority: args.priority ?? 2, // Default medium priority
+      priority: args.priority ?? 2,
       type: args.type ?? "task",
       assignee: args.assignee,
       labels: args.labels ?? [],
@@ -145,11 +363,20 @@ export const createIssue = mutation({
       updatedAt: now,
     });
 
-    // Create audit event
+    // If parent exists, create parent-child dependency
+    if (args.parentIssue) {
+      await ctx.db.insert("dependencies", {
+        fromIssue: issueId,
+        toIssue: args.parentIssue,
+        type: "parent_child",
+        createdAt: now,
+      });
+    }
+
     await ctx.db.insert("issueEvents", {
       issue: issueId,
       type: "created",
-      data: { title: args.title, type: args.type ?? "task" },
+      data: { title: args.title, type: args.type ?? "task", shortId },
       createdAt: now,
     });
 
@@ -182,10 +409,7 @@ export const updateIssue = mutation({
       updates.title = args.title;
       changes.title = { from: issue.title, to: args.title };
     }
-    if (
-      args.description !== undefined &&
-      args.description !== issue.description
-    ) {
+    if (args.description !== undefined && args.description !== issue.description) {
       updates.description = args.description;
       changes.description = { from: issue.description, to: args.description };
     }
@@ -211,7 +435,6 @@ export const updateIssue = mutation({
 
     await ctx.db.patch(args.issueId, updates);
 
-    // Create audit event
     if (Object.keys(changes).length > 0) {
       await ctx.db.insert("issueEvents", {
         issue: args.issueId,
@@ -284,37 +507,135 @@ export const reopenIssue = mutation({
   },
 });
 
-// Get a single issue with its events
-export const getIssue = query({
+// Delete an issue
+export const deleteIssue = mutation({
   args: {
     issueId: v.id("issues"),
+    cascade: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const issue = await ctx.db.get(args.issueId);
-    if (!issue) return null;
+    if (!issue) throw new Error("Issue not found");
 
+    // Get all dependencies involving this issue
+    const depsFrom = await ctx.db
+      .query("dependencies")
+      .withIndex("by_from", (q) => q.eq("fromIssue", args.issueId))
+      .collect();
+    const depsTo = await ctx.db
+      .query("dependencies")
+      .withIndex("by_to", (q) => q.eq("toIssue", args.issueId))
+      .collect();
+
+    // If cascade, delete child issues
+    if (args.cascade) {
+      const children = await ctx.db
+        .query("issues")
+        .withIndex("by_parent", (q) => q.eq("parentIssue", args.issueId))
+        .collect();
+
+      for (const child of children) {
+        // Recursively delete children
+        await ctx.db.delete(child._id);
+        // Delete their events
+        const childEvents = await ctx.db
+          .query("issueEvents")
+          .withIndex("by_issue", (q) => q.eq("issue", child._id))
+          .collect();
+        for (const event of childEvents) {
+          await ctx.db.delete(event._id);
+        }
+      }
+    }
+
+    // Delete all dependencies
+    for (const dep of [...depsFrom, ...depsTo]) {
+      await ctx.db.delete(dep._id);
+    }
+
+    // Delete all events for this issue
     const events = await ctx.db
       .query("issueEvents")
       .withIndex("by_issue", (q) => q.eq("issue", args.issueId))
-      .order("desc")
-      .take(50);
+      .collect();
+    for (const event of events) {
+      await ctx.db.delete(event._id);
+    }
 
-    return { issue, events };
+    // Delete the issue
+    await ctx.db.delete(args.issueId);
+
+    return { success: true, deletedId: issue.shortId };
   },
 });
 
-// Get issue by short ID
-export const getIssueByShortId = query({
+// =============================================================================
+// LABELS
+// =============================================================================
+
+// Add a label to an issue
+export const addIssueLabel = mutation({
   args: {
-    shortId: v.string(),
+    issueId: v.id("issues"),
+    label: v.string(),
   },
   handler: async (ctx, args) => {
-    const issue = await ctx.db
-      .query("issues")
-      .withIndex("by_shortId", (q) => q.eq("shortId", args.shortId))
-      .first();
+    const issue = await ctx.db.get(args.issueId);
+    if (!issue) throw new Error("Issue not found");
 
-    return issue;
+    if (issue.labels.includes(args.label)) {
+      return { success: true, alreadyExists: true };
+    }
+
+    const now = Date.now();
+    const newLabels = [...issue.labels, args.label];
+
+    await ctx.db.patch(args.issueId, {
+      labels: newLabels,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("issueEvents", {
+      issue: args.issueId,
+      type: "label_added",
+      data: { label: args.label },
+      createdAt: now,
+    });
+
+    return { success: true };
+  },
+});
+
+// Remove a label from an issue
+export const removeIssueLabel = mutation({
+  args: {
+    issueId: v.id("issues"),
+    label: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const issue = await ctx.db.get(args.issueId);
+    if (!issue) throw new Error("Issue not found");
+
+    if (!issue.labels.includes(args.label)) {
+      return { success: true, notFound: true };
+    }
+
+    const now = Date.now();
+    const newLabels = issue.labels.filter((l) => l !== args.label);
+
+    await ctx.db.patch(args.issueId, {
+      labels: newLabels,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("issueEvents", {
+      issue: args.issueId,
+      type: "label_removed",
+      data: { label: args.label },
+      createdAt: now,
+    });
+
+    return { success: true };
   },
 });
 
@@ -337,10 +658,14 @@ export const addIssueDependency = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    // Check both issues exist
     const from = await ctx.db.get(args.fromIssue);
     const to = await ctx.db.get(args.toIssue);
     if (!from || !to) throw new Error("Issue not found");
+
+    // Prevent self-dependency
+    if (args.fromIssue === args.toIssue) {
+      throw new Error("Cannot create dependency to self");
+    }
 
     // Check for existing dependency
     const existing = await ctx.db
@@ -389,19 +714,16 @@ export const getIssueDependencies = query({
     issueId: v.id("issues"),
   },
   handler: async (ctx, args) => {
-    // Issues this one depends on (blockers)
     const dependsOn = await ctx.db
       .query("dependencies")
       .withIndex("by_from", (q) => q.eq("fromIssue", args.issueId))
       .collect();
 
-    // Issues that depend on this one (blocked by this)
     const blockedBy = await ctx.db
       .query("dependencies")
       .withIndex("by_to", (q) => q.eq("toIssue", args.issueId))
       .collect();
 
-    // Fetch the actual issues
     const dependsOnIssues = await Promise.all(
       dependsOn.map(async (d) => ({
         dependency: d,
@@ -420,5 +742,182 @@ export const getIssueDependencies = query({
       dependsOn: dependsOnIssues,
       blockedBy: blockedByIssues,
     };
+  },
+});
+
+// Get dependency tree for an issue
+export const getIssueDependencyTree = query({
+  args: {
+    issueId: v.id("issues"),
+    maxDepth: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const maxDepth = args.maxDepth ?? 10;
+    const visited = new Set<string>();
+
+    type TreeNode = {
+      issue: Awaited<ReturnType<typeof ctx.db.get>>;
+      dependsOn: TreeNode[];
+      depth: number;
+    };
+
+    async function buildTree(
+      issueId: Id<"issues">,
+      depth: number
+    ): Promise<TreeNode | null> {
+      if (depth > maxDepth || visited.has(issueId)) {
+        return null;
+      }
+      visited.add(issueId);
+
+      const issue = await ctx.db.get(issueId);
+      if (!issue) return null;
+
+      const deps = await ctx.db
+        .query("dependencies")
+        .withIndex("by_from", (q) => q.eq("fromIssue", issueId))
+        .filter((q) => q.eq(q.field("type"), "blocks"))
+        .collect();
+
+      const children: TreeNode[] = [];
+      for (const dep of deps) {
+        const child = await buildTree(dep.toIssue, depth + 1);
+        if (child) children.push(child);
+      }
+
+      return { issue, dependsOn: children, depth };
+    }
+
+    const tree = await buildTree(args.issueId, 0);
+    return tree;
+  },
+});
+
+// Detect dependency cycles
+export const detectDependencyCycles = query({
+  args: {},
+  handler: async (ctx) => {
+    const allDeps = await ctx.db.query("dependencies").collect();
+    const blockingDeps = allDeps.filter((d) => d.type === "blocks");
+
+    // Build adjacency list
+    const graph = new Map<string, string[]>();
+    for (const dep of blockingDeps) {
+      const from = dep.fromIssue;
+      const to = dep.toIssue;
+      if (!graph.has(from)) graph.set(from, []);
+      graph.get(from)!.push(to);
+    }
+
+    // DFS to detect cycles
+    const visited = new Set<string>();
+    const recStack = new Set<string>();
+    const cycles: string[][] = [];
+
+    function dfs(node: string, path: string[]): boolean {
+      visited.add(node);
+      recStack.add(node);
+      path.push(node);
+
+      const neighbors = graph.get(node) || [];
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          if (dfs(neighbor, path)) return true;
+        } else if (recStack.has(neighbor)) {
+          // Found cycle
+          const cycleStart = path.indexOf(neighbor);
+          cycles.push(path.slice(cycleStart));
+          return true;
+        }
+      }
+
+      path.pop();
+      recStack.delete(node);
+      return false;
+    }
+
+    for (const node of graph.keys()) {
+      if (!visited.has(node)) {
+        dfs(node, []);
+      }
+    }
+
+    // Fetch issue details for cycles
+    const cyclesWithDetails = await Promise.all(
+      cycles.map(async (cycle) => {
+        const issues = await Promise.all(
+          cycle.map((id) => ctx.db.get(id as Id<"issues">))
+        );
+        return issues.filter(Boolean);
+      })
+    );
+
+    return {
+      hasCycles: cycles.length > 0,
+      cycles: cyclesWithDetails,
+    };
+  },
+});
+
+// =============================================================================
+// COMPACTION (Memory Decay)
+// =============================================================================
+
+// Get compaction candidates (closed issues older than threshold)
+export const listCompactionCandidates = query({
+  args: {
+    daysOld: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const daysOld = args.daysOld ?? 30;
+    const limit = args.limit ?? 50;
+    const threshold = Date.now() - daysOld * 24 * 60 * 60 * 1000;
+
+    const closedIssues = await ctx.db
+      .query("issues")
+      .withIndex("by_status", (q) => q.eq("status", "closed"))
+      .collect();
+
+    const candidates = closedIssues.filter(
+      (issue) =>
+        !issue.isCompacted &&
+        issue.closedAt &&
+        issue.closedAt < threshold
+    );
+
+    return candidates.slice(0, limit);
+  },
+});
+
+// Apply compaction to an issue
+export const compactIssue = mutation({
+  args: {
+    issueId: v.id("issues"),
+    summary: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const issue = await ctx.db.get(args.issueId);
+    if (!issue) throw new Error("Issue not found");
+    if (issue.status !== "closed") throw new Error("Can only compact closed issues");
+
+    const now = Date.now();
+
+    await ctx.db.patch(args.issueId, {
+      isCompacted: true,
+      compactedSummary: args.summary,
+      // Clear the full description to save space
+      description: undefined,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("issueEvents", {
+      issue: args.issueId,
+      type: "compacted",
+      data: { summaryLength: args.summary.length },
+      createdAt: now,
+    });
+
+    return { success: true };
   },
 });

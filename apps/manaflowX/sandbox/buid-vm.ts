@@ -24,6 +24,22 @@ const client = new MorphCloudClient({
   await instance.waitUntilReady(30);
   console.log("Instance is ready!");
 
+  // Install Bun
+  console.log("Installing Bun...");
+  const bunInstall = await instance.exec(
+    "curl -fsSL https://bun.sh/install | bash"
+  );
+  console.log("Bun install stdout:", bunInstall.stdout);
+  if (bunInstall.stderr) console.log("Bun install stderr:", bunInstall.stderr);
+
+  // Symlink bun to /usr/local/bin
+  console.log("Symlinking bun to /usr/local/bin...");
+  await instance.exec("ln -sf /root/.bun/bin/bun /usr/local/bin/bun");
+
+  // Verify bun
+  const bunVerify = await instance.exec("which bun && bun --version");
+  console.log("Bun verify:", bunVerify.stdout);
+
   // Install opencode CLI
   console.log("Installing opencode CLI...");
   const installResult = await instance.exec(
@@ -42,22 +58,47 @@ const client = new MorphCloudClient({
   console.log("Verify result:", verifyResult.stdout);
   if (verifyResult.stderr) console.log("Verify stderr:", verifyResult.stderr);
 
-  // Upload the bun binary using SSH
-  console.log("Uploading xagi-server binary via SSH...");
+  // Upload the worker source files via SSH
+  console.log("Uploading worker files via SSH...");
   const ssh = await instance.ssh();
-  const binaryPath = "./worker/xagi-server";
-  await ssh.putFile(binaryPath, "/root/xagi-server");
-  console.log("Binary uploaded!");
 
-  // Make it executable
-  console.log("Making binary executable...");
-  await instance.exec("chmod +x /root/xagi-server");
+  // Create worker directory
+  await instance.exec("mkdir -p /root/worker");
 
-  // Run the server in the background using a proper nohup approach
-  console.log("Starting server...");
+  // Upload source files
+  await ssh.putFile("./worker/index.ts", "/root/worker/index.ts");
+  await ssh.putFile("./worker/package.json", "/root/worker/package.json");
+  console.log("Source files uploaded!");
+
+  // Install dependencies
+  console.log("Installing dependencies...");
+  const installDeps = await instance.exec("cd /root/worker && bun install");
+  console.log("Install deps stdout:", installDeps.stdout);
+  if (installDeps.stderr) console.log("Install deps stderr:", installDeps.stderr);
+
+  // Install bun-pty and set up the native library
+  console.log("Installing bun-pty...");
+  await instance.exec("cd /root/.opencode && bun add bun-pty");
+
+  // Copy .so to worker directory for cwd fallback path
   await instance.exec(
-    "nohup /root/xagi-server > /root/server.log 2>&1 &"
+    "mkdir -p /root/worker/node_modules/bun-pty/rust-pty/target/release && cp /root/.opencode/node_modules/bun-pty/rust-pty/target/release/*.so /root/worker/node_modules/bun-pty/rust-pty/target/release/"
   );
+
+  // Create a startup script with BUN_PTY_LIB env var
+  console.log("Creating startup script...");
+  await instance.exec(`cat > /root/start-server.sh << 'EOF'
+#!/bin/bash
+cd /root/worker
+export BUN_PTY_LIB=/root/worker/node_modules/bun-pty/rust-pty/target/release/librust_pty.so
+nohup bun run index.ts > /root/server.log 2>&1 &
+echo $! > /root/server.pid
+EOF`);
+  await instance.exec("chmod +x /root/start-server.sh");
+
+  // Run the server in the background using bash -c with proper detachment
+  console.log("Starting server...");
+  await instance.exec("bash -c '/root/start-server.sh'");
 
   // Give server a moment to start
   await new Promise((resolve) => setTimeout(resolve, 5000));
