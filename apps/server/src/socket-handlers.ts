@@ -57,6 +57,7 @@ import {
   checkAllProvidersStatus,
   checkAllProvidersStatusWebMode,
 } from "./utils/providerStatus";
+import { ghApi } from "./ghApi";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
 import { extractSandboxStartError } from "./utils/sandboxErrors";
@@ -2245,9 +2246,31 @@ Please address the issue mentioned in the comment above.`;
       try {
         const { repo } = GitHubFetchBranchesSchema.parse(data);
 
-        const { listRemoteBranches } = await import("./native/git.js");
-        const branches = await listRemoteBranches({ repoFullName: repo });
-        const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
+        // Try native git first (works if repo is cloned locally)
+        let branches: {
+          name: string;
+          lastCommitSha?: string;
+          lastActivityAt?: number;
+          isDefault?: boolean;
+        }[];
+        let defaultBranch: string | undefined;
+
+        try {
+          const { listRemoteBranches } = await import("./native/git.js");
+          branches = await listRemoteBranches({ repoFullName: repo });
+          defaultBranch = branches.find((branch) => branch.isDefault)?.name;
+        } catch (nativeError) {
+          // Fallback to GitHub API if native fails (e.g., repo not cloned yet in web mode)
+          serverLogger.info(
+            `Native branch listing failed for ${repo}; falling back to GitHub API: ${nativeError instanceof Error ? nativeError.message : String(nativeError)}`
+          );
+          const [apiBranches, repoInfo] = await Promise.all([
+            ghApi.getRepoBranchesWithActivity(repo),
+            ghApi.getRepoInfo(repo),
+          ]);
+          branches = apiBranches;
+          defaultBranch = repoInfo.defaultBranch;
+        }
 
         callback({
           success: true,
