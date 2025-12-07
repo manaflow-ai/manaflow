@@ -2,11 +2,10 @@
 
 import { useQuery } from "convex/react"
 import { useUser } from "@stackframe/stack"
-import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
-import { useState, useCallback, Suspense } from "react"
+import { useState, useCallback, Suspense, useRef, useEffect } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
@@ -26,30 +25,62 @@ type Post = {
   updatedAt: number
 }
 
+type FeedTab = "for_you" | "recent"
+
+type CuratedItem = {
+  post: Post | null
+  parentPost?: Post | null
+}
+
 function PostCard({
   post,
   onReply,
   onClick,
   isSelected = false,
+  showThreadLine = false,
+  showThreadLineAbove = false,
 }: {
   post: Post
   onReply: () => void
   onClick?: () => void
   isSelected?: boolean
+  showThreadLine?: boolean // Line going down from avatar (parent post)
+  showThreadLineAbove?: boolean // Line coming from above to avatar (reply post)
 }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [needsClamp, setNeedsClamp] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (contentRef.current) {
+      // Check if content exceeds 10 lines (approximate line height is ~20px for prose-sm)
+      const lineHeight = 20
+      const maxHeight = lineHeight * 10
+      setNeedsClamp(contentRef.current.scrollHeight > maxHeight)
+    }
+  }, [post.content])
+
   return (
     <div
       onClick={onClick}
-      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""}`}
+      className={`p-4 hover:bg-gray-900/30 transition-colors cursor-pointer border-l-2 ${!showThreadLine ? "border-b border-gray-800" : "pb-0"} ${isSelected ? "bg-gray-900/50 border-l-blue-500" : "border-l-transparent"} ${showThreadLineAbove ? "pt-0" : ""}`}
     >
       <div className="flex gap-3">
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 flex flex-col items-center">
+          {/* Thread line coming from parent above */}
+          {showThreadLineAbove && (
+            <div className="w-0.5 bg-gray-700 h-4 mb-1" />
+          )}
           {post.author === "Grok" ? (
             <GrokIcon className="w-10 h-10" />
           ) : (
             <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
               {post.author[0].toUpperCase()}
             </div>
+          )}
+          {/* Thread line connecting to reply below */}
+          {showThreadLine && (
+            <div className="w-0.5 bg-gray-700 flex-grow mt-1 min-h-[8px]" />
           )}
         </div>
         <div className="flex-grow min-w-0">
@@ -61,9 +92,23 @@ function PostCard({
               · {new Date(post.createdAt).toLocaleString()}
             </span>
           </div>
-          <div className="prose prose-invert prose-sm max-w-none mb-3">
+          <div
+            ref={contentRef}
+            className={`prose prose-invert prose-sm max-w-none mb-3 ${!isExpanded && needsClamp ? "line-clamp-[10]" : ""}`}
+          >
             <Streamdown>{post.content}</Streamdown>
           </div>
+          {needsClamp && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setIsExpanded(!isExpanded)
+              }}
+              className="text-blue-400 hover:text-blue-300 text-sm mb-3 transition-colors"
+            >
+              {isExpanded ? "Show less" : "Show more"}
+            </button>
+          )}
           <div className="flex gap-4 text-gray-500 text-sm">
             <button
               onClick={(e) => {
@@ -304,10 +349,17 @@ function HomeContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const user = useUser()
-  const data = useQuery(api.posts.listPosts, { limit: 20 })
+  const [feedTab, setFeedTab] = useState<FeedTab>("for_you")
+  const recentData = useQuery(api.posts.listPosts, { limit: 20 })
+  const curatedData = useQuery(api.curator.listCuratedFeed, { limit: 20 })
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
+
+  // Track displayed posts to show "new posts" indicator instead of jarring updates
+  const [displayedPosts, setDisplayedPosts] = useState<Post[]>([])
+  const [newPostsAvailable, setNewPostsAvailable] = useState(0)
+  const isInitialLoad = useRef(true)
 
   // Get selected post and agent sessions from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
@@ -371,6 +423,64 @@ function HomeContent() {
     [router, buildUrl, selectedThread, selectedCodingAgentSession],
   )
 
+  // Get posts based on active tab (compute before hooks)
+  const recentPosts = recentData?.posts ?? []
+  const curatedItems: CuratedItem[] = curatedData?.items
+    .filter((item: CuratedItem) => item.post !== null)
+    .map((item: CuratedItem) => ({
+      post: item.post,
+      parentPost: item.parentPost,
+    })) ?? []
+
+  // For "for you" tab, use curated items; for "recent" tab, convert to simple items
+  const liveItems: CuratedItem[] =
+    feedTab === "for_you" && curatedItems.length
+      ? curatedItems
+      : recentPosts.map((post) => ({ post, parentPost: null }))
+
+  // Handle new posts without scroll jump
+  useEffect(() => {
+    if (!liveItems.length) return
+
+    if (isInitialLoad.current) {
+      // First load - just set the posts
+      setDisplayedPosts(liveItems.map((item) => item.post).filter(Boolean) as Post[])
+      isInitialLoad.current = false
+      return
+    }
+
+    // Check if there are new posts at the top
+    const displayedIds = new Set(displayedPosts.map((p) => p._id))
+    const newPosts = liveItems.filter((item) => item.post && !displayedIds.has(item.post._id))
+
+    if (newPosts.length > 0) {
+      // Show indicator instead of immediately updating
+      setNewPostsAvailable(newPosts.length)
+    }
+  }, [liveItems, displayedPosts])
+
+  // Reset when tab changes
+  useEffect(() => {
+    isInitialLoad.current = true
+    setDisplayedPosts([])
+    setNewPostsAvailable(0)
+  }, [feedTab])
+
+  const showNewPosts = () => {
+    setDisplayedPosts(liveItems.map((item) => item.post).filter(Boolean) as Post[])
+    setNewPostsAvailable(0)
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
+  // Create a map of displayed post IDs for quick lookup
+  const displayedPostIds = new Set(displayedPosts.map((p) => p._id))
+
+  // Filter live items to only show displayed posts (for scroll preservation)
+  const itemsToShow: CuratedItem[] = displayedPosts.length
+    ? liveItems.filter((item) => item.post && displayedPostIds.has(item.post._id))
+    : liveItems
+
   const handleSubmit = async () => {
     if (!content.trim()) return
     setIsSubmitting(true)
@@ -397,7 +507,7 @@ function HomeContent() {
     }
   }
 
-  if (!data) {
+  if (!recentData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex items-center gap-2">
@@ -416,7 +526,7 @@ function HomeContent() {
     )
   }
 
-  const { viewer, posts } = data
+  const { viewer } = recentData
 
   return (
     <div className="min-h-screen">
@@ -425,16 +535,36 @@ function HomeContent() {
         <main
           className={`w-full sm:min-w-[450px] max-w-[666px] shrink sm:border-x border-gray-800 min-h-screen`}
         >
-          <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 h-[60px] px-4 flex justify-between items-center">
-            <h1 className="text-xl font-bold">Feed</h1>
-            {!user ? (
-              <Link
-                href="/sign-in"
-                className="bg-white text-black font-bold py-1.5 px-4 rounded-full hover:bg-gray-200 transition-colors"
+          <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800">
+            {/* Feed tabs */}
+            <div className="flex h-[53px]">
+              <button
+                onClick={() => setFeedTab("for_you")}
+                className={`flex-1 py-3 text-center font-medium transition-colors relative ${
+                  feedTab === "for_you"
+                    ? "text-white"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
               >
-                Sign in
-              </Link>
-            ) : null}
+                For you
+                {feedTab === "for_you" && (
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-16 h-1 bg-blue-500 rounded-full" />
+                )}
+              </button>
+              <button
+                onClick={() => setFeedTab("recent")}
+                className={`flex-1 py-3 text-center font-medium transition-colors relative ${
+                  feedTab === "recent"
+                    ? "text-white"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                Recent
+                {feedTab === "recent" && (
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-16 h-1 bg-blue-500 rounded-full" />
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="p-4 border-b border-gray-800">
@@ -480,21 +610,50 @@ function HomeContent() {
             </div>
           </div>
 
+          {/* New posts indicator */}
+          {newPostsAvailable > 0 && (
+            <button
+              onClick={showNewPosts}
+              className="w-full py-3 text-blue-400 hover:bg-blue-500/10 transition-colors border-b border-gray-800 font-medium"
+            >
+              Show {newPostsAvailable} new post{newPostsAvailable > 1 ? "s" : ""}
+            </button>
+          )}
+
           <div>
-            {posts.length === 0 ? (
+            {itemsToShow.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
-                No posts yet. Share something!
+                {feedTab === "for_you"
+                  ? "No curated posts yet. Check back soon or switch to Recent!"
+                  : "No posts yet. Share something!"}
               </div>
             ) : (
-              posts.map((post) => (
-                <PostCard
-                  key={post._id}
-                  post={post}
-                  onClick={() => setSelectedThread(post._id)}
-                  onReply={() => setSelectedThread(post._id)}
-                  isSelected={selectedThread === post._id}
-                />
-              ))
+              itemsToShow.map((item) => {
+                if (!item.post) return null
+                const post = item.post
+                const hasParent = !!item.parentPost
+                return (
+                  <div key={post._id}>
+                    {/* Show parent post with thread line if this is a curated reply */}
+                    {item.parentPost && (
+                      <PostCard
+                        post={item.parentPost}
+                        onClick={() => setSelectedThread(item.parentPost!._id)}
+                        onReply={() => setSelectedThread(item.parentPost!._id)}
+                        isSelected={selectedThread === item.parentPost!._id}
+                        showThreadLine
+                      />
+                    )}
+                    <PostCard
+                      post={post}
+                      onClick={() => setSelectedThread(post._id)}
+                      onReply={() => setSelectedThread(post._id)}
+                      isSelected={selectedThread === post._id}
+                      showThreadLineAbove={hasParent}
+                    />
+                  </div>
+                )
+              })
             )}
           </div>
         </main>
