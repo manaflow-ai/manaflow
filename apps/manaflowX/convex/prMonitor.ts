@@ -1,6 +1,11 @@
-import { action, internalQuery } from "./_generated/server";
+"use node";
+
+import { action } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { fetchInstallationAccessToken } from "./_shared/githubApp";
+import { xai } from "@ai-sdk/xai";
+import { generateObject } from "ai";
+import { z } from "zod";
 
 // GitHub PR type from API
 type GitHubPR = {
@@ -27,42 +32,6 @@ type GitHubPR = {
     ref: string;
   };
 };
-
-// Internal query to get monitored repos with their installation IDs
-export const getMonitoredReposWithInstallation = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-
-    const userId = identity.subject;
-
-    // Get all monitored repos
-    const repos = await ctx.db
-      .query("repos")
-      .withIndex("by_userId_monitored", (q) =>
-        q.eq("userId", userId).eq("isMonitored", true)
-      )
-      .collect();
-
-    // Get installation IDs for each repo
-    const reposWithInstallation = await Promise.all(
-      repos.map(async (repo) => {
-        let installationId: number | undefined;
-        if (repo.connectionId) {
-          const connection = await ctx.db.get(repo.connectionId);
-          installationId = connection?.installationId ?? undefined;
-        }
-        return {
-          ...repo,
-          installationId,
-        };
-      })
-    );
-
-    return reposWithInstallation.filter((r) => r.installationId !== undefined);
-  },
-});
 
 // Fetch PRs from GitHub for a single repo
 async function fetchRepoPRs(
@@ -96,7 +65,7 @@ export const testFetchAndPostPR = action({
   handler: async (ctx): Promise<{ success: boolean; message: string; pr?: { title: string; url: string; repo: string } }> => {
     // Get monitored repos with installation IDs
     const repos = await ctx.runQuery(
-      internal.prMonitor.getMonitoredReposWithInstallation
+      internal.github.getMonitoredReposWithInstallation
     );
 
     if (repos.length === 0) {
@@ -155,26 +124,83 @@ export const testFetchAndPostPR = action({
       return { success: false, message: "No open PRs found in monitored repos" };
     }
 
-    // Pick a random PR
-    const randomIndex = Math.floor(Math.random() * allPRs.length);
-    const selected = allPRs[randomIndex];
+    // Format PRs for Grok to evaluate
+    const prSummaries = allPRs.map((item, index) => ({
+      index,
+      repo: item.repoFullName,
+      number: item.pr.number,
+      title: item.pr.title,
+      author: item.pr.user.login,
+      labels: item.pr.labels.map((l) => l.name),
+      draft: item.pr.draft,
+      headBranch: item.pr.head.ref,
+      baseBranch: item.pr.base.ref,
+      createdAt: item.pr.created_at,
+      updatedAt: item.pr.updated_at,
+    }));
+
+    console.log(`[prMonitor] Asking Grok to evaluate ${prSummaries.length} PRs`);
+
+    // Have Grok pick the most interesting PR and write the post
+    const result = await generateObject({
+      model: xai("grok-3-fast"),
+      schema: z.object({
+        selectedIndex: z.number().describe("The index of the most interesting PR to post about"),
+        reasoning: z.string().describe("Brief explanation of why this PR is interesting"),
+        tweetContent: z.string().describe("The tweet/post content to share about this PR. Should be engaging and concise. Include the PR title and repo name. Do NOT include the URL - it will be added automatically."),
+      }),
+      prompt: `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
+
+Consider:
+- Is it a significant feature or important bug fix?
+- Does the title suggest something notable?
+- Is it from an active/interesting project?
+- Avoid drafts unless they look really interesting
+- Prefer PRs with meaningful labels (bug, feature, enhancement) over chores/docs
+
+PRs to evaluate:
+${JSON.stringify(prSummaries, null, 2)}
+
+Pick ONE PR and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`,
+    });
+
+    const selectedIndex = result.object.selectedIndex;
+    if (selectedIndex < 0 || selectedIndex >= allPRs.length) {
+      // Fallback to random if Grok gave invalid index
+      const randomIndex = Math.floor(Math.random() * allPRs.length);
+      const selected = allPRs[randomIndex];
+      const { pr, repoFullName } = selected;
+
+      const content = `**${repoFullName}**\n\n[${pr.title}](${pr.html_url})\n\nby @${pr.user.login}`;
+
+      await ctx.runMutation(api.posts.createPost, {
+        content,
+        author: "Grok",
+      });
+
+      return {
+        success: true,
+        message: `Posted PR #${pr.number} from ${repoFullName} (random fallback)`,
+        pr: { title: pr.title, url: pr.html_url, repo: repoFullName },
+      };
+    }
+
+    const selected = allPRs[selectedIndex];
     const { pr, repoFullName } = selected;
 
-    // Create a post about this PR
-    const content = `**${repoFullName}**
+    // Add the URL to Grok's tweet content
+    const content = `${result.object.tweetContent}\n\n${pr.html_url}`;
 
-[${pr.title}](${pr.html_url})
-
-by @${pr.user.login} | ${pr.head.ref} -> ${pr.base.ref}${pr.labels.length > 0 ? `\n\nLabels: ${pr.labels.map((l) => l.name).join(", ")}` : ""}`;
+    console.log(`[prMonitor] Grok selected PR #${pr.number}: ${result.object.reasoning}`);
 
     await ctx.runMutation(api.posts.createPost, {
       content,
-      author: "Algorithm",
+      author: "Grok",
     });
 
     return {
       success: true,
-      message: `Posted PR #${pr.number} from ${repoFullName}`,
+      message: `Grok picked PR #${pr.number}: ${result.object.reasoning}`,
       pr: {
         title: pr.title,
         url: pr.html_url,

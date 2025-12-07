@@ -470,3 +470,39 @@ export const setRepoMonitoring = mutation({
     return { isMonitored };
   },
 });
+
+// Internal query to get monitored repos with their installation IDs (for prMonitor action)
+export const getMonitoredReposWithInstallation = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const userId = identity.subject;
+
+    // Get all monitored repos
+    const repos = await ctx.db
+      .query("repos")
+      .withIndex("by_userId_monitored", (q) =>
+        q.eq("userId", userId).eq("isMonitored", true)
+      )
+      .collect();
+
+    // Get installation IDs for each repo
+    const reposWithInstallation = await Promise.all(
+      repos.map(async (repo) => {
+        let installationId: number | undefined;
+        if (repo.connectionId) {
+          const connection = await ctx.db.get(repo.connectionId);
+          installationId = connection?.installationId ?? undefined;
+        }
+        return {
+          ...repo,
+          installationId,
+        };
+      })
+    );
+
+    return reposWithInstallation.filter((r) => r.installationId !== undefined);
+  },
+});
