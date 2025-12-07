@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
 import { useState, useCallback, Suspense } from "react"
 import { Id } from "../convex/_generated/dataModel"
@@ -56,9 +57,9 @@ function PostCard({
               · {new Date(post.createdAt).toLocaleString()}
             </span>
           </div>
-          <p className="text-gray-200 whitespace-pre-wrap mb-3 break-words">
-            {post.content}
-          </p>
+          <div className="prose prose-invert prose-sm max-w-none mb-3">
+            <Streamdown>{post.content}</Streamdown>
+          </div>
           <div className="flex gap-4 text-gray-500 text-sm">
             <button
               onClick={(e) => {
@@ -319,7 +320,7 @@ function HomeContent() {
 
   if (!data) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
           <div
@@ -339,7 +340,7 @@ function HomeContent() {
   const { viewer, posts } = data
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen">
       <div className="flex justify-center">
         {/* Main Feed Column */}
         <main
@@ -357,35 +358,37 @@ function HomeContent() {
             ) : null}
           </div>
 
-          <div className="p-4 border-b border-gray-800 flex gap-4">
-            <div className="flex-shrink-0">
-              <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold">
-                {viewer ? viewer[0].toUpperCase() : "?"}
+          <div className="p-4 border-b border-gray-800">
+            <div className="flex gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold">
+                  {viewer ? viewer[0].toUpperCase() : "?"}
+                </div>
+              </div>
+              <div className="flex-grow">
+                <textarea
+                  className="w-full bg-transparent text-xl placeholder-gray-500 focus:outline-none resize-none py-2"
+                  placeholder="What's happening?"
+                  rows={3}
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                      e.preventDefault()
+                      handleSubmit()
+                    }
+                  }}
+                />
               </div>
             </div>
-            <div className="flex-grow">
-              <textarea
-                className="w-full bg-transparent text-xl placeholder-gray-500 focus:outline-none resize-none py-2"
-                placeholder="What's happening?"
-                rows={3}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                    e.preventDefault()
-                    handleSubmit()
-                  }
-                }}
-              />
-              <div className="flex justify-end mt-2 border-t border-gray-800 pt-3">
-                <button
-                  disabled={!content.trim() || isSubmitting}
-                  onClick={handleSubmit}
-                  className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-1.5 px-4 rounded-full transition-colors"
-                >
-                  {isSubmitting ? "Posting..." : "Post"}
-                </button>
-              </div>
+            <div className="flex justify-end mt-2 border-t border-gray-800 pt-3">
+              <button
+                disabled={!content.trim() || isSubmitting}
+                onClick={handleSubmit}
+                className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-1.5 px-4 rounded-full transition-colors"
+              >
+                {isSubmitting ? "Posting..." : "Post"}
+              </button>
             </div>
           </div>
 
@@ -427,7 +430,7 @@ export default function Home() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="min-h-screen flex items-center justify-center">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
             <div

@@ -153,7 +153,7 @@ function TurnView({ turn }: { turn: Turn }) {
   return (
     <div className={`py-3 ${isUser ? "bg-gray-900/30" : ""}`}>
       <div className="flex gap-3">
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 pl-2">
           <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
             isUser ? "bg-blue-600" : isAssistant ? "bg-purple-600" : "bg-gray-600"
           }`}>

@@ -921,3 +921,160 @@ export const compactIssue = mutation({
     return { success: true };
   },
 });
+
+// =============================================================================
+// ENHANCED QUERIES FOR UI
+// =============================================================================
+
+// Get all issues with full dependency graph (for tree view)
+export const listIssuesWithDependencyGraph = query({
+  args: {
+    status: v.optional(
+      v.union(v.literal("open"), v.literal("in_progress"), v.literal("closed"))
+    ),
+    type: v.optional(
+      v.union(
+        v.literal("bug"),
+        v.literal("feature"),
+        v.literal("task"),
+        v.literal("epic"),
+        v.literal("chore")
+      )
+    ),
+  },
+  handler: async (ctx, args) => {
+    // Get all issues
+    let issuesQuery;
+    if (args.status) {
+      issuesQuery = ctx.db
+        .query("issues")
+        .withIndex("by_status", (q) => q.eq("status", args.status!));
+    } else {
+      issuesQuery = ctx.db.query("issues");
+    }
+
+    let issues = await issuesQuery.collect();
+
+    if (args.type) {
+      issues = issues.filter((i) => i.type === args.type);
+    }
+
+    // Get all dependencies
+    const allDeps = await ctx.db.query("dependencies").collect();
+
+    // Build dependency maps
+    const blockedByMap: Record<string, Array<{ issueId: string; type: string }>> = {};
+    const blocksMap: Record<string, Array<{ issueId: string; type: string }>> = {};
+    const childrenMap: Record<string, string[]> = {};
+
+    for (const dep of allDeps) {
+      const fromId = dep.fromIssue as string;
+      const toId = dep.toIssue as string;
+
+      if (dep.type === "parent_child") {
+        // fromIssue is child, toIssue is parent
+        if (!childrenMap[toId]) childrenMap[toId] = [];
+        childrenMap[toId].push(fromId);
+      } else if (dep.type === "blocks") {
+        // fromIssue is blocked BY toIssue
+        if (!blockedByMap[fromId]) blockedByMap[fromId] = [];
+        blockedByMap[fromId].push({ issueId: toId, type: dep.type });
+
+        if (!blocksMap[toId]) blocksMap[toId] = [];
+        blocksMap[toId].push({ issueId: fromId, type: dep.type });
+      } else {
+        // related, discovered_from - treat as soft links
+        if (!blockedByMap[fromId]) blockedByMap[fromId] = [];
+        blockedByMap[fromId].push({ issueId: toId, type: dep.type });
+      }
+    }
+
+    // Sort issues by priority then by creation date
+    issues.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return b.createdAt - a.createdAt;
+    });
+
+    // Return issues with their relationships
+    return {
+      issues: issues.map((issue) => ({
+        ...issue,
+        blockedBy: blockedByMap[issue._id] || [],
+        blocks: blocksMap[issue._id] || [],
+        children: childrenMap[issue._id] || [],
+      })),
+      // Also return a map for quick lookup
+      issueMap: Object.fromEntries(issues.map((i) => [i._id, i])),
+    };
+  },
+});
+
+// List issues with dependency counts (for issue list view)
+export const listIssuesWithDependencies = query({
+  args: {
+    limit: v.optional(v.number()),
+    status: v.optional(
+      v.union(v.literal("open"), v.literal("in_progress"), v.literal("closed"))
+    ),
+    type: v.optional(
+      v.union(
+        v.literal("bug"),
+        v.literal("feature"),
+        v.literal("task"),
+        v.literal("epic"),
+        v.literal("chore")
+      )
+    ),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+
+    // Get issues
+    let issuesQuery;
+    if (args.status) {
+      issuesQuery = ctx.db
+        .query("issues")
+        .withIndex("by_status", (q) => q.eq("status", args.status!))
+        .order("desc");
+    } else {
+      issuesQuery = ctx.db.query("issues").order("desc");
+    }
+
+    let issues = await issuesQuery.take(limit * 2);
+
+    if (args.type) {
+      issues = issues.filter((i) => i.type === args.type);
+    }
+
+    issues = issues.slice(0, limit);
+
+    // Get all dependencies
+    const allDeps = await ctx.db.query("dependencies").collect();
+
+    // Build maps for quick lookup
+    const blockedByCount: Record<string, number> = {};
+    const blocksCount: Record<string, number> = {};
+
+    for (const dep of allDeps) {
+      if (dep.type === "blocks") {
+        // dep.fromIssue is blocked BY dep.toIssue
+        // So dep.toIssue blocks dep.fromIssue
+        const blockerId = dep.toIssue;
+        const blockedId = dep.fromIssue;
+
+        // Check if the blocker is still open
+        const blocker = await ctx.db.get(blockerId);
+        if (blocker && blocker.status !== "closed") {
+          blockedByCount[blockedId] = (blockedByCount[blockedId] || 0) + 1;
+          blocksCount[blockerId] = (blocksCount[blockerId] || 0) + 1;
+        }
+      }
+    }
+
+    return issues.map((issue) => ({
+      ...issue,
+      blockedByCount: blockedByCount[issue._id] || 0,
+      blocksCount: blocksCount[issue._id] || 0,
+    }));
+  },
+});
