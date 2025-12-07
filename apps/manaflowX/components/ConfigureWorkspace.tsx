@@ -103,19 +103,14 @@ interface ConfigureWorkspaceProps {
 
 export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWorkspaceProps>(
   function ConfigureWorkspace({ repoId, className = "" }, ref) {
-  // Fetch existing config
-  const existingConfig = useQuery(api.workspaceConfig.getWorkspaceConfig, {
-    repoId,
-  });
+  // Fetch repo with scripts
+  const repo = useQuery(api.github.getRepoById, { repoId });
 
-  // Mutations
-  const updateSetupScripts = useMutation(
-    api.workspaceConfig.updateSetupScripts
-  );
-  const updateDevScripts = useMutation(api.workspaceConfig.updateDevScripts);
+  // Mutation to update scripts
+  const updateRepoScripts = useMutation(api.github.updateRepoScripts);
 
   // Local state
-  const [setupScript, setSetupScript] = useState("");
+  const [maintenanceScript, setMaintenanceScript] = useState("");
   const [devScript, setDevScript] = useState("");
   const [envVars, setEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }]);
   const [showValues, setShowValues] = useState(false);
@@ -128,17 +123,13 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
   const [devOpen, setDevOpen] = useState(true);
   const [envOpen, setEnvOpen] = useState(true);
 
-  // Load from existing config
+  // Load from existing repo scripts
   useEffect(() => {
-    if (existingConfig) {
-      const setupStr =
-        existingConfig.setupScripts?.map((s) => s.command).join("\n") || "";
-      const devStr =
-        existingConfig.devScripts?.map((s) => s.command).join("\n") || "";
-      setSetupScript(setupStr);
-      setDevScript(devStr);
+    if (repo?.scripts) {
+      setMaintenanceScript(repo.scripts.maintenanceScript || "");
+      setDevScript(repo.scripts.devScript || "");
     }
-  }, [existingConfig]);
+  }, [repo?.scripts]);
 
   // Track changes
   const handleScriptChange = useCallback(
@@ -176,21 +167,17 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
     [envVars]
   );
 
-  // Convert script string to array format
-  const scriptToArray = (script: string) =>
-    script
-      .split("\n")
-      .filter((line) => line.trim())
-      .map((command) => ({ name: "", command, description: "" }));
-
   // Save handler
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      await Promise.all([
-        updateSetupScripts({ repoId, setupScripts: scriptToArray(setupScript) }),
-        updateDevScripts({ repoId, devScripts: scriptToArray(devScript) }),
-      ]);
+      await updateRepoScripts({
+        repoId,
+        scripts: {
+          maintenanceScript,
+          devScript,
+        },
+      });
       setHasChanges(false);
       setSaved(true);
       // Reset saved indicator after 2 seconds
@@ -198,7 +185,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
     } finally {
       setSaving(false);
     }
-  }, [repoId, setupScript, devScript, updateSetupScripts, updateDevScripts]);
+  }, [repoId, maintenanceScript, devScript, updateRepoScripts]);
 
   // Expose save state and function via ref
   useImperativeHandle(ref, () => ({
@@ -234,9 +221,9 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
         {maintenanceOpen && (
           <div className="mt-2 font-mono text-sm">
             <textarea
-              value={setupScript}
+              value={maintenanceScript}
               onChange={(e) =>
-                handleScriptChange(setSetupScript)(e.target.value)
+                handleScriptChange(setMaintenanceScript)(e.target.value)
               }
               placeholder={"# e.g.\npnpm install\nuv sync"}
               rows={3}

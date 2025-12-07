@@ -319,3 +319,40 @@ export const deleteRepo = mutation({
     await ctx.db.delete(id);
   },
 });
+
+// Update scripts for a repo
+export const updateRepoScripts = mutation({
+  args: {
+    repoId: v.id("repos"),
+    scripts: v.object({
+      maintenanceScript: v.string(),
+      devScript: v.string(),
+    }),
+  },
+  handler: async (ctx, { repoId, scripts }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const repo = await ctx.db.get(repoId);
+    if (!repo) throw new Error("Repo not found");
+    if (repo.userId !== identity.subject) throw new Error("Not authorized");
+
+    await ctx.db.patch(repoId, { scripts });
+    return { success: true };
+  },
+});
+
+// Get repo by ID (with scripts)
+export const getRepoById = query({
+  args: { repoId: v.id("repos") },
+  handler: async (ctx, { repoId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const repo = await ctx.db.get(repoId);
+    if (!repo) return null;
+    if (repo.userId !== identity.subject) return null;
+
+    return repo;
+  },
+});
