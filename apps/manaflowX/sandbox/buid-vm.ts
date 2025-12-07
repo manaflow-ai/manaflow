@@ -56,13 +56,9 @@ const client = new MorphCloudClient({
   const chromeVerify = await instance.exec("google-chrome --version");
   console.log("Chrome version:", chromeVerify.stdout);
 
-  // Set up VNC password (empty password for convenience, or use a simple one)
+  // Set up VNC (passwordless)
   console.log("Setting up VNC...");
-  await instance.exec(`
-    mkdir -p /root/.vnc
-    echo -e "password\\npassword\\nn" | vncpasswd /root/.vnc/passwd
-    chmod 600 /root/.vnc/passwd
-  `);
+  await instance.exec("mkdir -p /root/.vnc");
 
   // Create VNC xstartup script with Openbox
   await instance.exec(`cat > /root/.vnc/xstartup << 'EOF'
@@ -83,8 +79,8 @@ EOF`);
 vncserver -kill :1 2>/dev/null || true
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 
-# Start VNC server on display :1 with logging
-vncserver :1 -geometry 1920x1080 -depth 24 2>&1 | tee -a /root/vncserver.log &
+# Start VNC server on display :1 with logging (passwordless)
+vncserver :1 -geometry 1920x1080 -depth 24 -SecurityTypes None 2>&1 | tee -a /root/vncserver.log &
 
 # Give VNC server time to start
 sleep 2
