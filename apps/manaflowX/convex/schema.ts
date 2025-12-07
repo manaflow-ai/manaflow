@@ -856,14 +856,15 @@ export default defineSchema({
     .index("by_coding_agent_session", ["codingAgentSessionId"]),
 
   // ---------------------------------------------------------------------------
-  // ALGORITHM SETTINGS (global settings for algorithm features)
+  // ALGORITHM SETTINGS (per-user settings for the autonomous agent)
   // ---------------------------------------------------------------------------
 
   algorithmSettings: defineTable({
-    key: v.string(), // Setting key (e.g., "prMonitorEnabled", "grokSystemPrompt")
-    value: v.union(v.boolean(), v.string()), // Setting value (boolean or string)
+    userId: v.string(), // Stack Auth user ID
+    enabled: v.boolean(), // Whether the autonomous agent is enabled for this user
+    prompt: v.optional(v.string()), // Custom system prompt for the agent
     updatedAt: v.number(),
-  }).index("by_key", ["key"]),
+  }).index("by_userId", ["userId"]),
 
   // ---------------------------------------------------------------------------
   // WORKFLOW QUEUE (for triggering workflows from Convex actions)

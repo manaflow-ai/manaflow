@@ -200,12 +200,12 @@ async function runAlgorithm(ctx: any): Promise<{
   }> = await ctx.runQuery(api.issues.listIssues, { limit: 50 });
   console.log(`[algorithm] Found ${internalIssues.length} internal issues`);
 
-  // Get custom system prompt or use default
-  const customPrompt: string | null = await ctx.runQuery(
-    internal.github.getAlgorithmTextSettingInternal,
-    { key: "grokSystemPrompt" }
+  // Get the first enabled user's algorithm settings to use their prompt
+  const algorithmSettings = await ctx.runQuery(
+    internal.github.getFirstEnabledAlgorithmSettings
   );
-  const systemPrompt = customPrompt || DEFAULT_GROK_SYSTEM_PROMPT;
+  const systemPrompt = algorithmSettings?.prompt || DEFAULT_GROK_SYSTEM_PROMPT;
+  console.log(`[algorithm] Using ${algorithmSettings?.prompt ? "custom" : "default"} system prompt`);
 
   // Group repos by installation ID
   const reposByInstallation = new Map<number, MonitoredRepo[]>();
@@ -450,22 +450,21 @@ export const runGitHubAlgorithm = action({
   },
 });
 
-// Internal action for cron job - checks if enabled before running
+// Internal action for cron job - checks if ANY user has algorithm enabled
 export const cronRunGitHubAlgorithm = internalAction({
   args: {},
   handler: async (ctx): Promise<void> => {
-    // Check if algorithm is enabled
-    const isEnabled = await ctx.runQuery(
-      internal.github.getAlgorithmSettingInternal,
-      { key: "prMonitorEnabled" }
+    // Check if any user has algorithm enabled
+    const enabledUsers = await ctx.runQuery(
+      internal.github.getUsersWithAlgorithmEnabled
     );
 
-    if (!isEnabled) {
-      console.log("[algorithm] GitHub algorithm cron is disabled, skipping");
+    if (enabledUsers.length === 0) {
+      console.log("[algorithm] GitHub algorithm cron: no users have it enabled, skipping");
       return;
     }
 
-    console.log("[algorithm] Running scheduled GitHub algorithm");
+    console.log(`[algorithm] Running scheduled GitHub algorithm (${enabledUsers.length} users enabled)`);
 
     const result = await runAlgorithm(ctx);
     console.log(`[algorithm] Result: ${result.message}`);
@@ -483,17 +482,17 @@ export const testFetchAndPostPR = action({
 export const cronFetchAndPostPR = internalAction({
   args: {},
   handler: async (ctx): Promise<void> => {
-    const isEnabled = await ctx.runQuery(
-      internal.github.getAlgorithmSettingInternal,
-      { key: "prMonitorEnabled" }
+    // Check if any user has algorithm enabled
+    const enabledUsers = await ctx.runQuery(
+      internal.github.getUsersWithAlgorithmEnabled
     );
 
-    if (!isEnabled) {
-      console.log("[algorithm] GitHub algorithm cron is disabled, skipping");
+    if (enabledUsers.length === 0) {
+      console.log("[algorithm] GitHub algorithm cron: no users have it enabled, skipping");
       return;
     }
 
-    console.log("[algorithm] Running scheduled GitHub algorithm");
+    console.log(`[algorithm] Running scheduled GitHub algorithm (${enabledUsers.length} users enabled)`);
     const result = await runAlgorithm(ctx);
     console.log(`[algorithm] Result: ${result.message}`);
   },

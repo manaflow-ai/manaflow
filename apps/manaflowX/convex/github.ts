@@ -533,114 +533,154 @@ export const getMonitoredReposWithInstallation = internalQuery({
 });
 
 // ---------------------------------------------------------------------------
-// ALGORITHM SETTINGS (unified - supports boolean and string values)
+// ALGORITHM SETTINGS (per-user settings for autonomous agent)
 // ---------------------------------------------------------------------------
 
-// Get algorithm setting by key (returns boolean, defaults to false)
-export const getAlgorithmSetting = query({
-  args: { key: v.string() },
-  handler: async (ctx, { key }) => {
+// Default system prompt for Grok algorithm
+const DEFAULT_GROK_SYSTEM_PROMPT = `You are curating a developer feed and deciding how to engage with the codebase. You have two options:
+
+1. **Post about a PR** - Share an interesting Pull Request with the community
+2. **Solve an Issue** - Pick an issue to work on and delegate to a coding agent
+
+IMPORTANT: Aim for roughly 50/50 balance between these actions over time. Alternate between them - if you'd normally pick a PR, consider if there's a good issue to solve instead, and vice versa. Both actions are equally valuable.
+
+For PRs, look for:
+- Significant features or important bug fixes
+- PRs that look ready to merge or need review
+- Interesting technical changes
+
+For Issues, look for:
+- Tractable bugs or features that can realistically be solved
+- Well-defined issues with clear requirements
+- Issues that would provide clear value when fixed
+
+Pick the most interesting item from whichever category you choose. Write engaging content that makes developers want to check it out.`;
+
+// Get current user's algorithm settings
+export const getAlgorithmSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { enabled: false, prompt: null };
+
+    const userId = identity.subject;
     const setting = await ctx.db
       .query("algorithmSettings")
-      .withIndex("by_key", (q) => q.eq("key", key))
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
       .first();
-    const value = setting?.value;
-    return typeof value === "boolean" ? value : false;
+
+    return {
+      enabled: setting?.enabled ?? false,
+      prompt: setting?.prompt ?? null,
+    };
   },
 });
 
-// Internal query to get algorithm setting (for cron job)
-export const getAlgorithmSettingInternal = internalQuery({
-  args: { key: v.string() },
-  handler: async (ctx, { key }) => {
+// Internal query to get algorithm settings for a specific user
+export const getAlgorithmSettingsForUser = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
     const setting = await ctx.db
       .query("algorithmSettings")
-      .withIndex("by_key", (q) => q.eq("key", key))
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
       .first();
-    const value = setting?.value;
-    return typeof value === "boolean" ? value : false;
+
+    return {
+      enabled: setting?.enabled ?? false,
+      prompt: setting?.prompt ?? null,
+    };
   },
 });
 
-// Toggle algorithm setting (boolean)
-export const toggleAlgorithmSetting = mutation({
-  args: { key: v.string() },
-  handler: async (ctx, { key }) => {
+// Internal query to get all users with algorithm enabled
+export const getUsersWithAlgorithmEnabled = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const settings = await ctx.db
+      .query("algorithmSettings")
+      .filter((q) => q.eq(q.field("enabled"), true))
+      .collect();
+
+    return settings.map((s) => s.userId);
+  },
+});
+
+// Internal query to get the first enabled user's algorithm settings (for cron job to use their prompt)
+export const getFirstEnabledAlgorithmSettings = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .filter((q) => q.eq(q.field("enabled"), true))
+      .first();
+
+    if (!setting) return null;
+
+    return {
+      userId: setting.userId,
+      enabled: setting.enabled,
+      prompt: setting.prompt ?? null,
+    };
+  },
+});
+
+// Toggle algorithm enabled state
+export const toggleAlgorithmEnabled = mutation({
+  args: {},
+  handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
 
-    const existing = await ctx.db
-      .query("algorithmSettings")
-      .withIndex("by_key", (q) => q.eq("key", key))
-      .first();
-
+    const userId = identity.subject;
     const now = Date.now();
-
-    if (existing && typeof existing.value === "boolean") {
-      const newValue = !existing.value;
-      await ctx.db.patch(existing._id, { value: newValue, updatedAt: now });
-      return { value: newValue };
-    } else {
-      // Create with true (toggled from default false)
-      await ctx.db.insert("algorithmSettings", {
-        key,
-        value: true,
-        updatedAt: now,
-      });
-      return { value: true };
-    }
-  },
-});
-
-// Get algorithm text setting by key (returns string or null)
-export const getAlgorithmTextSetting = query({
-  args: { key: v.string() },
-  handler: async (ctx, { key }) => {
-    const setting = await ctx.db
-      .query("algorithmSettings")
-      .withIndex("by_key", (q) => q.eq("key", key))
-      .first();
-    const value = setting?.value;
-    return typeof value === "string" ? value : null;
-  },
-});
-
-// Internal query to get algorithm text setting (for cron job)
-export const getAlgorithmTextSettingInternal = internalQuery({
-  args: { key: v.string() },
-  handler: async (ctx, { key }) => {
-    const setting = await ctx.db
-      .query("algorithmSettings")
-      .withIndex("by_key", (q) => q.eq("key", key))
-      .first();
-    const value = setting?.value;
-    return typeof value === "string" ? value : null;
-  },
-});
-
-// Set algorithm text setting (string)
-export const setAlgorithmTextSetting = mutation({
-  args: { key: v.string(), value: v.string() },
-  handler: async (ctx, { key, value }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
 
     const existing = await ctx.db
       .query("algorithmSettings")
-      .withIndex("by_key", (q) => q.eq("key", key))
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
       .first();
-
-    const now = Date.now();
 
     if (existing) {
-      await ctx.db.patch(existing._id, { value, updatedAt: now });
+      const newEnabled = !existing.enabled;
+      await ctx.db.patch(existing._id, { enabled: newEnabled, updatedAt: now });
+      return { enabled: newEnabled };
+    } else {
+      // Create with true (toggled from default false) and set default prompt
+      await ctx.db.insert("algorithmSettings", {
+        userId,
+        enabled: true,
+        prompt: DEFAULT_GROK_SYSTEM_PROMPT,
+        updatedAt: now,
+      });
+      return { enabled: true };
+    }
+  },
+});
+
+// Set algorithm prompt
+export const setAlgorithmPrompt = mutation({
+  args: { prompt: v.string() },
+  handler: async (ctx, { prompt }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const userId = identity.subject;
+    const now = Date.now();
+
+    const existing = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { prompt, updatedAt: now });
     } else {
       await ctx.db.insert("algorithmSettings", {
-        key,
-        value,
+        userId,
+        enabled: false,
+        prompt,
         updatedAt: now,
       });
     }
-    return { value };
+    return { prompt };
   },
 });

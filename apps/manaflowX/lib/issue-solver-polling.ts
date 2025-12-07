@@ -105,12 +105,10 @@ async function processOpenIssues() {
 
     const convex = new ConvexHttpClient(convexUrl);
 
-    // Check if auto algorithm is enabled
-    const isEnabled = await convex.query(api.github.getAlgorithmSetting, {
-      key: "prMonitorEnabled",
-    });
-    if (!isEnabled) {
-      // Auto algorithm is off, skip this tick
+    // Check if any user has the algorithm enabled
+    const settings = await convex.query(api.github.getAlgorithmSettings, {});
+    if (!settings.enabled) {
+      // No user has algorithm enabled, skip this tick
       return;
     }
 

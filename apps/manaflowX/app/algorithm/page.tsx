@@ -8,13 +8,12 @@ import { api } from "../../convex/_generated/api"
 
 function GeneralContent() {
   const user = useUser()
-  const grokSystemPrompt = useQuery(api.github.getAlgorithmTextSetting, { key: "grokSystemPrompt" })
-  const setAlgorithmTextSetting = useMutation(api.github.setAlgorithmTextSetting)
+  const algorithmSettings = useQuery(api.github.getAlgorithmSettings)
+  const setAlgorithmPrompt = useMutation(api.github.setAlgorithmPrompt)
+  const toggleAlgorithmEnabled = useMutation(api.github.toggleAlgorithmEnabled)
 
   // Algorithm controls
   const monitoredRepos = useQuery(api.github.getMonitoredRepos)
-  const prMonitorEnabled = useQuery(api.github.getAlgorithmSetting, { key: "prMonitorEnabled" })
-  const toggleAlgorithmSetting = useMutation(api.github.toggleAlgorithmSetting)
   const testFetchPR = useAction(api.githubMonitor.testFetchAndPostPR)
 
   const [testStatus, setTestStatus] = useState<{
@@ -47,20 +46,20 @@ Pick the most interesting item from whichever category you choose. Write engagin
 
   // Initialize prompt value when data loads
   useEffect(() => {
-    if (grokSystemPrompt !== undefined) {
-      setPromptValue(grokSystemPrompt || defaultPrompt)
+    if (algorithmSettings !== undefined) {
+      setPromptValue(algorithmSettings.prompt || defaultPrompt)
     }
-  }, [grokSystemPrompt, defaultPrompt])
+  }, [algorithmSettings, defaultPrompt])
 
   const handleChange = (value: string) => {
     setPromptValue(value)
-    setHasChanges(value !== (grokSystemPrompt || defaultPrompt))
+    setHasChanges(value !== (algorithmSettings?.prompt || defaultPrompt))
   }
 
   const handleSave = async () => {
     setIsSaving(true)
     try {
-      await setAlgorithmTextSetting({ key: "grokSystemPrompt", value: promptValue })
+      await setAlgorithmPrompt({ prompt: promptValue })
       setHasChanges(false)
     } catch (error) {
       console.error("Failed to save prompt:", error)
@@ -86,6 +85,7 @@ Pick the most interesting item from whichever category you choose. Write engagin
   }
 
   const monitoredCount = monitoredRepos?.length ?? 0
+  const isEnabled = algorithmSettings?.enabled ?? false
 
   if (!user) {
     return (
@@ -115,21 +115,21 @@ Pick the most interesting item from whichever category you choose. Write engagin
             </p>
           </div>
           <button
-            onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
+            onClick={() => toggleAlgorithmEnabled()}
             disabled={monitoredCount === 0}
             className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed ${
-              prMonitorEnabled ? "bg-blue-600" : "bg-gray-700"
+              isEnabled ? "bg-blue-600" : "bg-gray-700"
             }`}
           >
             <span
               className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                prMonitorEnabled ? "left-6" : "left-1"
+                isEnabled ? "left-6" : "left-1"
               }`}
             />
           </button>
         </div>
 
-        {prMonitorEnabled && (
+        {isEnabled && (
           <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
             Active
