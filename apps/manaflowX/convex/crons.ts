@@ -10,4 +10,7 @@ crons.interval(
   internal.githubMonitor.cronFetchAndPostPR
 );
 
+// Run curator every minute to surface interesting posts
+crons.interval("curator", { minutes: 1 }, internal.curator.runCurator);
+
 export default crons;

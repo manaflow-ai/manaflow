@@ -6,6 +6,7 @@ import { Streamdown } from "streamdown";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 import { GrokIcon } from "./GrokIcon";
+import { embeddableComponents } from "./EmbeddableComponents";
 
 type Part = {
   type: "text" | "reasoning" | "tool_call" | "tool_result" | "file" | "step_start" | "step_finish" | "error";
@@ -292,7 +293,7 @@ function PartRenderer({
     case "text":
       return (
         <div className="prose prose-invert prose-sm max-w-none">
-          <Streamdown>{part.text ?? ""}</Streamdown>
+          <Streamdown components={embeddableComponents}>{part.text ?? ""}</Streamdown>
           {!part.isComplete && (
             <span className="inline-block w-2 h-4 bg-gray-400 animate-pulse ml-0.5" />
           )}
@@ -304,7 +305,7 @@ function PartRenderer({
         <div className="text-gray-400 italic border-l-2 border-gray-600 pl-3 my-2">
           <div className="text-xs text-gray-500 mb-1">Thinking...</div>
           <div className="prose prose-invert prose-sm max-w-none opacity-70">
-            <Streamdown>{part.text ?? ""}</Streamdown>
+            <Streamdown components={embeddableComponents}>{part.text ?? ""}</Streamdown>
             {!part.isComplete && (
               <span className="inline-block w-2 h-3 bg-gray-500 animate-pulse ml-0.5" />
             )}

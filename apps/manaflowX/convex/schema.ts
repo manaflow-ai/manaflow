@@ -207,11 +207,11 @@ export default defineSchema({
     .index("by_user_post", ["userId", "postId"]),
 
   // ---------------------------------------------------------------------------
-  // FEED (algorithm output for personalized feeds)
+  // FEED (algorithm output for curated feeds - global or per-user)
   // ---------------------------------------------------------------------------
 
   feedItems: defineTable({
-    userId: v.id("users"),
+    userId: v.optional(v.id("users")), // Optional - null for global feed items
     postId: v.id("posts"),
 
     // Algorithm scores (0-100)
@@ -236,6 +236,7 @@ export default defineSchema({
     expiresAt: v.number(),
   })
     .index("by_user_feed", ["userId", "dismissed", "finalScore"])
+    .index("by_global_feed", ["dismissed", "finalScore"]) // For global feed queries
     .index("by_post", ["postId"])
     .index("by_expires", ["expiresAt"]),
 

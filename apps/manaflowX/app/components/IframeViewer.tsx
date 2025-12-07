@@ -50,6 +50,7 @@ interface IframeViewerProps {
   color: string
   isExpanded: boolean
   onToggle: () => void
+  aspectRatio?: "16/9" | "4/3" | "square" | "auto"
 }
 
 export function IframeViewer({
@@ -58,7 +59,8 @@ export function IframeViewer({
   icon,
   color,
   isExpanded,
-  onToggle
+  onToggle,
+  aspectRatio = "auto"
 }: IframeViewerProps) {
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -85,7 +87,12 @@ export function IframeViewer({
         <div className="relative bg-black">
           <iframe
             src={url}
-            className="w-full h-[400px] border-0"
+            className={`w-full border-0 ${
+              aspectRatio === "16/9" ? "aspect-video" :
+              aspectRatio === "4/3" ? "aspect-[4/3]" :
+              aspectRatio === "square" ? "aspect-square" :
+              "h-[400px]"
+            }`}
             title={title}
             allow="clipboard-read; clipboard-write"
           />

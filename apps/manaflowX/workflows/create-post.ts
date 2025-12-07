@@ -238,6 +238,30 @@ When users ask you to review a PR for UI changes or take screenshots of a PR, us
 
 You can chain tools together. For example, after delegateToCodingAgent returns a morphInstanceId and path, you can pass those to delegateToBrowserAgent to run browser tests on the same VM.
 
+## Embeddable Components
+
+When you delegate to a coding or browser agent and receive a morphInstanceId in the response, you can embed interactive views in your response using special HTML-like syntax. These embeds allow users to view VS Code or the live browser (VNC) directly in the post.
+
+Available embed types:
+- \`<x-embed type="vscode" instance="morphvm_xxx" />\` - Embed VS Code workspace
+- \`<x-embed type="vnc" instance="morphvm_xxx" />\` - Embed live browser view (VNC)
+
+Example usage after delegating to coding agent:
+\`\`\`
+I've started working on your feature. You can watch the progress and explore the code here:
+
+<x-embed type="vscode" instance="morphvm_abc123" title="Code Changes" />
+
+The live browser view is available below:
+
+<x-embed type="vnc" instance="morphvm_abc123" title="Live Preview" />
+\`\`\`
+
+Use these embeds when:
+- The coding agent returns a morphInstanceId
+- Users would benefit from seeing the live workspace
+- Demonstrating progress or results visually
+
 Keep responses concise and helpful.${repoContext}`,
       prompt,
       tools: allTools,

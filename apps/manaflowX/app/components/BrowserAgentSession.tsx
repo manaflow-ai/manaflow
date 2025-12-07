@@ -6,6 +6,7 @@ import { Streamdown } from "streamdown"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
 import { IframeViewer, VNCIcon, WorkspaceIcon, VSCodeIcon } from "./IframeViewer"
+import { embeddableComponents } from "../../components/EmbeddableComponents"
 
 // =============================================================================
 // Types
@@ -53,7 +54,7 @@ interface Turn {
 function TextPart({ part }: { part: TurnPart }) {
   return (
     <div className="prose prose-invert prose-sm max-w-none">
-      <Streamdown>{part.text ?? ""}</Streamdown>
+      <Streamdown components={embeddableComponents}>{part.text ?? ""}</Streamdown>
     </div>
   )
 }
@@ -68,7 +69,7 @@ function ReasoningPart({ part }: { part: TurnPart }) {
         Thinking
       </div>
       <div className="prose prose-invert prose-sm max-w-none opacity-70">
-        <Streamdown>{part.text ?? ""}</Streamdown>
+        <Streamdown components={embeddableComponents}>{part.text ?? ""}</Streamdown>
       </div>
     </div>
   )
@@ -370,6 +371,7 @@ export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionP
               color="text-cyan-400"
               isExpanded={vncExpanded}
               onToggle={() => setVncExpanded(!vncExpanded)}
+              aspectRatio="16/9"
             />
             {vmUrl && (
               <IframeViewer
