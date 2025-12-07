@@ -89,6 +89,12 @@ export default function Home() {
               rows={3}
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
             />
             <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
               <div className="flex gap-2 text-blue-400">

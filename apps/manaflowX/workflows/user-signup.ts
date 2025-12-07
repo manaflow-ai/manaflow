@@ -1,4 +1,4 @@
-import { FatalError, sleep } from 'workflow'
+import { FatalError, sleep, createWebhook } from 'workflow'
 
 export async function handleUserSignup(email: string) {
   'use workflow'
@@ -6,6 +6,13 @@ export async function handleUserSignup(email: string) {
   const user = await createUser(email)
   await sendWelcomeEmail(user)
   await sleep('5s') // Pause for 5s - doesn't consume any resources
+
+  const webhook = createWebhook()
+  console.log('Webhook URL:', webhook.url)
+
+  // Workflow pauses here until an HTTP request is received at webhook.url
+  await webhook
+
   await sendOnboardingEmail(user)
 
   return { userId: user.id, status: 'onboarded' }
