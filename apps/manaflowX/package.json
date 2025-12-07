@@ -13,10 +13,14 @@
     "workflow:web": "bunx workflow web"
   },
   "dependencies": {
+    "@ai-sdk/xai": "^2.0.39",
+    "@opencode-ai/sdk": "^1.0.134",
     "@stackframe/stack": "^2.8.54",
+    "ai": "^5.0.108",
     "convex": "^1.29.3",
     "morphcloud": "^0.0.20",
     "next": "16.0.7",
+    "opencode-ai": "^1.0.134",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "workflow": "^4.0.1-beta.28"

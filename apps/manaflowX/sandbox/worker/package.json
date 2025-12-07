@@ -3,6 +3,9 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "build": "bun build ./index.ts --compile --target=bun-linux-x64-modern --outfile ./xagi-server"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
@@ -11,6 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.60",
-    "@opencode-ai/sdk": "^1.0.134"
+    "@opencode-ai/sdk": "^1.0.134",
+    "opencode-ai": "^1.0.134"
   }
 }

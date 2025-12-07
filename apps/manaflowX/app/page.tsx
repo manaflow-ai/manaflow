@@ -6,11 +6,11 @@ import Link from "next/link";
 import { api } from "../convex/_generated/api";
 import { useState } from "react";
 
-async function triggerSignupWorkflow(email: string) {
-  const response = await fetch("/api/signup", {
+async function triggerPostWorkflow(content: string) {
+  const response = await fetch("/api/post", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ content }),
   });
   return response.json();
 }
@@ -27,7 +27,7 @@ export default function Home() {
     setIsSubmitting(true);
     try {
       // Trigger the Workflow DevKit workflow
-      await triggerSignupWorkflow(content);
+      await triggerPostWorkflow(content);
       // Also create a task in Convex
       await startWorkflow({ content });
       setContent("");
