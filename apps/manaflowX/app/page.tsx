@@ -276,6 +276,7 @@ function HomeContent() {
   const data = useQuery(api.posts.listPosts, { limit: 20 })
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
   // Get selected post from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
@@ -377,7 +378,16 @@ function HomeContent() {
                   }
                 }}
               />
-              <div className="flex justify-end mt-2 border-t border-gray-800 pt-3">
+              <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
+                <div className="flex gap-2 items-center">
+                  {/* Repo picker dropdown */}
+                  {user && (
+                    <RepoPickerDropdown
+                      selectedRepo={selectedRepo}
+                      onRepoSelect={setSelectedRepo}
+                    />
+                  )}
+                </div>
                 <button
                   disabled={!content.trim() || isSubmitting}
                   onClick={handleSubmit}
@@ -446,4 +456,6 @@ export default function Home() {
       <HomeContent />
     </Suspense>
   )
+
+
 }
