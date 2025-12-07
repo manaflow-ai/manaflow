@@ -129,7 +129,9 @@ async function flushPendingMessages(): Promise<void> {
 }
 
 // Export the plugin factory function
-export const ConvexSyncPlugin = async (): Promise<PluginEventHandler> => {
+// Note: OpenCode passes a PluginInput object to the factory function
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const ConvexSyncPlugin = async (_input?: unknown): Promise<PluginEventHandler> => {
   console.log("[convex-sync] Plugin registered (config will load on first event)");
 
   return {

@@ -428,6 +428,9 @@ export default defineSchema({
     // External session ID from OpenCode
     externalSessionId: v.optional(v.string()),
 
+    // JWT secret for coding agent authentication (stored directly on session)
+    jwtSecret: v.optional(v.string()),
+
     // Session title (OpenCode)
     title: v.optional(v.string()),
 
