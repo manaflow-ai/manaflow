@@ -6,12 +6,47 @@ import { api } from "@/convex/_generated/api";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
+// Repo config to pass to the workflow
+export interface RepoConfig {
+  fullName: string;
+  gitRemote: string;
+  branch: string;
+  installationId?: number;
+}
+
 export async function POST(request: Request) {
-  const { content } = (await request.json()) as { content: string };
+  const { content, repo: repoFullName } = (await request.json()) as {
+    content: string;
+    repo?: string | null;
+  };
 
   console.log("[API] Creating post and starting reply workflow");
+  console.log("[API] Selected repo:", repoFullName);
 
   try {
+    // Fetch full repo details if a repo is selected
+    let repoConfig: RepoConfig | undefined;
+    if (repoFullName) {
+      console.log("[API] Fetching repo details for:", repoFullName);
+      // Fetch repo details from Convex using the new query that includes installationId
+      const repo = await convex.query(api.github.getRepoWithInstallation, {
+        fullName: repoFullName,
+      });
+      console.log("[API] Got repo from Convex:", repo);
+
+      if (repo) {
+        repoConfig = {
+          fullName: repo.fullName,
+          gitRemote: repo.gitRemote,
+          branch: repo.defaultBranch ?? "main",
+          installationId: repo.installationId,
+        };
+        console.log("[API] Repo config:", repoConfig);
+      } else {
+        console.log("[API] Repo not found in database");
+      }
+    }
+
     // First create the user's post
     const postId = await convex.mutation(api.posts.createPost, {
       content,
@@ -21,7 +56,8 @@ export async function POST(request: Request) {
     console.log("[API] Created post:", postId);
 
     // Then start the workflow to generate an AI reply
-    const result = await start(handleReplyToPost, [postId, content]);
+    // Pass repo config to the workflow
+    const result = await start(handleReplyToPost, [postId, content, repoConfig]);
     console.log("[API] Workflow started:", result);
 
     return NextResponse.json({

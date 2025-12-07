@@ -403,6 +403,16 @@ The agent will complete the task autonomously and return the results.`,
         repo: repo,
       });
 
+      // Update the session with VM info for debugging
+      if (convexSessionId) {
+        await convex.mutation(api.codingAgent.updateSessionVmInfo, {
+          sessionId: convexSessionId as Id<"sessions">,
+          morphInstanceId: vm.instanceId,
+          morphVmUrl: vm.url,
+        });
+        console.log(`[coding-agent] Updated session with VM URL: ${vm.url}`);
+      }
+
       // Create OpenCode client using the official SDK
       const opencode = createOpencodeClient({
         baseUrl: vm.url,
@@ -451,6 +461,8 @@ The agent will complete the task autonomously and return the results.`,
         success: true,
         sessionId: session.id,
         convexSessionId, // Include Convex session ID for UI linking
+        morphInstanceId: vm.instanceId, // VM instance ID for debugging
+        morphVmUrl: vm.url, // VM URL for debugging
         response: textResponse,
         toolsUsed: toolsSummary,
         tokens: response.info.tokens,

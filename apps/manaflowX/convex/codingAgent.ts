@@ -257,6 +257,7 @@ export const createCodingAgentSession = mutation({
     agent: v.string(),
     // VM info
     morphInstanceId: v.optional(v.string()),
+    morphVmUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -266,11 +267,32 @@ export const createCodingAgentSession = mutation({
       status: "active",
       agent: args.agent,
       title: `Task: ${args.task.slice(0, 50)}...`,
+      morphInstanceId: args.morphInstanceId,
+      morphVmUrl: args.morphVmUrl,
       createdAt: now,
       updatedAt: now,
     });
 
     return sessionId;
+  },
+});
+
+/**
+ * Update the VM info for a coding agent session.
+ * Called after the VM is spawned to store the instance ID and URL.
+ */
+export const updateSessionVmInfo = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    morphInstanceId: v.string(),
+    morphVmUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      morphInstanceId: args.morphInstanceId,
+      morphVmUrl: args.morphVmUrl,
+      updatedAt: Date.now(),
+    });
   },
 });
 

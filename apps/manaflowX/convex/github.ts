@@ -2,6 +2,34 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 
+// Get repo by full name with installation ID (for workflow/API use)
+export const getRepoWithInstallation = query({
+  args: { fullName: v.string() },
+  handler: async (ctx, { fullName }) => {
+    // Find the repo by fullName
+    const repo = await ctx.db
+      .query("repos")
+      .withIndex("by_fullName", (q) => q.eq("fullName", fullName))
+      .first();
+
+    if (!repo) return null;
+
+    // Get the connection to get installation ID
+    let installationId: number | undefined;
+    if (repo.connectionId) {
+      const connection = await ctx.db.get(repo.connectionId);
+      installationId = connection?.installationId ?? undefined;
+    }
+
+    return {
+      fullName: repo.fullName,
+      gitRemote: repo.gitRemote,
+      defaultBranch: repo.defaultBranch,
+      installationId,
+    };
+  },
+});
+
 // List all repos for the current user
 export const getAllRepos = query({
   args: {},
