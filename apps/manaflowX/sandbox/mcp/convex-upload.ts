@@ -79,24 +79,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "upload_image",
         description: `Upload an image to Convex storage and get a public URL.
 Use this tool after taking a screenshot or capturing an image to make it permanently accessible.
+You can provide either a file path OR base64 data.
 The tool returns a public URL that you MUST render in your response using markdown image syntax.`,
         inputSchema: {
           type: "object" as const,
           properties: {
+            path: {
+              type: "string",
+              description:
+                "Absolute path to an image file on disk (e.g., '/tmp/screenshot.png'). Use this OR data, not both.",
+            },
             data: {
               type: "string",
               description:
-                "Base64-encoded image data. Can be raw base64 or a data URL (data:image/png;base64,...).",
+                "Base64-encoded image data. Can be raw base64 or a data URL (data:image/png;base64,...). Use this OR path, not both.",
             },
             filename: {
               type: "string",
               description:
-                "Optional filename for the image (e.g., 'screenshot.png'). Defaults to 'screenshot-{timestamp}.png'.",
+                "Optional filename for the image (e.g., 'screenshot.png'). Defaults to basename of path or 'screenshot-{timestamp}.png'.",
             },
             mimeType: {
               type: "string",
               description:
-                "Optional MIME type (e.g., 'image/png', 'image/jpeg'). Defaults to 'image/png'.",
+                "Optional MIME type (e.g., 'image/png', 'image/jpeg'). Defaults to 'image/png' or inferred from file extension.",
             },
             description: {
               type: "string",
@@ -104,12 +110,32 @@ The tool returns a public URL that you MUST render in your response using markdo
                 "A brief description of what the image shows. This will be used as alt text.",
             },
           },
-          required: ["data"],
+          required: [],
         },
       },
     ],
   };
 });
+
+// Infer MIME type from file extension
+function inferMimeType(filename: string): string {
+  const ext = filename.toLowerCase().split(".").pop();
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "svg":
+      return "image/svg+xml";
+    default:
+      return "image/png";
+  }
+}
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -126,22 +152,74 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const args = request.params.arguments as {
-    data: string;
+    path?: string;
+    data?: string;
     filename?: string;
     mimeType?: string;
     description?: string;
   };
 
-  if (!args.data) {
+  // Must provide either path or data
+  if (!args.path && !args.data) {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: Missing required 'data' parameter (base64-encoded image)",
+          text: "Error: Must provide either 'path' (absolute file path) or 'data' (base64-encoded image)",
         },
       ],
       isError: true,
     };
+  }
+
+  // If path is provided, read the file and convert to base64
+  let imageData = args.data;
+  let filename = args.filename;
+  let mimeType = args.mimeType;
+
+  if (args.path) {
+    try {
+      const file = Bun.file(args.path);
+      const exists = await file.exists();
+      if (!exists) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: File not found: ${args.path}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Read file and convert to base64
+      const buffer = await file.arrayBuffer();
+      imageData = Buffer.from(buffer).toString("base64");
+
+      // Use filename from path if not provided
+      if (!filename) {
+        filename = args.path.split("/").pop() || "screenshot.png";
+      }
+
+      // Infer MIME type from extension if not provided
+      if (!mimeType) {
+        mimeType = inferMimeType(args.path);
+      }
+
+      console.error(`[convex-upload] Read file from ${args.path} (${buffer.byteLength} bytes)`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error reading file ${args.path}: ${errorMessage}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   // Load config
@@ -168,9 +246,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        data: args.data,
-        filename: args.filename,
-        mimeType: args.mimeType,
+        data: imageData,
+        filename: filename,
+        mimeType: mimeType,
       }),
     });
 

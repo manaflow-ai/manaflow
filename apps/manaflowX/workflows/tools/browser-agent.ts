@@ -516,7 +516,7 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
 
 Available browser tools:
 - navigate_page: Navigate to a URL
-- take_screenshot: Take a screenshot of the page
+- take_screenshot: Take a screenshot of the page (use filePath parameter to save to a file)
 - click: Click an element by selector
 - fill: Fill an input field
 - evaluate_script: Execute JavaScript in the page context (use this to get page HTML/content)
@@ -526,13 +526,17 @@ Available browser tools:
 - wait_for: Wait for an element or condition
 
 Available image tools:
-- upload_image: Upload a screenshot to get a permanent public URL.
+- upload_image: Upload a screenshot to get a permanent public URL. Accepts "path" (file path) or "data" (base64).
 
-IMPORTANT INSTRUCTIONS:
+IMPORTANT SCREENSHOT INSTRUCTIONS:
 1. Complete the requested task using the browser tools.
-2. When finished, ALWAYS take a final screenshot of the result using take_screenshot.
-3. Upload the screenshot using upload_image to get a permanent URL.
+2. When taking screenshots, ALWAYS use the filePath parameter to save to a file:
+   - Example: take_screenshot with filePath="/tmp/screenshot.png"
+3. Upload the screenshot using upload_image with the path parameter:
+   - Example: upload_image with path="/tmp/screenshot.png"
 4. In your final response, include the uploaded image using markdown syntax: ![description](url)
+
+DO NOT pass base64 data directly to upload_image - always save to a file first and use the path parameter.
 
 This allows the user to see visual proof of the completed task.
 

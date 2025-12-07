@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2025-12-07T12:41:26.398Z",
+  "updatedAt": "2025-12-07T12:50:02.789Z",
   "presets": [
     {
       "presetId": "6vcpu_24gb_48gb",
@@ -73,6 +73,11 @@
           "version": 13,
           "snapshotId": "snapshot_35qul1z6",
           "capturedAt": "2025-12-07T12:41:26.398Z"
+        },
+        {
+          "version": 14,
+          "snapshotId": "snapshot_j0hq7uu9",
+          "capturedAt": "2025-12-07T12:50:02.789Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."

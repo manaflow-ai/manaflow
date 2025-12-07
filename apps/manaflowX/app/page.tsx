@@ -299,24 +299,68 @@ function HomeContent() {
   const data = useQuery(api.posts.listPosts, { limit: 20 })
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [selectedCodingAgentSession, setSelectedCodingAgentSession] =
-    useState<Id<"sessions"> | null>(null)
-  const [selectedBrowserAgentSession, setSelectedBrowserAgentSession] =
-    useState<Id<"sessions"> | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
-  // Get selected post from URL search params
+  // Get selected post and agent sessions from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
+  const selectedCodingAgentSession = searchParams.get(
+    "codingAgent",
+  ) as Id<"sessions"> | null
+  const selectedBrowserAgentSession = searchParams.get(
+    "browserAgent",
+  ) as Id<"sessions"> | null
 
+  // Build URL with params, omitting null values
+  const buildUrl = useCallback(
+    (params: {
+      post?: Id<"posts"> | null
+      codingAgent?: Id<"sessions"> | null
+      browserAgent?: Id<"sessions"> | null
+    }) => {
+      const urlParams = new URLSearchParams()
+      if (params.post) urlParams.set("post", params.post)
+      if (params.codingAgent) urlParams.set("codingAgent", params.codingAgent)
+      if (params.browserAgent) urlParams.set("browserAgent", params.browserAgent)
+      const queryString = urlParams.toString()
+      return queryString ? `/?${queryString}` : "/"
+    },
+    [],
+  )
+
+  // When changing post, clear the agent panels (they're associated with the previous post)
   const setSelectedThread = useCallback(
     (postId: Id<"posts"> | null) => {
-      if (postId) {
-        router.push(`/?post=${postId}`, { scroll: false })
-      } else {
-        router.push("/", { scroll: false })
-      }
+      router.push(buildUrl({ post: postId }), { scroll: false })
     },
-    [router],
+    [router, buildUrl],
+  )
+
+  const setSelectedCodingAgentSession = useCallback(
+    (sessionId: Id<"sessions"> | null) => {
+      router.push(
+        buildUrl({
+          post: selectedThread,
+          codingAgent: sessionId,
+          browserAgent: selectedBrowserAgentSession,
+        }),
+        { scroll: false },
+      )
+    },
+    [router, buildUrl, selectedThread, selectedBrowserAgentSession],
+  )
+
+  const setSelectedBrowserAgentSession = useCallback(
+    (sessionId: Id<"sessions"> | null) => {
+      router.push(
+        buildUrl({
+          post: selectedThread,
+          codingAgent: selectedCodingAgentSession,
+          browserAgent: sessionId,
+        }),
+        { scroll: false },
+      )
+    },
+    [router, buildUrl, selectedThread, selectedCodingAgentSession],
   )
 
   const handleSubmit = async () => {
