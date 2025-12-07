@@ -83,7 +83,7 @@ function PostCard({
             <div className="w-0.5 bg-gray-700 flex-grow mt-1 min-h-[8px]" />
           )}
         </div>
-        <div className="flex-grow min-w-0">
+        <div className={`flex-grow min-w-0 ${showThreadLineAbove ? "pt-4" : ""} ${showThreadLine ? "pb-4" : ""}`}>
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="font-bold hover:underline">
               {post.author === "Assistant" ? "Grok" : post.author}
@@ -361,6 +361,39 @@ function HomeContent() {
   const [newPostsAvailable, setNewPostsAvailable] = useState(0)
   const isInitialLoad = useRef(true)
 
+  // Track scroll position and main feed position for "back to top" pill
+  const [showBackToTop, setShowBackToTop] = useState(false)
+  const [feedCenter, setFeedCenter] = useState<number | null>(null)
+  const mainFeedRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const updateFeedCenter = () => {
+      if (mainFeedRef.current) {
+        const rect = mainFeedRef.current.getBoundingClientRect()
+        setFeedCenter(rect.left + rect.width / 2)
+      }
+    }
+
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 300)
+      updateFeedCenter()
+    }
+
+    // Initial calculation
+    updateFeedCenter()
+
+    window.addEventListener("scroll", handleScroll, { passive: true })
+    window.addEventListener("resize", updateFeedCenter)
+    return () => {
+      window.removeEventListener("scroll", handleScroll)
+      window.removeEventListener("resize", updateFeedCenter)
+    }
+  }, [])
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
   // Get selected post and agent sessions from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
   const selectedCodingAgentSession = searchParams.get(
@@ -533,6 +566,7 @@ function HomeContent() {
       <div className="flex justify-center">
         {/* Main Feed Column */}
         <main
+          ref={mainFeedRef}
           className={`w-full sm:min-w-[450px] max-w-[666px] shrink sm:border-x border-gray-800 min-h-screen`}
         >
           <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800">
@@ -691,6 +725,30 @@ function HomeContent() {
           </aside>
         )}
       </div>
+
+      {/* Back to top floating pill - only shows when there are new posts and user has scrolled */}
+      {showBackToTop && newPostsAvailable > 0 && feedCenter !== null && (
+        <button
+          onClick={scrollToTop}
+          style={{ left: feedCenter }}
+          className="fixed top-[70px] -translate-x-1/2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-full shadow-lg transition-all flex items-center gap-2 z-50"
+        >
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 10l7-7m0 0l7 7m-7-7v18"
+            />
+          </svg>
+          {newPostsAvailable} new post{newPostsAvailable > 1 ? "s" : ""}
+        </button>
+      )}
     </div>
   )
 }
