@@ -30,10 +30,10 @@ const client = new MorphCloudClient({
     timeout: 120000,
   });
 
-  // Install Bun
-  console.log("Installing Bun...");
+  // Install Bun 1.3.3 (required by opencode)
+  console.log("Installing Bun 1.3.3...");
   const bunInstall = await instance.exec(
-    "curl -fsSL https://bun.sh/install | bash"
+    "curl -fsSL https://bun.sh/install | bash -s 'bun-v1.3.3'"
   );
   console.log("Bun install stdout:", bunInstall.stdout);
 
