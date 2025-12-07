@@ -252,7 +252,7 @@ function TurnMessage({ turn }: { turn: Turn }) {
   }
 
   return (
-    <div className={`border-l-2 pl-4 py-3 ${roleColors[turn.role] || "border-l-gray-700"}`}>
+    <div className={`border-l-2 py-3 ${roleColors[turn.role] || "border-l-gray-700"}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xs font-medium text-gray-400">
           {roleLabels[turn.role] || turn.role}

@@ -12,7 +12,6 @@ import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
 import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
-import { ConnectXButton } from "@/components/ConnectXButton"
 import { GrokIcon } from "@/components/GrokIcon"
 
 type Post = {
@@ -32,20 +31,16 @@ function PostCard({
   onReply,
   onClick,
   isSelected = false,
-  isReply = false,
 }: {
   post: Post
   onReply: () => void
   onClick?: () => void
   isSelected?: boolean
-  isReply?: boolean
 }) {
   return (
     <div
       onClick={onClick}
-      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${
-        isReply ? "border-l border-gray-700" : ""
-      } ${isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""}`}
+      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""}`}
     >
       <div className="flex gap-3">
         <div className="flex-shrink-0">
@@ -277,12 +272,11 @@ function ThreadPanel({
 
         {/* Render replies with linear indent */}
         {allReplies.map((reply) => (
-          <div key={reply._id} className="pl-6 border-l border-gray-800 ml-4">
+          <div key={reply._id}>
             <PostCard
               post={reply}
               onReply={() => setReplyingTo(reply)}
               onClick={() => onSelectPost(reply._id)}
-              isReply
               isSelected={reply._id === postId}
             />
             {replyingTo?._id === reply._id && (
@@ -292,11 +286,13 @@ function ThreadPanel({
                 onSubmit={handleReply}
               />
             )}
-            <SessionsByPost
-              postId={reply._id}
-              onCodingAgentSessionSelect={onCodingAgentSessionSelect}
-              onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
-            />
+            <div className="px-4">
+              <SessionsByPost
+                postId={reply._id}
+                onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+                onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -473,8 +469,6 @@ function HomeContent() {
                     onRepoSelect={setSelectedRepo}
                   />
                 )}
-                {/* Connect X account button */}
-                {user && <ConnectXButton />}
               </div>
               <button
                 disabled={!content.trim() || isSubmitting}
