@@ -323,6 +323,14 @@ auth: none
 cert: false
 EOF`);
 
+  // Create code-server user settings to disable welcome screen
+  await instance.exec("mkdir -p /root/.code-server/User");
+  await instance.exec(`cat > /root/.code-server/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none"
+}
+EOF`);
+
   // Create code-server startup script
   await instance.exec(`cat > /root/start-code-server.sh << 'EOF'
 #!/bin/bash

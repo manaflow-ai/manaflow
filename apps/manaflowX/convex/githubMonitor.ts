@@ -315,7 +315,7 @@ async function runAlgorithm(ctx: any): Promise<{
 
   // Have Grok decide what to do
   const result = await generateObject({
-    model: xai("grok-3-fast"),
+    model: xai("grok-4-1-fast-reasoning"),
     schema: z.object({
       action: z.enum(["post_pr", "solve_issue"]).describe("What action to take"),
       selectedPRIndex: z.number().optional().describe("If action is post_pr, the index of the PR to post about"),

@@ -191,7 +191,7 @@ Please analyze this issue and implement a solution.${repoConfig ? " When done, c
     console.log(`[issue-solver] Created post ${postId}, starting workflow`);
 
     // Start the workflow - pass issue ID so it can be closed when done
-    const workflowId = await start(handleReplyToPost, [postId, taskMessage, repoConfig, issue._id]);
+    const workflowId = await start(handleReplyToPost, [postId, taskMessage, repoConfig, undefined, issue._id]);
 
     console.log(`[issue-solver] Started workflow ${workflowId} for issue ${issue.shortId}`);
   } catch (error) {

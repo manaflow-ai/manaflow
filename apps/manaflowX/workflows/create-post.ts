@@ -4,7 +4,7 @@ import { streamText, stepCountIs } from "ai"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "../convex/_generated/api"
 import { Id } from "../convex/_generated/dataModel"
-import { issueTools, codingAgentTools, browserAgentTools } from "./tools"
+import { issueTools, codingAgentTools, browserAgentTools, prScreenshoterTools } from "./tools"
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
@@ -18,6 +18,12 @@ export interface RepoConfig {
     maintenanceScript: string;
     devScript: string;
   };
+}
+
+// Thread context for replies
+export interface ThreadContext {
+  rootPost: { content: string; author: string }
+  replies: Array<{ content: string; author: string }>
 }
 
 type TurnPart = {
@@ -48,6 +54,7 @@ export async function handleReplyToPost(
   postId: string,
   content: string,
   repoConfig?: RepoConfig,
+  threadContext?: ThreadContext,
   issueId?: string
 ) {
   "use workflow"
@@ -56,6 +63,7 @@ export async function handleReplyToPost(
     id: postId as Id<"posts">,
     content,
     repoConfig,
+    threadContext,
   })
 
   // If this was triggered for an issue, mark it as closed
@@ -90,6 +98,7 @@ async function generateStreamingReply(post: {
   id: Id<"posts">
   content: string
   repoConfig?: RepoConfig
+  threadContext?: ThreadContext
 }) {
   "use step"
   if (!post.content.trim()) {
@@ -98,6 +107,7 @@ async function generateStreamingReply(post: {
 
   console.log(`Generating streaming reply for post: ${post.id}`)
   console.log(`Repo config:`, post.repoConfig)
+  console.log(`Thread context:`, post.threadContext ? "present" : "none")
 
   // Create a session to track this AI conversation
   const sessionId = await convex.mutation(api.sessions.createSession, {
@@ -133,12 +143,13 @@ async function generateStreamingReply(post: {
     status: "streaming",
   })
 
-  // Issue tools + coding agent tools + browser agent tools
+  // Issue tools + coding agent tools + browser agent tools + PR screenshoter
   // Don't let the agent create posts (it would create duplicates)
   const allTools = {
     ...issueTools,
     ...codingAgentTools,
     ...browserAgentTools,
+    ...prScreenshoterTools,
   }
 
   let currentParts: TurnPart[] = []
@@ -154,6 +165,18 @@ When delegating to the coding agent, ALWAYS include the repo parameter:
 - branch: "${post.repoConfig.branch}"
 ${post.repoConfig.installationId ? `- installationId: ${post.repoConfig.installationId}` : ""}`
     : ""
+
+  // Build thread context for conversation history
+  let threadContextStr = ""
+  if (post.threadContext) {
+    const { rootPost, replies } = post.threadContext
+    threadContextStr = `\n\n--- CONVERSATION HISTORY ---\n`
+    threadContextStr += `[${rootPost.author}]: ${rootPost.content}\n`
+    for (const reply of replies) {
+      threadContextStr += `[${reply.author}]: ${reply.content}\n`
+    }
+    threadContextStr += `--- END CONVERSATION HISTORY ---\n\nThe user is continuing this conversation with:`
+  }
 
   // Build scripts context for the coding agent
   const scriptsContext = post.repoConfig?.scripts
@@ -176,8 +199,9 @@ ${post.repoConfig.scripts.maintenanceScript}
 
   // Build prompt - if repo is selected, automatically delegate to coding agent
   const autoDelegate = post.repoConfig !== undefined
-  const prompt = autoDelegate
-    ? `The user has selected the repository "${post.repoConfig!.fullName}" and sent this message:
+  let prompt: string
+  if (autoDelegate) {
+    prompt = `The user has selected the repository "${post.repoConfig!.fullName}" and sent this message:
 
 ${post.content}
 
@@ -186,12 +210,16 @@ Since a repository is selected, delegate this task to the coding agent immediate
 - context: Include any relevant context about the task${scriptsContext ? ". IMPORTANT: Include the workspace scripts context below so the coding agent knows how to set up and run the dev environment." : ""}
 - agent: "build" (for coding tasks)
 - repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }${scriptsContext}`
-    : `Respond to this post:\n\n${post.content}`
+  } else if (post.threadContext) {
+    prompt = `${threadContextStr}\n\n${post.content}\n\nRespond to this message in the context of the conversation above.`
+  } else {
+    prompt = `Respond to this post:\n\n${post.content}`
+  }
 
   try {
     const result = streamText({
       model: xai("grok-4-1-fast-non-reasoning"),
-      system: `You are an AI assistant with access to an issue tracking system, a post activity stream, coding agents, and browser automation.
+      system: `You are an AI assistant with access to an issue tracking system, a post activity stream, coding agents, browser automation, and PR review tools.
 
 You can:
 - Create, update, close, and search issues
@@ -200,11 +228,13 @@ You can:
 - Create and reply to posts in the activity stream
 - Delegate coding tasks to a remote coding agent (use delegateToCodingAgent)
 - Delegate browser automation tasks to a browser agent (use delegateToBrowserAgent)
+- Review PRs for UI changes and capture screenshots (use pullRequestScreenshoter)
 
 When users mention bugs, features, tasks, or work items, consider creating or updating issues.
 When users ask about status or progress, use the issue tools to look up information.
 When users ask you to write code, run tests, modify files, or perform any coding task, use the delegateToCodingAgent tool.
 When users ask you to interact with websites, scrape data, fill forms, or perform browser automation, use the delegateToBrowserAgent tool.
+When users ask you to review a PR for UI changes or take screenshots of a PR, use the pullRequestScreenshoter tool.
 
 You can chain tools together. For example, after delegateToCodingAgent returns a morphInstanceId and path, you can pass those to delegateToBrowserAgent to run browser tests on the same VM.
 
@@ -343,6 +373,21 @@ Keep responses concise and helpful.${repoContext}`,
                   toolCallId: chunk.toolCallId,
                   parentSessionId: sessionId,
                   task: input.task,
+                },
+              )
+            }
+          }
+
+          // Register PR screenshoter tool calls for immediate UI linking
+          if (chunk.toolName === "pullRequestScreenshoter") {
+            const input = chunk.input as { pullRequestUrl?: string }
+            if (input.pullRequestUrl) {
+              await convex.mutation(
+                api.codingAgent.registerCodingAgentToolCall,
+                {
+                  toolCallId: chunk.toolCallId,
+                  parentSessionId: sessionId,
+                  task: `PR Screenshot Review: ${input.pullRequestUrl}`,
                 },
               )
             }

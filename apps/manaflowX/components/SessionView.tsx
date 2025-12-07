@@ -506,7 +506,7 @@ export function SessionView({
   const sortedTurns = [...turns].sort((a, b) => a.order - b.order);
 
   return (
-    <div className="border border-gray-800 rounded-lg overflow-hidden">
+    <div className="border border-gray-800 rounded-lg overflow-hidden mb-4">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="bg-gray-900 px-4 py-2 border-b border-gray-800 flex justify-between items-center w-full hover:bg-gray-800 transition-colors"

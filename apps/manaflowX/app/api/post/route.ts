@@ -3,6 +3,7 @@ import { handleReplyToPost } from "@/workflows/create-post";
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
+import { Id } from "@/convex/_generated/dataModel";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
@@ -18,14 +19,22 @@ export interface RepoConfig {
   };
 }
 
+// Thread context for replies
+export interface ThreadContext {
+  rootPost: { content: string; author: string };
+  replies: Array<{ content: string; author: string }>;
+}
+
 export async function POST(request: Request) {
-  const { content, repo: repoFullName } = (await request.json()) as {
+  const { content, repo: repoFullName, replyTo } = (await request.json()) as {
     content: string;
     repo?: string | null;
+    replyTo?: string | null;
   };
 
   console.log("[API] Creating post and starting reply workflow");
   console.log("[API] Selected repo:", repoFullName);
+  console.log("[API] Reply to:", replyTo);
 
   try {
     // Fetch full repo details if a repo is selected
@@ -52,17 +61,34 @@ export async function POST(request: Request) {
       }
     }
 
-    // First create the user's post
+    // Fetch thread context if this is a reply
+    let threadContext: ThreadContext | undefined;
+    if (replyTo) {
+      console.log("[API] Fetching thread context for reply");
+      const thread = await convex.query(api.posts.getPostThread, {
+        postId: replyTo as Id<"posts">,
+      });
+      if (thread) {
+        threadContext = {
+          rootPost: { content: thread.root.content, author: thread.root.author },
+          replies: thread.replies.map((r) => ({ content: r.content, author: r.author })),
+        };
+        console.log("[API] Thread context:", threadContext);
+      }
+    }
+
+    // Create the user's post
     const postId = await convex.mutation(api.posts.createPost, {
       content,
       author: "User",
+      replyTo: replyTo ? (replyTo as Id<"posts">) : undefined,
     });
 
     console.log("[API] Created post:", postId);
 
-    // Then start the workflow to generate an AI reply
-    // Pass repo config to the workflow
-    const result = await start(handleReplyToPost, [postId, content, repoConfig]);
+    // Start the workflow to generate an AI reply
+    // Pass repo config and thread context to the workflow
+    const result = await start(handleReplyToPost, [postId, content, repoConfig, threadContext]);
     console.log("[API] Workflow started:", result);
 
     return NextResponse.json({

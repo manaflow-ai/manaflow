@@ -1,9 +1,8 @@
 "use client"
 
-import { useQuery, useMutation } from "convex/react"
+import { useQuery } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
-import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
@@ -51,13 +50,7 @@ function PostCard({
       <div className="flex gap-3">
         <div className="flex-shrink-0">
           {post.author === "Grok" ? (
-            <Image
-              src="/image.png"
-              alt="Grok"
-              width={40}
-              height={40}
-              className="rounded-full"
-            />
+            <GrokIcon className="w-10 h-10" />
           ) : (
             <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
               {post.author[0].toUpperCase()}
@@ -184,15 +177,23 @@ function ThreadPanel({
   onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId })
-  const createPost = useMutation(api.posts.createPost)
   const [replyingTo, setReplyingTo] = useState<Post | null>(null)
 
   const handleReply = async (content: string) => {
     if (!replyingTo) return
-    await createPost({
-      content,
-      replyTo: replyingTo._id,
-    })
+    try {
+      // Call the workflow API to create reply post and generate AI reply
+      const response = await fetch("/api/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, replyTo: replyingTo._id }),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to create reply")
+      }
+    } catch (error) {
+      console.error("Failed to create reply:", error)
+    }
     setReplyingTo(null)
   }
 
@@ -214,38 +215,22 @@ function ThreadPanel({
     repliesByParent.get(parentId)!.push(reply)
   }
 
-  const renderReplies = (parentId: string, depth: number): React.ReactNode => {
+  // Flatten all replies into a single list for linear display
+  const flattenReplies = (parentId: string): Post[] => {
     const replies = repliesByParent.get(parentId) ?? []
-    if (replies.length === 0) return null
-
-    return (
-      <div className={depth > 0 ? "pl-4 border-l border-gray-800" : ""}>
-        {replies.map((reply) => (
-          <div key={reply._id}>
-            <PostCard
-              post={reply}
-              onReply={() => setReplyingTo(reply)}
-              onClick={() => onSelectPost(reply._id)}
-              isReply
-              isSelected={reply._id === postId}
-            />
-            {replyingTo?._id === reply._id && (
-              <ReplyComposer
-                replyingTo={reply}
-                onCancel={() => setReplyingTo(null)}
-                onSubmit={handleReply}
-              />
-            )}
-            {renderReplies(reply._id.toString(), depth + 1)}
-          </div>
-        ))}
-      </div>
-    )
+    const result: Post[] = []
+    for (const reply of replies) {
+      result.push(reply)
+      result.push(...flattenReplies(reply._id.toString()))
+    }
+    return result
   }
+
+  const allReplies = flattenReplies(thread.root._id.toString())
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
+      <div className="h-[60px] px-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
         <h2 className="text-lg font-bold">Thread</h2>
         <button
           onClick={onClose}
@@ -281,17 +266,39 @@ function ThreadPanel({
           />
         )}
 
-        {/* Show AI sessions for the focused post */}
+        {/* Show AI sessions for the root post */}
         <div className="px-4">
           <SessionsByPost
-            postId={postId}
+            postId={thread.root._id}
             onCodingAgentSessionSelect={onCodingAgentSessionSelect}
             onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
           />
         </div>
 
-        {/* Render nested replies */}
-        {renderReplies(thread.root._id.toString(), 0)}
+        {/* Render replies with linear indent */}
+        {allReplies.map((reply) => (
+          <div key={reply._id} className="pl-6 border-l border-gray-800 ml-4">
+            <PostCard
+              post={reply}
+              onReply={() => setReplyingTo(reply)}
+              onClick={() => onSelectPost(reply._id)}
+              isReply
+              isSelected={reply._id === postId}
+            />
+            {replyingTo?._id === reply._id && (
+              <ReplyComposer
+                replyingTo={reply}
+                onCancel={() => setReplyingTo(null)}
+                onSubmit={handleReply}
+              />
+            )}
+            <SessionsByPost
+              postId={reply._id}
+              onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+              onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
+            />
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -422,7 +429,7 @@ function HomeContent() {
         <main
           className={`w-full max-w-[600px] border-x border-gray-800 min-h-screen`}
         >
-          <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 p-4 flex justify-between items-center">
+          <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 h-[60px] px-4 flex justify-between items-center">
             <h1 className="text-xl font-bold">Feed</h1>
             {!user ? (
               <Link
