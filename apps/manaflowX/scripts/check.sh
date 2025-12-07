@@ -1,3 +1,4 @@
 #!/bin/bash
-bunx tsgo & bun lint &
+(bunx tsgo && echo "✓ tsc passed") &
+(bun lint && echo "✓ lint passed") &
 wait
