@@ -170,7 +170,6 @@ function getLatestSnapshotId(): string {
 // Get or spawn a Morph VM instance with browser capabilities
 async function getOrSpawnBrowserVM(options?: {
   vmInstanceId?: string; // If provided, connect to existing VM instead of spawning new one
-  onReady?: (instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> }) => Promise<void>;
 }): Promise<{
   instanceId: string;
   url: string;
@@ -203,11 +202,6 @@ async function getOrSpawnBrowserVM(options?: {
 
     console.log(`[browser-agent] Waiting for instance to be ready...`);
     await instance.waitUntilReady(60);
-
-    // Run onReady callback if provided (only for new VMs)
-    if (options?.onReady) {
-      await options.onReady(instance);
-    }
   }
 
   // Wait for Chrome DevTools Protocol to be ready
@@ -357,14 +351,14 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
     });
 
     try {
-      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE;
+      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
 
       // Generate JWT secret for this invocation
       const jwtSecretBytes = crypto.getRandomValues(new Uint8Array(32));
       const jwtSecret = base64urlEncode(jwtSecretBytes);
 
       if (!convexSiteUrl) {
-        console.warn("[browser-agent] NEXT_PUBLIC_CONVEX_SITE not set, streaming to Convex disabled");
+        console.warn("[browser-agent] NEXT_PUBLIC_CONVEX_SITE_URL not set, streaming to Convex disabled");
       }
 
       // Update progress: Creating session
@@ -372,10 +366,10 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
 
       // Create a session in Convex
       convexSessionId = await convex.mutation(api.codingAgent.createCodingAgentSession, {
-        toolCallId: `browser_${Date.now()}`,
+        toolCallId, // Use the actual toolCallId from AI SDK for proper linking
         task,
         context,
-        agent: "build",
+        agent: "browser",
         jwtSecret,
       });
       console.log(`[browser-agent] Created Convex session: ${convexSessionId}`);
@@ -386,33 +380,36 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
         sessionId: convexSessionId,
       });
 
-      // Get or spawn VM with JWT config
+      // Get or spawn VM
       vm = await getOrSpawnBrowserVM({
         vmInstanceId,
-        onReady: async (instance) => {
-          // Only write JWT config for new VMs
-          if (jwtSecret && convexSiteUrl && convexSessionId) {
-            const now = Math.floor(Date.now() / 1000);
-            const jwt = await createJWT(
-              {
-                sessionId: convexSessionId,
-                iat: now,
-                exp: now + 3600,
-              },
-              jwtSecret
-            );
-
-            const config = {
-              convexUrl: `${convexSiteUrl}/opencode_hook`,
-              jwt,
-            };
-
-            const escapedConfig = JSON.stringify(config).replace(/'/g, "'\"'\"'");
-            await instance.exec(`mkdir -p /root/.xagi && echo '${escapedConfig}' > /root/.xagi/config.json`);
-            console.log(`[browser-agent] Wrote JWT config to VM`);
-          }
-        },
       });
+
+      // Write JWT config to VM (works for both new and existing VMs)
+      if (jwtSecret && convexSiteUrl && convexSessionId) {
+        const apiKey = process.env.MORPH_API_KEY!;
+        const client = new MorphCloudClient({ apiKey });
+        const instance = await client.instances.get({ instanceId: vm.instanceId });
+
+        const now = Math.floor(Date.now() / 1000);
+        const jwt = await createJWT(
+          {
+            sessionId: convexSessionId,
+            iat: now,
+            exp: now + 3600,
+          },
+          jwtSecret
+        );
+
+        const config = {
+          convexUrl: `${convexSiteUrl}/opencode_hook`,
+          jwt,
+        };
+
+        const escapedConfig = JSON.stringify(config).replace(/'/g, "'\"'\"'");
+        await instance.exec(`mkdir -p /root/.xagi && echo '${escapedConfig}' > /root/.xagi/config.json`);
+        console.log(`[browser-agent] Wrote JWT config to VM`);
+      }
 
       // Update session with the Morph instance ID
       await convex.mutation(api.codingAgent.updateCodingAgentSessionInstance, {

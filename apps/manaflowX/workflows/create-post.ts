@@ -288,6 +288,21 @@ Keep responses concise and helpful.${repoContext}`,
               )
             }
           }
+
+          // Register browser agent tool calls for immediate UI linking
+          if (chunk.toolName === "delegateToBrowserAgent") {
+            const input = chunk.input as { task?: string }
+            if (input.task) {
+              await convex.mutation(
+                api.codingAgent.registerCodingAgentToolCall,
+                {
+                  toolCallId: chunk.toolCallId,
+                  parentSessionId: sessionId,
+                  task: input.task,
+                },
+              )
+            }
+          }
         } else if (chunk.type === "tool-result") {
           // Find the tool call part and update it
           const toolCallIndex = currentParts.findIndex(

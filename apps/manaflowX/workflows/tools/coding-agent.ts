@@ -449,7 +449,7 @@ The agent will complete the task autonomously and return the results.`,
 
     try {
       // Get required environment variables
-      const convexSiteUrl = process.env.NEXT_PUBLIC_NEXT_PUBLIC_CONVEX_SITE;
+      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
 
       // Generate a random JWT secret for this invocation
       // This secret will be written to the VM and used by the plugin
@@ -457,7 +457,7 @@ The agent will complete the task autonomously and return the results.`,
       const jwtSecret = base64urlEncode(jwtSecretBytes);
 
       if (!convexSiteUrl) {
-        console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE not set, streaming to Convex disabled");
+        console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE_URL not set, streaming to Convex disabled");
       }
 
       // Update progress: Creating session (non-blocking)

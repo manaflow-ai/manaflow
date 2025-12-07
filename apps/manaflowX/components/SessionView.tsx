@@ -53,6 +53,122 @@ const stageLabels: Record<string, string> = {
   error: "Error",
 };
 
+// Separate component for browser agent tool calls
+function BrowserAgentToolCallPart({
+  part,
+  onBrowserAgentClick,
+}: {
+  part: Part;
+  onBrowserAgentClick?: (sessionId: Id<"sessions"> | null) => void;
+}) {
+  // Extract task from toolInput
+  const input = part.toolInput as { task?: string } | undefined;
+  const task = input?.task;
+
+  // Get session ID from progress or query by task
+  const progressSessionId = part.toolProgress?.sessionId as Id<"sessions"> | undefined;
+
+  // Query for the browser agent session directly by task text (fallback)
+  const queriedSessionId = useQuery(
+    api.codingAgent.getCodingAgentSessionByTask,
+    !progressSessionId && task ? { task } : "skip"
+  );
+
+  // Also check toolOutput for backwards compatibility (when tool completes)
+  let outputSessionId: Id<"sessions"> | null = null;
+  if (part.toolOutput) {
+    try {
+      const output = JSON.parse(part.toolOutput);
+      if (output.convexSessionId) {
+        outputSessionId = output.convexSessionId as Id<"sessions">;
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }
+
+  const sessionId = progressSessionId ?? queriedSessionId ?? outputSessionId;
+  const progress = part.toolProgress;
+
+  // Can click as soon as we have a sessionId
+  const canClick = !!sessionId;
+
+  return (
+    <div
+      className={`my-2 bg-gray-800 rounded-lg p-3 pr-4 border border-cyan-600 hover:border-cyan-500 ${
+        canClick ? "cursor-pointer" : ""
+      }`}
+      onClick={() => {
+        if (sessionId && onBrowserAgentClick) {
+          onBrowserAgentClick(sessionId);
+        }
+      }}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <div
+          className={`w-2 h-2 rounded-full ${
+            part.toolStatus === "pending"
+              ? "bg-yellow-500"
+              : part.toolStatus === "running"
+                ? "bg-blue-500 animate-pulse"
+                : part.toolStatus === "completed"
+                  ? "bg-green-500"
+                  : "bg-red-500"
+          }`}
+        />
+        <span className="text-sm font-mono text-cyan-400">{part.toolName}</span>
+        <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+        </svg>
+        <span className="text-xs text-gray-500">
+          {progress ? (
+            <span className="flex items-center gap-1">
+              {part.toolStatus === "running" && (
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+              )}
+              {stageLabels[progress.stage] || progress.stage}
+            </span>
+          ) : (
+            <>
+              {part.toolStatus === "pending" && "Preparing..."}
+              {part.toolStatus === "running" && "Running..."}
+              {part.toolStatus === "completed" && "Completed"}
+              {part.toolStatus === "error" && "Failed"}
+            </>
+          )}
+        </span>
+        {canClick && (
+          <span className="ml-auto text-xs text-cyan-400 flex items-center gap-1">
+            View session
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </span>
+        )}
+      </div>
+      {progress && progress.message && part.toolStatus === "running" && (
+        <div className="text-xs text-gray-400 mb-2 flex items-center gap-2">
+          <span className="w-1 h-1 bg-blue-400 rounded-full animate-pulse" />
+          {progress.message}
+        </div>
+      )}
+      {part.toolInput !== undefined && (
+        <details className="text-xs">
+          <summary className="text-gray-500 cursor-pointer hover:text-gray-300">Input</summary>
+          <pre className="mt-1 p-2 bg-gray-900 rounded overflow-x-auto text-gray-300">
+            {JSON.stringify(part.toolInput, null, 2)}
+          </pre>
+        </details>
+      )}
+      {canClick && (
+        <div className="text-xs mt-2 text-gray-400">
+          Click to view session
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Separate component for coding agent tool calls that queries for the session
 function CodingAgentToolCallPart({
   part,
@@ -163,7 +279,15 @@ function CodingAgentToolCallPart({
   );
 }
 
-function PartRenderer({ part, onCodingAgentClick }: { part: Part; onCodingAgentClick?: (sessionId: Id<"sessions">) => void }) {
+function PartRenderer({
+  part,
+  onCodingAgentClick,
+  onBrowserAgentClick,
+}: {
+  part: Part;
+  onCodingAgentClick?: (sessionId: Id<"sessions">) => void;
+  onBrowserAgentClick?: (sessionId: Id<"sessions"> | null) => void;
+}) {
   switch (part.type) {
     case "text":
       return (
@@ -192,6 +316,11 @@ function PartRenderer({ part, onCodingAgentClick }: { part: Part; onCodingAgentC
       // Use specialized component for delegateToCodingAgent
       if (part.toolName === "delegateToCodingAgent") {
         return <CodingAgentToolCallPart part={part} onCodingAgentClick={onCodingAgentClick} />;
+      }
+
+      // Use specialized component for delegateToBrowserAgent
+      if (part.toolName === "delegateToBrowserAgent") {
+        return <BrowserAgentToolCallPart part={part} onBrowserAgentClick={onBrowserAgentClick} />;
       }
 
       // Regular tool call rendering
@@ -280,7 +409,15 @@ function PartRenderer({ part, onCodingAgentClick }: { part: Part; onCodingAgentC
   }
 }
 
-function TurnView({ turn, onCodingAgentClick }: { turn: Turn; onCodingAgentClick?: (sessionId: Id<"sessions">) => void }) {
+function TurnView({
+  turn,
+  onCodingAgentClick,
+  onBrowserAgentClick,
+}: {
+  turn: Turn;
+  onCodingAgentClick?: (sessionId: Id<"sessions">) => void;
+  onBrowserAgentClick?: (sessionId: Id<"sessions"> | null) => void;
+}) {
   const isUser = turn.role === "user";
   const isAssistant = turn.role === "assistant";
   const isStreaming = turn.status === "streaming";
@@ -317,7 +454,12 @@ function TurnView({ turn, onCodingAgentClick }: { turn: Turn; onCodingAgentClick
           </div>
           <div className="text-gray-200">
             {turn.parts.map((part, idx) => (
-              <PartRenderer key={idx} part={part} onCodingAgentClick={onCodingAgentClick} />
+              <PartRenderer
+                key={idx}
+                part={part}
+                onCodingAgentClick={onCodingAgentClick}
+                onBrowserAgentClick={onBrowserAgentClick}
+              />
             ))}
             {turn.parts.length === 0 && isStreaming && (
               <span className="text-gray-500 flex items-center gap-2">
@@ -340,9 +482,11 @@ function TurnView({ turn, onCodingAgentClick }: { turn: Turn; onCodingAgentClick
 export function SessionView({
   sessionId,
   onCodingAgentSessionSelect,
+  onBrowserAgentSessionSelect,
 }: {
   sessionId: Id<"sessions">;
   onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void;
+  onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void;
 }) {
   const data = useQuery(api.sessions.getSessionWithTurns, { sessionId });
   const [isExpanded, setIsExpanded] = useState(true);
@@ -404,6 +548,7 @@ export function SessionView({
               key={turn._id}
               turn={turn as Turn}
               onCodingAgentClick={onCodingAgentSessionSelect}
+              onBrowserAgentClick={onBrowserAgentSessionSelect}
             />
           ))}
         </div>
@@ -415,9 +560,11 @@ export function SessionView({
 export function SessionsByPost({
   postId,
   onCodingAgentSessionSelect,
+  onBrowserAgentSessionSelect,
 }: {
   postId: Id<"posts">;
   onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void;
+  onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void;
 }) {
   const sessions = useQuery(api.sessions.listSessionsByPost, { postId });
 
@@ -432,6 +579,7 @@ export function SessionsByPost({
           key={session._id}
           sessionId={session._id}
           onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+          onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
         />
       ))}
     </div>

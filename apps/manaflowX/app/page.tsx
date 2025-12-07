@@ -10,6 +10,7 @@ import { useState, useCallback, Suspense } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
+import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
 import { ConnectXButton } from "@/components/ConnectXButton"
 import { GrokIcon } from "@/components/GrokIcon"
@@ -169,11 +170,13 @@ function ThreadPanel({
   onClose,
   onSelectPost,
   onCodingAgentSessionSelect,
+  onBrowserAgentSessionSelect,
 }: {
   postId: Id<"posts">
   onClose: () => void
   onSelectPost: (postId: Id<"posts">) => void
   onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
+  onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId })
   const createPost = useMutation(api.posts.createPost)
@@ -278,6 +281,7 @@ function ThreadPanel({
           <SessionsByPost
             postId={postId}
             onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+            onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
           />
         </div>
 
@@ -296,6 +300,8 @@ function HomeContent() {
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedCodingAgentSession, setSelectedCodingAgentSession] =
+    useState<Id<"sessions"> | null>(null)
+  const [selectedBrowserAgentSession, setSelectedBrowserAgentSession] =
     useState<Id<"sessions"> | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
@@ -451,16 +457,27 @@ function HomeContent() {
               onClose={() => setSelectedThread(null)}
               onSelectPost={setSelectedThread}
               onCodingAgentSessionSelect={setSelectedCodingAgentSession}
+              onBrowserAgentSessionSelect={setSelectedBrowserAgentSession}
             />
           </aside>
         )}
 
         {/* Coding Agent Session Panel - Third Column */}
-        {selectedCodingAgentSession && (
+        {selectedCodingAgentSession && !selectedBrowserAgentSession && (
           <aside className="w-[500px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <CodingAgentSession
               sessionId={selectedCodingAgentSession}
               onClose={() => setSelectedCodingAgentSession(null)}
+            />
+          </aside>
+        )}
+
+        {/* Browser Agent Session Panel - Third Column (takes precedence over coding agent) */}
+        {selectedBrowserAgentSession && (
+          <aside className="w-[600px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+            <BrowserAgentSession
+              sessionId={selectedBrowserAgentSession}
+              onClose={() => setSelectedBrowserAgentSession(null)}
             />
           </aside>
         )}
