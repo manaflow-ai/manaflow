@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --ignore-pattern \"convex/_generated/**\"",
-    "workflow:web": "npx workflow web"
+    "workflow:web": "bunx workflow web"
   },
   "dependencies": {
     "@stackframe/stack": "^2.8.54",
