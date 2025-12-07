@@ -301,6 +301,37 @@ EOF`);
   console.log("Global install stdout:", globalInstall.stdout);
   if (globalInstall.stderr) console.log("Global install stderr:", globalInstall.stderr);
 
+  // Install code-server (VS Code for the web)
+  console.log("Installing code-server...");
+  const codeServerInstall = await instance.exec(
+    "curl -fsSL https://code-server.dev/install.sh | sh",
+    { timeout: 300000 }
+  );
+  console.log("code-server install stdout:", codeServerInstall.stdout);
+  if (codeServerInstall.stderr) console.log("code-server install stderr:", codeServerInstall.stderr);
+
+  // Verify code-server installation
+  const codeServerVerify = await instance.exec("code-server --version");
+  console.log("code-server version:", codeServerVerify.stdout);
+
+  // Create code-server config directory and config file (no auth for internal use)
+  console.log("Configuring code-server...");
+  await instance.exec("mkdir -p /root/.config/code-server");
+  await instance.exec(`cat > /root/.config/code-server/config.yaml << 'EOF'
+bind-addr: 0.0.0.0:8080
+auth: none
+cert: false
+EOF`);
+
+  // Create code-server startup script
+  await instance.exec(`cat > /root/start-code-server.sh << 'EOF'
+#!/bin/bash
+nohup code-server --user-data-dir /root/.code-server --disable-workspace-trust /root/workspace > /root/code-server.log 2>&1 &
+echo $! > /root/code-server.pid
+echo "code-server started on port 8080"
+EOF`);
+  await instance.exec("chmod +x /root/start-code-server.sh");
+
   // Verify chrome-devtools-mcp installation
   const cdmVerify = await instance.exec("which chrome-devtools-mcp || bun pm ls -g | grep chrome-devtools");
   console.log("Chrome DevTools MCP verify:", cdmVerify.stdout);
@@ -378,6 +409,11 @@ EOF`);
   // Start VNC and noVNC
   console.log("Starting VNC and noVNC...");
   await instance.exec("bash -c 'nohup /root/start-vnc.sh > /root/vnc.log 2>&1 &'");
+
+  // Start code-server
+  console.log("Starting code-server...");
+  await instance.exec("bash -c '/root/start-code-server.sh'");
+
   // Give VNC and Chrome time to start (Chrome takes a while)
   console.log("Waiting for VNC and Chrome to start...");
   await new Promise((resolve) => setTimeout(resolve, 15000));
@@ -438,6 +474,13 @@ EOF`);
   const novncCheck = await instance.exec("curl -s -o /dev/null -w '%{http_code}' http://localhost:6080/");
   console.log("noVNC HTTP status:", novncCheck.stdout);
 
+  // Verify code-server is running
+  console.log("Verifying code-server is running...");
+  const codeServerCheck = await instance.exec("ps aux | grep 'code-server' | grep -v grep | head -1");
+  console.log("code-server process:", codeServerCheck.stdout);
+  const codeServerHttpCheck = await instance.exec("curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/");
+  console.log("code-server HTTP status:", codeServerHttpCheck.stdout);
+
   // Check server log
   const logResult = await instance.exec("cat /root/server.log");
   console.log("Server log:", logResult.stdout);
@@ -456,6 +499,13 @@ EOF`);
   console.log(`noVNC Service exposed!`);
   console.log(`noVNC URL: ${vncService.url}`);
   console.log(`noVNC service name: ${vncService.name}`);
+
+  // Expose port 8080 (code-server)
+  console.log("Exposing port 8080 for code-server...");
+  const codeServerService = await instance.exposeHttpService("code-server", 8080);
+  console.log(`code-server Service exposed!`);
+  console.log(`code-server URL: ${codeServerService.url}`);
+  console.log(`code-server service name: ${codeServerService.name}`);
 
   // Create snapshot
   console.log("Creating snapshot of running instance...");

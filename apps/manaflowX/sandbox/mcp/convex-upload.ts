@@ -298,11 +298,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 **Storage ID:** ${result.storageId}
 **Filename:** ${result.filename}
 
-**IMPORTANT:** You MUST include this image in your response to the user by using the following markdown:
+You may include this image in your response using markdown:
 
 ${markdownImage}
 
-Copy the markdown above into your response so the user can see the image.`,
+Note: Only convex.cloud URLs can be rendered as images. External URLs will not display - always upload screenshots first to get a convex.cloud URL.`,
         },
       ],
     };
