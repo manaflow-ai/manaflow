@@ -357,11 +357,9 @@ EOF`);
   // Start VNC and noVNC
   console.log("Starting VNC and noVNC...");
   await instance.exec("bash -c 'nohup /root/start-vnc.sh > /root/vnc.log 2>&1 &'");
-  // Give VNC time to start
-  await new Promise((resolve) => setTimeout(resolve, 5000));
-
-  // Give servers time to start
-  await new Promise((resolve) => setTimeout(resolve, 10000));
+  // Give VNC and Chrome time to start (Chrome takes a while)
+  console.log("Waiting for VNC and Chrome to start...");
+  await new Promise((resolve) => setTimeout(resolve, 15000));
 
   // Verify server is actually running before proceeding
   console.log("Verifying server is running...");
@@ -394,6 +392,26 @@ EOF`);
   console.log("Verifying VNC is running...");
   const vncCheck = await instance.exec("ps aux | grep -E 'Xtigervnc|websockify' | grep -v grep");
   console.log("VNC processes:", vncCheck.stdout);
+
+  // Verify Chrome is running
+  console.log("Verifying Chrome is running...");
+  const chromeCheck = await instance.exec("ps aux | grep 'chrome' | grep -v grep | head -1");
+  console.log("Chrome process:", chromeCheck.stdout);
+
+  // Verify CDP endpoint is working
+  console.log("Verifying Chrome DevTools Protocol endpoint...");
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const cdpCheck = await instance.exec("curl -s http://127.0.0.1:39382/json/version");
+    if (cdpCheck.stdout && cdpCheck.stdout.includes("Browser")) {
+      console.log("CDP endpoint verified:", cdpCheck.stdout);
+      break;
+    }
+    if (attempt === 9) {
+      console.error("CDP endpoint not responding after 10 attempts");
+    }
+    console.log(`CDP not ready, retrying in 2s (attempt ${attempt + 1}/10)...`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
 
   // Verify noVNC responds
   const novncCheck = await instance.exec("curl -s -o /dev/null -w '%{http_code}' http://localhost:6080/");
