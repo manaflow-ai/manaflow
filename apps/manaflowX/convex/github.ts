@@ -26,6 +26,7 @@ export const getRepoWithInstallation = query({
       gitRemote: repo.gitRemote,
       defaultBranch: repo.defaultBranch,
       installationId,
+      scripts: repo.scripts,
     };
   },
 });

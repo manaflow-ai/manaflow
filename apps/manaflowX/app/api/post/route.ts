@@ -12,6 +12,10 @@ export interface RepoConfig {
   gitRemote: string;
   branch: string;
   installationId?: number;
+  scripts?: {
+    maintenanceScript: string;
+    devScript: string;
+  };
 }
 
 export async function POST(request: Request) {
@@ -40,6 +44,7 @@ export async function POST(request: Request) {
           gitRemote: repo.gitRemote,
           branch: repo.defaultBranch ?? "main",
           installationId: repo.installationId,
+          scripts: repo.scripts,
         };
         console.log("[API] Repo config:", repoConfig);
       } else {
