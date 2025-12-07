@@ -364,6 +364,9 @@ function HomeContent() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
+  // Track optimistically submitted posts to show at top of "for you" feed
+  const [optimisticPostIds, setOptimisticPostIds] = useState<Set<string>>(new Set())
+
   // Track displayed posts to show "new posts" indicator instead of jarring updates
   const [displayedPosts, setDisplayedPosts] = useState<Post[]>([])
   const [newPostsAvailable, setNewPostsAvailable] = useState(0)
@@ -475,10 +478,18 @@ function HomeContent() {
         parentPost: item.parentPost,
       })) ?? []
 
+  // Optimistic posts rendered separately at top of "for you" feed
+  const optimisticPosts: Post[] =
+    feedTab === "for_you"
+      ? recentPosts.filter((post) => optimisticPostIds.has(post._id))
+      : []
+
   // For "for you" tab, use curated items; for "recent" tab, convert to simple items
   const liveItems: CuratedItem[] =
     feedTab === "for_you" && curatedItems.length
-      ? curatedItems
+      ? curatedItems.filter(
+          (item) => !item.post || !optimisticPostIds.has(item.post._id)
+        )
       : recentPosts.map((post) => ({ post, parentPost: null }))
 
   // Handle new posts without scroll jump
@@ -494,17 +505,19 @@ function HomeContent() {
       return
     }
 
-    // Check if there are new posts at the top
+    // Check if there are new posts at the top (excluding optimistic posts)
     const displayedIds = new Set(displayedPosts.map((p) => p._id))
     const newPosts = liveItems.filter(
-      (item) => item.post && !displayedIds.has(item.post._id),
+      (item) =>
+        item.post &&
+        !displayedIds.has(item.post._id) &&
+        !optimisticPostIds.has(item.post._id),
     )
 
     if (newPosts.length > 0) {
-      // Show indicator instead of immediately updating
       setNewPostsAvailable(newPosts.length)
     }
-  }, [liveItems, displayedPosts])
+  }, [liveItems, displayedPosts, optimisticPostIds])
 
   // Reset when tab changes
   useEffect(() => {
@@ -512,6 +525,20 @@ function HomeContent() {
     setDisplayedPosts([])
     setNewPostsAvailable(0)
   }, [feedTab])
+
+  // Remove optimistic posts once they appear in curated feed
+  useEffect(() => {
+    if (optimisticPostIds.size === 0) return
+    const curatedPostIds = new Set(
+      curatedItems.map((item) => item.post?._id).filter(Boolean)
+    )
+    const stillOptimistic = new Set(
+      [...optimisticPostIds].filter((id) => !curatedPostIds.has(id as Id<"posts">))
+    )
+    if (stillOptimistic.size !== optimisticPostIds.size) {
+      setOptimisticPostIds(stillOptimistic)
+    }
+  }, [curatedItems, optimisticPostIds])
 
   const showNewPosts = () => {
     setDisplayedPosts(
@@ -547,9 +574,11 @@ function HomeContent() {
       }
       const result = await response.json()
       setContent("")
-      // Focus on the newly created post
+      // Focus on the newly created post and add to optimistic list for "for you" feed
       if (result.postId) {
         setSelectedThread(result.postId as Id<"posts">)
+        // Add to optimistic posts so it appears at top of "for you" feed
+        setOptimisticPostIds((prev) => new Set([...prev, result.postId]))
       }
     } catch (error) {
       console.error("Failed to create post:", error)
@@ -677,8 +706,19 @@ function HomeContent() {
             </button>
           )}
 
+          {/* Optimistic posts - user's own submissions shown immediately */}
+          {optimisticPosts.map((post) => (
+            <PostCard
+              key={`optimistic-${post._id}`}
+              post={post}
+              onClick={() => setSelectedThread(post._id)}
+              onReply={() => setSelectedThread(post._id)}
+              isSelected={selectedThread === post._id}
+            />
+          ))}
+
           <div>
-            {itemsToShow.length === 0 ? (
+            {itemsToShow.length === 0 && optimisticPosts.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
                 {feedTab === "for_you"
                   ? "No curated posts yet. Check back soon or switch to Recent!"
