@@ -139,10 +139,17 @@ function extractImagesFromMarkdown(text: string | null): string[] {
   let match;
   while ((match = markdownImageRegex.exec(text)) !== null) {
     const url = match[2];
+
+    // Skip Vercel status icons (ready/error/building badges)
+    if (url.includes('vercel.com/static/status/')) {
+      continue;
+    }
+
     // Only include image URLs (filter out non-image links)
     if (url.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i) ||
         url.includes('user-images.githubusercontent.com') ||
-        url.includes('github.com') && url.includes('/assets/')) {
+        url.includes('github.com') && url.includes('/assets/') ||
+        url.includes('.convex.cloud/api/storage/')) {
       images.push(url);
     }
   }
@@ -150,7 +157,14 @@ function extractImagesFromMarkdown(text: string | null): string[] {
   // Match HTML img tags: <img src="url">
   const htmlImageRegex = /<img[^>]+src=["']([^"']+)["']/gi;
   while ((match = htmlImageRegex.exec(text)) !== null) {
-    images.push(match[1]);
+    const url = match[1];
+
+    // Skip Vercel status icons
+    if (url.includes('vercel.com/static/status/')) {
+      continue;
+    }
+
+    images.push(url);
   }
 
   return images;
