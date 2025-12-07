@@ -387,6 +387,8 @@ function HomeContent() {
                       onRepoSelect={setSelectedRepo}
                     />
                   )}
+                  {/* Connect X account button */}
+                  {user && <ConnectXButton />}
                 </div>
                 <button
                   disabled={!content.trim() || isSubmitting}
