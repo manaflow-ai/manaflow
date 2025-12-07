@@ -1,78 +1,151 @@
 import { v } from "convex/values";
-import { query, mutation, action } from "./_generated/server";
-import { api } from "./_generated/api";
+import { mutation, query } from "./_generated/server";
 
-// Write your Convex functions in any file inside this directory (`convex`).
-// See https://docs.convex.dev/functions for more.
+// Example queries and mutations for the xagi schema
+// These are starter examples - expand as needed
 
-// You can read data from the database via a query:
-export const listNumbers = query({
-  // Validators for arguments.
+// Get tasks for the feed
+export const listTasks = query({
   args: {
-    count: v.number(),
+    limit: v.optional(v.number()),
+    status: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_review"),
+        v.literal("approved"),
+        v.literal("rejected"),
+        v.literal("completed")
+      )
+    ),
   },
-
-  // Query implementation.
   handler: async (ctx, args) => {
-    //// Read the database as many times as you need here.
-    //// See https://docs.convex.dev/database/reading-data.
-    const numbers = await ctx.db
-      .query("numbers")
-      // Ordered by _creationTime, return most recent
-      .order("desc")
-      .take(args.count);
+    const limit = args.limit ?? 20;
+
+    let tasksQuery = ctx.db.query("tasks").order("desc");
+
+    if (args.status) {
+      tasksQuery = ctx.db
+        .query("tasks")
+        .withIndex("by_status", (q) => q.eq("status", args.status!))
+        .order("desc");
+    }
+
+    const tasks = await tasksQuery.take(limit);
+
     return {
       viewer: (await ctx.auth.getUserIdentity())?.name ?? null,
-      numbers: numbers.reverse().map((number) => number.value),
+      tasks,
     };
   },
 });
 
-// You can write data to the database via a mutation:
-export const addNumber = mutation({
-  // Validators for arguments.
+// Create a new task
+export const createTask = mutation({
   args: {
-    value: v.number(),
+    title: v.string(),
+    content: v.string(),
+    type: v.union(
+      v.literal("code_review"),
+      v.literal("approval"),
+      v.literal("verification"),
+      v.literal("decision"),
+      v.literal("triage"),
+      v.literal("feedback"),
+      v.literal("discussion")
+    ),
+    priority: v.optional(
+      v.union(
+        v.literal("critical"),
+        v.literal("high"),
+        v.literal("medium"),
+        v.literal("low")
+      )
+    ),
+    parentId: v.optional(v.id("tasks")),
+    tags: v.optional(v.array(v.string())),
   },
-
-  // Mutation implementation.
   handler: async (ctx, args) => {
-    //// Insert or modify documents in the database here.
-    //// Mutations can also read from the database like queries.
-    //// See https://docs.convex.dev/database/writing-data.
+    const now = Date.now();
 
-    const id = await ctx.db.insert("numbers", { value: args.value });
+    // If this is a reply, get parent info for tree structure
+    let depth = 0;
+    let threadRootId = undefined;
+    let path = undefined;
 
-    console.log("Added new document with id:", id);
-    // Optionally, return a value from your mutation.
-    // return id;
+    if (args.parentId) {
+      const parent = await ctx.db.get(args.parentId);
+      if (parent) {
+        depth = parent.depth + 1;
+        threadRootId = parent.threadRootId ?? parent._id;
+        path = parent.path ? `${parent.path}/${args.parentId}` : `${args.parentId}`;
+
+        // Update parent's child count
+        await ctx.db.patch(args.parentId, {
+          childCount: parent.childCount + 1,
+        });
+
+        // Update all ancestors' descendant counts
+        if (threadRootId) {
+          const root = await ctx.db.get(threadRootId);
+          if (root) {
+            await ctx.db.patch(threadRootId, {
+              descendantCount: root.descendantCount + 1,
+            });
+          }
+        }
+      }
+    }
+
+    const taskId = await ctx.db.insert("tasks", {
+      title: args.title,
+      content: args.content,
+      type: args.type,
+      status: "pending",
+      priority: args.priority ?? "medium",
+      urgencyScore: args.priority === "critical" ? 100 : args.priority === "high" ? 75 : 50,
+      parentId: args.parentId,
+      threadRootId,
+      path,
+      depth,
+      childCount: 0,
+      descendantCount: 0,
+      tags: args.tags ?? [],
+      attachments: [],
+      replyCount: 0,
+      reactionCount: 0,
+      viewCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return taskId;
   },
 });
 
-// You can fetch data from and send data to third-party APIs via an action:
-export const myAction = action({
-  // Validators for arguments.
+// Get a task with its replies (tree)
+export const getTaskWithReplies = query({
   args: {
-    first: v.number(),
-    second: v.string(),
+    taskId: v.id("tasks"),
+    maxDepth: v.optional(v.number()),
   },
-
-  // Action implementation.
   handler: async (ctx, args) => {
-    //// Use the browser-like `fetch` API to send HTTP requests.
-    //// See https://docs.convex.dev/functions/actions#calling-third-party-apis-and-using-npm-packages.
-    // const response = await ctx.fetch("https://api.thirdpartyservice.com");
-    // const data = await response.json();
+    const task = await ctx.db.get(args.taskId);
+    if (!task) return null;
 
-    //// Query data by running Convex queries.
-    const data = await ctx.runQuery(api.myFunctions.listNumbers, {
-      count: 10,
-    });
-    console.log(data);
+    // Get all replies in the thread
+    const threadRootId = task.threadRootId ?? task._id;
+    const maxDepth = args.maxDepth ?? 10;
 
-    //// Write data by running Convex mutations.
-    await ctx.runMutation(api.myFunctions.addNumber, {
-      value: args.first,
-    });
+    const replies = await ctx.db
+      .query("tasks")
+      .withIndex("by_thread_root", (q) => q.eq("threadRootId", threadRootId))
+      .filter((q) => q.lte(q.field("depth"), task.depth + maxDepth))
+      .order("asc")
+      .collect();
+
+    return {
+      task,
+      replies,
+    };
   },
 });

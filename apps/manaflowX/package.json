@@ -9,13 +9,15 @@
     "predev": "convex dev --until-success && convex dashboard",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint . --ignore-pattern \"convex/_generated/**\""
+    "lint": "eslint . --ignore-pattern \"convex/_generated/**\"",
+    "workflow:web": "npx workflow web"
   },
   "dependencies": {
     "convex": "^1.29.3",
     "next": "16.0.7",
     "react": "^19.2.1",
-    "react-dom": "^19.2.1"
+    "react-dom": "^19.2.1",
+    "workflow": "^4.0.1-beta.28"
   },
   "devDependencies": {
     "@convex-dev/eslint-plugin": "^1.0.0",
