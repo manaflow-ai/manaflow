@@ -437,6 +437,9 @@ export default defineSchema({
     // Session title (OpenCode)
     title: v.optional(v.string()),
 
+    // Task text (for coding agent sessions - used for UI lookup)
+    task: v.optional(v.string()),
+
     // Session summary with file diffs (OpenCode)
     summary: v.optional(
       v.object({
@@ -454,7 +457,8 @@ export default defineSchema({
     .index("by_post", ["postId"])
     .index("by_status", ["status", "createdAt"])
     .index("by_created", ["createdAt"])
-    .index("by_external_session", ["externalSessionId"]),
+    .index("by_external_session", ["externalSessionId"])
+    .index("by_task", ["task"]),
 
   // ---------------------------------------------------------------------------
   // TURNS (AI messages with inline parts)

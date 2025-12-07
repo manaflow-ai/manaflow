@@ -209,6 +209,7 @@ The agent will complete the task autonomously and return the results.`,
 
       // Create a session in Convex to track this coding agent task
       // The JWT secret is stored directly on the session for reliable authentication
+      // The task is stored on the session so the UI can query by it directly
       convexSessionId = await convex.mutation(api.codingAgent.createCodingAgentSession, {
         toolCallId: `tool_${Date.now()}`, // Generate a unique ID
         task,

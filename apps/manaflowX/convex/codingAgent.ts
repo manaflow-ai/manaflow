@@ -118,6 +118,8 @@ export const getJwtSecretForSessionInternal = internalQuery({
 /**
  * Get the coding agent session ID for a tool call.
  * Used by the UI to show "View session" immediately.
+ *
+ * @deprecated Use getCodingAgentSessionByTask instead for more reliable matching
  */
 export const getCodingAgentSessionForToolCall = query({
   args: {
@@ -130,6 +132,28 @@ export const getCodingAgentSessionForToolCall = query({
       .first();
 
     return toolCall?.codingAgentSessionId ?? null;
+  },
+});
+
+/**
+ * Get the coding agent session by task text.
+ * Returns the most recently created opencode session with matching task.
+ * This is more reliable than toolCallId-based lookup since we query directly.
+ */
+export const getCodingAgentSessionByTask = query({
+  args: {
+    task: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Find the most recent opencode session with this exact task
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_task", (q) => q.eq("task", args.task))
+      .filter((q) => q.eq(q.field("source"), "opencode"))
+      .order("desc")
+      .first();
+
+    return session?._id ?? null;
   },
 });
 
@@ -267,6 +291,7 @@ export const createCodingAgentSession = mutation({
       status: "active",
       agent: args.agent,
       title: `Task: ${args.task.slice(0, 50)}...`,
+      task: args.task, // Store full task for UI lookup
       jwtSecret: args.jwtSecret,
       morphInstanceId: args.morphInstanceId,
       createdAt: now,

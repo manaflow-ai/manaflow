@@ -12,7 +12,7 @@
  * Events sent:
  * - session.created: When a new session starts
  * - session.updated: When session state changes
- * - message.updated: When a message is created or updated (not individual parts)
+ * - message.updated: When a message is created or updated (with accumulated parts)
  * - session.idle: When the session completes
  * - session.error: When an error occurs
  *
@@ -30,8 +30,34 @@ interface XagiConfig {
   jwt: string;
 }
 
+// Part type from OpenCode
+interface MessagePart {
+  id: string;
+  messageID: string;
+  sessionID: string;
+  type: string;
+  [key: string]: unknown;
+}
+
+// Message info type
+interface MessageInfo {
+  id: string;
+  sessionID: string;
+  role: string;
+  [key: string]: unknown;
+}
+
+// Accumulated message data
+interface AccumulatedMessage {
+  info: MessageInfo;
+  parts: Map<string, MessagePart>;
+}
+
 // Cached config - loaded lazily on first event
 let cachedConfig: XagiConfig | null | undefined = undefined;
+
+// Accumulated parts per message
+const messagePartsMap = new Map<string, AccumulatedMessage>();
 
 // Load config from the standard location using Bun's file API
 async function loadConfigAsync(): Promise<XagiConfig | null> {
@@ -95,11 +121,10 @@ async function sendEvent(
   }
 }
 
-// Debounced message sender
+// Debounced message sender - sends accumulated parts
 function sendMessageDebounced(
   config: XagiConfig,
-  messageId: string,
-  data: Record<string, unknown>
+  messageId: string
 ): void {
   // Clear existing timeout for this message
   const existingTimeout = messageDebounceMap.get(messageId);
@@ -110,7 +135,19 @@ function sendMessageDebounced(
   // Set new timeout
   const timeout = setTimeout(() => {
     messageDebounceMap.delete(messageId);
-    sendEvent(config, "message.updated", data);
+
+    const accumulated = messagePartsMap.get(messageId);
+    if (accumulated) {
+      // Convert parts map to array
+      const partsArray = Array.from(accumulated.parts.values());
+      sendEvent(config, "message.updated", {
+        info: {
+          ...accumulated.info,
+          id: messageId,
+          parts: partsArray,
+        },
+      });
+    }
   }, MESSAGE_DEBOUNCE_MS);
 
   messageDebounceMap.set(messageId, timeout);
@@ -159,16 +196,59 @@ export const ConvexSyncPlugin = async (_input?: unknown): Promise<PluginEventHan
           break;
 
         case "message.updated": {
-          // Debounce message updates to reduce frequency
-          // The hook sends complete messages, not individual parts
-          const info = props.info as {
-            id?: string;
-            role?: string;
-            parts?: unknown[];
-          };
-
+          // Store message info for later use with parts
+          const info = props.info as MessageInfo;
           if (info?.id) {
-            sendMessageDebounced(config, info.id, { info });
+            const existing = messagePartsMap.get(info.id);
+            if (existing) {
+              existing.info = info;
+            } else {
+              messagePartsMap.set(info.id, {
+                info,
+                parts: new Map(),
+              });
+            }
+            // Trigger debounced send
+            sendMessageDebounced(config, info.id);
+          }
+          break;
+        }
+
+        case "message.part.updated": {
+          // Accumulate parts for the message
+          const part = props.part as MessagePart;
+          if (part?.messageID && part?.id) {
+            let accumulated = messagePartsMap.get(part.messageID);
+            if (!accumulated) {
+              // Create placeholder - will be filled by message.updated
+              accumulated = {
+                info: {
+                  id: part.messageID,
+                  sessionID: part.sessionID,
+                  role: "assistant", // Default, will be overwritten
+                },
+                parts: new Map(),
+              };
+              messagePartsMap.set(part.messageID, accumulated);
+            }
+            // Update or add the part
+            accumulated.parts.set(part.id, part);
+            // Trigger debounced send
+            sendMessageDebounced(config, part.messageID);
+          }
+          break;
+        }
+
+        case "message.part.removed": {
+          // Remove the part from accumulated data
+          const messageID = props.messageID as string;
+          const partID = props.partID as string;
+          if (messageID && partID) {
+            const accumulated = messagePartsMap.get(messageID);
+            if (accumulated) {
+              accumulated.parts.delete(partID);
+              sendMessageDebounced(config, messageID);
+            }
           }
           break;
         }
@@ -179,6 +259,12 @@ export const ConvexSyncPlugin = async (_input?: unknown): Promise<PluginEventHan
           await sendEvent(config, eventType, {
             sessionID: props.sessionID,
           });
+          // Clean up accumulated data for this session
+          for (const [messageId, data] of messagePartsMap) {
+            if (data.info.sessionID === props.sessionID) {
+              messagePartsMap.delete(messageId);
+            }
+          }
           break;
 
         case "session.error":
@@ -187,12 +273,6 @@ export const ConvexSyncPlugin = async (_input?: unknown): Promise<PluginEventHan
             sessionID: props.sessionID,
             error: props,
           });
-          break;
-
-        // Ignore these events as they're too granular
-        case "message.part.updated":
-        case "message.part.removed":
-          // Skip - we use message.updated instead
           break;
 
         default:
