@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   title: "xagi",
   description: "optimal coding interface",
   icons: {
-    icon: "/convex.svg",
+    icon: "/favicon.svg",
   },
 };
 
