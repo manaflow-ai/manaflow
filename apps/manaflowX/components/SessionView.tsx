@@ -13,6 +13,12 @@ type Part = {
   toolInput?: unknown;
   toolOutput?: string;
   toolStatus?: "pending" | "running" | "completed" | "error";
+  toolProgress?: {
+    stage: string;
+    message: string;
+    sessionId?: string;
+    instanceId?: string;
+  };
   fileUrl?: string;
   fileMime?: string;
   fileName?: string;
@@ -34,6 +40,17 @@ type Turn = {
   finishReason?: string;
 };
 
+// Progress stage display names
+const stageLabels: Record<string, string> = {
+  creating_session: "Creating session",
+  starting_vm: "Starting VM",
+  vm_ready: "VM ready",
+  sending_task: "Sending task",
+  running: "Running",
+  completed: "Completed",
+  error: "Error",
+};
+
 // Separate component for coding agent tool calls that queries for the session
 function CodingAgentToolCallPart({
   part,
@@ -45,11 +62,13 @@ function CodingAgentToolCallPart({
   // Extract task from toolInput
   const task = (part.toolInput as { task?: string })?.task;
 
-  // Query for the coding agent session directly by task text
-  // This is immediate - as soon as the session is created, the query returns it
-  const codingAgentSessionId = useQuery(
+  // Get session ID from progress or query by task
+  const progressSessionId = part.toolProgress?.sessionId as Id<"sessions"> | undefined;
+
+  // Query for the coding agent session directly by task text (fallback)
+  const queriedSessionId = useQuery(
     api.codingAgent.getCodingAgentSessionByTask,
-    task ? { task } : "skip"
+    !progressSessionId && task ? { task } : "skip"
   );
 
   // Also check toolOutput for backwards compatibility (when tool completes)
@@ -65,7 +84,8 @@ function CodingAgentToolCallPart({
     }
   }
 
-  const sessionId = codingAgentSessionId ?? outputSessionId;
+  const sessionId = progressSessionId ?? queriedSessionId ?? outputSessionId;
+  const progress = part.toolProgress;
 
   return (
     <div
@@ -95,10 +115,21 @@ function CodingAgentToolCallPart({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
         </svg>
         <span className="text-xs text-gray-500">
-          {part.toolStatus === "pending" && "Preparing..."}
-          {part.toolStatus === "running" && "Running..."}
-          {part.toolStatus === "completed" && "Completed"}
-          {part.toolStatus === "error" && "Failed"}
+          {progress ? (
+            <span className="flex items-center gap-1">
+              {part.toolStatus === "running" && (
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+              )}
+              {stageLabels[progress.stage] || progress.stage}
+            </span>
+          ) : (
+            <>
+              {part.toolStatus === "pending" && "Preparing..."}
+              {part.toolStatus === "running" && "Running..."}
+              {part.toolStatus === "completed" && "Completed"}
+              {part.toolStatus === "error" && "Failed"}
+            </>
+          )}
         </span>
         {sessionId && (
           <span className="ml-auto text-xs text-purple-400 flex items-center gap-1">
@@ -108,13 +139,13 @@ function CodingAgentToolCallPart({
             </svg>
           </span>
         )}
-        {!sessionId && part.toolStatus === "running" && (
-          <span className="ml-auto text-xs text-gray-500 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-pulse" />
-            Starting...
-          </span>
-        )}
       </div>
+      {progress && progress.message && part.toolStatus === "running" && (
+        <div className="text-xs text-gray-400 mb-2 flex items-center gap-2">
+          <span className="w-1 h-1 bg-blue-400 rounded-full animate-pulse" />
+          {progress.message}
+        </div>
+      )}
       {part.toolInput !== undefined && (
         <details className="text-xs">
           <summary className="text-gray-500 cursor-pointer hover:text-gray-300">Input</summary>
@@ -318,6 +349,9 @@ export function SessionView({
 
   const { session, turns } = data;
 
+  // Sort turns by order to ensure correct display order
+  const sortedTurns = [...turns].sort((a, b) => a.order - b.order);
+
   return (
     <div className="border border-gray-800 rounded-lg overflow-hidden">
       <div className="bg-gray-900 px-4 py-2 border-b border-gray-800 flex justify-between items-center">
@@ -339,7 +373,7 @@ export function SessionView({
         )}
       </div>
       <div className="divide-y divide-gray-800">
-        {turns.map((turn) => (
+        {sortedTurns.map((turn) => (
           <TurnView
             key={turn._id}
             turn={turn as Turn}

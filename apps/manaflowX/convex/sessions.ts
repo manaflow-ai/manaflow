@@ -122,6 +122,15 @@ const partValidator = v.object({
       v.literal("error")
     )
   ),
+  // Progress tracking for long-running tools
+  toolProgress: v.optional(
+    v.object({
+      stage: v.string(),
+      message: v.string(),
+      sessionId: v.optional(v.string()),
+      instanceId: v.optional(v.string()),
+    })
+  ),
   fileUrl: v.optional(v.string()),
   fileMime: v.optional(v.string()),
   fileName: v.optional(v.string()),
@@ -304,6 +313,56 @@ export const updatePartStatus = mutation({
         parts,
         updatedAt: Date.now(),
       });
+    }
+  },
+});
+
+/**
+ * Update tool progress for a specific tool call in a turn.
+ * Used by long-running tools like delegateToCodingAgent to show progress.
+ */
+export const updateToolProgress = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    toolCallId: v.string(),
+    progress: v.object({
+      stage: v.string(),
+      message: v.string(),
+      sessionId: v.optional(v.string()),
+      instanceId: v.optional(v.string()),
+    }),
+  },
+  handler: async (ctx, args) => {
+    // Find the turn with this tool call
+    const turns = await ctx.db
+      .query("turns")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const turn of turns) {
+      const partIndex = turn.parts.findIndex(
+        (p) => p.type === "tool_call" && p.toolCallId === args.toolCallId
+      );
+
+      if (partIndex >= 0) {
+        const parts = [...turn.parts];
+        parts[partIndex] = {
+          ...parts[partIndex],
+          toolProgress: args.progress,
+          // Set to running if not already completed
+          toolStatus:
+            parts[partIndex].toolStatus === "completed" ||
+            parts[partIndex].toolStatus === "error"
+              ? parts[partIndex].toolStatus
+              : "running",
+        };
+
+        await ctx.db.patch(turn._id, {
+          parts,
+          updatedAt: Date.now(),
+        });
+        return;
+      }
     }
   },
 });

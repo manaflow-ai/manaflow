@@ -30,11 +30,69 @@ const client = new MorphCloudClient({
   await instance.waitUntilReady(30);
   console.log("Instance is ready!");
 
-  // Install git
-  console.log("Installing git...");
-  await instance.exec("apt-get update && apt-get install -y git", {
+  // Install git and basic dependencies
+  console.log("Installing git and basic dependencies...");
+  await instance.exec("apt-get update && apt-get install -y git curl wget gnupg2 ca-certificates", {
     timeout: 120000,
   });
+
+  // Install TigerVNC, noVNC, websockify, and a minimal desktop (Openbox)
+  console.log("Installing VNC stack and minimal desktop...");
+  await instance.exec(
+    "apt-get install -y tigervnc-standalone-server tigervnc-common novnc websockify openbox xterm dbus-x11 x11-xserver-utils",
+    { timeout: 300000 }
+  );
+
+  // Install Google Chrome
+  console.log("Installing Google Chrome...");
+  await instance.exec(`
+    wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+    apt-get update
+    apt-get install -y google-chrome-stable
+  `, { timeout: 300000 });
+
+  // Verify Chrome installation
+  const chromeVerify = await instance.exec("google-chrome --version");
+  console.log("Chrome version:", chromeVerify.stdout);
+
+  // Set up VNC password (empty password for convenience, or use a simple one)
+  console.log("Setting up VNC...");
+  await instance.exec(`
+    mkdir -p /root/.vnc
+    echo -e "password\\npassword\\nn" | vncpasswd /root/.vnc/passwd
+    chmod 600 /root/.vnc/passwd
+  `);
+
+  // Create VNC xstartup script with Openbox
+  await instance.exec(`cat > /root/.vnc/xstartup << 'EOF'
+#!/bin/bash
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+export XDG_RUNTIME_DIR=/tmp/runtime-root
+mkdir -p $XDG_RUNTIME_DIR
+chmod 700 $XDG_RUNTIME_DIR
+xsetroot -solid "#2d2d2d"
+openbox-session &
+EOF`);
+  await instance.exec("chmod +x /root/.vnc/xstartup");
+
+  // Create a startup script for VNC + noVNC
+  await instance.exec(`cat > /root/start-vnc.sh << 'EOF'
+#!/bin/bash
+# Kill any existing VNC sessions
+vncserver -kill :1 2>/dev/null || true
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
+
+# Start VNC server on display :1
+vncserver :1 -geometry 1920x1080 -depth 24
+
+# Start websockify for noVNC (port 6080 -> VNC port 5901)
+websockify --web=/usr/share/novnc/ 6080 localhost:5901 &
+echo $! > /root/websockify.pid
+echo "noVNC started on port 6080"
+EOF`);
+  await instance.exec("chmod +x /root/start-vnc.sh");
 
   // Install Bun 1.3.3 (required by opencode)
   console.log("Installing Bun 1.3.3...");
@@ -50,6 +108,15 @@ const client = new MorphCloudClient({
   // Verify bun
   const bunVerify = await instance.exec("which bun && bun --version");
   console.log("Bun verify:", bunVerify.stdout);
+
+  // Install Node.js 22 (required for Vite 7+)
+  console.log("Installing Node.js 22...");
+  await instance.exec(
+    "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
+    { timeout: 300000 }
+  );
+  const nodeVerify = await instance.exec("node --version && npm --version");
+  console.log("Node.js verify:", nodeVerify.stdout);
 
   // Clone opencode repo
   console.log("Cloning opencode repo...");
@@ -197,11 +264,15 @@ EOF`);
   // Install global CLI tools
   console.log("Installing global CLI tools...");
   const globalInstall = await instance.exec(
-    "bun add -g @anthropic-ai/claude-code @openai/codex-cli @openai/codex-sdk @google/gemini-cli@preview",
+    "bun add -g @anthropic-ai/claude-code @anthropic-ai/claude-code-sdk @google/gemini-cli@preview chrome-devtools-mcp",
     { timeout: 300000 }
   );
   console.log("Global install stdout:", globalInstall.stdout);
   if (globalInstall.stderr) console.log("Global install stderr:", globalInstall.stderr);
+
+  // Verify chrome-devtools-mcp installation
+  const cdmVerify = await instance.exec("which chrome-devtools-mcp || bun pm ls -g | grep chrome-devtools");
+  console.log("Chrome DevTools MCP verify:", cdmVerify.stdout);
 
   // Copy grok-code binary and symlink to PATH
   console.log("Setting up grok-code binary...");
@@ -252,7 +323,13 @@ EOF`);
   console.log("Starting server...");
   await instance.exec("bash -c '/root/start-server.sh'");
 
-  // Give server time to start
+  // Start VNC and noVNC
+  console.log("Starting VNC and noVNC...");
+  await instance.exec("bash -c 'nohup /root/start-vnc.sh > /root/vnc.log 2>&1 &'");
+  // Give VNC time to start
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  // Give servers time to start
   await new Promise((resolve) => setTimeout(resolve, 10000));
 
   // Verify server is actually running before proceeding
@@ -282,17 +359,33 @@ EOF`);
   }
   console.log("Server HTTP check passed");
 
+  // Verify VNC is running
+  console.log("Verifying VNC is running...");
+  const vncCheck = await instance.exec("ps aux | grep -E 'Xtigervnc|websockify' | grep -v grep");
+  console.log("VNC processes:", vncCheck.stdout);
+
+  // Verify noVNC responds
+  const novncCheck = await instance.exec("curl -s -o /dev/null -w '%{http_code}' http://localhost:6080/");
+  console.log("noVNC HTTP status:", novncCheck.stdout);
+
   // Check server log
   const logResult = await instance.exec("cat /root/server.log");
   console.log("Server log:", logResult.stdout);
   if (logResult.stderr) console.log("Server stderr:", logResult.stderr);
 
-  // Expose port 4096
+  // Expose port 4096 (opencode)
   console.log("Exposing port 4096...");
   const service = await instance.exposeHttpService("port-4096", 4096);
   console.log(`Service exposed!`);
   console.log(`Service URL: ${service.url}`);
   console.log(`Service name: ${service.name}`);
+
+  // Expose port 6080 (noVNC)
+  console.log("Exposing port 6080 for noVNC...");
+  const vncService = await instance.exposeHttpService("novnc", 6080);
+  console.log(`noVNC Service exposed!`);
+  console.log(`noVNC URL: ${vncService.url}`);
+  console.log(`noVNC service name: ${vncService.name}`);
 
   // Create snapshot
   console.log("Creating snapshot of running instance...");

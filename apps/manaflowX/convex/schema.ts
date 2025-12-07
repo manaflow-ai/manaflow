@@ -562,6 +562,15 @@ export default defineSchema({
         // OpenCode SDK tool fields
         toolTitle: v.optional(v.string()), // human-readable title
         toolError: v.optional(v.string()), // error message
+        // Progress tracking for long-running tools (like coding agent)
+        toolProgress: v.optional(
+          v.object({
+            stage: v.string(), // e.g., "creating_session", "starting_vm", "running"
+            message: v.string(), // Human-readable progress message
+            sessionId: v.optional(v.string()), // Coding agent session ID
+            instanceId: v.optional(v.string()), // Morph instance ID
+          })
+        ),
         toolAttachments: v.optional(
           v.array(
             v.object({

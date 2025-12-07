@@ -136,6 +136,24 @@ export const getCodingAgentSessionForToolCall = query({
 });
 
 /**
+ * Get the parent session ID for a tool call.
+ * Used by the coding agent tool to update progress in the parent session.
+ */
+export const getParentSessionForToolCall = query({
+  args: {
+    toolCallId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const toolCall = await ctx.db
+      .query("codingAgentToolCalls")
+      .withIndex("by_tool_call", (q) => q.eq("toolCallId", args.toolCallId))
+      .first();
+
+    return toolCall?.parentSessionId ?? null;
+  },
+});
+
+/**
  * Get the coding agent session by task text.
  * Returns the most recently created opencode session with matching task.
  * This is more reliable than toolCallId-based lookup since we query directly.
@@ -393,14 +411,31 @@ export const upsertTurnFromHook = internalMutation({
       });
       return existing._id;
     } else {
-      // Get next order number
-      const lastTurn = await ctx.db
-        .query("turns")
-        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-        .order("desc")
-        .first();
+      // Extract order from external message ID
+      // OpenCode message IDs are in format: msg_<timestamp><random>
+      // We use the timestamp portion for ordering to ensure correct message order
+      // even if events arrive out of order
+      let order = 0;
+      if (args.externalMessageId) {
+        // Extract the hex timestamp from the message ID (after "msg_")
+        // Format: msg_af852433d001... where af852433 is the timestamp portion
+        const match = args.externalMessageId.match(/^msg_([a-f0-9]+)/i);
+        if (match?.[1]) {
+          // Parse the first 8 hex chars as a timestamp-like value
+          const hexTimestamp = match[1].slice(0, 8);
+          order = parseInt(hexTimestamp, 16);
+        }
+      }
 
-      const order = lastTurn ? lastTurn.order + 1 : 0;
+      // Fallback: if we couldn't extract order, use sequential numbering
+      if (order === 0) {
+        const lastTurn = await ctx.db
+          .query("turns")
+          .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+          .order("desc")
+          .first();
+        order = lastTurn ? lastTurn.order + 1 : 0;
+      }
 
       // Create new turn
       const turnId = await ctx.db.insert("turns", {
