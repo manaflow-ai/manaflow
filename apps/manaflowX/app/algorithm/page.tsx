@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery, useMutation } from "convex/react"
+import { useQuery, useMutation, useAction } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
 import { useState, useEffect } from "react"
@@ -10,6 +10,17 @@ function GeneralContent() {
   const user = useUser()
   const grokSystemPrompt = useQuery(api.github.getAlgorithmTextSetting, { key: "grokSystemPrompt" })
   const setAlgorithmTextSetting = useMutation(api.github.setAlgorithmTextSetting)
+
+  // Algorithm controls
+  const monitoredRepos = useQuery(api.github.getMonitoredRepos)
+  const prMonitorEnabled = useQuery(api.github.getAlgorithmSetting, { key: "prMonitorEnabled" })
+  const toggleAlgorithmSetting = useMutation(api.github.toggleAlgorithmSetting)
+  const testFetchPR = useAction(api.githubMonitor.testFetchAndPostPR)
+
+  const [testStatus, setTestStatus] = useState<{
+    loading: boolean
+    result?: { success: boolean; message: string; pr?: { title: string; url: string; repo: string } }
+  }>({ loading: false })
 
   const [promptValue, setPromptValue] = useState("")
   const [isSaving, setIsSaving] = useState(false)
@@ -58,6 +69,24 @@ Pick the most interesting item from whichever category you choose. Write engagin
     }
   }
 
+  const handleTestFetch = async () => {
+    setTestStatus({ loading: true })
+    try {
+      const result = await testFetchPR()
+      setTestStatus({ loading: false, result })
+    } catch (error) {
+      setTestStatus({
+        loading: false,
+        result: {
+          success: false,
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      })
+    }
+  }
+
+  const monitoredCount = monitoredRepos?.length ?? 0
+
   if (!user) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
@@ -75,9 +104,72 @@ Pick the most interesting item from whichever category you choose. Write engagin
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)]">
+    <div className="max-w-2xl mx-auto">
+      {/* Auto Algorithm Control */}
+      <div className="p-4 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-white">Auto Algorithm</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Post about PRs or solve issues automatically
+            </p>
+          </div>
+          <button
+            onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
+            disabled={monitoredCount === 0}
+            className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed ${
+              prMonitorEnabled ? "bg-blue-600" : "bg-gray-700"
+            }`}
+          >
+            <span
+              className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                prMonitorEnabled ? "left-6" : "left-1"
+              }`}
+            />
+          </button>
+        </div>
+
+        {prMonitorEnabled && (
+          <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+            Active
+          </div>
+        )}
+
+        {monitoredCount === 0 && (
+          <p className="mt-2 text-sm text-gray-500">
+            Enable monitoring on repos in the GitHub tab first
+          </p>
+        )}
+      </div>
+
+      {/* Run Algorithm */}
+      <div className="p-4 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-white">Run Algorithm</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Post about a PR or start solving an issue now
+            </p>
+          </div>
+          <button
+            onClick={handleTestFetch}
+            disabled={testStatus.loading || monitoredCount === 0}
+            className="px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {testStatus.loading ? "Running..." : "Run"}
+          </button>
+        </div>
+
+        {testStatus.result && (
+          <div className={`mt-3 text-sm ${testStatus.result.success ? "text-green-400" : "text-red-400"}`}>
+            {testStatus.result.message}
+          </div>
+        )}
+      </div>
+
       {/* Grok System Prompt */}
-      <div className="p-4 flex flex-col flex-1">
+      <div className="p-4">
         <div className="mb-3">
           <h3 className="font-medium text-white">Grok System Prompt</h3>
           <p className="text-sm text-gray-500 mt-0.5">
@@ -88,7 +180,8 @@ Pick the most interesting item from whichever category you choose. Write engagin
         <textarea
           value={promptValue}
           onChange={(e) => handleChange(e.target.value)}
-          className="w-full flex-1 bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+          rows={12}
+          className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
           placeholder="Enter the system prompt for Grok..."
         />
 

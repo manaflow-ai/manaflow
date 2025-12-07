@@ -190,6 +190,16 @@ async function runAlgorithm(ctx: any): Promise<{
   const alreadyPostedUrls = extractGitHubUrlsFromPosts(recentPosts);
   console.log(`[algorithm] Found ${alreadyPostedUrls.size} recently posted URLs to avoid`);
 
+  // Get internal issues to show Grok what's already being tracked
+  const internalIssues: Array<{
+    shortId: string;
+    title: string;
+    status: string;
+    githubIssueNumber?: number;
+    githubRepo?: string;
+  }> = await ctx.runQuery(api.issues.listIssues, { limit: 50 });
+  console.log(`[algorithm] Found ${internalIssues.length} internal issues`);
+
   // Get custom system prompt or use default
   const customPrompt: string | null = await ctx.runQuery(
     internal.github.getAlgorithmTextSettingInternal,
@@ -315,15 +325,26 @@ async function runAlgorithm(ctx: any): Promise<{
     }),
     prompt: `${systemPrompt}
 
-IMPORTANT: Do NOT select items that have already been posted. Items marked with "alreadyPosted: true" MUST be skipped.
+IMPORTANT RULES:
+1. Do NOT select items marked with "alreadyPosted: true"
+2. Do NOT select GitHub issues that are already tracked internally (check "Internal Issues Being Tracked" below)
+
+Internal Issues Being Tracked (DO NOT create duplicates):
+${internalIssues.length > 0 ? JSON.stringify(internalIssues.map(i => ({
+  shortId: i.shortId,
+  title: i.title,
+  status: i.status,
+  githubIssue: i.githubIssueNumber ? `#${i.githubIssueNumber}` : null,
+  githubRepo: i.githubRepo || null,
+})), null, 2) : "No internal issues yet"}
 
 Available Pull Requests:
 ${prSummaries.length > 0 ? JSON.stringify(prSummaries, null, 2) : "No open PRs available"}
 
-Available Issues:
+Available GitHub Issues:
 ${issueSummaries.length > 0 ? JSON.stringify(issueSummaries, null, 2) : "No open issues available"}
 
-Decide: Should you post about a PR or start solving an issue? Pick the most interesting/valuable action.`,
+Decide: Should you post about a PR or start solving an issue? Pick the most interesting/valuable action. NEVER pick a GitHub issue that's already in the internal issues list above.`,
   });
 
   const { action, selectedPRIndex, selectedIssueIndex, reasoning, postContent } = result.object;

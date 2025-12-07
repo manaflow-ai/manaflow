@@ -1080,6 +1080,44 @@ export const listIssuesWithDependencies = query({
 });
 
 // =============================================================================
+// CLAIM ISSUE FOR PROCESSING (atomic operation to prevent duplicates)
+// =============================================================================
+
+// Atomically claim an issue for processing - returns the issue only if it's still "open"
+export const claimIssueForProcessing = mutation({
+  args: {
+    issueId: v.id("issues"),
+  },
+  handler: async (ctx, { issueId }) => {
+    const issue = await ctx.db.get(issueId);
+
+    // Only claim if the issue exists and is still open
+    if (!issue || issue.status !== "open") {
+      return null; // Already claimed or doesn't exist
+    }
+
+    const now = Date.now();
+
+    // Mark as in_progress
+    await ctx.db.patch(issueId, {
+      status: "in_progress",
+      updatedAt: now,
+    });
+
+    // Add event
+    await ctx.db.insert("issueEvents", {
+      issue: issueId,
+      type: "updated",
+      data: { status: { from: "open", to: "in_progress" } },
+      actor: "issue-solver",
+      createdAt: now,
+    });
+
+    return issue;
+  },
+});
+
+// =============================================================================
 // INTERNAL MUTATIONS (for GitHub integration)
 // =============================================================================
 
@@ -1125,6 +1163,19 @@ export const createIssueFromGitHub = internalMutation({
     installationId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    // Check for existing issue with same GitHub repo and issue number
+    const existing = await ctx.db
+      .query("issues")
+      .withIndex("by_github_issue", (q) =>
+        q.eq("githubRepo", args.githubRepo).eq("githubIssueNumber", args.githubIssueNumber)
+      )
+      .first();
+
+    if (existing) {
+      // Return existing issue instead of creating duplicate
+      return { issueId: existing._id, shortId: existing.shortId, alreadyExists: true };
+    }
+
     const now = Date.now();
     const shortId = generateShortId();
 

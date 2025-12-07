@@ -40,7 +40,7 @@ type TurnPart = {
 }
 
 // Generate an AI reply to an existing post
-export async function handleReplyToPost(postId: string, content: string, repoConfig?: RepoConfig) {
+export async function handleReplyToPost(postId: string, content: string, repoConfig?: RepoConfig, issueId?: string) {
   "use workflow"
 
   const reply = await generateStreamingReply({
@@ -49,11 +49,30 @@ export async function handleReplyToPost(postId: string, content: string, repoCon
     repoConfig,
   })
 
+  // If this was triggered for an issue, mark it as closed
+  if (issueId) {
+    await closeIssueOnCompletion(issueId)
+  }
+
   return {
     postId,
     replyPostId: reply.postId,
     sessionId: reply.sessionId,
     status: "published",
+  }
+}
+
+// Close the issue when the workflow completes
+async function closeIssueOnCompletion(issueId: string) {
+  "use step"
+  try {
+    await convex.mutation(api.issues.closeIssue, {
+      issueId: issueId as Id<"issues">,
+      reason: "Workflow completed - PR created",
+    })
+    console.log(`Closed issue ${issueId} after workflow completion`)
+  } catch (error) {
+    console.error(`Failed to close issue ${issueId}:`, error)
   }
 }
 

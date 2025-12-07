@@ -1,9 +1,9 @@
 "use client"
 
-import { useQuery, useMutation, useAction } from "convex/react"
+import { useQuery, useMutation } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
-import { useState, useCallback, useEffect } from "react"
+import { useCallback, useEffect } from "react"
 import { api } from "../../../convex/_generated/api"
 import { Id } from "../../../convex/_generated/dataModel"
 
@@ -76,17 +76,7 @@ function GitHubContent() {
   const repos = useQuery(api.github.getReposSortedByActivity)
   const monitoredRepos = useQuery(api.github.getMonitoredRepos)
   const toggleMonitoring = useMutation(api.github.toggleRepoMonitoring)
-  const testFetchPR = useAction(api.githubMonitor.testFetchAndPostPR)
   const mintState = useMutation(api.github_app.mintInstallState)
-
-  // Algorithm settings
-  const prMonitorEnabled = useQuery(api.github.getAlgorithmSetting, { key: "prMonitorEnabled" })
-  const toggleAlgorithmSetting = useMutation(api.github.toggleAlgorithmSetting)
-
-  const [testStatus, setTestStatus] = useState<{
-    loading: boolean
-    result?: { success: boolean; message: string; pr?: { title: string; url: string; repo: string } }
-  }>({ loading: false })
 
   // GitHub App installation
   const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
@@ -131,22 +121,6 @@ function GitHubContent() {
     return () => window.removeEventListener("message", handleMessage)
   }, [])
 
-  const handleTestFetch = async () => {
-    setTestStatus({ loading: true })
-    try {
-      const result = await testFetchPR()
-      setTestStatus({ loading: false, result })
-    } catch (error) {
-      setTestStatus({
-        loading: false,
-        result: {
-          success: false,
-          message: error instanceof Error ? error.message : "Unknown error",
-        },
-      })
-    }
-  }
-
   if (!user) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
@@ -179,63 +153,6 @@ function GitHubContent() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      {/* Auto Algorithm Control */}
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-white">Auto Algorithm</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Post about PRs or solve issues automatically
-            </p>
-          </div>
-          <button
-            onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
-            disabled={monitoredCount === 0}
-            className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed ${
-              prMonitorEnabled ? "bg-blue-600" : "bg-gray-700"
-            }`}
-          >
-            <span
-              className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                prMonitorEnabled ? "left-6" : "left-1"
-              }`}
-            />
-          </button>
-        </div>
-
-        {prMonitorEnabled && (
-          <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            Active
-          </div>
-        )}
-      </div>
-
-      {/* Run Algorithm */}
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-white">Run Algorithm</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Post about a PR or start solving an issue now
-            </p>
-          </div>
-          <button
-            onClick={handleTestFetch}
-            disabled={testStatus.loading || monitoredCount === 0}
-            className="px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {testStatus.loading ? "Running..." : "Run"}
-          </button>
-        </div>
-
-        {testStatus.result && (
-          <div className={`mt-3 text-sm ${testStatus.result.success ? "text-green-400" : "text-red-400"}`}>
-            {testStatus.result.message}
-          </div>
-        )}
-      </div>
-
       {/* Repositories */}
       <div>
         <div className="px-4 py-3 border-b border-gray-800">

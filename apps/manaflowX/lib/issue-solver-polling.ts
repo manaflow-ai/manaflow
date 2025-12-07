@@ -52,16 +52,26 @@ async function processOpenIssues() {
 
     console.log(`[issue-solver] Found ${readyIssues.length} ready issues`);
 
-    // Pick the first one (highest priority)
-    const issue = readyIssues[0];
+    // Try to claim each issue atomically until we get one
+    let claimedIssue = null;
+    for (const issue of readyIssues) {
+      const claimed = await convex.mutation(api.issues.claimIssueForProcessing, {
+        issueId: issue._id as Id<"issues">,
+      });
+      if (claimed) {
+        claimedIssue = issue;
+        break;
+      }
+      console.log(`[issue-solver] Issue ${issue.shortId} already claimed, trying next`);
+    }
 
-    // Mark issue as in_progress before starting work
-    await convex.mutation(api.issues.updateIssue, {
-      issueId: issue._id as Id<"issues">,
-      status: "in_progress",
-    });
+    if (!claimedIssue) {
+      console.log(`[issue-solver] All issues already claimed`);
+      return;
+    }
 
-    console.log(`[issue-solver] Processing issue ${issue.shortId}: ${issue.title}`);
+    const issue = claimedIssue;
+    console.log(`[issue-solver] Claimed issue ${issue.shortId}: ${issue.title}`);
 
     // Build the task message for the coding agent
     const taskMessage = `Fix issue ${issue.shortId}: ${issue.title}
@@ -86,8 +96,8 @@ Please analyze this issue and implement a fix. When done, create a PR for review
 
     console.log(`[issue-solver] Created post ${postId}, starting workflow`);
 
-    // Start the workflow
-    const workflowId = await start(handleReplyToPost, [postId, taskMessage, repoConfig]);
+    // Start the workflow - pass issue ID so it can be closed when done
+    const workflowId = await start(handleReplyToPost, [postId, taskMessage, repoConfig, issue._id]);
 
     console.log(`[issue-solver] Started workflow ${workflowId} for issue ${issue.shortId}`);
   } catch (error) {
