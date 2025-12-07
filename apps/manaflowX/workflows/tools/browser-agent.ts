@@ -415,26 +415,40 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
         console.log(`[browser-agent] Wrote JWT config to VM`);
       }
 
-      // Write OpenCode config to use xAI Grok model
+      // Write OpenCode config with provider API keys
       const xaiApiKey = process.env.XAI_API_KEY;
-      if (xaiApiKey) {
-        const opencodeConfig = {
+      const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+      if (xaiApiKey || anthropicApiKey) {
+        const opencodeConfig: Record<string, unknown> = {
           $schema: "https://opencode.ai/config.json",
-          model: "xai/grok-4-1-fast-non-reasoning",
-          provider: {
-            xai: {
-              options: {
-                apiKey: xaiApiKey,
-              },
-            },
-          },
+          provider: {},
         };
+
+        // Set default model based on available keys (prefer xAI)
+        if (xaiApiKey) {
+          opencodeConfig.model = "xai/grok-4-1-fast-non-reasoning";
+          (opencodeConfig.provider as Record<string, unknown>).xai = {
+            options: {
+              apiKey: xaiApiKey,
+            },
+          };
+        }
+        if (anthropicApiKey) {
+          if (!xaiApiKey) {
+            opencodeConfig.model = "anthropic/claude-opus-4-5";
+          }
+          (opencodeConfig.provider as Record<string, unknown>).anthropic = {
+            options: {
+              apiKey: anthropicApiKey,
+            },
+          };
+        }
 
         const escapedOpencodeConfig = JSON.stringify(opencodeConfig).replace(/'/g, "'\"'\"'");
         await instance.exec(`mkdir -p /root/.config/opencode && echo '${escapedOpencodeConfig}' > /root/.config/opencode/opencode.json`);
-        console.log(`[browser-agent] Wrote OpenCode config with xAI/grok-4-1-fast-non-reasoning model`);
+        console.log(`[browser-agent] Wrote OpenCode config with model: ${opencodeConfig.model}`);
       } else {
-        console.warn(`[browser-agent] XAI_API_KEY not set, using default model`);
+        console.warn(`[browser-agent] No API keys set (XAI_API_KEY or ANTHROPIC_API_KEY), using default model`);
       }
 
       // Update session with the Morph instance ID
