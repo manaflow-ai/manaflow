@@ -172,7 +172,7 @@ function PostCard({
                 {post.replyCount} replies
               </span>
             )}
-            {onMerge && post.replyTo && (
+            {onMerge && (post.replyTo || post.author === "Grok" || post.author === "Assistant") && (
               <button
                 onClick={(e) => {
                   e.stopPropagation()
