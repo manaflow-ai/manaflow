@@ -63,7 +63,7 @@ function ConfigureFlyout({ repoId, repoName }: { repoId: Id<"repos">; repoName: 
   }, []);
 
   return (
-    <div className="w-[520px] max-h-[500px] flex flex-col bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl">
+    <div className="w-[520px] max-h-[min(500px,calc(100vh-200px))] flex flex-col bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl">
       {/* Fixed header with save button */}
       <div className="shrink-0 px-4 py-3 border-b border-neutral-800">
         <div className="flex items-start justify-between gap-3">

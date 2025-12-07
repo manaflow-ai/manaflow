@@ -371,6 +371,7 @@ const SearchableSelect = forwardRef<
           align="start"
           side="bottom"
           sideOffset={4}
+          collisionPadding={16}
           className="z-50 outline-none flex items-start gap-1"
         >
           <div
