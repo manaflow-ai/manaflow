@@ -196,8 +196,8 @@ export function RepoPickerDropdown({
     [onRepoSelect]
   );
 
-  // Footer with "Add repos from GitHub" button
-  const footer = installNewUrl ? (
+  // Header with "Add repos from GitHub" button
+  const header = installNewUrl ? (
     <div className="p-1">
       <button
         type="button"
@@ -237,7 +237,7 @@ export function RepoPickerDropdown({
       loading={repos === undefined}
       showSearch
       searchPlaceholder="Search for a GitHub repo..."
-      footer={footer}
+      header={header}
       sectionLabel="Repositories"
       closeOnSelect={false}
       renderOptionFlyout={renderOptionFlyout}

@@ -38,6 +38,7 @@ export interface SearchableSelectProps {
   showSearch?: boolean;
   disabled?: boolean;
   leftIcon?: ReactNode;
+  header?: ReactNode;
   footer?: ReactNode;
   searchPlaceholder?: string;
   /** Section label shown above the options list (e.g. "Repositories") */
@@ -146,6 +147,7 @@ const SearchableSelect = forwardRef<
     showSearch = true,
     disabled = false,
     leftIcon,
+    header,
     footer,
     searchPlaceholder = "Search...",
     sectionLabel,
@@ -401,6 +403,11 @@ const SearchableSelect = forwardRef<
                     "placeholder-neutral-500 focus:outline-none"
                   )}
                 />
+              </div>
+            ) : null}
+            {header ? (
+              <div className="border-b border-neutral-800">
+                {header}
               </div>
             ) : null}
             {loading ? (
