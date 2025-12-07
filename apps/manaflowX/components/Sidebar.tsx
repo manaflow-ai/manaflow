@@ -87,7 +87,14 @@ export function Sidebar() {
 
       <div className="mt-auto mb-4 flex justify-center 2xl:justify-start 2xl:px-3">
         <button
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onClick={() => {
+            const newTheme = theme === "dark" ? "light" : "dark"
+            if (document.startViewTransition) {
+              document.startViewTransition(() => setTheme(newTheme))
+            } else {
+              setTheme(newTheme)
+            }
+          }}
           className="p-3 rounded-full transition-colors hover:bg-accent/50 text-muted-foreground"
           aria-label="Toggle theme"
         >
