@@ -3,9 +3,9 @@
 import { useQuery } from "convex/react"
 import { useState } from "react"
 import { Streamdown } from "streamdown"
-import * as Dialog from "@radix-ui/react-dialog"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
+import { IframeViewer, VNCIcon, WorkspaceIcon, VSCodeIcon } from "./IframeViewer"
 
 // =============================================================================
 // Types
@@ -271,127 +271,6 @@ function TurnMessage({ turn }: { turn: Turn }) {
 }
 
 // =============================================================================
-// VNC Iframe Component
-// =============================================================================
-
-function VNCViewer({ morphInstanceId, isExpanded, onToggle }: {
-  morphInstanceId: string;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  const [modalOpen, setModalOpen] = useState(false)
-  const instanceSlug = morphInstanceId.replace('_', '-')
-  const vncUrl = `https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`
-
-  return (
-    <div className="border-b border-gray-800">
-      <button
-        onClick={onToggle}
-        className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-900/50 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-          <span className="text-sm font-medium text-cyan-400">Live Browser View</span>
-          <span className="text-xs text-gray-500">(noVNC)</span>
-        </div>
-        <svg
-          className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-      {isExpanded && (
-        <div className="relative bg-black">
-          <iframe
-            src={vncUrl}
-            className="w-full h-[400px] border-0"
-            title="Browser VNC View"
-            allow="clipboard-read; clipboard-write"
-          />
-          <div className="absolute top-2 right-2 flex items-center gap-1">
-            <Dialog.Root open={modalOpen} onOpenChange={setModalOpen}>
-              <Dialog.Trigger asChild>
-                <button
-                  className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                  </svg>
-                  Expand
-                </button>
-              </Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50" />
-                <Dialog.Content className="fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%] w-[95vw] h-[90vh] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-                    <Dialog.Title className="text-sm font-medium text-cyan-400 flex items-center gap-2">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                      Live Browser View
-                    </Dialog.Title>
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={vncUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                        Open in new tab
-                      </a>
-                      <Dialog.Close asChild>
-                        <button
-                          className="p-1 text-gray-500 hover:text-white rounded transition-colors"
-                          aria-label="Close"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </Dialog.Close>
-                    </div>
-                  </div>
-                  <Dialog.Description className="sr-only">
-                    Full-screen view of the browser VNC session
-                  </Dialog.Description>
-                  <div className="flex-1 bg-black">
-                    <iframe
-                      src={vncUrl}
-                      className="w-full h-full border-0"
-                      title="Browser VNC View (Expanded)"
-                      allow="clipboard-read; clipboard-write"
-                    />
-                  </div>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
-            <a
-              href={vncUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-              Open in new tab
-            </a>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// =============================================================================
 // Main Component
 // =============================================================================
 
@@ -403,6 +282,8 @@ interface BrowserAgentSessionProps {
 export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionProps) {
   const data = useQuery(api.codingAgent.getCodingAgentSession, { sessionId })
   const [vncExpanded, setVncExpanded] = useState(true)
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(false)
+  const [vscodeExpanded, setVscodeExpanded] = useState(false)
 
   if (!data) {
     return (
@@ -431,6 +312,7 @@ export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionP
 
   const instanceSlug = morphInstanceId?.replace('_', '-')
   const vmUrl = instanceSlug ? `https://port-4096-${instanceSlug}.http.cloud.morph.so` : null
+  const vscodeUrl = instanceSlug ? `https://code-server-${instanceSlug}.http.cloud.morph.so/?folder=/root/workspace` : null
 
   return (
     <div className="h-full flex flex-col bg-black">
@@ -477,34 +359,7 @@ export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionP
           </div>
         )}
 
-        {/* VM Workspace link */}
-        {vmUrl ? (
-          <div className="mt-2 flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
-            <svg className="w-4 h-4 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-gray-400">VM Workspace</div>
-              <a
-                href={vmUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-blue-400 hover:text-blue-300 hover:underline truncate block"
-              >
-                {vmUrl}
-              </a>
-            </div>
-            <button
-              onClick={() => navigator.clipboard.writeText(vmUrl)}
-              className="p-1 text-gray-500 hover:text-white rounded transition-colors"
-              title="Copy URL"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-            </button>
-          </div>
-        ) : (
+        {!morphInstanceId && (
           <div className="mt-2 flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
             <svg className="w-4 h-4 text-yellow-400 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -514,13 +369,38 @@ export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionP
         )}
       </div>
 
-      {/* VNC Viewer - at the top, collapsible (only show if we have morphInstanceId) */}
+      {/* Iframe Viewers - Live Browser, VM Workspace, VS Code */}
       {morphInstanceId && (
-        <VNCViewer
-          morphInstanceId={morphInstanceId}
-          isExpanded={vncExpanded}
-          onToggle={() => setVncExpanded(!vncExpanded)}
-        />
+        <>
+          <IframeViewer
+            url={`https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`}
+            title="Live Browser View"
+            icon={VNCIcon}
+            color="text-cyan-400"
+            isExpanded={vncExpanded}
+            onToggle={() => setVncExpanded(!vncExpanded)}
+          />
+          {vmUrl && (
+            <IframeViewer
+              url={vmUrl}
+              title="VM Workspace"
+              icon={WorkspaceIcon}
+              color="text-green-400"
+              isExpanded={workspaceExpanded}
+              onToggle={() => setWorkspaceExpanded(!workspaceExpanded)}
+            />
+          )}
+          {vscodeUrl && (
+            <IframeViewer
+              url={vscodeUrl}
+              title="VS Code"
+              icon={VSCodeIcon}
+              color="text-blue-400"
+              isExpanded={vscodeExpanded}
+              onToggle={() => setVscodeExpanded(!vscodeExpanded)}
+            />
+          )}
+        </>
       )}
 
       {/* Messages */}

@@ -530,10 +530,9 @@ Available image tools:
 
 IMPORTANT SCREENSHOT INSTRUCTIONS:
 1. Complete the requested task using the browser tools.
-2. When taking screenshots, ALWAYS use the filePath parameter to save to a file:
-   - Example: take_screenshot with filePath="/tmp/screenshot.png"
-3. Upload the screenshot using upload_image with the path parameter:
-   - Example: upload_image with path="/tmp/screenshot.png"
+2. When taking screenshots, ALWAYS use the filePath parameter to save to a file in /tmp/:
+   - Use a descriptive filename, e.g., filePath="/tmp/google-search-results.png" or filePath="/tmp/weather-widget.png"
+3. Upload the screenshot using upload_image with the path parameter pointing to the saved file.
 4. In your final response, include the uploaded image using markdown syntax: ![description](url)
 
 DO NOT pass base64 data directly to upload_image - always save to a file first and use the path parameter.
