@@ -713,11 +713,12 @@ ${installCommand}
         path: session.directory, // Working directory path in the VM
         response: textResponse,
         toolsUsed: toolsSummary,
-        tokens: response.info.tokens,
-        cost: response.info.cost,
+        tokens: response.info?.tokens,
+        cost: response.info?.cost,
       };
 
-      console.log(`[coding-agent] Task completed. Tokens: ${response.info.tokens.input + response.info.tokens.output}`);
+      const totalTokens = (response.info?.tokens?.input ?? 0) + (response.info?.tokens?.output ?? 0);
+      console.log(`[coding-agent] Task completed. Tokens: ${totalTokens}`);
 
       return result;
     } catch (error) {

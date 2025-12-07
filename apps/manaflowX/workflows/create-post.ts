@@ -184,18 +184,20 @@ ${post.repoConfig.installationId ? `- installationId: ${post.repoConfig.installa
   const scriptsContext = post.repoConfig?.scripts
     ? `
 
-## Workspace Scripts
-The repository has the following workspace scripts configured:
+## IMPORTANT: Workspace Setup Instructions
+Before starting ANY coding task, you MUST run these scripts in order:
 
-### Dev Script (run this to start the development environment):
+1. **First, run the maintenance script** (installs dependencies):
+\`\`\`bash
+${post.repoConfig.scripts.maintenanceScript}
+\`\`\`
+
+2. **Then, run the dev script** (starts the development server):
 \`\`\`bash
 ${post.repoConfig.scripts.devScript}
 \`\`\`
 
-### Maintenance Script (run this for maintenance tasks like installing dependencies):
-\`\`\`bash
-${post.repoConfig.scripts.maintenanceScript}
-\`\`\`
+Always run these scripts at the start of your task to ensure the environment is properly set up.
 `
     : ""
 
