@@ -472,6 +472,37 @@ export const setRepoMonitoring = mutation({
   },
 });
 
+// Public query to get the first monitored repo (for issue solver - no auth required)
+// Returns the first monitored repo with installation ID, used as default for internal issues
+export const getDefaultMonitoredRepo = query({
+  args: {},
+  handler: async (ctx) => {
+    // Get first monitored repo (not user-specific)
+    const repo = await ctx.db
+      .query("repos")
+      .filter((q) => q.eq(q.field("isMonitored"), true))
+      .first();
+
+    if (!repo) return null;
+
+    // Get installation ID
+    let installationId: number | undefined;
+    if (repo.connectionId) {
+      const connection = await ctx.db.get(repo.connectionId);
+      installationId = connection?.installationId ?? undefined;
+    }
+
+    if (!installationId) return null;
+
+    return {
+      fullName: repo.fullName,
+      gitRemote: repo.gitRemote,
+      defaultBranch: repo.defaultBranch,
+      installationId,
+    };
+  },
+});
+
 // Internal query to get monitored repos with their installation IDs (for githubMonitor action)
 export const getMonitoredReposWithInstallation = internalQuery({
   args: {},
