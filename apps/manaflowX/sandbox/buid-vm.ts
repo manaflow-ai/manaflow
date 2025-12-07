@@ -101,27 +101,51 @@ PATCH`);
 
   // Patch server.ts to serve static files from local desktop build instead of proxying
   console.log("Patching server.ts to serve local desktop build...");
-  // Use node to do the replacement - more reliable than sed for complex patterns
-  await instance.exec(`cat > /tmp/patch-server.js << 'PATCHJS'
-const fs = require('fs');
+  // Use bun to do the replacement with proper string handling
+  await instance.exec(`cat > /tmp/patch-server.ts << 'PATCHTS'
 const path = '/root/opencode/packages/opencode/src/server/server.ts';
-let content = fs.readFileSync(path, 'utf8');
+let content = await Bun.file(path).text();
 
-// Add import at top
+// Add import at top if not already present
 if (!content.includes('serveStatic')) {
   content = 'import { serveStatic } from "hono/bun"\\n' + content;
 }
 
-// Replace the proxy .all("/*", ...) with serveStatic
-content = content.replace(
-  /\\.all\\("\\/"\\*", async \\(c\\) => \\{[\\s\\S]*?return proxy\\([\\s\\S]*?\\}\\)/,
-  '.get("/*", serveStatic({ root: "/root/opencode/packages/desktop/dist" }))'
-);
+// Find and replace the proxy block
+// Looking for: .all("/*", async (c) => { ... return proxy(...desktop.dev.opencode...) ... })
+const proxyBlockStart = content.indexOf('.all("/*", async (c) => {');
+if (proxyBlockStart !== -1) {
+  // Find the matching closing }) by counting braces
+  let braceCount = 0;
+  let started = false;
+  let endPos = proxyBlockStart;
+  for (let i = proxyBlockStart; i < content.length; i++) {
+    if (content[i] === '{') {
+      braceCount++;
+      started = true;
+    } else if (content[i] === '}') {
+      braceCount--;
+      if (started && braceCount === 0) {
+        // Found matching }, but we need the trailing )
+        endPos = i + 1;
+        if (content[i + 1] === ')') endPos = i + 2;
+        break;
+      }
+    }
+  }
 
-fs.writeFileSync(path, content);
+  const before = content.substring(0, proxyBlockStart);
+  const after = content.substring(endPos);
+  content = before + '.get("/*", serveStatic({ root: "/root/opencode/packages/desktop/dist" }))' + after;
+  console.log('Replaced proxy block with serveStatic');
+} else {
+  console.log('Warning: proxy block not found');
+}
+
+await Bun.write(path, content);
 console.log('Patched server.ts');
-PATCHJS`);
-  const patchServerResult = await instance.exec("bun /tmp/patch-server.js 2>&1");
+PATCHTS`);
+  const patchServerResult = await instance.exec("bun /tmp/patch-server.ts 2>&1");
   console.log("Server patch result:", patchServerResult.stdout);
 
   // Verify the patch
