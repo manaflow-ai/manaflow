@@ -42,13 +42,17 @@ function CodingAgentToolCallPart({
   part: Part;
   onCodingAgentClick?: (sessionId: Id<"sessions">) => void;
 }) {
-  // Query for the coding agent session using the toolCallId
+  // Extract task from toolInput
+  const task = (part.toolInput as { task?: string })?.task;
+
+  // Query for the coding agent session directly by task text
+  // This is immediate - as soon as the session is created, the query returns it
   const codingAgentSessionId = useQuery(
-    api.codingAgent.getCodingAgentSessionForToolCall,
-    part.toolCallId ? { toolCallId: part.toolCallId } : "skip"
+    api.codingAgent.getCodingAgentSessionByTask,
+    task ? { task } : "skip"
   );
 
-  // Also check toolOutput for backwards compatibility
+  // Also check toolOutput for backwards compatibility (when tool completes)
   let outputSessionId: Id<"sessions"> | null = null;
   if (part.toolOutput) {
     try {

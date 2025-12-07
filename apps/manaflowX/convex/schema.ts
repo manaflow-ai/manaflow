@@ -425,11 +425,20 @@ export default defineSchema({
     // OpenCode SDK specific fields
     // -------------------------------------------------------------------------
 
+    // Morph VM instance ID (for accessing the running VM)
+    morphInstanceId: v.optional(v.string()),
+
     // External session ID from OpenCode
     externalSessionId: v.optional(v.string()),
 
+    // JWT secret for coding agent authentication (stored directly on session)
+    jwtSecret: v.optional(v.string()),
+
     // Session title (OpenCode)
     title: v.optional(v.string()),
+
+    // Task text (for coding agent sessions - used for UI lookup)
+    task: v.optional(v.string()),
 
     // Session summary with file diffs (OpenCode)
     summary: v.optional(
@@ -452,7 +461,8 @@ export default defineSchema({
     .index("by_post", ["postId"])
     .index("by_status", ["status", "createdAt"])
     .index("by_created", ["createdAt"])
-    .index("by_external_session", ["externalSessionId"]),
+    .index("by_external_session", ["externalSessionId"])
+    .index("by_task", ["task"]),
 
   // ---------------------------------------------------------------------------
   // TURNS (AI messages with inline parts)

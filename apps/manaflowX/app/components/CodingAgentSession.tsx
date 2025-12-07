@@ -1,6 +1,7 @@
 "use client"
 
 import { useQuery } from "convex/react"
+import { Streamdown } from "streamdown"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
 
@@ -49,8 +50,8 @@ interface Turn {
 
 function TextPart({ part }: { part: TurnPart }) {
   return (
-    <div className="whitespace-pre-wrap text-gray-200 leading-relaxed">
-      {part.text}
+    <div className="prose prose-invert prose-sm max-w-none">
+      <Streamdown>{part.text ?? ""}</Streamdown>
     </div>
   )
 }
@@ -64,7 +65,9 @@ function ReasoningPart({ part }: { part: TurnPart }) {
         </svg>
         Thinking
       </div>
-      <div className="text-gray-300 text-sm whitespace-pre-wrap">{part.text}</div>
+      <div className="prose prose-invert prose-sm max-w-none opacity-70">
+        <Streamdown>{part.text ?? ""}</Streamdown>
+      </div>
     </div>
   )
 }
@@ -245,12 +248,6 @@ function TurnMessage({ turn }: { turn: Turn }) {
         <span className="text-xs font-medium text-gray-400">
           {roleLabels[turn.role] || turn.role}
         </span>
-        {turn.status === "streaming" && (
-          <span className="flex items-center gap-1 text-xs text-yellow-400">
-            <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse" />
-            Streaming
-          </span>
-        )}
         <span className="text-xs text-gray-600 ml-auto">
           {new Date(turn.createdAt).toLocaleTimeString()}
         </span>

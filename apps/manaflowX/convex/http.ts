@@ -660,9 +660,12 @@ http.route({
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     } catch (error) {
-      console.error("[opencode_hook] Error:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      console.error("[opencode_hook] Error:", errorMessage);
+      if (errorStack) console.error("[opencode_hook] Stack:", errorStack);
       return new Response(
-        JSON.stringify({ success: false, error: "Internal server error" }),
+        JSON.stringify({ success: false, error: "Internal server error", details: errorMessage }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }

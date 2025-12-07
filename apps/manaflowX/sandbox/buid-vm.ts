@@ -241,7 +241,7 @@ EOF`);
   await instance.exec(`cat > /root/start-server.sh << 'EOF'
 #!/bin/bash
 cd /root/workspace
-export OPENCODE_CONFIG_CONTENT='{"model":"opencode/grok-code"}'
+export OPENCODE_CONFIG_CONTENT='{"model":"opencode/grok-code","plugin":["file:///root/workspace/.opencode/plugin/convex-sync.ts"]}'
 export BUN_PTY_LIB="/root/opencode/node_modules/.bun/bun-pty@0.4.2/node_modules/bun-pty/rust-pty/target/release/librust_pty.so"
 nohup /root/opencode/packages/opencode/dist/opencode-linux-x64/bin/opencode serve --hostname=0.0.0.0 --port=4096 > /root/server.log 2>&1 &
 echo $! > /root/server.pid
@@ -254,7 +254,33 @@ EOF`);
 
   // Give server time to start
   await new Promise((resolve) => setTimeout(resolve, 10000));
-  console.log("Server started!");
+
+  // Verify server is actually running before proceeding
+  console.log("Verifying server is running...");
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const serverCheck = await instance.exec(
+      "ps aux | grep 'opencode serve' | grep -v grep"
+    );
+    if (serverCheck.stdout && serverCheck.stdout.includes("opencode")) {
+      console.log("Server process confirmed running");
+      break;
+    }
+    if (attempt === 4) {
+      const logResult = await instance.exec("cat /root/server.log");
+      console.error("Server log:", logResult.stdout);
+      throw new Error("Server process not found after 5 attempts - cannot proceed");
+    }
+    console.log(`Server not found, retrying in 5s (attempt ${attempt + 1}/5)...`);
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+
+  // Verify server responds to HTTP
+  console.log("Verifying server responds to HTTP...");
+  const healthCheck = await instance.exec("curl -s http://localhost:4096/session");
+  if (!healthCheck.stdout) {
+    throw new Error("Server not responding to HTTP requests");
+  }
+  console.log("Server HTTP check passed");
 
   // Check server log
   const logResult = await instance.exec("cat /root/server.log");
