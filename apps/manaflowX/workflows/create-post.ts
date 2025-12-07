@@ -10,10 +10,14 @@ const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // Repo config passed from the API
 export interface RepoConfig {
-  fullName: string
-  gitRemote: string
-  branch: string
-  installationId?: number
+  fullName: string;
+  gitRemote: string;
+  branch: string;
+  installationId?: number;
+  scripts?: {
+    maintenanceScript: string;
+    devScript: string;
+  };
 }
 
 // Thread context for replies
@@ -51,6 +55,7 @@ export async function handleReplyToPost(
   content: string,
   repoConfig?: RepoConfig,
   threadContext?: ThreadContext,
+  issueId?: string
 ) {
   "use workflow"
 
@@ -61,11 +66,30 @@ export async function handleReplyToPost(
     threadContext,
   })
 
+  // If this was triggered for an issue, mark it as closed
+  if (issueId) {
+    await closeIssueOnCompletion(issueId)
+  }
+
   return {
     postId,
     replyPostId: reply.postId,
     sessionId: reply.sessionId,
     status: "published",
+  }
+}
+
+// Close the issue when the workflow completes
+async function closeIssueOnCompletion(issueId: string) {
+  "use step"
+  try {
+    await convex.mutation(api.issues.closeIssue, {
+      issueId: issueId as Id<"issues">,
+      reason: "Workflow completed - PR created",
+    })
+    console.log(`Closed issue ${issueId} after workflow completion`)
+  } catch (error) {
+    console.error(`Failed to close issue ${issueId}:`, error)
   }
 }
 
@@ -153,6 +177,25 @@ ${post.repoConfig.installationId ? `- installationId: ${post.repoConfig.installa
     threadContextStr += `--- END CONVERSATION HISTORY ---\n\nThe user is continuing this conversation with:`
   }
 
+  // Build scripts context for the coding agent
+  const scriptsContext = post.repoConfig?.scripts
+    ? `
+
+## Workspace Scripts
+The repository has the following workspace scripts configured:
+
+### Dev Script (run this to start the development environment):
+\`\`\`bash
+${post.repoConfig.scripts.devScript}
+\`\`\`
+
+### Maintenance Script (run this for maintenance tasks like installing dependencies):
+\`\`\`bash
+${post.repoConfig.scripts.maintenanceScript}
+\`\`\`
+`
+    : ""
+
   // Build prompt - if repo is selected, automatically delegate to coding agent
   const autoDelegate = post.repoConfig !== undefined
   let prompt: string
@@ -163,9 +206,9 @@ ${post.content}
 
 Since a repository is selected, delegate this task to the coding agent immediately. Use the delegateToCodingAgent tool with:
 - task: The user's request
-- context: Any relevant context about the task
+- context: Include any relevant context about the task${scriptsContext ? ". IMPORTANT: Include the workspace scripts context below so the coding agent knows how to set up and run the dev environment." : ""}
 - agent: "build" (for coding tasks)
-- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }`
+- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }${scriptsContext}`
   } else if (post.threadContext) {
     prompt = `${threadContextStr}\n\n${post.content}\n\nRespond to this message in the context of the conversation above.`
   } else {

@@ -26,6 +26,7 @@ export const getRepoWithInstallation = query({
       gitRemote: repo.gitRemote,
       defaultBranch: repo.defaultBranch,
       installationId,
+      scripts: repo.scripts,
     };
   },
 });
@@ -382,5 +383,233 @@ export const getRepoById = query({
     if (repo.userId !== identity.subject) return null;
 
     return repo;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ALGORITHM MONITORING
+// ---------------------------------------------------------------------------
+
+// Get all repos sorted by lastPushedAt (most active first)
+export const getReposSortedByActivity = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const userId = identity.subject;
+    const repos = await ctx.db
+      .query("repos")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+
+    // Sort by lastPushedAt descending (most recent first)
+    return repos.sort((a, b) => {
+      const aTime = a.lastPushedAt ?? 0;
+      const bTime = b.lastPushedAt ?? 0;
+      return bTime - aTime;
+    });
+  },
+});
+
+// Get only monitored repos
+export const getMonitoredRepos = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const userId = identity.subject;
+    const repos = await ctx.db
+      .query("repos")
+      .withIndex("by_userId_monitored", (q) =>
+        q.eq("userId", userId).eq("isMonitored", true)
+      )
+      .collect();
+
+    // Sort by lastPushedAt descending (most active first)
+    return repos.sort((a, b) => {
+      const aTime = a.lastPushedAt ?? 0;
+      const bTime = b.lastPushedAt ?? 0;
+      return bTime - aTime;
+    });
+  },
+});
+
+// Toggle monitoring for a repo
+export const toggleRepoMonitoring = mutation({
+  args: { repoId: v.id("repos") },
+  handler: async (ctx, { repoId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const repo = await ctx.db.get(repoId);
+    if (!repo) throw new Error("Repo not found");
+    if (repo.userId !== identity.subject) throw new Error("Not authorized");
+
+    const newValue = !repo.isMonitored;
+    await ctx.db.patch(repoId, { isMonitored: newValue });
+    return { isMonitored: newValue };
+  },
+});
+
+// Set monitoring for a repo explicitly
+export const setRepoMonitoring = mutation({
+  args: {
+    repoId: v.id("repos"),
+    isMonitored: v.boolean(),
+  },
+  handler: async (ctx, { repoId, isMonitored }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const repo = await ctx.db.get(repoId);
+    if (!repo) throw new Error("Repo not found");
+    if (repo.userId !== identity.subject) throw new Error("Not authorized");
+
+    await ctx.db.patch(repoId, { isMonitored });
+    return { isMonitored };
+  },
+});
+
+// Internal query to get monitored repos with their installation IDs (for githubMonitor action)
+export const getMonitoredReposWithInstallation = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    // Get ALL monitored repos (not user-specific, for cron job)
+    const repos = await ctx.db
+      .query("repos")
+      .filter((q) => q.eq(q.field("isMonitored"), true))
+      .collect();
+
+    // Get installation IDs for each repo
+    const reposWithInstallation = await Promise.all(
+      repos.map(async (repo) => {
+        let installationId: number | undefined;
+        if (repo.connectionId) {
+          const connection = await ctx.db.get(repo.connectionId);
+          installationId = connection?.installationId ?? undefined;
+        }
+        return {
+          ...repo,
+          installationId,
+        };
+      })
+    );
+
+    return reposWithInstallation.filter((r) => r.installationId !== undefined);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ALGORITHM SETTINGS (unified - supports boolean and string values)
+// ---------------------------------------------------------------------------
+
+// Get algorithm setting by key (returns boolean, defaults to false)
+export const getAlgorithmSetting = query({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    const value = setting?.value;
+    return typeof value === "boolean" ? value : false;
+  },
+});
+
+// Internal query to get algorithm setting (for cron job)
+export const getAlgorithmSettingInternal = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    const value = setting?.value;
+    return typeof value === "boolean" ? value : false;
+  },
+});
+
+// Toggle algorithm setting (boolean)
+export const toggleAlgorithmSetting = mutation({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const existing = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    const now = Date.now();
+
+    if (existing && typeof existing.value === "boolean") {
+      const newValue = !existing.value;
+      await ctx.db.patch(existing._id, { value: newValue, updatedAt: now });
+      return { value: newValue };
+    } else {
+      // Create with true (toggled from default false)
+      await ctx.db.insert("algorithmSettings", {
+        key,
+        value: true,
+        updatedAt: now,
+      });
+      return { value: true };
+    }
+  },
+});
+
+// Get algorithm text setting by key (returns string or null)
+export const getAlgorithmTextSetting = query({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    const value = setting?.value;
+    return typeof value === "string" ? value : null;
+  },
+});
+
+// Internal query to get algorithm text setting (for cron job)
+export const getAlgorithmTextSettingInternal = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    const value = setting?.value;
+    return typeof value === "string" ? value : null;
+  },
+});
+
+// Set algorithm text setting (string)
+export const setAlgorithmTextSetting = mutation({
+  args: { key: v.string(), value: v.string() },
+  handler: async (ctx, { key, value }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const existing = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    const now = Date.now();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { value, updatedAt: now });
+    } else {
+      await ctx.db.insert("algorithmSettings", {
+        key,
+        value,
+        updatedAt: now,
+      });
+    }
+    return { value };
   },
 });

@@ -123,6 +123,15 @@ export default defineSchema({
     // Hierarchical issues (epic -> sub-issues)
     parentIssue: v.optional(v.id("issues")),
 
+    // GitHub issue link (for issues imported from GitHub)
+    githubIssueUrl: v.optional(v.string()),
+    githubIssueNumber: v.optional(v.number()),
+    githubRepo: v.optional(v.string()), // e.g., "owner/repo"
+    // Repo config (for workflow execution)
+    gitRemote: v.optional(v.string()), // e.g., "https://github.com/owner/repo.git"
+    gitBranch: v.optional(v.string()), // e.g., "main"
+    installationId: v.optional(v.number()), // GitHub App installation ID
+
     // Closure info
     closedAt: v.optional(v.number()),
     closedReason: v.optional(v.string()),
@@ -140,7 +149,8 @@ export default defineSchema({
     .index("by_status_priority", ["status", "priority"])
     .index("by_assignee", ["assignee", "status"])
     .index("by_parent", ["parentIssue"])
-    .index("by_type", ["type", "status"]),
+    .index("by_type", ["type", "status"])
+    .index("by_github_issue", ["githubRepo", "githubIssueNumber"]),
 
   // ---------------------------------------------------------------------------
   // DEPENDENCIES (issue relationships, Beads-style)
@@ -253,11 +263,15 @@ export default defineSchema({
         devScript: v.string(),
       })
     ),
+    // Algorithm monitoring
+    isMonitored: v.optional(v.boolean()), // Whether to monitor this repo for PRs
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
     .index("by_userId", ["userId"])
-    .index("by_fullName", ["fullName"]),
+    .index("by_fullName", ["fullName"])
+    .index("by_userId_monitored", ["userId", "isMonitored"])
+    .index("by_userId_lastPushed", ["userId", "lastPushedAt"]),
 
   // ---------------------------------------------------------------------------
   // PROVIDER CONNECTIONS (GitHub App installations)
@@ -840,4 +854,54 @@ export default defineSchema({
     .index("by_task_hash", ["taskHash"])
     .index("by_parent_session", ["parentSessionId"])
     .index("by_coding_agent_session", ["codingAgentSessionId"]),
+
+  // ---------------------------------------------------------------------------
+  // ALGORITHM SETTINGS (global settings for algorithm features)
+  // ---------------------------------------------------------------------------
+
+  algorithmSettings: defineTable({
+    key: v.string(), // Setting key (e.g., "prMonitorEnabled", "grokSystemPrompt")
+    value: v.union(v.boolean(), v.string()), // Setting value (boolean or string)
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  // ---------------------------------------------------------------------------
+  // WORKFLOW QUEUE (for triggering workflows from Convex actions)
+  // ---------------------------------------------------------------------------
+  // Convex actions can't call Next.js workflow library directly, so they
+  // insert tasks here. Next.js subscribes and processes them.
+
+  workflowQueue: defineTable({
+    // Task type
+    type: v.literal("solve_issue"), // GitHub issue to solve
+
+    // Status
+    status: v.union(
+      v.literal("pending"), // Waiting to be processed
+      v.literal("processing"), // Being processed by Next.js
+      v.literal("completed"), // Successfully completed
+      v.literal("failed") // Failed to process
+    ),
+
+    // Link to internal issue
+    issueId: v.id("issues"),
+
+    // Repository info for the coding agent
+    repoFullName: v.string(),
+    gitRemote: v.string(),
+    branch: v.string(),
+    installationId: v.optional(v.number()),
+
+    // Result tracking
+    workflowId: v.optional(v.string()), // ID from workflow.start()
+    prUrl: v.optional(v.string()), // URL of created PR
+    error: v.optional(v.string()), // Error message if failed
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    processedAt: v.optional(v.number()),
+  })
+    .index("by_status", ["status", "createdAt"])
+    .index("by_issue", ["issueId"]),
 });
