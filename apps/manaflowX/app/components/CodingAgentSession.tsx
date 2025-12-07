@@ -237,7 +237,7 @@ function TurnMessage({ turn }: { turn: Turn }) {
 
   const roleLabels: Record<string, string> = {
     user: "User",
-    assistant: "Assistant",
+    assistant: "Grok",
     system: "System",
     tool: "Tool",
   }

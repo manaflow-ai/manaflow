@@ -592,6 +592,7 @@ The agent will complete the task autonomously and return the results.`,
         sessionId: session.id,
         convexSessionId, // Include Convex session ID for UI linking
         morphInstanceId: vm.instanceId, // VM instance ID for debugging (URL derived as https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
+        path: session.directory, // Working directory path in the VM
         response: textResponse,
         toolsUsed: toolsSummary,
         tokens: response.info.tokens,

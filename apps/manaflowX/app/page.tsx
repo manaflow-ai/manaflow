@@ -12,6 +12,7 @@ import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
 import { ConnectXButton } from "@/components/ConnectXButton"
+import { GrokIcon } from "@/components/GrokIcon"
 
 type Post = {
   _id: Id<"posts">
@@ -47,13 +48,21 @@ function PostCard({
     >
       <div className="flex gap-3">
         <div className="flex-shrink-0">
-          <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
-            {post.author[0].toUpperCase()}
-          </div>
+          {post.author === "Assistant" || post.author === "Grok" ? (
+            <div className="w-10 h-10 rounded-full bg-black border border-gray-700 flex items-center justify-center">
+              <GrokIcon size={24} className="text-white" />
+            </div>
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
+              {post.author[0].toUpperCase()}
+            </div>
+          )}
         </div>
         <div className="flex-grow min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="font-bold hover:underline">{post.author}</span>
+            <span className="font-bold hover:underline">
+              {post.author === "Assistant" ? "Grok" : post.author}
+            </span>
             <span className="text-gray-500 text-sm">
               · {new Date(post.createdAt).toLocaleString()}
             </span>
@@ -117,7 +126,10 @@ function ReplyComposer({
   return (
     <div className="p-4 border-b border-gray-800 bg-gray-900/50">
       <div className="text-sm text-gray-500 mb-2">
-        Replying to <span className="text-blue-400">@{replyingTo.author}</span>
+        Replying to{" "}
+        <span className="text-blue-400">
+          @{replyingTo.author === "Assistant" ? "Grok" : replyingTo.author}
+        </span>
       </div>
       <textarea
         className="w-full bg-gray-800 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none p-3 rounded-lg"
@@ -283,7 +295,8 @@ function HomeContent() {
   const data = useQuery(api.posts.listPosts, { limit: 20 })
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [selectedCodingAgentSession, setSelectedCodingAgentSession] = useState<Id<"sessions"> | null>(null)
+  const [selectedCodingAgentSession, setSelectedCodingAgentSession] =
+    useState<Id<"sessions"> | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
   // Get selected post from URL search params
@@ -479,6 +492,4 @@ export default function Home() {
       <HomeContent />
     </Suspense>
   )
-
-
 }

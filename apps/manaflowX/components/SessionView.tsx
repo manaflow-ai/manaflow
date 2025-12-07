@@ -1,9 +1,11 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { useState } from "react";
 import { Streamdown } from "streamdown";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
+import { GrokIcon } from "./GrokIcon";
 
 type Part = {
   type: "text" | "reasoning" | "tool_call" | "tool_result" | "file" | "step_start" | "step_finish" | "error";
@@ -288,15 +290,21 @@ function TurnView({ turn, onCodingAgentClick }: { turn: Turn; onCodingAgentClick
     <div className={`py-3 pr-4 ${isUser ? "bg-gray-900/30" : ""}`}>
       <div className="flex gap-3">
         <div className="flex-shrink-0 pl-2">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-            isUser ? "bg-blue-600" : isAssistant ? "bg-purple-600" : "bg-gray-600"
-          }`}>
-            {isUser ? "U" : isAssistant ? "A" : turn.role[0].toUpperCase()}
-          </div>
+          {isAssistant ? (
+            <div className="w-8 h-8 rounded-full bg-black border border-gray-700 flex items-center justify-center">
+              <GrokIcon size={20} className="text-white" />
+            </div>
+          ) : (
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+              isUser ? "bg-blue-600" : "bg-gray-600"
+            }`}>
+              {isUser ? "U" : turn.role[0].toUpperCase()}
+            </div>
+          )}
         </div>
         <div className="flex-grow min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-sm capitalize">{turn.role}</span>
+            <span className="font-medium text-sm capitalize">{turn.role === "assistant" ? "Grok" : turn.role}</span>
             {isStreaming && (
               <span className="text-xs text-blue-400 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
@@ -337,6 +345,7 @@ export function SessionView({
   onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void;
 }) {
   const data = useQuery(api.sessions.getSessionWithTurns, { sessionId });
+  const [isExpanded, setIsExpanded] = useState(true);
 
   if (!data) {
     return (
@@ -354,8 +363,24 @@ export function SessionView({
 
   return (
     <div className="border border-gray-800 rounded-lg overflow-hidden">
-      <div className="bg-gray-900 px-4 py-2 border-b border-gray-800 flex justify-between items-center">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="bg-gray-900 px-4 py-2 border-b border-gray-800 flex justify-between items-center w-full hover:bg-gray-800 transition-colors"
+      >
         <div className="flex items-center gap-2">
+          <svg
+            className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 5l7 7-7 7"
+            />
+          </svg>
           <span className={`w-2 h-2 rounded-full ${
             session.status === "active" ? "bg-blue-500 animate-pulse" :
             session.status === "completed" ? "bg-green-500" :
@@ -371,16 +396,18 @@ export function SessionView({
             {session.tokens.input + session.tokens.output} total tokens
           </div>
         )}
-      </div>
-      <div className="divide-y divide-gray-800">
-        {sortedTurns.map((turn) => (
-          <TurnView
-            key={turn._id}
-            turn={turn as Turn}
-            onCodingAgentClick={onCodingAgentSessionSelect}
-          />
-        ))}
-      </div>
+      </button>
+      {isExpanded && (
+        <div className="divide-y divide-gray-800">
+          {sortedTurns.map((turn) => (
+            <TurnView
+              key={turn._id}
+              turn={turn as Turn}
+              onCodingAgentClick={onCodingAgentSessionSelect}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -400,7 +427,6 @@ export function SessionsByPost({
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="text-sm text-gray-500">AI Sessions</div>
       {sessions.map((session) => (
         <SessionView
           key={session._id}
