@@ -308,7 +308,7 @@ function HomeContent() {
       const response = await fetch("/api/post", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, repo: selectedRepo }),
       })
       if (!response.ok) {
         throw new Error("Failed to create post")

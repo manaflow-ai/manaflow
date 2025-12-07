@@ -8,6 +8,7 @@ import { dirname, join } from "path";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { fetchInstallationAccessToken } from "../../convex/_shared/githubApp";
 
 // =============================================================================
 // Progress Stage Types
@@ -158,6 +159,128 @@ function updateProgress(
 }
 
 // =============================================================================
+// Repository Cloning Helpers
+// =============================================================================
+
+interface RepoCloneConfig {
+  gitRemote: string;           // e.g., "https://github.com/owner/repo.git"
+  branch: string;              // branch to checkout
+  installationId?: number;     // GitHub App installation ID for private repos
+}
+
+// Get GitHub access token for cloning private repos
+async function getGitHubAccessToken(installationId: number): Promise<string | null> {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
+
+  if (!appId || !privateKey) {
+    console.warn("[coding-agent] GitHub App credentials not configured");
+    return null;
+  }
+
+  return fetchInstallationAccessToken(installationId, appId, privateKey);
+}
+
+// Build authenticated git remote URL
+function buildAuthenticatedRemoteUrl(gitRemote: string, accessToken: string): string {
+  // Convert https://github.com/owner/repo.git to https://x-access-token:TOKEN@github.com/owner/repo.git
+  const url = new URL(gitRemote);
+  url.username = "x-access-token";
+  url.password = accessToken;
+  return url.toString();
+}
+
+// Safely quote a string for shell usage (single quotes with escaping)
+function singleQuote(str: string): string {
+  return `'${str.replace(/'/g, "'\"'\"'")}'`;
+}
+
+// Clone repository and checkout branch in the VM
+async function cloneRepositoryInVM(
+  instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> },
+  config: RepoCloneConfig
+): Promise<void> {
+  const { gitRemote, branch, installationId } = config;
+  const workspacePath = "/workspace";
+
+  console.log(`[coding-agent] Cloning repository: ${gitRemote} branch: ${branch}`);
+
+  // Get authenticated URL if we have an installation ID
+  let cloneUrl = gitRemote;
+  if (installationId) {
+    const accessToken = await getGitHubAccessToken(installationId);
+    if (accessToken) {
+      cloneUrl = buildAuthenticatedRemoteUrl(gitRemote, accessToken);
+      console.log(`[coding-agent] Using authenticated clone URL`);
+
+      // Set up gh CLI auth and git credential helper in the VM
+      console.log(`[coding-agent] Setting up gh auth in VM`);
+      const ghAuthRes = await instance.exec(
+        `bash -lc "printf %s ${singleQuote(accessToken)} | gh auth login --with-token && gh auth setup-git 2>&1"`
+      );
+      if (ghAuthRes.stderr && ghAuthRes.stderr.includes("error")) {
+        console.warn(`[coding-agent] gh auth setup warning: ${ghAuthRes.stderr}`);
+      } else {
+        console.log(`[coding-agent] gh auth setup completed`);
+      }
+    } else {
+      console.warn(`[coding-agent] Could not get access token, attempting public clone`);
+    }
+  }
+
+  // Remove existing workspace contents (the VM may have a placeholder)
+  await instance.exec(`rm -rf ${workspacePath}/*`);
+
+  // Clone with depth 1 (shallow clone for speed)
+  // Pattern from cmux: git clone --depth 1 "${repoUrl}" "${originPath}"
+  const cloneCmd = `git clone --depth 1 "${cloneUrl}" ${workspacePath}`;
+  const cloneResult = await instance.exec(cloneCmd);
+  if (cloneResult.stderr && cloneResult.stderr.includes("fatal:")) {
+    throw new Error(`Failed to clone repository: ${cloneResult.stderr}`);
+  }
+  console.log(`[coding-agent] Clone completed`);
+
+  // Configure git safe directory
+  // Pattern from cmux: git config --global --add safe.directory /workspace
+  await instance.exec(`git config --global --add safe.directory ${workspacePath}`);
+
+  // Set remote HEAD
+  // Pattern from cmux: git remote set-head origin -a
+  await instance.exec(`cd ${workspacePath} && git remote set-head origin -a`);
+
+  // Fetch and checkout the specified branch
+  // Pattern from cmux: git fetch --depth 1 origin +refs/heads/${branch}:refs/remotes/origin/${branch}
+  // Pattern from cmux: git checkout -B ${branch} origin/${branch}
+  if (branch !== "main" && branch !== "master") {
+    console.log(`[coding-agent] Fetching and checking out branch: ${branch}`);
+
+    // Fetch the specific branch
+    const fetchCmd = `cd ${workspacePath} && git fetch --depth 1 origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"`;
+    await instance.exec(fetchCmd);
+
+    // Checkout the branch (create local tracking branch)
+    const checkoutCmd = `cd ${workspacePath} && git checkout -B "${branch}" "origin/${branch}"`;
+    const checkoutResult = await instance.exec(checkoutCmd);
+    if (checkoutResult.stderr && checkoutResult.stderr.includes("fatal:")) {
+      throw new Error(`Failed to checkout branch ${branch}: ${checkoutResult.stderr}`);
+    }
+  } else {
+    // For main/master, just ensure we're on the default branch
+    const defaultBranchResult = await instance.exec(
+      `cd ${workspacePath} && git rev-parse --abbrev-ref HEAD`
+    );
+    console.log(`[coding-agent] On branch: ${defaultBranchResult.stdout.trim()}`);
+  }
+
+  // Pull latest changes (for safety, in case the branch was partially cloned)
+  // Pattern from cmux: git pull --ff-only --depth 1 origin ${branch}
+  const pullCmd = `cd ${workspacePath} && git pull --ff-only --depth 1 origin "${branch}" 2>/dev/null || true`;
+  await instance.exec(pullCmd);
+
+  console.log(`[coding-agent] Repository ready at ${workspacePath}`);
+}
+
+// =============================================================================
 // Coding Agent Tool - Delegates tasks to OpenCode running in Morph VMs
 // =============================================================================
 
@@ -180,6 +303,7 @@ function getLatestSnapshotId(): string {
 // Spawn a Morph VM instance and return the OpenCode URL
 async function spawnCodingVM(options?: {
   onReady?: (instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> }) => Promise<void>;
+  repo?: RepoCloneConfig;
 }): Promise<{
   instanceId: string;
   url: string;
@@ -203,6 +327,11 @@ async function spawnCodingVM(options?: {
   // Run onReady callback if provided (e.g., to write config files)
   if (options?.onReady) {
     await options.onReady(instance);
+  }
+
+  // Clone repository if configuration provided
+  if (options?.repo) {
+    await cloneRepositoryInVM(instance, options.repo);
   }
 
   const service = instance.networking.httpServices.find(
@@ -284,9 +413,30 @@ The agent will complete the task autonomously and return the results.`,
       .describe(
         "Which agent mode to use: 'build' for coding tasks, 'plan' for read-only analysis, 'general' for general questions"
       ),
+    // Repository configuration for cloning
+    repo: z
+      .object({
+        gitRemote: z
+          .string()
+          .describe("Git remote URL, e.g., 'https://github.com/owner/repo.git'"),
+        branch: z
+          .string()
+          .describe("Branch to checkout after cloning"),
+        installationId: z
+          .number()
+          .optional()
+          .describe("GitHub App installation ID for private repos"),
+      })
+      .optional()
+      .describe("Repository to clone into the VM workspace. If not provided, no repository will be cloned."),
   }),
   execute: async (
-    { task, context, agent }: { task: string; context?: string; agent: "build" | "plan" | "general" },
+    { task, context, agent, repo }: {
+      task: string;
+      context?: string;
+      agent: "build" | "plan" | "general";
+      repo?: { gitRemote: string; branch: string; installationId?: number };
+    },
     { toolCallId }: { toolCallId: string }
   ) => {
     let vm: Awaited<ReturnType<typeof spawnCodingVM>> | null = null;
@@ -299,7 +449,7 @@ The agent will complete the task autonomously and return the results.`,
 
     try {
       // Get required environment variables
-      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
+      const convexSiteUrl = process.env.NEXT_PUBLIC_NEXT_PUBLIC_CONVEX_SITE;
 
       // Generate a random JWT secret for this invocation
       // This secret will be written to the VM and used by the plugin
@@ -307,7 +457,7 @@ The agent will complete the task autonomously and return the results.`,
       const jwtSecret = base64urlEncode(jwtSecretBytes);
 
       if (!convexSiteUrl) {
-        console.warn("[coding-agent] CONVEX_SITE_URL not set, streaming to Convex disabled");
+        console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE not set, streaming to Convex disabled");
       }
 
       // Update progress: Creating session (non-blocking)
@@ -356,6 +506,8 @@ The agent will complete the task autonomously and return the results.`,
             console.log(`[coding-agent] Wrote JWT config to VM`);
           }
         },
+        // Pass repository config for cloning
+        repo: repo,
       });
 
       // Update session with the Morph instance ID
@@ -363,7 +515,8 @@ The agent will complete the task autonomously and return the results.`,
         sessionId: convexSessionId as Id<"sessions">,
         morphInstanceId: vm.instanceId,
       });
-      console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId}`);
+      // Log the VM URL (derived from instance ID: https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
+      console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId} (VM URL: ${vm.url})`);
 
       // Update progress: VM ready (non-blocking)
       updateProgress(parentSessionId, toolCallId, "vm_ready", "VM ready, creating OpenCode session...", {
@@ -438,6 +591,7 @@ The agent will complete the task autonomously and return the results.`,
         success: true,
         sessionId: session.id,
         convexSessionId, // Include Convex session ID for UI linking
+        morphInstanceId: vm.instanceId, // VM instance ID for debugging (URL derived as https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
         response: textResponse,
         toolsUsed: toolsSummary,
         tokens: response.info.tokens,

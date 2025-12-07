@@ -22,7 +22,38 @@ export type NormalizedInstallationRepo = {
 const textEncoder = new TextEncoder();
 const privateKeyCache = new Map<string, CryptoKey>();
 
-function pemToDer(pem: string): Uint8Array {
+// ASN.1 header for PKCS#8 wrapping of RSA keys
+// SEQUENCE { INTEGER 0, SEQUENCE { OID 1.2.840.113549.1.1.1, NULL }, OCTET STRING ... }
+const PKCS8_RSA_HEADER = new Uint8Array([
+  0x30, 0x82, 0x00, 0x00, // SEQUENCE with 2-byte length placeholder (bytes 2-3)
+  0x02, 0x01, 0x00, // INTEGER 0 (version)
+  0x30, 0x0d, // SEQUENCE (algorithm identifier)
+  0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, // OID 1.2.840.113549.1.1.1 (rsaEncryption)
+  0x05, 0x00, // NULL
+  0x04, 0x82, 0x00, 0x00, // OCTET STRING with 2-byte length placeholder (bytes 24-25)
+]);
+
+function wrapPkcs1InPkcs8(pkcs1Der: Uint8Array): Uint8Array {
+  const header = PKCS8_RSA_HEADER.slice();
+  const totalLength = header.length - 4 + pkcs1Der.length;
+  const octetStringLength = pkcs1Der.length;
+
+  // Set outer SEQUENCE length (total - 4 bytes for SEQUENCE tag and length)
+  header[2] = (totalLength >> 8) & 0xff;
+  header[3] = totalLength & 0xff;
+
+  // Set OCTET STRING length
+  header[24] = (octetStringLength >> 8) & 0xff;
+  header[25] = octetStringLength & 0xff;
+
+  const result = new Uint8Array(header.length + pkcs1Der.length);
+  result.set(header, 0);
+  result.set(pkcs1Der, header.length);
+  return result;
+}
+
+function pemToDer(pem: string): { der: Uint8Array; isPkcs1: boolean } {
+  const isPkcs1 = pem.includes("-----BEGIN RSA PRIVATE KEY-----");
   const cleaned = pem
     .replace(/-----BEGIN [A-Z ]+-----/g, "")
     .replace(/-----END [A-Z ]+-----/g, "")
@@ -31,7 +62,7 @@ function pemToDer(pem: string): Uint8Array {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
-  return base64urlToBytes(base64Url);
+  return { der: base64urlToBytes(base64Url), isPkcs1 };
 }
 
 function base64urlEncodeJson(value: unknown): string {
@@ -45,11 +76,13 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   if (!subtle) {
     throw new Error("SubtleCrypto is not available in this environment");
   }
-  const der = pemToDer(pem);
+  const { der, isPkcs1 } = pemToDer(pem);
+  // Wrap PKCS#1 (RSA PRIVATE KEY) in PKCS#8 structure for WebCrypto
+  const pkcs8Der = isPkcs1 ? wrapPkcs1InPkcs8(der) : der;
   const keyData =
-    der.byteOffset === 0 && der.byteLength === der.buffer.byteLength
-      ? der
-      : der.slice();
+    pkcs8Der.byteOffset === 0 && pkcs8Der.byteLength === pkcs8Der.buffer.byteLength
+      ? pkcs8Der
+      : pkcs8Der.slice();
   const key = await subtle.importKey(
     "pkcs8",
     keyData as BufferSource,

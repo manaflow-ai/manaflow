@@ -339,6 +339,69 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
             {session.title}
           </div>
         )}
+
+        {/* VM URLs - computed from morphInstanceId */}
+        {session.morphInstanceId && (() => {
+          const instanceSlug = session.morphInstanceId.replace('_', '-')
+          const vmUrl = `https://port-4096-${instanceSlug}.http.cloud.morph.so`
+          const vncUrl = `https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html`
+          return (
+            <div className="mt-2 space-y-2">
+              {/* VM Workspace */}
+              <div className="flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
+                <svg className="w-4 h-4 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-gray-400">VM Workspace</div>
+                  <a
+                    href={vmUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-400 hover:text-blue-300 hover:underline truncate block"
+                  >
+                    {vmUrl}
+                  </a>
+                </div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(vmUrl)}
+                  className="p-1 text-gray-500 hover:text-white rounded transition-colors"
+                  title="Copy URL"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+              </div>
+              {/* noVNC */}
+              <div className="flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
+                <svg className="w-4 h-4 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-gray-400">noVNC</div>
+                  <a
+                    href={vncUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-purple-400 hover:text-purple-300 hover:underline truncate block"
+                  >
+                    {vncUrl}
+                  </a>
+                </div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(vncUrl)}
+                  className="p-1 text-gray-500 hover:text-white rounded transition-colors"
+                  title="Copy URL"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Messages */}
