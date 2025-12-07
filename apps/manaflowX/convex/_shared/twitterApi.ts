@@ -142,6 +142,41 @@ export async function fetchTwitterUser(accessToken: string): Promise<TwitterUser
   }
 }
 
+// =============================================================================
+// TWITTER SEARCH API (via Grok)
+// =============================================================================
+// Grok has access to real-time X/Twitter data through the xAI API
+// We use Grok to search and retrieve relevant tweets
+
+export type Tweet = {
+  id: string;
+  text: string;
+  authorUsername: string;
+  authorName: string;
+  authorProfileImageUrl?: string;
+  createdAt: string;
+  metrics?: {
+    likes: number;
+    retweets: number;
+    replies: number;
+    views?: number;
+  };
+  mediaUrls?: string[];
+  quotedTweet?: {
+    id: string;
+    text: string;
+    authorUsername: string;
+  };
+};
+
+export type TweetSearchResult = {
+  success: true;
+  tweets: Tweet[];
+} | {
+  success: false;
+  error: string;
+};
+
 /**
  * Refresh access token using refresh token
  * Reference: POST https://api.x.com/2/oauth2/token with grant_type=refresh_token
