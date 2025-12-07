@@ -18,6 +18,8 @@ export interface RepoConfig {
     maintenanceScript: string;
     devScript: string;
   };
+  repoId?: string;  // Convex repo ID for env var lookup
+  userId?: string;  // User ID for env var lookup
 }
 
 // Thread context for replies
@@ -182,18 +184,20 @@ ${post.repoConfig.installationId ? `- installationId: ${post.repoConfig.installa
   const scriptsContext = post.repoConfig?.scripts
     ? `
 
-## Workspace Scripts
-The repository has the following workspace scripts configured:
+## IMPORTANT: Workspace Setup Instructions
+Before starting ANY coding task, you MUST run these scripts in order:
 
-### Dev Script (run this to start the development environment):
+1. **First, run the maintenance script** (installs dependencies):
+\`\`\`bash
+${post.repoConfig.scripts.maintenanceScript}
+\`\`\`
+
+2. **Then, run the dev script** (starts the development server):
 \`\`\`bash
 ${post.repoConfig.scripts.devScript}
 \`\`\`
 
-### Maintenance Script (run this for maintenance tasks like installing dependencies):
-\`\`\`bash
-${post.repoConfig.scripts.maintenanceScript}
-\`\`\`
+Always run these scripts at the start of your task to ensure the environment is properly set up.
 `
     : ""
 
@@ -201,6 +205,10 @@ ${post.repoConfig.scripts.maintenanceScript}
   const autoDelegate = post.repoConfig !== undefined
   let prompt: string
   if (autoDelegate) {
+    // Build repo object with repoId and userId for env var lookup
+    const repoIdInstruction = post.repoConfig?.repoId ? `, repoId: "${post.repoConfig.repoId}"` : ""
+    const userIdInstruction = post.repoConfig?.userId ? `, userId: "${post.repoConfig.userId}"` : ""
+
     prompt = `The user has selected the repository "${post.repoConfig!.fullName}" and sent this message:
 
 ${post.content}
@@ -209,7 +217,7 @@ Since a repository is selected, delegate this task to the coding agent immediate
 - task: The user's request
 - context: Include any relevant context about the task${scriptsContext ? ". IMPORTANT: Include the workspace scripts context below so the coding agent knows how to set up and run the dev environment." : ""}
 - agent: "build" (for coding tasks)
-- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }${scriptsContext}`
+- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""}${repoIdInstruction}${userIdInstruction} }${scriptsContext}`
   } else if (post.threadContext) {
     prompt = `${threadContextStr}\n\n${post.content}\n\nRespond to this message in the context of the conversation above.`
   } else {

@@ -7,6 +7,49 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { fetchInstallationAccessToken } from "../../convex/_shared/githubApp";
 import { getLatestSnapshotId } from "./vm-snapshots";
+import { StackServerApp } from "@stackframe/stack";
+
+// =============================================================================
+// Stack Auth Data Vault - for fetching env vars
+// =============================================================================
+
+const stackServerApp = new StackServerApp({
+  tokenStore: "nextjs-cookie",
+  urls: {
+    home: process.env.NEXT_PUBLIC_STACK_URL || "http://localhost:3000",
+  },
+});
+
+interface EnvVar {
+  key: string;
+  value: string;
+}
+
+async function fetchEnvVarsFromVault(userId: string, repoId: string): Promise<EnvVar[]> {
+  const secret = process.env.STACK_DATA_VAULT_SECRET;
+  if (!secret) {
+    console.warn("[coding-agent] STACK_DATA_VAULT_SECRET not set, skipping env vars");
+    return [];
+  }
+
+  try {
+    const store = await stackServerApp.getDataVaultStore("xagi");
+    const key = `env:${userId}:${repoId}`;
+    const value = await store.getValue(key, { secret });
+
+    if (!value) {
+      console.log(`[coding-agent] No env vars found for user:${userId} repo:${repoId}`);
+      return [];
+    }
+
+    const envVars = JSON.parse(value) as EnvVar[];
+    console.log(`[coding-agent] Fetched ${envVars.length} env vars from vault`);
+    return envVars;
+  } catch (error) {
+    console.error("[coding-agent] Failed to fetch env vars from vault:", error);
+    return [];
+  }
+}
 
 // =============================================================================
 // Progress Stage Types
@@ -83,7 +126,6 @@ type ProgressUpdate = {
 class ProgressQueue {
   private queue: ProgressUpdate[] = [];
   private processing = false;
-  private flushPromise: Promise<void> | null = null;
 
   // Add update to queue and start processing if not already running
   enqueue(update: ProgressUpdate): void {
@@ -199,7 +241,7 @@ async function cloneRepositoryInVM(
   config: RepoCloneConfig
 ): Promise<void> {
   const { gitRemote, branch, installationId } = config;
-  const workspacePath = "/workspace";
+  const workspacePath = "/root/workspace";
 
   console.log(`[coding-agent] Cloning repository: ${gitRemote} branch: ${branch}`);
 
@@ -227,7 +269,8 @@ async function cloneRepositoryInVM(
   }
 
   // Remove existing workspace contents (the VM may have a placeholder)
-  await instance.exec(`rm -rf ${workspacePath}/*`);
+  // Use rm -rf on the directory and recreate it to ensure hidden files are also removed
+  await instance.exec(`rm -rf ${workspacePath} && mkdir -p ${workspacePath}`);
 
   // Clone with depth 1 (shallow clone for speed)
   // Pattern from cmux: git clone --depth 1 "${repoUrl}" "${originPath}"
@@ -286,6 +329,7 @@ async function cloneRepositoryInVM(
 async function spawnCodingVM(options?: {
   onReady?: (instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> }) => Promise<void>;
   repo?: RepoCloneConfig;
+  envVars?: Array<{ key: string; value: string }>;
 }): Promise<{
   instanceId: string;
   url: string;
@@ -314,6 +358,37 @@ async function spawnCodingVM(options?: {
   // Clone repository if configuration provided
   if (options?.repo) {
     await cloneRepositoryInVM(instance, options.repo);
+  }
+
+  // Inject environment variables as .env file in workspace
+  if (options?.envVars && options.envVars.length > 0) {
+    console.log(`[coding-agent] Injecting ${options.envVars.length} environment variables`);
+
+    // Build .env file content - each line is KEY=VALUE
+    // We need to escape special characters for shell safety
+    const envContent = options.envVars
+      .filter((env) => env.key.trim() !== "")
+      .map((env) => {
+        // Escape backslashes and double quotes in values
+        const escapedValue = env.value
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"')
+          .replace(/\$/g, "\\$")
+          .replace(/`/g, "\\`");
+        return `${env.key}="${escapedValue}"`;
+      })
+      .join("\n");
+
+    // Write .env file to workspace using heredoc for safety
+    const writeEnvCmd = `cat > /root/workspace/.env << 'ENVEOF'
+${envContent}
+ENVEOF`;
+
+    await instance.exec(writeEnvCmd);
+
+    // Verify the .env file was written
+    const verifyResult = await instance.exec(`cat /root/workspace/.env`);
+    console.log(`[coding-agent] Wrote .env file to /root/workspace/.env (${verifyResult.stdout.split('\n').length} lines)`);
   }
 
   const service = instance.networking.httpServices.find(
@@ -408,6 +483,14 @@ The agent will complete the task autonomously and return the results.`,
           .number()
           .optional()
           .describe("GitHub App installation ID for private repos"),
+        repoId: z
+          .string()
+          .optional()
+          .describe("Convex repo ID for fetching env vars from vault"),
+        userId: z
+          .string()
+          .optional()
+          .describe("User ID for fetching env vars from vault"),
       })
       .optional()
       .describe("Repository to clone into the VM workspace. If not provided, no repository will be cloned."),
@@ -423,7 +506,7 @@ The agent will complete the task autonomously and return the results.`,
       task: string;
       context?: string;
       agent: "build" | "plan" | "general";
-      repo?: { gitRemote: string; branch: string; installationId?: number };
+      repo?: { gitRemote: string; branch: string; installationId?: number; repoId?: string; userId?: string };
       installCommand?: string;
     },
     { toolCallId }: { toolCallId: string }
@@ -468,6 +551,12 @@ The agent will complete the task autonomously and return the results.`,
       updateProgress(parentSessionId, toolCallId, "starting_vm", "Starting sandboxed VM...", {
         sessionId: convexSessionId,
       });
+
+      // Fetch env vars from vault if we have repoId and userId
+      let envVars: EnvVar[] = [];
+      if (repo?.repoId && repo?.userId) {
+        envVars = await fetchEnvVarsFromVault(repo.userId, repo.repoId);
+      }
 
       // Spawn a VM with JWT config written before OpenCode starts
       vm = await spawnCodingVM({
@@ -519,6 +608,8 @@ The agent will complete the task autonomously and return the results.`,
         },
         // Pass repository config for cloning
         repo: repo,
+        // Pass environment variables fetched from vault
+        envVars,
       });
 
       // Update session with the Morph instance ID
@@ -604,9 +695,9 @@ ${installCommand}
 
       const response = promptResponse.data;
 
-      // Extract results
-      const textResponse = extractTextFromParts(response.parts);
-      const toolsSummary = extractToolSummary(response.parts);
+      // Extract results (handle undefined parts gracefully)
+      const textResponse = extractTextFromParts(response.parts ?? []);
+      const toolsSummary = extractToolSummary(response.parts ?? []);
 
       // Update progress: Completed (non-blocking)
       updateProgress(parentSessionId, toolCallId, "completed", "Task completed successfully", {
@@ -622,11 +713,12 @@ ${installCommand}
         path: session.directory, // Working directory path in the VM
         response: textResponse,
         toolsUsed: toolsSummary,
-        tokens: response.info.tokens,
-        cost: response.info.cost,
+        tokens: response.info?.tokens,
+        cost: response.info?.cost,
       };
 
-      console.log(`[coding-agent] Task completed. Tokens: ${response.info.tokens.input + response.info.tokens.output}`);
+      const totalTokens = (response.info?.tokens?.input ?? 0) + (response.info?.tokens?.output ?? 0);
+      console.log(`[coding-agent] Task completed. Tokens: ${totalTokens}`);
 
       return result;
     } catch (error) {

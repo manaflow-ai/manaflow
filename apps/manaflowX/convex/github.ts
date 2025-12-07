@@ -22,6 +22,7 @@ export const getRepoWithInstallation = query({
     }
 
     return {
+      _id: repo._id, // Include for env var vault lookup
       fullName: repo.fullName,
       gitRemote: repo.gitRemote,
       defaultBranch: repo.defaultBranch,
