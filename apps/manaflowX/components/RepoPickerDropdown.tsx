@@ -137,16 +137,23 @@ export function RepoPickerDropdown({
       if (!repo) return null;
 
       return (
-        <div className="w-[480px] max-h-[500px] overflow-y-auto bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl">
-          <div className="sticky top-0 bg-neutral-900 border-b border-neutral-800 px-4 py-3">
-            <h3 className="text-sm font-medium text-neutral-200">
-              Configure workspace for <span className="text-neutral-400">{repoFullName}</span>
-            </h3>
-            <p className="text-xs text-neutral-500 mt-1">
-              Set up scripts and environment variables for {repoFullName}.
-            </p>
+        <div className="w-[520px] max-h-[500px] flex flex-col bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl">
+          {/* Fixed header */}
+          <div className="shrink-0 px-4 py-3 border-b border-neutral-800">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-medium text-neutral-200">
+                  Configure workspace for{" "}
+                  <span className="text-neutral-400">{repoFullName}</span>
+                </h3>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Set up scripts and environment variables.
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="p-4">
+          {/* Scrollable content */}
+          <div className="flex-1 overflow-y-auto p-4">
             <ConfigureWorkspace repoId={repo._id as Id<"repos">} />
           </div>
         </div>
