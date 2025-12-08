@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "stack-auth": {
+      "type": "http",
+      "url": "https://mcp.stack-auth.com/"
+    }
+  }
+}

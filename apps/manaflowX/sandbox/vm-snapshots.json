@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2025-12-07T17:15:09.797Z",
+  "presets": [
+    {
+      "presetId": "6vcpu_24gb_48gb",
+      "label": "Standard workspace",
+      "cpu": "6 vCPU",
+      "memory": "24 GB RAM",
+      "disk": "48 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_f1qfq204",
+          "capturedAt": "2025-12-06T00:00:00Z"
+        },
+        {
+          "version": 2,
+          "snapshotId": "snapshot_2s1vpc1x",
+          "capturedAt": "2025-12-07T07:27:52.482Z"
+        },
+        {
+          "version": 3,
+          "snapshotId": "snapshot_p8c2is5y",
+          "capturedAt": "2025-12-07T08:08:41.853Z"
+        },
+        {
+          "version": 4,
+          "snapshotId": "snapshot_ip3ziorm",
+          "capturedAt": "2025-12-07T08:45:00.000Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_36q6ly8o",
+          "capturedAt": "2025-12-07T09:32:00.000Z"
+        },
+        {
+          "version": 6,
+          "snapshotId": "snapshot_x6k3uoe1",
+          "capturedAt": "2025-12-07T09:57:00.000Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "snapshot_rm13m5gn",
+          "capturedAt": "2025-12-07T09:44:41.623Z"
+        },
+        {
+          "version": 8,
+          "snapshotId": "snapshot_81pisgoq",
+          "capturedAt": "2025-12-07T09:48:25.415Z"
+        },
+        {
+          "version": 9,
+          "snapshotId": "snapshot_i8lkfcbd",
+          "capturedAt": "2025-12-07T10:08:53.200Z"
+        },
+        {
+          "version": 10,
+          "snapshotId": "snapshot_ir8cm10x",
+          "capturedAt": "2025-12-07T10:45:13.467Z"
+        },
+        {
+          "version": 11,
+          "snapshotId": "snapshot_fksv49c4",
+          "capturedAt": "2025-12-07T10:50:08.134Z"
+        },
+        {
+          "version": 12,
+          "snapshotId": "snapshot_7oriz0qz",
+          "capturedAt": "2025-12-07T11:09:00.000Z"
+        },
+        {
+          "version": 13,
+          "snapshotId": "snapshot_35qul1z6",
+          "capturedAt": "2025-12-07T12:41:26.398Z"
+        },
+        {
+          "version": 14,
+          "snapshotId": "snapshot_j0hq7uu9",
+          "capturedAt": "2025-12-07T12:50:02.789Z"
+        },
+        {
+          "version": 15,
+          "snapshotId": "snapshot_2djobhi4",
+          "capturedAt": "2025-12-07T13:21:34.955Z"
+        },
+        {
+          "version": 16,
+          "snapshotId": "snapshot_xej6x1dm",
+          "capturedAt": "2025-12-07T13:30:38.280Z"
+        },
+        {
+          "version": 17,
+          "snapshotId": "snapshot_ghm6uygf",
+          "capturedAt": "2025-12-07T13:41:26.924Z"
+        },
+        {
+          "version": 18,
+          "snapshotId": "snapshot_4vgf5whr",
+          "capturedAt": "2025-12-07T13:52:17.289Z"
+        },
+        {
+          "version": 19,
+          "snapshotId": "snapshot_7bhlpv1h",
+          "capturedAt": "2025-12-07T14:52:14.532Z"
+        },
+        {
+          "version": 20,
+          "snapshotId": "snapshot_e6iw3gz7",
+          "capturedAt": "2025-12-07T17:09:46.153Z"
+        },
+        {
+          "version": 21,
+          "snapshotId": "snapshot_c0rwb7ha",
+          "capturedAt": "2025-12-07T17:15:09.797Z"
+        }
+      ],
+      "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
+    }
+  ]
+}

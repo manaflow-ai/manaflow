@@ -1,0 +1,12 @@
+[submodule "dev-docs/vercel-workflow"]
+	path = dev-docs/vercel-workflow
+	url = https://github.com/vercel/workflow.git
+[submodule "dev-docs/beads"]
+	path = dev-docs/beads
+	url = https://github.com/steveyegge/beads
+[submodule "dev-docs/streamdown"]
+	path = dev-docs/streamdown
+	url = https://github.com/vercel/streamdown.git
+[submodule "dev-docs/opencode"]
+	path = dev-docs/opencode
+	url = https://github.com/sst/opencode.git

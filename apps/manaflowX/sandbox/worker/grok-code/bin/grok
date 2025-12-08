@@ -1,0 +1,110 @@
+#!/usr/bin/env node
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const TOML = require('@iarna/toml');
+const https = require('https');
+
+const pkgName = '@xai-official/grok';
+
+function readLocalVersion() {
+    try {
+        const p = path.join(__dirname, '..', 'vendor', 'version.json');
+        if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8')).version;
+    } catch { }
+    try { return require('../package.json').version; } catch { return undefined; }
+}
+
+function compareSemver(a, b) {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+    }
+    return 0;
+}
+
+function getLatestVersion(timeoutMs = 450) {
+    const url = new URL(`https://registry.npmjs.org/${encodeURIComponent(pkgName)}/latest`);
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(undefined), timeoutMs);
+        const headers = {
+            'Authorization': `Bearer `
+        };
+
+        const req = https.get({
+            hostname: url.hostname,
+            path: url.pathname + url.search,
+            protocol: url.protocol,
+            headers,
+        }, (res) => {
+            let buf = '';
+            res.on('data', (c) => (buf += c));
+            res.on('end', () => {
+                clearTimeout(timer);
+                if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                    try { resolve(JSON.parse(buf).version); } catch { resolve(undefined); }
+                } else {
+                    resolve(undefined);
+                }
+            });
+        });
+
+        req.on('error', () => { clearTimeout(timer); resolve(undefined); });
+        req.setTimeout(timeoutMs, () => { try { req.destroy(); } catch { } resolve(undefined); });
+    });
+}
+
+const key = `${process.platform}-${process.arch}`;
+const map = {
+    'darwin-arm64': 'vendor/darwin-arm64/grok',
+    'linux-x64': 'vendor/linux-x64/grok',
+};
+const rel = map[key];
+if (!rel) {
+    console.error(`${pkgName}: unsupported platform ${key}. Supported: ${Object.keys(map).join(', ')}`);
+    process.exit(1);
+}
+const binPath = path.join(__dirname, '..', rel);
+
+if (!fs.existsSync(binPath)) {
+    console.error(`${pkgName}: missing binary at ${binPath}. Was the package packed with binaries?`);
+    process.exit(1);
+}
+
+const localVersion = readLocalVersion();
+const args = process.argv.slice(2);
+
+function writeInstallerConfig(installer) {
+    const configDir = path.join(os.homedir(), '.grok');
+    const configPath = path.join(configDir, 'config.toml');
+    fs.mkdirSync(configDir, { recursive: true });
+    let obj = {};
+    if (fs.existsSync(configPath)) {
+        obj = TOML.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+    obj.cli ??= {};
+    obj.cli.installer = installer;
+    fs.writeFileSync(configPath, TOML.stringify(obj), 'utf8');
+}
+
+Promise.race([
+    getLatestVersion(450).then((latest) => {
+        if (latest && localVersion && compareSemver(localVersion, latest) < 0) {
+            console.warn(`Update available for ${pkgName}: ${latest} (current ${localVersion}). Run: npm i -g ${pkgName}@latest`);
+        }
+    }),
+    new Promise((r) => setTimeout(r, 500)),
+]).finally(() => {
+    // Persist installer choice and set env overrides for the child
+    writeInstallerConfig('npm');
+    const childEnv = { ...process.env, GROK_MANAGED_BY_NPM: '1' };
+    const child = spawn(binPath, args, { stdio: 'inherit', env: childEnv });
+    child.on('exit', (code, signal) => {
+        if (signal) {
+            process.kill(process.pid, signal);
+        } else {
+            process.exit(code ?? 0);
+        }
+    });
+});

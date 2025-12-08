@@ -1,0 +1,34 @@
+{
+    "name": "@xai-official/grok",
+    "version": "0.1.43",
+    "description": "Grok CLI",
+    "license": "Proprietary",
+    "bin": {
+        "grok": "bin/grok"
+    },
+    "files": [
+        "bin/",
+        "vendor/",
+        "scripts/pack-binaries.js"
+    ],
+    "os": [
+        "darwin",
+        "linux"
+    ],
+    "cpu": [
+        "arm64",
+        "x64"
+    ],
+    "scripts": {
+        "prepack": "node scripts/pack-binaries.js"
+    },
+    "publishConfig": {
+        "access": "restricted"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "dependencies": {
+        "@iarna/toml": "^3.0.0"
+    }
+}
