@@ -3,7 +3,7 @@ import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
@@ -84,12 +84,27 @@ function VSCodeComponent() {
     id: taskRunId,
   });
 
-  const workspaceUrl = taskRun?.vscode?.workspaceUrl
-    ? toProxyWorkspaceUrl(
-        taskRun.vscode.workspaceUrl,
-        localServeWeb.data?.baseUrl
-      )
-    : null;
+  // Memoize workspaceUrl to prevent flickering when localServeWeb.data becomes available.
+  // Once we have a valid URL, we lock it in to avoid triggering status resets.
+  const workspaceUrlRef = useRef<{ runId: string; url: string } | null>(null);
+  const workspaceUrl = useMemo(() => {
+    const rawUrl = taskRun?.vscode?.workspaceUrl;
+    if (!rawUrl) {
+      workspaceUrlRef.current = null;
+      return null;
+    }
+    // If we already have a locked-in URL for this specific run, keep using it
+    if (workspaceUrlRef.current?.runId === taskRunId) {
+      return workspaceUrlRef.current.url;
+    }
+    // Compute the URL with the current localServeWeb data
+    const computed = toProxyWorkspaceUrl(rawUrl, localServeWeb.data?.baseUrl);
+    // Lock it in once we have the data (or if it doesn't need rewriting)
+    if (localServeWeb.data !== undefined || !localServeWeb.isLoading) {
+      workspaceUrlRef.current = { runId: taskRunId, url: computed };
+    }
+    return computed;
+  }, [taskRunId, taskRun?.vscode?.workspaceUrl, localServeWeb.data, localServeWeb.isLoading]);
   const disablePreflight = taskRun?.vscode?.workspaceUrl
     ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
     : false;
@@ -100,9 +115,10 @@ function VSCodeComponent() {
 
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
-  useEffect(() => {
-    setIframeStatus("loading");
-  }, [workspaceUrl]);
+  // Note: We don't reset iframeStatus here when workspaceUrl changes because:
+  // 1. PersistentIframe already handles status resets internally
+  // 2. Our workspaceUrlRef prevents unnecessary URL changes
+  // 3. Resetting here caused double status resets and flickering
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);

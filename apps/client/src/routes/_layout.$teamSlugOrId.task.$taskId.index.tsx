@@ -481,10 +481,28 @@ function TaskDetailPage() {
   }, [selectedRunId]);
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
+  // Memoize workspaceUrl to prevent flickering when localServeWeb.data becomes available.
+  // Once we have a valid URL for a run, we lock it in to avoid triggering status resets.
+  const workspaceUrlRef = useRef<{ runId: string; url: string } | null>(null);
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-  const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
-    : null;
+  const workspaceUrl = useMemo(() => {
+    if (!rawWorkspaceUrl || !selectedRunId) {
+      workspaceUrlRef.current = null;
+      return null;
+    }
+    // If we already have a locked-in URL for this specific run, keep using it
+    const cached = workspaceUrlRef.current;
+    if (cached && cached.runId === selectedRunId) {
+      return cached.url;
+    }
+    // Compute the URL with the current localServeWeb data
+    const computed = toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl);
+    // Lock it in once we have the data (or if it doesn't need rewriting)
+    if (localServeWeb.data !== undefined || !localServeWeb.isLoading) {
+      workspaceUrlRef.current = { runId: selectedRunId, url: computed };
+    }
+    return computed;
+  }, [selectedRunId, rawWorkspaceUrl, localServeWeb.data, localServeWeb.isLoading]);
   const workspacePersistKey = selectedRunId
     ? getTaskRunPersistKey(selectedRunId)
     : null;
