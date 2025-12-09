@@ -6,6 +6,12 @@ export const ANTHROPIC_API_KEY: AgentConfigApiKey = {
   description: "Anthropic API Key",
 };
 
+export const CLAUDE_CODE_OAUTH_TOKEN: AgentConfigApiKey = {
+  envVar: "CLAUDE_CODE_OAUTH_TOKEN",
+  displayName: "Claude Code OAuth Token",
+  description: "OAuth token for Claude Code authentication",
+};
+
 export const OPENAI_API_KEY: AgentConfigApiKey = {
   envVar: "OPENAI_API_KEY",
   displayName: "OpenAI API Key",

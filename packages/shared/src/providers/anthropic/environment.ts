@@ -8,6 +8,7 @@ export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
   "ANTHROPIC_AUTH_TOKEN",
   "ANTHROPIC_CUSTOM_HEADERS",
   "CLAUDE_API_KEY",
+  "CLAUDE_CODE_OAUTH_TOKEN",
 ];
 
 export async function getClaudeEnvironment(
@@ -163,12 +164,16 @@ exit 0`;
     mode: "755",
   });
 
+  // Check if OAuth token is available (preferred over API key)
+  const oauthToken = ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN;
+
   // Create settings.json with hooks configuration
   const settingsConfig: Record<string, unknown> = {
     // Use the Anthropic API key from cmux settings.json instead of env vars
     // This ensures Claude Code always uses the key from cmux, bypassing any
     // ANTHROPIC_API_KEY environment variables in the repo
-    ...(ctx.apiKeys?.ANTHROPIC_API_KEY
+    // OAuth token is handled via environment variable, not settings.json
+    ...(!oauthToken && ctx.apiKeys?.ANTHROPIC_API_KEY
       ? { anthropicApiKey: ctx.apiKeys.ANTHROPIC_API_KEY }
       : {}),
     // Configure helper to avoid env-var based prompting
@@ -191,6 +196,12 @@ exit 0`;
       ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}`,
     },
   };
+
+  // If OAuth token is available, set it as an environment variable
+  // Claude Code recognizes CLAUDE_CODE_OAUTH_TOKEN natively
+  if (oauthToken) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+  }
 
   // Add settings.json to files array as well
   files.push({
