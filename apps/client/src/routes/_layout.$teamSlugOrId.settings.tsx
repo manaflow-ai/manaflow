@@ -747,8 +747,16 @@ function SettingsComponent() {
 
                       {/* Group API keys by provider for better organization */}
                       {apiKeys.map((key) => {
-                        const getProviderInfo = (envVar: string) => {
+                        const getProviderInfo = (
+                          envVar: string
+                        ): { url: string | null; instructions?: string } | null => {
                           switch (envVar) {
+                            case "CLAUDE_CODE_OAUTH_TOKEN":
+                              return {
+                                url: null,
+                                instructions:
+                                  "Run 'claude setup-token' in your terminal and paste the output here. Takes precedence over ANTHROPIC_API_KEY.",
+                              };
                             case "ANTHROPIC_API_KEY":
                               return {
                                 url: "https://console.anthropic.com/settings/keys",
@@ -876,6 +884,11 @@ function SettingsComponent() {
                             </div>
 
                             <div className="md:w-[min(100%,480px)] md:flex-shrink-0 self-start">
+                              {providerInfo?.instructions && (
+                                <p className="text-xs text-amber-600 dark:text-amber-400 mb-1 pb-1">
+                                  {providerInfo.instructions}
+                                </p>
+                              )}
                               <div className="relative">
                                 <input
                                   type={
@@ -891,13 +904,15 @@ function SettingsComponent() {
                                   }
                                   className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
                                   placeholder={
-                                    key.envVar === "ANTHROPIC_API_KEY"
-                                      ? "sk-ant-api03-..."
-                                      : key.envVar === "OPENAI_API_KEY"
-                                        ? "sk-proj-..."
-                                        : key.envVar === "OPENROUTER_API_KEY"
-                                          ? "sk-or-v1-..."
-                                          : `Enter your ${key.displayName}`
+                                    key.envVar === "CLAUDE_CODE_OAUTH_TOKEN"
+                                      ? "sk-ant-oat-..."
+                                      : key.envVar === "ANTHROPIC_API_KEY"
+                                        ? "sk-ant-api03-..."
+                                        : key.envVar === "OPENAI_API_KEY"
+                                          ? "sk-proj-..."
+                                          : key.envVar === "OPENROUTER_API_KEY"
+                                            ? "sk-or-v1-..."
+                                            : `Enter your ${key.displayName}`
                                   }
                                 />
                                 <button

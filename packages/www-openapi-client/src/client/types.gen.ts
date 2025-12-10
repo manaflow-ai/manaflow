@@ -116,17 +116,6 @@ export type GithubReposResponse = {
     repos: Array<GithubRepo>;
 };
 
-export type FrameworkPreset = 'other' | 'next' | 'vite' | 'remix' | 'nuxt' | 'sveltekit' | 'angular' | 'cra' | 'vue';
-
-export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
-
-export type FrameworkDetectionResponse = {
-    framework: FrameworkPreset;
-    packageManager: PackageManager;
-    maintenanceScript: string;
-    devScript: string;
-};
-
 export type GithubPullRequestItem = {
     id: number;
     number: number;
@@ -367,23 +356,6 @@ export type GithubOAuthTokenResponse = {
     error: string | null;
 };
 
-export type GithubDefaultBranchResponse = {
-    defaultBranch: string | null;
-    error: string | null;
-};
-
-export type GithubBranch = {
-    name: string;
-    lastCommitSha?: string;
-    isDefault?: boolean;
-};
-
-export type GithubBranchesResponse = {
-    branches: Array<GithubBranch>;
-    defaultBranch: string | null;
-    error: string | null;
-};
-
 export type ResumeTaskRunResponse = {
     resumed: true;
 };
@@ -420,7 +392,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_vkfzdrxw' | 'snapshot_jqe2lrhp' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_st54kpzd' | 'snapshot_6isj88bc' | 'snapshot_pcmfvjra');
 };
 
 export type CreateEnvironmentResponse = {
@@ -527,7 +499,6 @@ export type StartSandboxResponse = {
     vscodeUrl: string;
     workerUrl: string;
     provider?: 'morph';
-    vscodePersisted?: boolean;
 };
 
 export type StartSandboxBody = {
@@ -1154,38 +1125,6 @@ export type GetApiIntegrationsGithubReposResponses = {
 
 export type GetApiIntegrationsGithubReposResponse = GetApiIntegrationsGithubReposResponses[keyof GetApiIntegrationsGithubReposResponses];
 
-export type GetApiIntegrationsGithubFrameworkDetectionData = {
-    body?: never;
-    path?: never;
-    query: {
-        /**
-         * Full repository name (owner/repo)
-         */
-        repo: string;
-    };
-    url: '/api/integrations/github/framework-detection';
-};
-
-export type GetApiIntegrationsGithubFrameworkDetectionErrors = {
-    /**
-     * Bad request
-     */
-    400: unknown;
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-};
-
-export type GetApiIntegrationsGithubFrameworkDetectionResponses = {
-    /**
-     * OK
-     */
-    200: FrameworkDetectionResponse;
-};
-
-export type GetApiIntegrationsGithubFrameworkDetectionResponse = GetApiIntegrationsGithubFrameworkDetectionResponses[keyof GetApiIntegrationsGithubFrameworkDetectionResponses];
-
 export type GetApiIntegrationsGithubPrsData = {
     body?: never;
     path?: never;
@@ -1719,70 +1658,6 @@ export type GetApiIntegrationsGithubOauthTokenResponses = {
 };
 
 export type GetApiIntegrationsGithubOauthTokenResponse = GetApiIntegrationsGithubOauthTokenResponses[keyof GetApiIntegrationsGithubOauthTokenResponses];
-
-export type GetApiIntegrationsGithubDefaultBranchData = {
-    body?: never;
-    path?: never;
-    query: {
-        /**
-         * Repository full name (owner/repo)
-         */
-        repo: string;
-    };
-    url: '/api/integrations/github/default-branch';
-};
-
-export type GetApiIntegrationsGithubDefaultBranchErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-};
-
-export type GetApiIntegrationsGithubDefaultBranchResponses = {
-    /**
-     * Default branch response
-     */
-    200: GithubDefaultBranchResponse;
-};
-
-export type GetApiIntegrationsGithubDefaultBranchResponse = GetApiIntegrationsGithubDefaultBranchResponses[keyof GetApiIntegrationsGithubDefaultBranchResponses];
-
-export type GetApiIntegrationsGithubBranchesData = {
-    body?: never;
-    path?: never;
-    query: {
-        /**
-         * Repository full name (owner/repo)
-         */
-        repo: string;
-        /**
-         * Optional search term to filter branches by name
-         */
-        search?: string;
-        /**
-         * Max branches to return (default 30, max 100)
-         */
-        limit?: number;
-    };
-    url: '/api/integrations/github/branches';
-};
-
-export type GetApiIntegrationsGithubBranchesErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-};
-
-export type GetApiIntegrationsGithubBranchesResponses = {
-    /**
-     * Branches list response
-     */
-    200: GithubBranchesResponse;
-};
-
-export type GetApiIntegrationsGithubBranchesResponse = GetApiIntegrationsGithubBranchesResponses[keyof GetApiIntegrationsGithubBranchesResponses];
 
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;
