@@ -1525,15 +1525,44 @@ EOF
 @registry.task(
     name="configure-openbox",
     deps=("upload-repo", "install-base-packages"),
-    description="Install openbox configuration for desktop menu",
+    description="Install openbox configuration for desktop menu and GTK theme",
 )
 async def task_configure_openbox(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
         f"""
         set -eux
+
+        # Install GTK theme packages for proper native widget styling (select dropdowns, etc.)
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            adwaita-icon-theme \
+            gnome-themes-extra \
+            gtk2-engines-pixbuf
+
+        # Install openbox menu configuration
         mkdir -p /root/.config/openbox
         install -Dm0644 {repo}/configs/openbox/menu.xml /root/.config/openbox/menu.xml
+
+        # Install GTK-3.0 settings for proper form element styling in Chrome
+        mkdir -p /root/.config/gtk-3.0
+        install -Dm0644 {repo}/configs/gtk-3.0/settings.ini /root/.config/gtk-3.0/settings.ini
+
+        # Install GTK-2.0 settings (fallback for some applications)
+        mkdir -p /root/.config/gtk-2.0
+        install -Dm0644 {repo}/configs/gtk-2.0/gtkrc /root/.config/gtk-2.0/gtkrc
+
+        # Also install system-wide GTK settings
+        install -Dm0644 {repo}/configs/gtk-3.0/settings.ini /etc/gtk-3.0/settings.ini
+        install -Dm0644 {repo}/configs/gtk-2.0/gtkrc /etc/gtk-2.0/gtkrc
+
+        # Set environment variables for GTK theme (will be picked up by Chrome)
+        cat >> /etc/environment <<'EOF'
+GTK_THEME=Adwaita
+GTK2_RC_FILES=/etc/gtk-2.0/gtkrc
+EOF
+
+        rm -rf /var/lib/apt/lists/*
         """
     )
     await ctx.run("configure-openbox", cmd)
