@@ -103,8 +103,21 @@ export function PersistentIframe({
   const loadTimeoutRef = useRef<number | null>(null);
   const preflightErrorRef = useRef<string | null>(null);
 
+  // Only reset to loading when persistKey or src actually changes,
+  // and only if the iframe isn't already loaded with the same URL.
+  // This prevents flickering for local workspaces where the iframe may already be ready.
+  const prevKeyRef = useRef(persistKey);
+  const prevSrcRef = useRef(src);
   useEffect(() => {
-    setStatus("loading");
+    const keyChanged = prevKeyRef.current !== persistKey;
+    const srcChanged = prevSrcRef.current !== src;
+    prevKeyRef.current = persistKey;
+    prevSrcRef.current = src;
+
+    // Only reset status if key or src actually changed
+    if (keyChanged || srcChanged) {
+      setStatus("loading");
+    }
   }, [persistKey, src]);
 
   const clearLoadTimeout = useCallback(() => {

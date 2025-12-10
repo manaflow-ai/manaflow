@@ -231,35 +231,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     };
   }, []);
 
-  // Control iframe wrapper visibility based on this panel's expansion state
-  useEffect(() => {
-    if (typeof document === "undefined" || !type) return;
-
-    // Find the container div for this panel's content
-    const container = document.querySelector(`[data-panel-position="${position}"]`);
-    if (!container) return;
-
-    // Find any iframe target within this panel
-    const iframeTarget = container.querySelector('[data-iframe-target]') as HTMLElement;
-    if (!iframeTarget) return;
-
-    const iframeKey = iframeTarget.getAttribute('data-iframe-target');
-    if (!iframeKey) return;
-
-    // Find the corresponding iframe wrapper
-    const wrapper = document.querySelector(`[data-iframe-key="${iframeKey}"]`) as HTMLElement;
-    if (!wrapper) return;
-
-    if (isAnyPanelExpanded && !isExpanded) {
-      // Another panel is expanded - hide this iframe
-      wrapper.style.visibility = "hidden";
-      wrapper.style.pointerEvents = "none";
-    } else {
-      // This panel is expanded OR no panel is expanded - show iframe
-      wrapper.style.visibility = "visible";
-      wrapper.style.pointerEvents = "auto";
-    }
-  }, [type, position, isExpanded, isAnyPanelExpanded]);
+  // NOTE: Iframe visibility is managed by PersistentIframe component via isExpanded/isAnyPanelExpanded props.
+  // Do NOT add duplicate visibility management here - it causes flickering due to race conditions.
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = "move";
@@ -487,9 +460,11 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
       const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
       const shouldShowWorkspaceLoader = Boolean(selectedRun) && !workspaceUrl && !isLocalWorkspace;
-      const disablePreflight = rawWorkspaceUrl
+      // For local workspaces, skip preflight entirely since they don't need Morph resume checks.
+      // Also use server-side preflight for Morph URLs.
+      const disablePreflight = isLocalWorkspace || (rawWorkspaceUrl
         ? shouldUseServerIframePreflight(rawWorkspaceUrl)
-        : false;
+        : false);
 
       return panelWrapper(
         <Code2 className="size-3" aria-hidden />,
@@ -518,6 +493,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               loadTimeoutMs={60_000}
               isExpanded={isExpanded}
               isAnyPanelExpanded={isAnyPanelExpanded}
+              // For local workspaces, force status to "loaded" to prevent loading overlay flicker.
+              // Local workspaces load synchronously and don't need the loading state.
+              forcedStatus={isLocalWorkspace ? "loaded" : null}
             />
           ) : shouldShowWorkspaceLoader ? (
             <div className="flex h-full items-center justify-center">
