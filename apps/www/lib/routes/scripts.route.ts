@@ -119,7 +119,7 @@ scriptsRouter.openapi(
       },
     },
   }),
-  async (c) => {
+  async (_c) => {
     try {
       const { hash } = await getScriptContent();
 

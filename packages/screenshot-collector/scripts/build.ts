@@ -2,6 +2,9 @@
 /**
  * Build script that bundles the screenshot collector into a single executable file.
  * The bundled script can be served from the www server and fetched/executed by workers.
+ *
+ * This script builds from packages/screenshot-collector/src/index.ts (isolated)
+ * NOT from apps/worker/src which would pull in all worker dependencies.
  */
 
 import { build } from "bun";
@@ -9,10 +12,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 const ROOT_DIR = path.resolve(import.meta.dir, "..");
-const ENTRY_FILE = path.join(
-  ROOT_DIR,
-  "src/screenshotCollector/claudeScreenshotCollectorBundle.ts"
-);
+const ENTRY_FILE = path.join(ROOT_DIR, "src/index.ts");
 const OUTPUT_DIR = path.join(ROOT_DIR, "dist");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "screenshot-collector.js");
 
@@ -63,7 +63,9 @@ async function main() {
     await fs.copyFile(OUTPUT_FILE, wwwOutputFile);
     console.log(`  Copied to: ${wwwOutputFile}`);
   } catch (error) {
-    console.warn(`  Warning: Could not copy to www public dir: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `  Warning: Could not copy to www public dir: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 

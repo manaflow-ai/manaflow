@@ -39,6 +39,7 @@ export default tseslint.config(
       "build/**",
       "next-env.d.ts",
       "scripts/pr-review/pr-review-inject.bundle.js",
+      "public/scripts/screenshot-collector.js", // Generated bundle from packages/screenshot-collector
     ],
   },
   // Project rules
