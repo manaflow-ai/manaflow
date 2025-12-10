@@ -1326,6 +1326,8 @@ export async function runPreviewJob(
         // Pass environment scripts so Claude knows how to install deps and run dev server
         installCommand: environment.maintenanceScript ?? undefined,
         devCommand: environment.devScript ?? undefined,
+        // Pass additional context for the screenshot agent
+        screenshotAgentContext: environment.screenshotAgentContext ?? undefined,
       };
 
       try {

@@ -31,6 +31,8 @@ export interface StartScreenshotCollectionOptions {
   installCommand?: string | null;
   /** Command to start the dev server (e.g., "bun run dev") */
   devCommand?: string | null;
+  /** Additional context/notes for the screenshot agent (e.g., auth instructions, browser config) */
+  screenshotAgentContext?: string | null;
 }
 
 interface CapturedScreenshot {
@@ -461,6 +463,7 @@ export async function startScreenshotCollection(
       pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
       installCommand: options.installCommand ?? undefined,
       devCommand: options.devCommand ?? undefined,
+      screenshotAgentContext: options.screenshotAgentContext ?? undefined,
       ...claudeAuth,
     });
 
