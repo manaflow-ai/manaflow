@@ -95,7 +95,7 @@ before_free="$(capture_output free -h || true)"
 before_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
 before_zram="$(capture_output zramctl || true)"
 
-declare -a candidate_units=(ssh.service sshd.service cmux-ide.service cmux-openvscode.service code-server.service openvscode-server.service)
+declare -a candidate_units=(ssh.service sshd.service cmux-ide.service cmux-openvscode.service cmux-coder.service code-server.service openvscode-server.service cmux-tigervnc.service cmux-openbox.service cmux-vnc-proxy.service cmux-devtools.service cmux-xterm.service cmux-worker.service cmux-proxy.service cmux-cdp-proxy.service)
 declare -a report_units=()
 
 for unit in "${candidate_units[@]}"; do
@@ -396,13 +396,31 @@ sysctl -q -p /etc/sysctl.d/99-cmux-memory.conf >/dev/null 2>&1 || true
 summary+=("Set vm.swappiness to 70.")
 
 # Systemd drop-ins
+# Reserve memory (MemoryLow) and boost CPU/IO priority for interactive services.
+# This ensures UI remains responsive even when coding agents consume heavy resources.
 declare -A memory_low_map=(
+  # SSH - must never fail
   [ssh.service]="256M"
   [sshd.service]="256M"
+  # IDE services - primary user interface
   [cmux-ide.service]="2G"
   [cmux-openvscode.service]="2G"
+  [cmux-coder.service]="2G"
   [code-server.service]="2G"
   [openvscode-server.service]="2G"
+  # VNC/desktop services for snappy interaction
+  [cmux-tigervnc.service]="512M"
+  [cmux-openbox.service]="256M"
+  [cmux-vnc-proxy.service]="128M"
+  # Chrome DevTools browser (memory-hungry)
+  [cmux-devtools.service]="1G"
+  # Terminal service - direct user interaction
+  [cmux-xterm.service]="256M"
+  # Worker service - background operations
+  [cmux-worker.service]="512M"
+  # Proxy services - handle all HTTP traffic
+  [cmux-proxy.service]="256M"
+  [cmux-cdp-proxy.service]="128M"
 )
 
 managed_units=()
