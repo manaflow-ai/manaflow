@@ -171,6 +171,12 @@ export function PersistentIframe({
         typeof preflightPhasePayload?.attempt === "number"
           ? preflightPhasePayload.attempt
           : null;
+      const serverPhase = preflightPhasePayload?.phase;
+
+      // Differentiate between resume retries and preflight connection retries
+      if (serverPhase === "preflight_retry" && attempt) {
+        return `Waiting for workspace server (attempt ${attempt})…`;
+      }
       if (attempt && attempt > 1) {
         return `Retrying workspace resume (attempt ${attempt})…`;
       }

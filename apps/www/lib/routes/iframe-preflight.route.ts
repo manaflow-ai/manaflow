@@ -70,10 +70,29 @@ const QuerySchema = z
 const MAX_RESUME_ATTEMPTS = 3;
 const RESUME_RETRY_DELAY_MS = 1_000;
 
+const MAX_PREFLIGHT_ATTEMPTS = 10;
+const PREFLIGHT_BASE_DELAY_MS = 500;
+const PREFLIGHT_MAX_DELAY_MS = 3_000;
+
 const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+
+function isConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  // Match common connection error patterns from fetch/hyper
+  return (
+    message.includes("connect") ||
+    message.includes("econnrefused") ||
+    message.includes("connection refused") ||
+    message.includes("network") ||
+    message.includes("fetch failed")
+  );
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -195,7 +214,17 @@ async function attemptResumeIfNeeded(
   return "failed";
 }
 
-async function performPreflight(target: URL): Promise<IframePreflightResult> {
+interface PerformPreflightOptions {
+  sendPhase?: SendPhaseFn;
+  wasResumed?: boolean;
+}
+
+async function performPreflight(
+  target: URL,
+  options?: PerformPreflightOptions,
+): Promise<IframePreflightResult> {
+  const { sendPhase, wasResumed = false } = options ?? {};
+
   const probe = async (method: "HEAD" | "GET") => {
     const response = await fetch(target, {
       method,
@@ -205,7 +234,7 @@ async function performPreflight(target: URL): Promise<IframePreflightResult> {
     return response;
   };
 
-  try {
+  const attemptPreflight = async (): Promise<IframePreflightResult> => {
     const headResponse = await probe("HEAD");
 
     if (headResponse.ok) {
@@ -240,17 +269,59 @@ async function performPreflight(target: URL): Promise<IframePreflightResult> {
       method: "HEAD",
       error: `Request failed with status ${headResponse.status}.`,
     };
-  } catch (error) {
-    return {
-      ok: false,
-      status: null,
-      method: null,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Unknown error during preflight.",
-    };
+  };
+
+  // Determine how many attempts based on whether the instance was just resumed.
+  // After a resume, the HTTP server may need a few seconds to start accepting
+  // connections, so we retry connection errors with exponential backoff.
+  const maxAttempts = wasResumed ? MAX_PREFLIGHT_ATTEMPTS : 1;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await attemptPreflight();
+    } catch (error) {
+      lastError = error;
+
+      // Only retry on connection errors (server not ready yet)
+      if (!isConnectionError(error)) {
+        break;
+      }
+
+      // Don't retry on the last attempt
+      if (attempt >= maxAttempts) {
+        break;
+      }
+
+      // Calculate delay with exponential backoff
+      const delay = Math.min(
+        PREFLIGHT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+        PREFLIGHT_MAX_DELAY_MS,
+      );
+
+      // Notify about retry if sendPhase is available
+      if (sendPhase) {
+        await sendPhase("preflight_retry", {
+          attempt,
+          maxAttempts,
+          delay,
+          error: error instanceof Error ? error.message : "Connection error",
+        });
+      }
+
+      await wait(delay);
+    }
   }
+
+  return {
+    ok: false,
+    status: null,
+    method: null,
+    error:
+      lastError instanceof Error
+        ? lastError.message
+        : "Unknown error during preflight.",
+  };
 }
 
 export const iframePreflightRouter = new OpenAPIHono();
@@ -479,7 +550,13 @@ iframePreflightRouter.openapi(
           }
         }
 
-        const preflightResult = await performPreflight(target);
+        // Determine if we just resumed the instance - if so, the HTTP server
+        // may need time to start accepting connections and we should retry
+        const wasResumed = morphInfo !== null;
+        const preflightResult = await performPreflight(target, {
+          sendPhase,
+          wasResumed,
+        });
 
         if (preflightResult.ok) {
           await sendPhase("ready", {

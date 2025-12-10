@@ -7,6 +7,7 @@ const IFRAME_PREFLIGHT_SERVER_PHASES = [
   "resume_failed",
   "resume_forbidden",
   "instance_not_found",
+  "preflight_retry",
   "preflight_failed",
   "error",
 ] as const;
@@ -52,6 +53,7 @@ export const isIframePreflightServerPhase = (
     case "resume_failed":
     case "resume_forbidden":
     case "instance_not_found":
+    case "preflight_retry":
     case "preflight_failed":
     case "error":
       return true;

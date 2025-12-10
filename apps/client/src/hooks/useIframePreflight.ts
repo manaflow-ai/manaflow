@@ -111,6 +111,7 @@ function applyPhaseMapping(
     case "resuming":
     case "resume_retry":
     case "resumed":
+    case "preflight_retry":
       return "resuming";
     case "already_ready":
     case "ready":
