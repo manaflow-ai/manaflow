@@ -6,16 +6,18 @@ import {
 import { SENTRY_ELECTRON_DSN } from "./sentry-config.ts";
 import { router } from "./router";
 
-init(
-  {
-    dsn: SENTRY_ELECTRON_DSN,
-    integrations: [tanstackRouterBrowserTracingIntegration(router)],
-    // Setting a sample rate is required for sending performance data.
-    // Adjust this value in production or use tracesSampler for finer control.
-    tracesSampleRate: 1.0,
-  },
-  reactInit
-);
+if (!import.meta.env.DEV) {
+  init(
+    {
+      dsn: SENTRY_ELECTRON_DSN,
+      integrations: [tanstackRouterBrowserTracingIntegration(router)],
+      // Setting a sample rate is required for sending performance data.
+      // Adjust this value in production or use tracesSampler for finer control.
+      tracesSampleRate: 1.0,
+    },
+    reactInit
+  );
+}
 
 
 import { StrictMode } from "react";

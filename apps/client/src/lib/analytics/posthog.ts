@@ -24,6 +24,10 @@ export function initPosthog() {
     return posthog;
   }
 
+  if (import.meta.env.DEV) {
+    return null;
+  }
+
   if (!env.NEXT_PUBLIC_POSTHOG_KEY) {
     return null;
   }
