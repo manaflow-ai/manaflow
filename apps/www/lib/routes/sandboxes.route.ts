@@ -31,6 +31,37 @@ import {
 import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 
 /**
+ * Wait for the VSCode server to be ready by polling the service URL.
+ * This prevents "upstream connect error" when the iframe loads before the server is ready.
+ */
+async function waitForVSCodeReady(
+  vscodeUrl: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<boolean> {
+  const { timeoutMs = 15_000, intervalMs = 500 } = options;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // Use a simple HEAD request to check if the server is responding
+      const response = await fetch(vscodeUrl, {
+        method: "HEAD",
+        signal: AbortSignal.timeout(3_000),
+      });
+      // OpenVSCode server returns 200 for the root path when ready
+      if (response.ok || response.status === 302 || response.status === 301) {
+        return true;
+      }
+    } catch {
+      // Connection refused or timeout - server not ready yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return false;
+}
+
+/**
  * Extract a safe, descriptive error message from sandbox start errors.
  * Avoids leaking sensitive information like API keys, tokens, or internal paths.
  */
@@ -336,8 +367,22 @@ sandboxesRouter.openapi(
         return c.text("VSCode or worker service not found", 500);
       }
 
-      // OPTIMIZATION: Immediately persist VSCode URLs to Convex (status="starting")
-      // This allows frontend to show VSCode iframe while hydration continues
+      // Wait for VSCode server to be ready before persisting URL
+      // This prevents "upstream connect error" when the frontend loads the iframe
+      // before the OpenVSCode server is actually listening
+      const vscodeReady = await waitForVSCodeReady(vscodeService.url);
+      if (!vscodeReady) {
+        console.warn(
+          `[sandboxes.start] VSCode server did not become ready within timeout for ${instance.id}, proceeding anyway`,
+        );
+      } else {
+        console.log(
+          `[sandboxes.start] VSCode server ready for ${instance.id}`,
+        );
+      }
+
+      // Persist VSCode URLs to Convex once the server is ready
+      // Status is "starting" to indicate hydration is still in progress
       let vscodePersisted = false;
       if (body.taskRunId) {
         try {
@@ -355,11 +400,11 @@ sandboxesRouter.openapi(
           });
           vscodePersisted = true;
           console.log(
-            `[sandboxes.start] Persisted initial VSCode info for ${body.taskRunId}`,
+            `[sandboxes.start] Persisted VSCode info for ${body.taskRunId}`,
           );
         } catch (error) {
           console.error(
-            "[sandboxes.start] Failed to persist initial VSCode info (non-fatal):",
+            "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
             error,
           );
         }
