@@ -17,6 +17,11 @@ import {
   normalizeScreenshotOutputDir,
   type ClaudeCodeAuthConfig,
 } from "./claudeScreenshotCollector";
+import {
+  executeRemoteScreenshotCollector,
+  shouldUseRemoteScript,
+  type RemoteScreenshotAuth,
+} from "./remoteScreenshotCollector";
 
 export interface StartScreenshotCollectionOptions {
   anthropicApiKey?: string | null;
@@ -450,19 +455,57 @@ export async function startScreenshotCollection(
   await logToScreenshotCollector(`Claude collector output dir: ${outputDir}`);
 
   try {
-    const claudeResult = await claudeCodeCapturePRScreenshots({
-      workspaceDir,
-      changedFiles: textFiles,
-      prTitle,
-      prDescription: prDescription ?? "",
-      baseBranch,
-      headBranch,
-      outputDir,
-      pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
-      installCommand: options.installCommand ?? undefined,
-      devCommand: options.devCommand ?? undefined,
-      ...claudeAuth,
-    });
+    // Determine whether to use remote script execution or local execution
+    const useRemote = shouldUseRemoteScript();
+    await logToScreenshotCollector(
+      `Screenshot collector mode: ${useRemote ? "remote" : "local"}`
+    );
+
+    // Convert claudeAuth to RemoteScreenshotAuth format
+    const remoteAuth: RemoteScreenshotAuth = (() => {
+      if ("taskRunJwt" in claudeAuth.auth) {
+        return { taskRunJwt: claudeAuth.auth.taskRunJwt };
+      }
+      return { anthropicApiKey: claudeAuth.auth.anthropicApiKey };
+    })();
+
+    // Execute screenshot collection using appropriate method
+    const claudeResult = useRemote
+      ? await (async () => {
+          // Use remote script execution
+          const result = await executeRemoteScreenshotCollector({
+            workspaceDir,
+            changedFiles: textFiles,
+            prTitle,
+            prDescription: prDescription ?? "",
+            branch: headBranch,
+            outputDir,
+            pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+            installCommand: options.installCommand ?? undefined,
+            devCommand: options.devCommand ?? undefined,
+            auth: remoteAuth,
+          });
+
+          // Convert to expected format
+          return {
+            status: "completed" as const,
+            screenshots: result.screenshots,
+            hasUiChanges: result.hasUiChanges,
+          };
+        })()
+      : await claudeCodeCapturePRScreenshots({
+          workspaceDir,
+          changedFiles: textFiles,
+          prTitle,
+          prDescription: prDescription ?? "",
+          baseBranch,
+          headBranch,
+          outputDir,
+          pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+          installCommand: options.installCommand ?? undefined,
+          devCommand: options.devCommand ?? undefined,
+          ...claudeAuth,
+        });
 
     if (claudeResult.status === "completed") {
       const collectedScreenshots = claudeResult.screenshots ?? [];

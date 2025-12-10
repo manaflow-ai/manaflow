@@ -2743,6 +2743,72 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
 
+export type GetApiScriptsScreenshotCollectorData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/scripts/screenshot-collector';
+};
+
+export type GetApiScriptsScreenshotCollectorErrors = {
+    /**
+     * Script not found or build error
+     */
+    500: {
+        error: string;
+    };
+};
+
+export type GetApiScriptsScreenshotCollectorError = GetApiScriptsScreenshotCollectorErrors[keyof GetApiScriptsScreenshotCollectorErrors];
+
+export type GetApiScriptsScreenshotCollectorResponses = {
+    /**
+     * The bundled screenshot collector script
+     */
+    200: string;
+};
+
+export type GetApiScriptsScreenshotCollectorResponse = GetApiScriptsScreenshotCollectorResponses[keyof GetApiScriptsScreenshotCollectorResponses];
+
+export type HeadApiScriptsScreenshotCollectorData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/scripts/screenshot-collector';
+};
+
+export type HeadApiScriptsScreenshotCollectorErrors = {
+    /**
+     * Script not found
+     */
+    500: unknown;
+};
+
+export type HeadApiScriptsScreenshotCollectorResponses = {
+    /**
+     * Script metadata in headers
+     */
+    200: unknown;
+};
+
+export type PostApiScriptsScreenshotCollectorInvalidateData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/scripts/screenshot-collector/invalidate';
+};
+
+export type PostApiScriptsScreenshotCollectorInvalidateResponses = {
+    /**
+     * Cache invalidated
+     */
+    200: {
+        success: boolean;
+    };
+};
+
+export type PostApiScriptsScreenshotCollectorInvalidateResponse = PostApiScriptsScreenshotCollectorInvalidateResponses[keyof PostApiScriptsScreenshotCollectorInvalidateResponses];
+
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
