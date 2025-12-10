@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
@@ -725,6 +726,10 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
 
   // Only render if NOT on localhost:5173 OR if force shown with Option+C
   const shouldRender = () => {
+    // Hide comments in web mode
+    if (env.NEXT_PUBLIC_WEB_MODE) {
+      return false;
+    }
     const hostname = window.location.hostname;
     const port = window.location.port;
     const isLocalhost5173 = hostname === "localhost" && port === "5173";
