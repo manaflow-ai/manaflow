@@ -103,8 +103,44 @@ export function PersistentIframe({
   const loadTimeoutRef = useRef<number | null>(null);
   const preflightErrorRef = useRef<string | null>(null);
 
+  // Track previous values to only reset status when actually necessary
+  const prevPersistKeyRef = useRef<string | null>(null);
+  const prevSrcRef = useRef<string | null>(null);
+
   useEffect(() => {
-    setStatus("loading");
+    const prevPersistKey = prevPersistKeyRef.current;
+    const prevSrc = prevSrcRef.current;
+
+    // Update refs for next comparison
+    prevPersistKeyRef.current = persistKey;
+    prevSrcRef.current = src;
+
+    // Only reset to loading if this is a genuinely new iframe context
+    // (different persistKey) OR if the URL has meaningfully changed.
+    // Skip reset if we're already loaded with the same effective URL.
+    if (prevPersistKey === null) {
+      // First mount - set loading
+      setStatus("loading");
+      return;
+    }
+
+    if (prevPersistKey !== persistKey) {
+      // Different iframe context - reset to loading
+      setStatus("loading");
+      return;
+    }
+
+    // Same persistKey - only reset if URL actually changed AND we're not already loaded
+    if (prevSrc !== src) {
+      setStatus((currentStatus) => {
+        // If already loaded and URL changed, reset to loading
+        // But if URL changed while still loading, keep loading
+        if (currentStatus === "loaded") {
+          return "loading";
+        }
+        return currentStatus;
+      });
+    }
   }, [persistKey, src]);
 
   const clearLoadTimeout = useCallback(() => {

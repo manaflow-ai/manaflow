@@ -482,9 +482,40 @@ function TaskDetailPage() {
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-  const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
-    : null;
+  const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
+
+  // For local workspaces, we need to wait for localServeWeb to resolve
+  // to avoid URL flickering (placeholder -> actual localhost URL)
+  const isLocalWorkspaceUrlPending = useMemo(() => {
+    if (!rawWorkspaceUrl || !isLocalWorkspace) {
+      return false;
+    }
+    // Check if this URL needs rewriting and localServeWeb hasn't resolved yet
+    try {
+      const url = new URL(rawWorkspaceUrl);
+      const needsRewrite =
+        url.hostname.toLowerCase() === "cmux-vscode.local" ||
+        url.hostname.toLowerCase().endsWith(".local") ||
+        url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1";
+      return needsRewrite && !localServeWeb.data?.baseUrl;
+    } catch {
+      return false;
+    }
+  }, [rawWorkspaceUrl, isLocalWorkspace, localServeWeb.data?.baseUrl]);
+
+  const workspaceUrl = useMemo(() => {
+    if (!rawWorkspaceUrl) {
+      return null;
+    }
+    // Don't provide URL until localServeWeb resolves for local workspaces
+    // This prevents the URL from changing and causing iframe reload/flicker
+    if (isLocalWorkspaceUrlPending) {
+      return null;
+    }
+    return toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl);
+  }, [rawWorkspaceUrl, isLocalWorkspaceUrlPending, localServeWeb.data?.baseUrl]);
+
   const workspacePersistKey = selectedRunId
     ? getTaskRunPersistKey(selectedRunId)
     : null;
@@ -558,8 +589,6 @@ function TaskDetailPage() {
     },
     [selectedRunId]
   );
-
-  const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
 
   const editorLoadingFallback = useMemo(
     () =>
