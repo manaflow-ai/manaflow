@@ -848,6 +848,46 @@ export async function runPreviewJob(
       screenshotLogUrl: `${workerService.url.replace(':39377', ':39376')}/file?path=/root/.cmux/screenshot-collector/screenshot-collector.log`,
     });
 
+    // Post initial GitHub comment with "in progress" status and diff heatmap link
+    if (run.repoInstallationId) {
+      console.log("[preview-jobs] Posting initial GitHub comment", {
+        previewRunId,
+        repoFullName: run.repoFullName,
+        prNumber: run.prNumber,
+      });
+
+      try {
+        const initialCommentResult = await ctx.runAction(
+          internal.github_pr_comments.postInitialPreviewComment,
+          {
+            installationId: run.repoInstallationId,
+            repoFullName: run.repoFullName,
+            prNumber: run.prNumber,
+            previewRunId,
+          },
+        );
+
+        if (initialCommentResult.ok) {
+          console.log("[preview-jobs] Posted initial GitHub comment", {
+            previewRunId,
+            commentId: initialCommentResult.commentId,
+            commentUrl: initialCommentResult.commentUrl,
+          });
+        } else {
+          console.warn("[preview-jobs] Failed to post initial GitHub comment", {
+            previewRunId,
+            error: initialCommentResult.error,
+          });
+        }
+      } catch (commentError) {
+        console.error("[preview-jobs] Error posting initial GitHub comment", {
+          previewRunId,
+          error: commentError instanceof Error ? commentError.message : String(commentError),
+        });
+        // Don't fail the entire job if the initial comment fails
+      }
+    }
+
     if (taskRunId) {
       const networking = instance.networking?.http_services?.map((s) => ({
         status: "running" as const,

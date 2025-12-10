@@ -341,7 +341,103 @@ export const addPrReaction = internalAction({
 });
 
 /**
+ * Posts the initial "in progress" comment to GitHub PR.
+ * This comment is posted immediately when preview job starts and includes
+ * a link to the diff heatmap. The comment will be updated later with
+ * workspace/dev browser links and screenshots.
+ */
+export const postInitialPreviewComment = internalAction({
+  args: {
+    installationId: v.number(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    previewRunId: v.id("previewRuns"),
+  },
+  handler: async (ctx, args): Promise<{ ok: true; commentId: number; commentUrl: string } | { ok: false; error: string }> => {
+    const { installationId, repoFullName, prNumber, previewRunId } = args;
+
+    try {
+      const accessToken = await fetchInstallationAccessToken(installationId);
+      if (!accessToken) {
+        console.error(
+          "[github_pr_comments] Failed to get access token for initial preview comment",
+          { installationId },
+        );
+        return { ok: false, error: "Failed to get access token" };
+      }
+
+      const repo = parseRepoFullName(repoFullName);
+      if (!repo) {
+        console.error("[github_pr_comments] Invalid repo full name", {
+          repoFullName,
+        });
+        return { ok: false, error: "Invalid repository name" };
+      }
+
+      const octokit = createOctokit(accessToken);
+
+      // Build initial comment with just the diff heatmap link
+      const commentSections: string[] = [
+        "## Preview Screenshots",
+        "",
+        `<a href="https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap" target="_blank">Open Diff Heatmap</a>`,
+        "",
+        "⏳ **Preview screenshots are being generated...**",
+        "",
+        "Workspace and dev browser links will appear here once ready.",
+        "",
+        "---",
+        PREVIEW_SIGNATURE,
+      ];
+
+      const commentBody = commentSections.join("\n");
+
+      const { data } = await octokit.rest.issues.createComment({
+        owner: repo.owner,
+        repo: repo.repo,
+        issue_number: prNumber,
+        body: commentBody,
+      });
+
+      console.log("[github_pr_comments] Successfully posted initial preview comment", {
+        installationId,
+        repoFullName,
+        prNumber,
+        commentId: data.id,
+        commentUrl: data.html_url,
+      });
+
+      // Store the comment ID and URL in the preview run
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId,
+        status: "running",
+        githubCommentUrl: data.html_url,
+        githubCommentId: data.id,
+      });
+
+      return { ok: true, commentId: data.id, commentUrl: data.html_url };
+    } catch (error) {
+      console.error(
+        "[github_pr_comments] Unexpected error posting initial preview comment",
+        {
+          installationId,
+          repoFullName,
+          prNumber,
+          error,
+        },
+      );
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+});
+
+/**
  * Unified function to post preview comments to GitHub PRs.
+ * If the preview run already has a githubCommentId, this will update that comment
+ * instead of creating a new one.
  *
  * Options:
  * - includePreviousRuns: Include collapsible history of previous screenshot sets (default: false)
@@ -406,6 +502,12 @@ export const postPreviewComment = internalAction({
         });
         return { ok: false, error: "Screenshot set not found" };
       }
+
+      // Check if we have an existing comment to update
+      const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
+        id: previewRunId,
+      });
+      const existingCommentId = previewRun?.githubCommentId;
 
       // Build comment sections
       const commentSections: string[] = ["## Preview Screenshots"];
@@ -489,38 +591,65 @@ export const postPreviewComment = internalAction({
       commentSections.push("---", PREVIEW_SIGNATURE);
       const commentBody = commentSections.join("\n\n");
 
-      const { data } = await octokit.rest.issues.createComment({
-        owner: repo.owner,
-        repo: repo.repo,
-        issue_number: prNumber,
-        body: commentBody,
-      });
+      let commentId: number;
+      let commentUrl: string;
 
-      console.log("[github_pr_comments] Successfully posted preview comment", {
-        installationId,
-        repoFullName,
-        prNumber,
-        commentId: data.id,
-        commentUrl: data.html_url,
-      });
+      if (existingCommentId) {
+        // Update existing comment
+        const { data } = await octokit.rest.issues.updateComment({
+          owner: repo.owner,
+          repo: repo.repo,
+          comment_id: existingCommentId,
+          body: commentBody,
+        });
+        commentId = data.id;
+        commentUrl = data.html_url;
+
+        console.log("[github_pr_comments] Successfully updated preview comment", {
+          installationId,
+          repoFullName,
+          prNumber,
+          commentId,
+          commentUrl,
+        });
+      } else {
+        // Create new comment
+        const { data } = await octokit.rest.issues.createComment({
+          owner: repo.owner,
+          repo: repo.repo,
+          issue_number: prNumber,
+          body: commentBody,
+        });
+        commentId = data.id;
+        commentUrl = data.html_url;
+
+        console.log("[github_pr_comments] Successfully posted preview comment", {
+          installationId,
+          repoFullName,
+          prNumber,
+          commentId,
+          commentUrl,
+        });
+
+        // Only collapse older comments when creating a new one
+        await collapseOlderPreviewComments({
+          octokit,
+          owner: repo.owner,
+          repo: repo.repo,
+          prNumber,
+          latestCommentId: commentId,
+        });
+      }
 
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: screenshotSet.status as "completed" | "failed" | "skipped",
         screenshotSetId,
-        githubCommentUrl: data.html_url,
-        githubCommentId: data.id,
+        githubCommentUrl: commentUrl,
+        githubCommentId: commentId,
       });
 
-      await collapseOlderPreviewComments({
-        octokit,
-        owner: repo.owner,
-        repo: repo.repo,
-        prNumber,
-        latestCommentId: data.id,
-      });
-
-      return { ok: true, commentId: data.id, commentUrl: data.html_url };
+      return { ok: true, commentId, commentUrl };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error posting preview comment",
@@ -582,7 +711,7 @@ export const addPrComment = internalAction({
         commentId: data.id,
       });
 
-      return { ok: true, commentId: data.id };
+      return { ok: true, commentId: data.id, commentUrl: data.html_url };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error adding comment",
@@ -590,6 +719,67 @@ export const addPrComment = internalAction({
           installationId,
           repoFullName,
           prNumber,
+          error,
+        },
+      );
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+});
+
+export const updatePrComment = internalAction({
+  args: {
+    installationId: v.number(),
+    repoFullName: v.string(),
+    commentId: v.number(),
+    body: v.string(),
+  },
+  handler: async (
+    _ctx,
+    { installationId, repoFullName, commentId, body },
+  ) => {
+    try {
+      const accessToken = await fetchInstallationAccessToken(installationId);
+      if (!accessToken) {
+        console.error(
+          "[github_pr_comments] Failed to get access token for installation",
+          { installationId },
+        );
+        return { ok: false, error: "Failed to get access token" };
+      }
+
+      const repo = parseRepoFullName(repoFullName);
+      if (!repo) {
+        console.error("[github_pr_comments] Invalid repo full name", {
+          repoFullName,
+        });
+        return { ok: false, error: "Invalid repository name" };
+      }
+
+      const octokit = createOctokit(accessToken);
+      const { data } = await octokit.rest.issues.updateComment({
+        owner: repo.owner,
+        repo: repo.repo,
+        comment_id: commentId,
+        body,
+      });
+      console.log("[github_pr_comments] Successfully updated comment", {
+        installationId,
+        repoFullName,
+        commentId: data.id,
+      });
+
+      return { ok: true, commentId: data.id, commentUrl: data.html_url };
+    } catch (error) {
+      console.error(
+        "[github_pr_comments] Unexpected error updating comment",
+        {
+          installationId,
+          repoFullName,
+          commentId,
           error,
         },
       );
