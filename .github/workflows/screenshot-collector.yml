@@ -6,9 +6,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - packages/screenshot-collector/**
-      - .github/workflows/screenshot-collector.yml
 
 concurrency:
   group: screenshot-collector-${{ github.ref }}
