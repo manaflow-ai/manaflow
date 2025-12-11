@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
+import { CheckCircle2, ChevronRight } from "lucide-react";
 import clsx from "clsx";
 
 export interface PreviewItemButtonProps {
@@ -25,28 +25,46 @@ export function PreviewItemButton({
   className,
 }: PreviewItemButtonProps) {
   return (
-    <button
-      onClick={onClick}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        // Only call onClick if the click wasn't on the chevron button
+        if (!(e.target as HTMLElement).closest('button')) {
+          onClick();
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className={clsx(
-        "w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer",
+        "w-full flex items-center gap-1 px-2 py-[3px] text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-sm",
         isSelected && "bg-neutral-800/30",
         className
       )}
+      style={{ paddingLeft: "6px" }}
     >
-      <span
+      <button
+        type="button"
         onClick={(e) => {
+          e.preventDefault();
           e.stopPropagation();
           onToggleExpand();
         }}
-        className="shrink-0"
+        onMouseDown={(e) => e.stopPropagation()}
+        className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4"
       >
-        {isExpanded ? (
-          <ChevronDown className="w-3 h-3 text-neutral-500" />
-        ) : (
-          <ChevronRight className="w-3 h-3 text-neutral-500" />
-        )}
-      </span>
-      <div className="flex flex-col min-w-0 text-left flex-1 gap-0">
+        <ChevronRight
+          className={clsx(
+            "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
+            isExpanded && "rotate-90"
+          )}
+        />
+      </button>
+      <div className="flex flex-col min-w-0 text-left flex-1 gap-0 ml-1 pointer-events-none">
         <span className="truncate font-medium">{title}</span>
         {subtitle && (
           <span className="text-[11px] text-neutral-500 truncate -mt-[1px]">
@@ -65,7 +83,7 @@ export function PreviewItemButton({
       ) : (
         <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
       )}
-    </button>
+    </div>
   );
 }
 

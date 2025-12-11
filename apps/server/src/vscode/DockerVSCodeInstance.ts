@@ -132,7 +132,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
   /**
    * Get the actual host port for a given container port
-   * @param containerPort The port inside the container (e.g., "39378", "39377", "39376", "39379", "39380")
+   * @param containerPort The port inside the container (e.g., "39378", "39377", "39379", "39380")
    * @returns The actual host port or null if not found
    */
   async getActualPort(containerPort: string): Promise<string | null> {
@@ -188,9 +188,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
       if (ports["39377/tcp"]?.[0]?.HostPort) {
         portMapping["39377"] = ports["39377/tcp"][0].HostPort;
-      }
-      if (ports["39376/tcp"]?.[0]?.HostPort) {
-        portMapping["39376"] = ports["39376/tcp"][0].HostPort;
       }
       if (ports["39379/tcp"]?.[0]?.HostPort) {
         portMapping["39379"] = ports["39379/tcp"][0].HostPort;
@@ -272,7 +269,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         "39375/tcp": [{ HostPort: "0" }], // Exec service port
         "39378/tcp": [{ HostPort: "0" }], // VS Code port
         "39377/tcp": [{ HostPort: "0" }], // Worker port
-        "39376/tcp": [{ HostPort: "0" }], // Extension socket port
         "39379/tcp": [{ HostPort: "0" }], // cmux-proxy port
         "39380/tcp": [{ HostPort: "0" }], // VNC websocket proxy port
         "39381/tcp": [{ HostPort: "0" }], // Chrome DevTools port
@@ -293,7 +289,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         "39375/tcp": {},
         "39378/tcp": {},
         "39377/tcp": {},
-        "39376/tcp": {},
         "39379/tcp": {},
         "39380/tcp": {},
         "39381/tcp": {},
@@ -468,7 +463,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
     const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
-    const extensionPort = ports["39376/tcp"]?.[0]?.HostPort;
     const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
     const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
 
@@ -498,7 +492,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       mapping.ports = {
         vscode: vscodePort,
         worker: workerPort,
-        extension: extensionPort,
         proxy: proxyPort,
         vnc: vncPort,
       };
@@ -513,7 +506,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         ports: {
           vscode: vscodePort,
           worker: workerPort,
-          extension: extensionPort,
           proxy: proxyPort,
           vnc: vncPort,
         },
@@ -1365,14 +1357,12 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const ports = info.NetworkSettings.Ports;
         const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
         const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
-        const extensionPort = ports["39376/tcp"]?.[0]?.HostPort;
         const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
         const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
         if (vscodePort && workerPort && proxyPort && vncPort) {
           mapping.ports = {
             vscode: vscodePort,
             worker: workerPort,
-            extension: extensionPort,
             proxy: proxyPort,
             vnc: vncPort,
           };
@@ -1393,7 +1383,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                 ports: {
                   vscode: vscodePort,
                   worker: workerPort,
-                  extension: extensionPort,
                   proxy: proxyPort,
                   vnc: vncPort,
                 },

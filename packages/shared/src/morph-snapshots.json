@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2025-12-10T05:09:05Z",
+  "updatedAt": "2025-12-11T03:05:35Z",
   "presets": [
     {
       "presetId": "4vcpu_16gb_48gb",
@@ -128,6 +128,31 @@
           "version": 24,
           "snapshotId": "snapshot_eezx6d0u",
           "capturedAt": "2025-12-10T05:09:22Z"
+        },
+        {
+          "version": 25,
+          "snapshotId": "snapshot_8l8a9h3p",
+          "capturedAt": "2025-12-11T01:36:14Z"
+        },
+        {
+          "version": 26,
+          "snapshotId": "snapshot_02l15x9j",
+          "capturedAt": "2025-12-11T01:57:04Z"
+        },
+        {
+          "version": 27,
+          "snapshotId": "snapshot_zndugorb",
+          "capturedAt": "2025-12-11T02:30:45Z"
+        },
+        {
+          "version": 28,
+          "snapshotId": "snapshot_ve3d1xvc",
+          "capturedAt": "2025-12-11T02:52:33Z"
+        },
+        {
+          "version": 29,
+          "snapshotId": "snapshot_a31882pu",
+          "capturedAt": "2025-12-11T03:06:12Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
@@ -258,6 +283,31 @@
           "version": 24,
           "snapshotId": "snapshot_8mklccsm",
           "capturedAt": "2025-12-10T05:09:05Z"
+        },
+        {
+          "version": 25,
+          "snapshotId": "snapshot_1omnkir7",
+          "capturedAt": "2025-12-11T01:35:08Z"
+        },
+        {
+          "version": 26,
+          "snapshotId": "snapshot_97cle28t",
+          "capturedAt": "2025-12-11T01:56:52Z"
+        },
+        {
+          "version": 27,
+          "snapshotId": "snapshot_n207qp6d",
+          "capturedAt": "2025-12-11T02:28:27Z"
+        },
+        {
+          "version": 28,
+          "snapshotId": "snapshot_hsv663qh",
+          "capturedAt": "2025-12-11T02:53:16Z"
+        },
+        {
+          "version": 29,
+          "snapshotId": "snapshot_5lt07dvd",
+          "capturedAt": "2025-12-11T03:05:35Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."

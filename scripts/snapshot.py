@@ -544,7 +544,6 @@ async def _expose_standard_ports(
 ) -> dict[int, str]:
     ports = [
         EXEC_HTTP_PORT,
-        39376,
         39377,
         VSCODE_HTTP_PORT,
         39379,
