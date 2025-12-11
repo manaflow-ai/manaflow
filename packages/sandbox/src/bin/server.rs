@@ -15,9 +15,37 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::{TcpListener, TcpStream, UnixListener};
 use tokio::time::{sleep, Duration};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+/// A wrapper around TcpListener that sets TCP_NODELAY on all accepted connections
+struct NoDelayListener(TcpListener);
+
+impl axum::serve::Listener for NoDelayListener {
+    type Io = TcpStream;
+    type Addr = std::net::SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            match self.0.accept().await {
+                Ok((stream, addr)) => {
+                    let _ = stream.set_nodelay(true);
+                    return (stream, addr);
+                }
+                Err(e) => {
+                    tracing::error!("accept error: {}", e);
+                    // Small delay before retrying on error
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.0.local_addr()
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "cmux-sandboxd", author, version)]
@@ -160,6 +188,9 @@ async fn run_server(options: Options) {
             Ok(listener) => {
                 tracing::info!("cmux-sandboxd listening on http://{}", addr);
                 tracing::info!("HTTP/1.1 and HTTP/2 are enabled");
+
+                // Wrap listener to enable TCP_NODELAY on all accepted connections
+                let listener = NoDelayListener(listener);
 
                 match axum::serve(listener, app.clone())
                     .with_graceful_shutdown(shutdown_signal())

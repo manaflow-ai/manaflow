@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use cmux_xterm_server::{build_router, session::AppState};
+use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,7 +17,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "127.0.0.1:39383".to_string())
         .parse()?;
     tracing::info!("listening on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .tcp_nodelay(true)
+        .await?;
     Ok(())
 }

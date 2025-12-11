@@ -48,6 +48,20 @@ func loadConfig() proxyConfig {
 	}
 }
 
+// noDelayListener wraps a TCPListener and sets TCP_NODELAY on all accepted connections
+type noDelayListener struct {
+	*net.TCPListener
+}
+
+func (l *noDelayListener) Accept() (net.Conn, error) {
+	conn, err := l.TCPListener.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetNoDelay(true)
+	return conn, nil
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	cfg := loadConfig()
@@ -76,7 +90,6 @@ func main() {
 	proxy.FlushInterval = 100 * time.Millisecond
 
 	server := &http.Server{
-		Addr:              net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.listenPort)),
 		Handler:           proxy,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -88,7 +101,14 @@ func main() {
 		cfg.hostHeader,
 	)
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// Use a custom listener to enable TCP_NODELAY on all accepted connections
+	ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.listenPort)))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	ln = &noDelayListener{ln.(*net.TCPListener)}
+
+	if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server exited: %v", err)
 	}
 }

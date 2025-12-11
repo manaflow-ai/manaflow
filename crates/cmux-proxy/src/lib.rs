@@ -460,6 +460,8 @@ async fn serve_client_stream(
     client: Client<HttpConnector, BoxBody>,
     cfg: ProxyConfig,
 ) -> Result<(), BoxError> {
+    // Enable TCP_NODELAY to reduce latency for interactive traffic
+    let _ = stream.set_nodelay(true);
     let (buffered_stream, client_prefers_http2) = sniff_http2_preface(stream).await?;
     let io = TokioIo::new(buffered_stream);
     let svc_client = client.clone();

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -219,6 +220,20 @@ func determinePort(flagPort int) int {
 	return 39375
 }
 
+// noDelayListener wraps a TCPListener and sets TCP_NODELAY on all accepted connections
+type noDelayListener struct {
+	*net.TCPListener
+}
+
+func (l *noDelayListener) Accept() (net.Conn, error) {
+	conn, err := l.TCPListener.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetNoDelay(true)
+	return conn, nil
+}
+
 func main() {
 	portFlag := flag.Int("port", 39375, "port to listen on")
 	flag.Parse()
@@ -229,7 +244,6 @@ func main() {
 	mux.HandleFunc("/exec", execHandler)
 
 	server := &http.Server{
-		Addr:              fmt.Sprintf(":%d", port),
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       0,
@@ -238,7 +252,15 @@ func main() {
 	}
 
 	log.Printf("cmux exec daemon listening on http://0.0.0.0:%d", port)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+
+	// Use a custom listener to enable TCP_NODELAY on all accepted connections
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	ln = &noDelayListener{ln.(*net.TCPListener)}
+
+	if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)
 	}
 }
