@@ -1,0 +1,13 @@
+{
+  "name": "claude-screenshot-collector",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun build claude-screenshot-collector.ts --outfile claude-screenshot-collector.js --target bun --minify"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.54",
+    "zod": "^3.24.4"
+  }
+}

@@ -12,11 +12,18 @@ import {
 import { detectGitRepoPath, listGitRepoPaths } from "../crown/git";
 import { readPrDescription } from "./context";
 import {
-  SCREENSHOT_STORAGE_ROOT,
-  claudeCodeCapturePRScreenshots,
-  normalizeScreenshotOutputDir,
-  type ClaudeCodeAuthConfig,
-} from "./claudeScreenshotCollector";
+  fetchAndRunScreenshotCollector,
+  type ScreenshotCollectorConfig,
+} from "./fetchAndRunCollector";
+
+const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
+
+function normalizeScreenshotOutputDir(outputDir: string): string {
+  if (path.isAbsolute(outputDir)) {
+    return path.normalize(outputDir);
+  }
+  return path.resolve(SCREENSHOT_STORAGE_ROOT, outputDir);
+}
 
 export interface StartScreenshotCollectionOptions {
   anthropicApiKey?: string | null;
@@ -399,10 +406,10 @@ export async function startScreenshotCollection(
   const trimmedAnthropicKey =
     options.anthropicApiKey?.trim() ?? process.env.ANTHROPIC_API_KEY;
 
-  let claudeAuth: ClaudeCodeAuthConfig | null = null;
+  let claudeAuth: ScreenshotCollectorConfig["auth"] | null = null;
 
   if (trimmedTaskRunJwt) {
-    claudeAuth = { auth: { taskRunJwt: trimmedTaskRunJwt } };
+    claudeAuth = { taskRunJwt: trimmedTaskRunJwt };
     await logToScreenshotCollector(
       "Using taskRun JWT for Claude Code screenshot collection"
     );
@@ -410,7 +417,7 @@ export async function startScreenshotCollection(
       `JWT details: present=${!!trimmedTaskRunJwt}, length=${trimmedTaskRunJwt?.length ?? 0}, first 20 chars=${trimmedTaskRunJwt?.substring(0, 20) ?? "N/A"}`
     );
   } else if (trimmedAnthropicKey) {
-    claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicKey } };
+    claudeAuth = { anthropicApiKey: trimmedAnthropicKey };
     await logToScreenshotCollector(
       `ANTHROPIC_API_KEY source: ${
         options.anthropicApiKey?.trim() ? "payload" : "environment"
@@ -450,7 +457,7 @@ export async function startScreenshotCollection(
   await logToScreenshotCollector(`Claude collector output dir: ${outputDir}`);
 
   try {
-    const claudeResult = await claudeCodeCapturePRScreenshots({
+    const collectorConfig: ScreenshotCollectorConfig = {
       workspaceDir,
       changedFiles: textFiles,
       prTitle,
@@ -461,8 +468,10 @@ export async function startScreenshotCollection(
       pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
       installCommand: options.installCommand ?? undefined,
       devCommand: options.devCommand ?? undefined,
-      ...claudeAuth,
-    });
+      auth: claudeAuth,
+    };
+
+    const claudeResult = await fetchAndRunScreenshotCollector(collectorConfig);
 
     if (claudeResult.status === "completed") {
       const collectedScreenshots = claudeResult.screenshots ?? [];

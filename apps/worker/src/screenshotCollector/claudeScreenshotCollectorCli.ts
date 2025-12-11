@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
-import { claudeCodeCapturePRScreenshots } from "./claudeScreenshotCollector";
+muimport { fetchAndRunScreenshotCollector } from "./fetchAndRunCollector";
 
 /**
  * Parse PR URL to extract owner, repo, and PR number
@@ -255,8 +255,8 @@ async function main() {
 
       console.log(`📸 Starting screenshot capture...`);
 
-      // Capture screenshots
-      const result = await claudeCodeCapturePRScreenshots({
+      // Capture screenshots using the dynamically fetched collector
+      const result = await fetchAndRunScreenshotCollector({
         workspaceDir,
         changedFiles,
         prTitle: prInfo.title,

@@ -1,0 +1,134 @@
+name: Release Screenshot Collector
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/screenshot-collector/**
+      - .github/workflows/screenshot-collector.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Get version
+        id: version
+        run: |
+          # Use git commit SHA short hash as version
+          VERSION="$(git rev-parse --short HEAD)"
+          TIMESTAMP="$(date -u +%Y%m%d%H%M%S)"
+          RELEASE_TAG="screenshot-collector-${TIMESTAMP}-${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "timestamp=${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        working-directory: scripts/screenshot-collector
+        run: bun install
+
+      - name: Bundle script
+        working-directory: scripts/screenshot-collector
+        run: |
+          # Replace version placeholder and bundle
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/__VERSION__/${VERSION}/g" claude-screenshot-collector.ts
+
+          # Bundle with bun (produces a single file with all dependencies)
+          bun build claude-screenshot-collector.ts \
+            --outfile claude-screenshot-collector.js \
+            --target bun \
+            --minify
+
+          # Create a checksum
+          sha256sum claude-screenshot-collector.js > claude-screenshot-collector.js.sha256
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Create a new release
+          gh release create "$RELEASE_TAG" \
+            --title "Screenshot Collector $VERSION" \
+            --notes "Automated release of screenshot collector script.
+
+            Commit: ${{ github.sha }}
+            Timestamp: ${{ steps.version.outputs.timestamp }}
+
+            ## Usage
+
+            Download and run with bun:
+            \`\`\`bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/claude-screenshot-collector.js -o /tmp/claude-screenshot-collector.js
+            bun run /tmp/claude-screenshot-collector.js --config /path/to/config.json
+            \`\`\`" \
+            --latest \
+            scripts/screenshot-collector/claude-screenshot-collector.js \
+            scripts/screenshot-collector/claude-screenshot-collector.js.sha256
+
+      - name: Update latest tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Also upload to a "latest" release for easy fetching
+          # First check if the release exists
+          if gh release view screenshot-collector-latest >/dev/null 2>&1; then
+            # Delete existing assets
+            gh release delete-asset screenshot-collector-latest claude-screenshot-collector.js --yes || true
+            gh release delete-asset screenshot-collector-latest claude-screenshot-collector.js.sha256 --yes || true
+
+            # Upload new assets
+            gh release upload screenshot-collector-latest \
+              scripts/screenshot-collector/claude-screenshot-collector.js \
+              scripts/screenshot-collector/claude-screenshot-collector.js.sha256 \
+              --clobber
+
+            # Update release notes
+            gh release edit screenshot-collector-latest \
+              --notes "Latest screenshot collector script.
+
+              Current version: ${{ steps.version.outputs.version }}
+              Commit: ${{ github.sha }}
+              Updated: ${{ steps.version.outputs.timestamp }}
+
+              ## Usage
+
+              Download and run with bun:
+              \`\`\`bash
+              curl -fsSL https://github.com/${{ github.repository }}/releases/download/screenshot-collector-latest/claude-screenshot-collector.js -o /tmp/claude-screenshot-collector.js
+              bun run /tmp/claude-screenshot-collector.js --config /path/to/config.json
+              \`\`\`"
+          else
+            # Create the latest release
+            gh release create screenshot-collector-latest \
+              --title "Screenshot Collector (Latest)" \
+              --notes "Latest screenshot collector script.
+
+              Current version: ${{ steps.version.outputs.version }}
+              Commit: ${{ github.sha }}
+              Updated: ${{ steps.version.outputs.timestamp }}
+
+              ## Usage
+
+              Download and run with bun:
+              \`\`\`bash
+              curl -fsSL https://github.com/${{ github.repository }}/releases/download/screenshot-collector-latest/claude-screenshot-collector.js -o /tmp/claude-screenshot-collector.js
+              bun run /tmp/claude-screenshot-collector.js --config /path/to/config.json
+              \`\`\`" \
+              scripts/screenshot-collector/claude-screenshot-collector.js \
+              scripts/screenshot-collector/claude-screenshot-collector.js.sha256
+          fi
