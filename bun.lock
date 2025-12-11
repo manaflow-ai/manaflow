@@ -447,6 +447,20 @@
         "typescript-eslint": "^8.41.0",
       },
     },
+    "packages/screenshot-collector": {
+      "name": "@cmux/screenshot-collector",
+      "version": "0.0.1",
+      "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.1.54",
+        "zod": "^4.1.12",
+      },
+      "devDependencies": {
+        "@types/node": "^24.9.1",
+      },
+      "peerDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/shared": {
       "name": "@cmux/shared",
       "version": "1.0.0",
@@ -803,6 +817,8 @@
     "@cmux/edge-router": ["@cmux/edge-router@workspace:apps/edge-router"],
 
     "@cmux/morphcloud-openapi-client": ["@cmux/morphcloud-openapi-client@workspace:packages/morphcloud-openapi-client"],
+
+    "@cmux/screenshot-collector": ["@cmux/screenshot-collector@workspace:packages/screenshot-collector"],
 
     "@cmux/scripts": ["@cmux/scripts@workspace:scripts"],
 

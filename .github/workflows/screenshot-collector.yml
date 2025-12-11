@@ -1,0 +1,155 @@
+name: Screenshot Collector Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/screenshot-collector/**
+      - .github/workflows/screenshot-collector.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  build-and-release:
+    name: Build and Release Screenshot Collector
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build screenshot collector bundle
+        working-directory: packages/screenshot-collector
+        run: bun run build
+
+      - name: Generate version and checksums
+        id: version
+        working-directory: packages/screenshot-collector
+        run: |
+          set -euo pipefail
+
+          # Generate version based on timestamp and short commit SHA
+          VERSION="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Generate SHA256 checksum
+          SHA256=$(sha256sum dist/index.js | cut -d' ' -f1)
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+          # Get file size
+          SIZE=$(stat --printf="%s" dist/index.js)
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+
+          echo "Version: $VERSION"
+          echo "SHA256: $SHA256"
+          echo "Size: $SIZE bytes"
+
+      - name: Create release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="screenshot-collector-v${VERSION}"
+
+          # Create the release
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "Screenshot Collector v${VERSION}" \
+            --notes "Automated release of screenshot collector bundle.
+
+          **Version:** ${VERSION}
+          **Commit:** ${{ github.sha }}
+          **SHA256:** ${{ steps.version.outputs.sha256 }}
+          **Size:** ${{ steps.version.outputs.size }} bytes
+
+          This release is automatically deployed to Convex storage for use by cmux workers."
+
+          echo "Created release: $TAG"
+
+      - name: Upload bundle to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        working-directory: packages/screenshot-collector
+        run: |
+          set -euo pipefail
+          TAG="screenshot-collector-v${VERSION}"
+
+          # Rename the bundle with version
+          cp dist/index.js "screenshot-collector-${VERSION}.js"
+
+          # Also create a latest version for easy access
+          cp dist/index.js "screenshot-collector-latest.js"
+
+          # Upload both to the release
+          gh release upload "$TAG" \
+            "screenshot-collector-${VERSION}.js" \
+            "screenshot-collector-latest.js" \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+      - name: Trigger Convex upload (staging)
+        env:
+          CONVEX_STAGING_URL: ${{ secrets.CONVEX_STAGING_URL }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.version.outputs.sha256 }}
+          SIZE: ${{ steps.version.outputs.size }}
+        if: env.CONVEX_STAGING_URL != ''
+        run: |
+          set -euo pipefail
+          TAG="screenshot-collector-v${VERSION}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/screenshot-collector-${VERSION}.js"
+
+          echo "Triggering Convex staging upload..."
+          curl -X POST "${CONVEX_STAGING_URL}/api/internal/screenshot-collector/upload" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"version\": \"${VERSION}\",
+              \"downloadUrl\": \"${DOWNLOAD_URL}\",
+              \"sha256\": \"${SHA256}\",
+              \"size\": ${SIZE},
+              \"commitSha\": \"${{ github.sha }}\",
+              \"isStaging\": true
+            }" || echo "Staging upload trigger failed (may not be configured)"
+
+      - name: Trigger Convex upload (production)
+        env:
+          CONVEX_PROD_URL: ${{ secrets.CONVEX_PROD_URL }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.version.outputs.sha256 }}
+          SIZE: ${{ steps.version.outputs.size }}
+        if: env.CONVEX_PROD_URL != ''
+        run: |
+          set -euo pipefail
+          TAG="screenshot-collector-v${VERSION}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/screenshot-collector-${VERSION}.js"
+
+          echo "Triggering Convex production upload..."
+          curl -X POST "${CONVEX_PROD_URL}/api/internal/screenshot-collector/upload" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"version\": \"${VERSION}\",
+              \"downloadUrl\": \"${DOWNLOAD_URL}\",
+              \"sha256\": \"${SHA256}\",
+              \"size\": ${SIZE},
+              \"commitSha\": \"${{ github.sha }}\",
+              \"isStaging\": false
+            }" || echo "Production upload trigger failed (may not be configured)"

@@ -11,12 +11,13 @@ import {
 } from "./logger";
 import { detectGitRepoPath, listGitRepoPaths } from "../crown/git";
 import { readPrDescription } from "./context";
-import {
-  SCREENSHOT_STORAGE_ROOT,
-  claudeCodeCapturePRScreenshots,
-  normalizeScreenshotOutputDir,
-  type ClaudeCodeAuthConfig,
-} from "./claudeScreenshotCollector";
+import { getScreenshotCollector } from "./dynamicCollector";
+
+// Re-export types from the bundled version for backward compatibility
+export type { ClaudeCodeAuthConfig } from "./claudeScreenshotCollector";
+
+// These will be loaded dynamically, but we need them for type checking
+import type { ClaudeCodeAuthConfig } from "./claudeScreenshotCollector";
 
 export interface StartScreenshotCollectionOptions {
   anthropicApiKey?: string | null;
@@ -107,27 +108,29 @@ function resolvePrTitle(params: {
   return `UI screenshots for ${params.headBranch}`;
 }
 
-function resolveOutputDirectory(
+async function resolveOutputDirectory(
   headBranch: string,
   requestedPath?: string
-): { outputDir: string; copyTarget?: string } {
+): Promise<{ outputDir: string; copyTarget?: string }> {
+  const collector = await getScreenshotCollector();
+
   if (requestedPath) {
     const trimmed = requestedPath.trim();
     if (trimmed.length > 0) {
       if (trimmed.endsWith(".png")) {
-        const normalizedCopyTarget = normalizeScreenshotOutputDir(trimmed);
+        const normalizedCopyTarget = collector.normalizeScreenshotOutputDir(trimmed);
         return {
           outputDir: path.dirname(normalizedCopyTarget),
           copyTarget: normalizedCopyTarget,
         };
       }
-      return { outputDir: normalizeScreenshotOutputDir(trimmed) };
+      return { outputDir: collector.normalizeScreenshotOutputDir(trimmed) };
     }
   }
 
   return {
     outputDir: path.join(
-      SCREENSHOT_STORAGE_ROOT,
+      collector.SCREENSHOT_STORAGE_ROOT,
       `${Date.now()}-${sanitizeSegment(headBranch)}`
     ),
   };
@@ -442,7 +445,7 @@ export async function startScreenshotCollection(
     headBranch,
   });
 
-  const { outputDir, copyTarget } = resolveOutputDirectory(
+  const { outputDir, copyTarget } = await resolveOutputDirectory(
     headBranch,
     options.outputPath
   );
@@ -450,7 +453,11 @@ export async function startScreenshotCollection(
   await logToScreenshotCollector(`Claude collector output dir: ${outputDir}`);
 
   try {
-    const claudeResult = await claudeCodeCapturePRScreenshots({
+    // Get the screenshot collector (dynamic or bundled fallback)
+    const collector = await getScreenshotCollector();
+    await logToScreenshotCollector("Screenshot collector module loaded");
+
+    const claudeResult = await collector.claudeCodeCapturePRScreenshots({
       workspaceDir,
       changedFiles: textFiles,
       prTitle,

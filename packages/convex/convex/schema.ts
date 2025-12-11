@@ -1007,6 +1007,24 @@ const convexSchema = defineSchema({
     .index("by_deploymentId", ["deploymentId"])
     .index("by_sha", ["sha", "updatedAt"]),
 
+  // Screenshot collector releases - tracks bundled collector scripts stored in Convex
+  screenshotCollectorReleases: defineTable({
+    version: v.string(), // e.g., "20250611123456-abc1234"
+    storageId: v.id("_storage"), // Convex storage ID for the JS bundle
+    downloadUrl: v.string(), // Original GitHub Releases download URL
+    sha256: v.string(), // SHA256 checksum of the bundle
+    size: v.number(), // File size in bytes
+    commitSha: v.string(), // Git commit SHA that built this release
+    isStaging: v.boolean(), // Whether this release is for staging (cmux-internal-dev-agent) or production (cmux-agent)
+    isActive: v.boolean(), // Whether this is the currently active release for its environment
+    uploadedAt: v.number(), // When this was uploaded to Convex
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_version", ["version"])
+    .index("by_staging_active", ["isStaging", "isActive", "createdAt"])
+    .index("by_staging_created", ["isStaging", "createdAt"]),
+
   // GitHub Commit Statuses (legacy status API)
   githubCommitStatuses: defineTable({
     provider: v.literal("github"),

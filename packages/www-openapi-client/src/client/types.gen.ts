@@ -726,6 +726,38 @@ export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
 };
 
+export type ScreenshotCollectorRelease = {
+    /**
+     * Version identifier for the release
+     */
+    version: string;
+    /**
+     * URL to download the screenshot collector bundle
+     */
+    downloadUrl: string;
+    /**
+     * SHA256 checksum of the bundle
+     */
+    sha256: string;
+    /**
+     * Size of the bundle in bytes
+     */
+    size: number;
+    /**
+     * Git commit SHA that built this release
+     */
+    commitSha: string;
+    /**
+     * Timestamp when this was uploaded to Convex
+     */
+    uploadedAt: number;
+};
+
+export type NotFound = {
+    code: 404;
+    message: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2742,6 +2774,31 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
+
+export type GetApiScreenshotCollectorLatestData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/screenshot-collector/latest';
+};
+
+export type GetApiScreenshotCollectorLatestErrors = {
+    /**
+     * No active release found for this environment
+     */
+    404: NotFound;
+};
+
+export type GetApiScreenshotCollectorLatestError = GetApiScreenshotCollectorLatestErrors[keyof GetApiScreenshotCollectorLatestErrors];
+
+export type GetApiScreenshotCollectorLatestResponses = {
+    /**
+     * Latest screenshot collector release
+     */
+    200: ScreenshotCollectorRelease;
+};
+
+export type GetApiScreenshotCollectorLatestResponse = GetApiScreenshotCollectorLatestResponses[keyof GetApiScreenshotCollectorLatestResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

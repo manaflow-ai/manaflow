@@ -49,6 +49,7 @@
     "typecheck:morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run typecheck",
     "typecheck:www-openapi-client": "cd packages/www-openapi-client && bun run typecheck",
     "typecheck:www": "cd apps/www && bun run typecheck",
+    "typecheck:screenshot-collector": "cd packages/screenshot-collector && bun run typecheck",
     "gen": "run-p generate-openapi-client generate-morphcloud-openapi-client generate-routes",
     "generate-routes": "cd apps/client && bun run generate-routes",
     "generate-openapi-client": "cd apps/www && bun run generate-openapi-client",

@@ -21,6 +21,10 @@ import {
   dispatchPreviewJob,
   completePreviewJob,
 } from "./preview_jobs_http";
+import {
+  uploadScreenshotCollector,
+  getLatestScreenshotCollector,
+} from "./screenshotCollector_http";
 
 const http = httpRouter();
 
@@ -124,6 +128,19 @@ http.route({
   path: "/api/preview/complete",
   method: "POST",
   handler: completePreviewJob,
+});
+
+// Screenshot collector release management
+http.route({
+  path: "/api/internal/screenshot-collector/upload",
+  method: "POST",
+  handler: uploadScreenshotCollector,
+});
+
+http.route({
+  path: "/api/screenshot-collector/latest",
+  method: "GET",
+  handler: getLatestScreenshotCollector,
 });
 
 export default http;

@@ -1,0 +1,22 @@
+{
+  "name": "@cmux/screenshot-collector",
+  "version": "0.0.1",
+  "description": "Standalone screenshot collector for cmux - downloaded at runtime from GitHub Releases",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "bun build src/index.ts --outfile dist/index.js --target node --minify",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.54",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
