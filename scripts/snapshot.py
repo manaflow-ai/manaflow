@@ -1386,7 +1386,9 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           fi
         }}
         while IFS='|' read -r publisher name version; do
-          [ -z "${{publisher}}" ] && continue
+          if [ -z "${{publisher}}" ]; then
+            continue
+          fi
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
         done <<'EXTENSIONS'
         anthropic|claude-code|2.0.27
