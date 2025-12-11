@@ -403,6 +403,17 @@ export function setupSocketHandlers(
     }
 
     socket.on("git-diff", async (data, callback) => {
+      // In web mode, git operations should use the www API endpoints instead
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback?.({
+          ok: false,
+          error:
+            "Local git operations are disabled in web mode. Use the /api/integrations/github/compare endpoint instead.",
+          diffs: [],
+        });
+        return;
+      }
+
       try {
         const parsed = GitSocketDiffRequestSchema.parse(data);
 
@@ -1694,6 +1705,16 @@ export function setupSocketHandlers(
     });
 
     socket.on("git-full-diff", async (data) => {
+      // In web mode, git operations should use the www API endpoints instead
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        socket.emit("git-full-diff-response", {
+          diff: "",
+          error:
+            "Local git operations are disabled in web mode. Use the /api/integrations/github/compare endpoint instead.",
+        });
+        return;
+      }
+
       try {
         const { workspacePath } = GitFullDiffRequestSchema.parse(data);
         const diff = await gitDiffManager.getFullDiff(workspacePath);

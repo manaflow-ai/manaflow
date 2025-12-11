@@ -56,6 +56,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
         repoFullName,
         baseRef: normalizedBaseBranch || undefined,
         headRef: normalizedHeadBranch ?? "",
+        teamSlugOrId,
       }),
       enabled:
         Boolean(repoFullName?.trim()) && Boolean(normalizedHeadBranch?.trim()),

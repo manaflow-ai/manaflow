@@ -40,6 +40,7 @@ type AdditionsAndDeletionsProps = {
   repoFullName: string;
   ref1: string;
   ref2: string;
+  teamSlugOrId?: string;
 };
 
 function PullRequestLoadingState() {
@@ -84,12 +85,14 @@ function AdditionsAndDeletions({
   repoFullName,
   ref1,
   ref2,
+  teamSlugOrId,
 }: AdditionsAndDeletionsProps) {
   const diffsQuery = useRQ(
     gitDiffQueryOptions({
       repoFullName,
       baseRef: normalizeGitRef(ref1),
       headRef: normalizeGitRef(ref2),
+      teamSlugOrId,
     })
   );
 
@@ -365,6 +368,7 @@ export function PullRequestDetailView({
                     repoFullName={currentPR.repoFullName}
                     ref1={currentPR.baseRef || ""}
                     ref2={currentPR.headRef || ""}
+                    teamSlugOrId={teamSlugOrId}
                   />
                 </Suspense>
                 <Suspense fallback={null}>
@@ -518,6 +522,7 @@ export function PullRequestDetailView({
                   ref2={normalizeGitRef(currentPR.headRef)}
                   onControlsChange={handleDiffControlsChange}
                   classNames={gitDiffViewerClassNames}
+                  teamSlugOrId={teamSlugOrId}
                 />
               ) : (
                 <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">

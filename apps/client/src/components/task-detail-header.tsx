@@ -87,10 +87,12 @@ function AdditionsAndDeletions({
   repos,
   defaultBaseRef,
   defaultHeadRef,
+  teamSlugOrId,
 }: {
   repos: RepoDiffTarget[];
   defaultBaseRef?: string;
   defaultHeadRef?: string;
+  teamSlugOrId?: string;
 }) {
   const repoConfigs = useMemo(() => {
     const normalizedDefaults = {
@@ -128,6 +130,7 @@ function AdditionsAndDeletions({
         repoFullName: config.repoFullName,
         baseRef: config.baseRef,
         headRef,
+        teamSlugOrId,
       });
       return {
         ...options,
@@ -314,6 +317,7 @@ export function TaskDetailHeader({
                 repos={repoDiffTargets}
                 defaultBaseRef={normalizedBaseBranch || undefined}
                 defaultHeadRef={normalizedHeadBranch || undefined}
+                teamSlugOrId={teamSlugOrId}
               />
             </Suspense>
           )}
@@ -625,6 +629,7 @@ function SocketActions({
         repoFullName: target.repoFullName,
         baseRef: target.baseRef,
         headRef: target.headRef ?? "",
+        teamSlugOrId,
       }),
       enabled:
         Boolean(target.repoFullName?.trim()) && Boolean(target.headRef?.trim()),

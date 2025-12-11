@@ -36,6 +36,7 @@ export async function preloadPullRequestDetail({
             repoFullName: target.repoFullName,
             baseRef: normalizeGitRef(target.baseRef),
             headRef: normalizeGitRef(target.headRef),
+            teamSlugOrId,
           })
         );
       }

@@ -16,6 +16,7 @@ import {
   devServerRouter,
   environmentsRouter,
   githubBranchesRouter,
+  githubCompareRouter,
   githubFrameworkDetectionRouter,
   githubInstallStateRouter,
   githubOAuthTokenRouter,
@@ -142,6 +143,7 @@ app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
 app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
+app.route("/", githubCompareRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

@@ -599,6 +599,7 @@ export const Route = createFileRoute(
                 repoFullName,
                 lastKnownBaseSha: metadata?.lastKnownBaseSha,
                 lastKnownMergeCommitSha: metadata?.lastKnownMergeCommitSha,
+                teamSlugOrId: opts.params.teamSlugOrId,
               }),
             )
             .catch(() => undefined);

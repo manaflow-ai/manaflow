@@ -158,6 +158,7 @@ function DashboardDiffPage() {
       repoFullName: selectedProject!,
       baseRef: search.ref1,
       headRef: search.ref2!,
+      teamSlugOrId,
     }),
     enabled: Boolean(selectedProject && search.ref1 && search.ref2),
   });

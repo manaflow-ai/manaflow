@@ -19,6 +19,8 @@ export interface RunDiffSectionProps {
       lastKnownMergeCommitSha?: string;
     }
   >;
+  /** Team slug or ID for web mode API calls */
+  teamSlugOrId?: string;
 }
 
 function applyRepoPrefix(
@@ -48,6 +50,7 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     additionalRepoFullNames,
     withRepoPrefix,
     metadataByRepo,
+    teamSlugOrId,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -73,6 +76,7 @@ export function RunDiffSection(props: RunDiffSectionProps) {
         lastKnownBaseSha: metadataByRepo?.[repo]?.lastKnownBaseSha,
         lastKnownMergeCommitSha:
           metadataByRepo?.[repo]?.lastKnownMergeCommitSha,
+        teamSlugOrId,
       }),
       enabled: canFetch,
     })),
