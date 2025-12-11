@@ -14,7 +14,7 @@ The flow:
 
 Examples:
 uv run --env-file .env ./scripts/snapshot.py
-uv run --env-file .env ./scripts/snapshot.py --require-verify
+uv run --env-file .env ./scripts/snapshot.py --require-verify # do not use this flag unless explicitly asked
 """
 
 from __future__ import annotations
