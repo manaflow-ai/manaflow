@@ -1,0 +1,96 @@
+name: Screenshot Collector Host Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/screenshot-collector-host/**
+      - .github/workflows/screenshot-collector-host.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Install dependencies
+        working-directory: packages/screenshot-collector-host
+        run: bun install
+
+      - name: Build bundle
+        working-directory: packages/screenshot-collector-host
+        run: bun run build
+
+      - name: Get version and create tag
+        id: version
+        working-directory: packages/screenshot-collector-host
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          TAG="screenshot-collector-host-v${VERSION}-${COMMIT_SHA}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Delete existing release with same tag if it exists
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git tag -d "$TAG" 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+
+          # Create new release
+          gh release create "$TAG" \
+            --title "Screenshot Collector Host v${VERSION}" \
+            --notes "Automated release of screenshot-collector-host bundle.
+
+          This bundle is fetched dynamically by cmux workers to capture UI screenshots.
+
+          **Commit:** ${{ github.sha }}
+          **Built at:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          " \
+            --latest=false \
+            packages/screenshot-collector-host/dist/index.js#screenshot-collector-host.js
+
+      - name: Update latest tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          LATEST_TAG="screenshot-collector-host-latest"
+
+          # Delete existing latest release if it exists
+          gh release delete "$LATEST_TAG" --yes 2>/dev/null || true
+          git tag -d "$LATEST_TAG" 2>/dev/null || true
+          git push origin ":refs/tags/$LATEST_TAG" 2>/dev/null || true
+
+          # Create new latest release
+          gh release create "$LATEST_TAG" \
+            --title "Screenshot Collector Host (Latest)" \
+            --notes "Latest build of screenshot-collector-host bundle.
+
+          This release always points to the most recent build.
+          Workers fetch from this release by default.
+
+          **Commit:** ${{ github.sha }}
+          **Built at:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          " \
+            --latest=false \
+            packages/screenshot-collector-host/dist/index.js#screenshot-collector-host.js
