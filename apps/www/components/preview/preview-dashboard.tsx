@@ -506,7 +506,7 @@ function MockGitHubPRBrowser() {
   return (
     <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
       {/* Browser window frame - wider than container */}
-      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto flex-1 flex flex-col min-h-0">
+      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] 2xl:max-w-[1400px] mx-auto flex-1 flex flex-col min-h-0">
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
