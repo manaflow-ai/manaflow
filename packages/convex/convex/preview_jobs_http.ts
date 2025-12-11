@@ -369,35 +369,11 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
       // Determine which comment to update:
-      // 1. Use stored githubCommentId if available
-      // 2. Otherwise, search for an existing cmux comment on the PR (fallback)
-      // 3. If no existing comment found, create a new one
-      let commentIdToUpdate = previewRun.githubCommentId;
-
-      if (!commentIdToUpdate) {
-        console.log("[preview-jobs-http] No stored githubCommentId, searching for existing comment", {
-          taskRunId,
-          previewRunId: previewRun._id,
-        });
-
-        const findResult = await ctx.runAction(
-          internal.github_pr_comments.findExistingPreviewComment,
-          {
-            installationId: previewRun.repoInstallationId,
-            repoFullName: previewRun.repoFullName,
-            prNumber: previewRun.prNumber,
-          }
-        );
-
-        if (findResult.ok && findResult.commentId) {
-          commentIdToUpdate = findResult.commentId;
-          console.log("[preview-jobs-http] Found existing comment to update via search", {
-            taskRunId,
-            previewRunId: previewRun._id,
-            commentId: commentIdToUpdate,
-          });
-        }
-      }
+      // 1. Use stored githubCommentId if available (this is the comment THIS preview run created)
+      // 2. If no stored comment ID, create a new comment
+      // NOTE: We intentionally do NOT search for existing cmux comments as a fallback,
+      // because that could find comments from other environments (e.g., dev editing prod's comment)
+      const commentIdToUpdate = previewRun.githubCommentId;
 
       if (commentIdToUpdate) {
         console.log("[preview-jobs-http] Updating existing GitHub comment", {
