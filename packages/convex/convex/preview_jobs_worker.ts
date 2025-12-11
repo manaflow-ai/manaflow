@@ -879,7 +879,6 @@ export async function runPreviewJob(
       vscodeUrl,
       workerUrl: workerService.url,
       workerHealthUrl: `${workerService.url}/health`,
-      screenshotLogUrl: `${workerService.url.replace(':39377', ':39376')}/file?path=/root/.cmux/screenshot-collector/screenshot-collector.log`,
     });
 
     if (taskRunId) {
@@ -901,7 +900,6 @@ export async function runPreviewJob(
           ports: {
             vscode: getServiceUrl(39378) ?? "",
             worker: getServiceUrl(39377) ?? "",
-            extension: getServiceUrl(39376),
             vnc: getServiceUrl(39375),
           },
         },

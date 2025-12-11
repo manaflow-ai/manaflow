@@ -19,3 +19,9 @@
 [submodule "dev-docs/convex-js"]
 	path = dev-docs/convex-js
 	url = https://github.com/get-convex/convex-js
+[submodule "dev-docs/nitro"]
+	path = dev-docs/nitro
+	url = https://github.com/nitrojs/nitro
+[submodule "dev-docs/hono"]
+	path = dev-docs/hono
+	url = https://github.com/honojs/hono

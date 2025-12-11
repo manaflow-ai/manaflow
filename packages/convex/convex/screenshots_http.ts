@@ -127,8 +127,10 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       screenshotSetId: resolvedScreenshotSetId,
     });
   } else if (payload.status !== "completed") {
+    // For failed/skipped status, preserve the screenshotSetId so we can surface errors in PR comments
     await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
       id: payload.runId,
+      screenshotSetId: resolvedScreenshotSetId,
     });
   }
 

@@ -165,6 +165,7 @@ exit 0`;
 
   // Create settings.json with hooks configuration
   const settingsConfig: Record<string, unknown> = {
+    alwaysThinkingEnabled: true,
     // Use the Anthropic API key from cmux settings.json instead of env vars
     // This ensures Claude Code always uses the key from cmux, bypassing any
     // ANTHROPIC_API_KEY environment variables in the repo
