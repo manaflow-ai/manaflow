@@ -12,6 +12,8 @@ import clsx from "clsx";
 import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useQuery } from "convex/react";
+import { useMorphTtlExtension } from "@/hooks/useMorphWorkspace";
+import { type Id } from "@cmux/convex/dataModel";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -60,6 +62,13 @@ function TaskDetailPage() {
     | { taskRunId: string }
     | undefined;
   const activeRunId = deepestMatchParams?.taskRunId as string | undefined;
+
+  // Extend TTL for active Morph instances while user is viewing the task run
+  useMorphTtlExtension({
+    taskRunId: activeRunId as Id<"taskRuns">,
+    teamSlugOrId,
+    enabled: !!activeRunId,
+  });
 
   const navigate = useNavigate();
 

@@ -264,6 +264,123 @@ morphRouter.openapi(
   }
 );
 
+const ExtendTtlBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    ttlSeconds: z.number().min(60).max(7200).default(1800), // 1 min to 2 hours, default 30 min
+  })
+  .openapi("ExtendTtlBody");
+
+const ExtendTtlResponse = z
+  .object({
+    extended: z.literal(true),
+    expiresAt: z.number().optional(),
+  })
+  .openapi("ExtendTtlResponse");
+
+morphRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/morph/task-runs/{taskRunId}/extend-ttl",
+    tags: ["Morph"],
+    summary: "Extend the TTL of a Morph instance backing a task run",
+    description:
+      "Extends the time-to-live for a Morph VM associated with a task run. " +
+      "Use this to keep instances alive while actively working on them.",
+    request: {
+      params: z.object({
+        taskRunId: typedZid("taskRuns"),
+      }),
+      body: {
+        content: {
+          "application/json": {
+            schema: ExtendTtlBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: ExtendTtlResponse,
+          },
+        },
+        description: "TTL extended successfully",
+      },
+      400: { description: "Task run is not backed by a Morph instance" },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden - instance does not belong to this team" },
+      404: { description: "Task run or instance not found" },
+      500: { description: "Failed to extend TTL" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { taskRunId } = c.req.valid("param");
+    const { teamSlugOrId, ttlSeconds } = c.req.valid("json");
+
+    const convex = getConvex({ accessToken });
+    const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+
+    const taskRun = await convex.query(api.taskRuns.get, {
+      teamSlugOrId,
+      id: taskRunId,
+    });
+
+    if (!taskRun) {
+      return c.text("Task run not found", 404);
+    }
+
+    const instanceId = taskRun.vscode?.containerName;
+    const isMorphProvider = taskRun.vscode?.provider === "morph";
+
+    if (!isMorphProvider || !instanceId) {
+      return c.text("Task run is not backed by a Morph instance", 400);
+    }
+
+    try {
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances.get({ instanceId });
+
+      const metadataTeamId = (
+        instance as unknown as {
+          metadata?: { teamId?: string };
+        }
+      ).metadata?.teamId;
+
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Only extend TTL for running instances (not paused ones)
+      if (instance.status === "paused") {
+        // Still return success for paused instances - the TTL will apply when resumed
+        return c.json({ extended: true });
+      }
+
+      await instance.setTTL(ttlSeconds, "pause");
+
+      // Calculate approximate expiration time
+      const expiresAt = Date.now() + ttlSeconds * 1000;
+
+      console.log(
+        `[morph.extend-ttl] Extended TTL for instance ${instanceId} by ${ttlSeconds}s`
+      );
+
+      return c.json({ extended: true, expiresAt });
+    } catch (error) {
+      console.error("[morph.extend-ttl] Failed to extend TTL", error);
+      return c.text("Failed to extend TTL", 500);
+    }
+  }
+);
+
 const RefreshGitHubAuthBody = z
   .object({
     teamSlugOrId: z.string(),
