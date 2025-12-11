@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useId,
+  Suspense,
 } from "react";
 import {
   Camera,
@@ -64,6 +65,7 @@ import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 import { PreviewItemButton } from "./preview-item-button";
 import { BlinkingCursor } from "./blinking-cursor";
+import { UseDifferentAccountButton } from "./use-different-account-button";
 
 type ProviderConnection = {
   id: string;
@@ -107,6 +109,10 @@ type PreviewDashboardProps = {
   isAuthenticated: boolean;
   previewConfigs: PreviewConfigListItem[];
   popupComplete?: boolean;
+  /** When set, user authenticated with these providers but GitHub is not connected yet - show waitlist */
+  waitlistProviders?: ("gitlab" | "bitbucket")[];
+  /** Email to display on waitlist screen */
+  waitlistEmail?: string | null;
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
@@ -1943,21 +1949,31 @@ function MockGitHubPRBrowser() {
                             onClick={() => selectTask("task-1")}
                             className={clsx(
                               "w-full flex items-center py-[3px] pr-2 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-sm mt-px",
-                              selectedTaskId === "task-1" && viewMode === "all" ? "bg-neutral-800/50" : "text-neutral-300"
+                              selectedTaskId === "task-1" && viewMode === "all"
+                                ? "bg-neutral-800/50"
+                                : "text-neutral-300"
                             )}
                             style={{ paddingLeft: "28px" }}
                           >
                             <button
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTaskExpanded("task-1-run"); }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                toggleTaskExpanded("task-1-run");
+                              }}
                               onMouseDown={(e) => e.stopPropagation()}
                               className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-2"
                             >
-                              <ChevronRight className={clsx(
-                                "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
-                                expandedTasks.has("task-1-run") && "rotate-90"
-                              )} />
+                              <ChevronRight
+                                className={clsx(
+                                  "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
+                                  expandedTasks.has("task-1-run") && "rotate-90"
+                                )}
+                              />
                             </button>
-                            <span className="truncate">screenshot-collector</span>
+                            <span className="truncate">
+                              screenshot-collector
+                            </span>
                             {isPRMerged ? (
                               <svg
                                 className="w-3 h-3 text-[#8957e5] shrink-0 ml-auto"
@@ -1973,10 +1989,16 @@ function MockGitHubPRBrowser() {
                           {expandedTasks.has("task-1-run") && (
                             <>
                               <button
-                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("workspace"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-1");
+                                  setViewMode("workspace");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-1" && viewMode === "workspace" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-1" &&
+                                    viewMode === "workspace"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -1984,10 +2006,16 @@ function MockGitHubPRBrowser() {
                                 <span>VS Code</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("gitDiff"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-1");
+                                  setViewMode("gitDiff");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-1" && viewMode === "gitDiff" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-1" &&
+                                    viewMode === "gitDiff"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -1995,10 +2023,16 @@ function MockGitHubPRBrowser() {
                                 <span>Git diff</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("browser"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-1");
+                                  setViewMode("browser");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-1" && viewMode === "browser" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-1" &&
+                                    viewMode === "browser"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2006,10 +2040,16 @@ function MockGitHubPRBrowser() {
                                 <span>Browser</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("terminals"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-1");
+                                  setViewMode("terminals");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-1" && viewMode === "terminals" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-1" &&
+                                    viewMode === "terminals"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2046,25 +2086,39 @@ function MockGitHubPRBrowser() {
                             style={{ paddingLeft: "28px" }}
                           >
                             <button
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTaskExpanded("task-2-run"); }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                toggleTaskExpanded("task-2-run");
+                              }}
                               onMouseDown={(e) => e.stopPropagation()}
                               className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-2"
                             >
-                              <ChevronRight className={clsx(
-                                "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
-                                expandedTasks.has("task-2-run") && "rotate-90"
-                              )} />
+                              <ChevronRight
+                                className={clsx(
+                                  "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
+                                  expandedTasks.has("task-2-run") && "rotate-90"
+                                )}
+                              />
                             </button>
-                            <span className="truncate">screenshot-collector</span>
+                            <span className="truncate">
+                              screenshot-collector
+                            </span>
                             <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
                           </div>
                           {expandedTasks.has("task-2-run") && (
                             <>
                               <button
-                                onClick={() => { setSelectedTaskId("task-2"); setViewMode("workspace"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-2");
+                                  setViewMode("workspace");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-2" && viewMode === "workspace" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-2" &&
+                                    viewMode === "workspace"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2072,10 +2126,16 @@ function MockGitHubPRBrowser() {
                                 <span>VS Code</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-2"); setViewMode("gitDiff"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-2");
+                                  setViewMode("gitDiff");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-2" && viewMode === "gitDiff" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-2" &&
+                                    viewMode === "gitDiff"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2083,10 +2143,16 @@ function MockGitHubPRBrowser() {
                                 <span>Git diff</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-2"); setViewMode("browser"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-2");
+                                  setViewMode("browser");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-2" && viewMode === "browser" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-2" &&
+                                    viewMode === "browser"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2094,10 +2160,16 @@ function MockGitHubPRBrowser() {
                                 <span>Browser</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-2"); setViewMode("terminals"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-2");
+                                  setViewMode("terminals");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-2" && viewMode === "terminals" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-2" &&
+                                    viewMode === "terminals"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2134,25 +2206,39 @@ function MockGitHubPRBrowser() {
                             style={{ paddingLeft: "28px" }}
                           >
                             <button
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTaskExpanded("task-3-run"); }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                toggleTaskExpanded("task-3-run");
+                              }}
                               onMouseDown={(e) => e.stopPropagation()}
                               className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-2"
                             >
-                              <ChevronRight className={clsx(
-                                "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
-                                expandedTasks.has("task-3-run") && "rotate-90"
-                              )} />
+                              <ChevronRight
+                                className={clsx(
+                                  "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
+                                  expandedTasks.has("task-3-run") && "rotate-90"
+                                )}
+                              />
                             </button>
-                            <span className="truncate">screenshot-collector</span>
+                            <span className="truncate">
+                              screenshot-collector
+                            </span>
                             <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
                           </div>
                           {expandedTasks.has("task-3-run") && (
                             <>
                               <button
-                                onClick={() => { setSelectedTaskId("task-3"); setViewMode("workspace"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-3");
+                                  setViewMode("workspace");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-3" && viewMode === "workspace" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-3" &&
+                                    viewMode === "workspace"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2160,10 +2246,16 @@ function MockGitHubPRBrowser() {
                                 <span>VS Code</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-3"); setViewMode("gitDiff"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-3");
+                                  setViewMode("gitDiff");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-3" && viewMode === "gitDiff" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-3" &&
+                                    viewMode === "gitDiff"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2171,10 +2263,16 @@ function MockGitHubPRBrowser() {
                                 <span>Git diff</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-3"); setViewMode("browser"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-3");
+                                  setViewMode("browser");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-3" && viewMode === "browser" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-3" &&
+                                    viewMode === "browser"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2182,10 +2280,16 @@ function MockGitHubPRBrowser() {
                                 <span>Browser</span>
                               </button>
                               <button
-                                onClick={() => { setSelectedTaskId("task-3"); setViewMode("terminals"); }}
+                                onClick={() => {
+                                  setSelectedTaskId("task-3");
+                                  setViewMode("terminals");
+                                }}
                                 className={clsx(
                                   "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
-                                  selectedTaskId === "task-3" && viewMode === "terminals" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                  selectedTaskId === "task-3" &&
+                                    viewMode === "terminals"
+                                    ? "bg-neutral-800/65 text-white"
+                                    : "text-neutral-400"
                                 )}
                                 style={{ paddingLeft: "48px" }}
                               >
@@ -2469,7 +2573,7 @@ function MockGitHubPRBrowser() {
                         {/* Browser content - cmux.dev landing page */}
                         <div className="flex-1 bg-[#030712] overflow-hidden">
                           <iframe
-                            src="/"
+                            src="https://cmux.dev"
                             className={clsx(
                               "border-0 origin-top-left",
                               isResizing && "pointer-events-none"
@@ -3573,6 +3677,8 @@ function PreviewDashboardInner({
   isAuthenticated,
   previewConfigs,
   popupComplete,
+  waitlistProviders,
+  waitlistEmail,
 }: PreviewDashboardProps) {
   const [selectedTeamSlugOrIdState, setSelectedTeamSlugOrIdState] = useState(
     () => selectedTeamSlugOrId || teamOptions[0]?.slugOrId || ""
@@ -4078,6 +4184,40 @@ function PreviewDashboardInner({
         </Button>
       </div>
     </div>
+  ) : waitlistProviders && waitlistProviders.length > 0 ? (
+    // Waitlist for GitLab/Bitbucket users who don't have GitHub connected
+    (() => {
+      const providerNames = waitlistProviders.map((p) =>
+        p === "gitlab" ? "GitLab" : "Bitbucket"
+      );
+      const providerDisplay =
+        providerNames.length === 1
+          ? providerNames[0]
+          : `${providerNames.slice(0, -1).join(", ")} and ${providerNames[providerNames.length - 1]}`;
+      return (
+        <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm px-4 py-8 overflow-hidden">
+          <GrainOverlay opacity={0.02} />
+          <h3 className="text-base font-medium text-white mb-2">
+            You&apos;re on the waitlist!
+          </h3>
+          <div className="text-sm text-neutral-400 text-center max-w-md space-y-2">
+            <p>
+              {providerDisplay} integration is in beta. We&apos;ll email you
+              when it&apos;s ready.
+            </p>
+            {waitlistEmail && (
+              <p className="text-neutral-500 text-xs">({waitlistEmail})</p>
+            )}
+          </div>
+          <p className="text-xs text-neutral-500 mt-4 text-center">
+            In the meantime, you can use Preview with GitHub.
+          </p>
+          <Suspense fallback={<div className="h-[36px] mt-4" />}>
+            <UseDifferentAccountButton />
+          </Suspense>
+        </div>
+      );
+    })()
   ) : !hasGithubAppInstallation ? (
     <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden py-16 sm:py-10">
       <GrainOverlay opacity={0.02} />

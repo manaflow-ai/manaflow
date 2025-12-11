@@ -17,6 +17,8 @@ export const enqueueFromWebhook = internalMutation({
     repoInstallationId: v.optional(v.number()),
     prNumber: v.number(),
     prUrl: v.string(),
+    prTitle: v.optional(v.string()),
+    prDescription: v.optional(v.string()),
     headSha: v.string(),
     baseSha: v.optional(v.string()),
     headRef: v.optional(v.string()),
@@ -60,6 +62,8 @@ export const enqueueFromWebhook = internalMutation({
       repoInstallationId: args.repoInstallationId,
       prNumber: args.prNumber,
       prUrl: args.prUrl,
+      prTitle: args.prTitle,
+      prDescription: args.prDescription,
       headSha: args.headSha,
       baseSha: args.baseSha,
       headRef: args.headRef,
@@ -219,6 +223,23 @@ export const enqueueFromTaskRun = internalMutation({
     // In crown worker flow, we may not have the exact commit SHA
     const headSha = taskRun.newBranch ?? `taskrun-${args.taskRunId}`;
 
+    // Try to get PR title from pullRequests table or task
+    let prTitle: string | undefined;
+    const prRecord = await ctx.db
+      .query("pullRequests")
+      .withIndex("by_team_repo_number", (q) =>
+        q.eq("teamId", taskRun.teamId).eq("repoFullName", repoFullName).eq("number", prNumber),
+      )
+      .first();
+    if (prRecord?.title) {
+      prTitle = prRecord.title;
+    } else if (task.pullRequestTitle) {
+      prTitle = task.pullRequestTitle;
+    }
+
+    // Get PR description from task if available
+    const prDescription = task.pullRequestDescription ?? undefined;
+
     const now = Date.now();
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: previewConfig._id,
@@ -227,6 +248,8 @@ export const enqueueFromTaskRun = internalMutation({
       repoInstallationId: previewConfig.repoInstallationId,
       prNumber,
       prUrl,
+      prTitle,
+      prDescription,
       headSha,
       baseSha: undefined,
       headRef: taskRun.newBranch ?? undefined,
@@ -503,6 +526,8 @@ export const createManual = authMutation({
     repoFullName: v.string(),
     prNumber: v.number(),
     prUrl: v.string(),
+    prTitle: v.optional(v.string()),
+    prDescription: v.optional(v.string()),
     headSha: v.string(),
     baseSha: v.optional(v.string()),
     headRef: v.optional(v.string()),
@@ -554,6 +579,8 @@ export const createManual = authMutation({
       repoInstallationId: config.repoInstallationId,
       prNumber: args.prNumber,
       prUrl: args.prUrl,
+      prTitle: args.prTitle,
+      prDescription: args.prDescription,
       headSha: args.headSha,
       baseSha: args.baseSha,
       headRef: args.headRef,
