@@ -527,6 +527,14 @@ export const postInitialPreviewComment = internalAction({
         githubCommentId: data.id,
       });
 
+      await collapseOlderPreviewComments({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        latestCommentId: data.id,
+      });
+
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
     } catch (error) {
       console.error(
@@ -751,14 +759,6 @@ export const updatePreviewComment = internalAction({
         screenshotSetId,
       });
 
-      // Collapse older preview comments
-      await collapseOlderPreviewComments({
-        octokit,
-        owner: repo.owner,
-        repo: repo.repo,
-        prNumber,
-        latestCommentId: commentId,
-      });
 
       return { ok: true };
     } catch (error) {

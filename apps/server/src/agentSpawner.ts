@@ -293,6 +293,7 @@ export async function spawnAgent(
 
     let authFiles: EnvironmentResult["files"] = [];
     let startupCommands: string[] = [];
+    let postStartCommands: EnvironmentResult["postStartCommands"] = [];
     let unsetEnvVars: string[] = [];
 
     // Fetch API keys from Convex BEFORE calling agent.environment()
@@ -315,6 +316,7 @@ export async function spawnAgent(
       };
       authFiles = envResult.files;
       startupCommands = envResult.startupCommands || [];
+      postStartCommands = envResult.postStartCommands || [];
       unsetEnvVars = envResult.unsetEnv || [];
     }
 
@@ -327,6 +329,9 @@ export async function spawnAgent(
       }
       if (applied.startupCommands && applied.startupCommands.length > 0) {
         startupCommands.push(...applied.startupCommands);
+      }
+      if (applied.postStartCommands && applied.postStartCommands.length > 0) {
+        postStartCommands = [...(postStartCommands || []), ...applied.postStartCommands];
       }
       if (applied.unsetEnv && applied.unsetEnv.length > 0) {
         unsetEnvVars.push(...applied.unsetEnv);
@@ -712,6 +717,7 @@ export async function spawnAgent(
       agentModel: agent.name,
       authFiles,
       startupCommands,
+      postStartCommands,
       cwd: "/root/workspace",
     };
 

@@ -14,7 +14,7 @@ The flow:
 
 Examples:
 uv run --env-file .env ./scripts/snapshot.py
-uv run --env-file .env ./scripts/snapshot.py --require-verify
+uv run --env-file .env ./scripts/snapshot.py --require-verify # do not use this flag unless explicitly asked
 """
 
 from __future__ import annotations
@@ -544,7 +544,6 @@ async def _expose_standard_ports(
 ) -> dict[int, str]:
     ports = [
         EXEC_HTTP_PORT,
-        39376,
         39377,
         VSCODE_HTTP_PORT,
         39379,

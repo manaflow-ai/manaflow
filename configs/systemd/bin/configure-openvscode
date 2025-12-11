@@ -22,6 +22,7 @@ SETTINGS=$(jq -n \
     "workbench.startupEditor": "none",
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "terminal.integrated.shellIntegration.enabled": false,
+    "terminal.integrated.showTerminalConfigPrompt": false,
     "terminal.integrated.macOptionClickForcesSelection": true,
     "terminal.integrated.shell.linux": "/usr/bin/zsh",
     "terminal.integrated.shellArgs.linux": ["-l"],

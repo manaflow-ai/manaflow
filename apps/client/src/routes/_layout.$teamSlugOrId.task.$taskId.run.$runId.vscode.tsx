@@ -3,7 +3,7 @@ import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
@@ -100,8 +100,19 @@ function VSCodeComponent() {
 
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
+  const prevWorkspaceUrlRef = useRef<string | null>(null);
+
+  // Only reset to loading when the URL actually changes to a different value
+  // This prevents flickering when the URL reference changes but the value is the same
   useEffect(() => {
-    setIframeStatus("loading");
+    if (workspaceUrl !== prevWorkspaceUrlRef.current) {
+      // Only reset to loading if we're transitioning to a new URL
+      // Don't reset if we're already loaded with the same URL
+      if (workspaceUrl !== null && prevWorkspaceUrlRef.current !== null) {
+        setIframeStatus("loading");
+      }
+      prevWorkspaceUrlRef.current = workspaceUrl;
+    }
   }, [workspaceUrl]);
 
   const onLoad = useCallback(() => {

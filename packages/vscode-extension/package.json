@@ -18,6 +18,9 @@
   "categories": [
     "Other"
   ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
   "activationEvents": [
     "*",
     "onStartupFinished",
@@ -71,7 +74,6 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "socket.io": "^4.8.1",
     "socket.io-client": "^4.6.1"
   }
 }

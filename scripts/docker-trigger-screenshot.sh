@@ -133,7 +133,6 @@ docker run -d \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -v docker-data:/var/lib/docker \
   -p "${BASE_PORT}:39375" \
-  -p "$((BASE_PORT + 1)):39376" \
   -p "$((BASE_PORT + 2)):39377" \
   -p "$((BASE_PORT + 3)):39378" \
   -p "$((BASE_PORT + 4)):39379" \

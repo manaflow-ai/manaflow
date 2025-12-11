@@ -33,7 +33,7 @@ describe("determineHttpServiceUpdates", () => {
   it("ignores services that are not managed by cmux", () => {
     const existing: ManagedHttpService[] = [
       createService({ name: "admin", port: 6000 }),
-      createService({ name: "port-39376", port: 39376 }),
+      createService({ name: "port-39377", port: 39377 }),
     ];
 
     const { portsToExpose, servicesToHide } = determineHttpServiceUpdates(

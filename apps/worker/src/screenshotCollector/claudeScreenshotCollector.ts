@@ -1,4 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type HookInput,
+  type HookJSONOutput,
+} from "@anthropic-ai/claude-agent-sdk";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
@@ -261,6 +265,29 @@ DUPLICATE SCREENSHOTS: Taking multiple identical screenshots. Each screenshot sh
 INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are visible and not cut off.
 </CRITICAL_MISTAKES>
 
+<CODE_MODIFICATION_POLICY>
+Your screenshots must be TRUTHFUL to the current state of the code in this branch.
+
+ALLOWED modifications (for environment setup only):
+- Creating mock environment variable files (e.g., .env.local with placeholder API keys)
+- Creating minimal configuration files required to start the dev server
+- Writing temporary test data files if needed to render UI states
+
+FORBIDDEN modifications:
+- DO NOT fix bugs, syntax errors, or type issues in the source code
+- DO NOT "improve" or refactor any existing code
+- DO NOT update dependencies or package.json
+- DO NOT modify the actual application source files
+
+The principle: You may CREATE files needed to RUN the app, but you must NOT MODIFY files that affect WHAT the app displays. If the UI has bugs, broken styles, or error states - capture them exactly as they appear. The purpose is to document the actual state of the PR, not an idealized or fixed version.
+
+If the dev server fails to start due to missing env vars or config:
+1. Try creating minimal mock files to get it running
+2. If it still fails, report the failure in your output
+3. Set hasUiChanges based on whether the changed files SHOULD have UI impact
+4. Never modify source code to fix the issues
+</CODE_MODIFICATION_POLICY>
+
 <OUTPUT_REQUIREMENTS>
 - Set hasUiChanges to true only if the PR modifies UI-rendering code AND you captured screenshots
 - Set hasUiChanges to false if the PR has no UI changes (with zero screenshots)
@@ -355,6 +382,71 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
           },
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Edit|Write",
+                hooks: [
+                  async (
+                    input: HookInput,
+                    _toolUseID: string | undefined
+                  ): Promise<HookJSONOutput> => {
+                    const toolName =
+                      "tool_name" in input ? input.tool_name : "unknown";
+                    const toolInput =
+                      "tool_input" in input
+                        ? (input.tool_input as Record<string, unknown>)
+                        : {};
+                    const filePath =
+                      typeof toolInput.file_path === "string"
+                        ? toolInput.file_path
+                        : "unknown";
+
+                    // Allow writing to the screenshot output directory
+                    if (filePath.startsWith(outputDir)) {
+                      return {};
+                    }
+
+                    // Allow creating environment/config files for setup
+                    const fileName = path.basename(filePath);
+                    const isEnvFile = fileName.startsWith(".env");
+                    const isLocalConfig =
+                      fileName.endsWith(".local.json") ||
+                      fileName.endsWith(".local.yaml") ||
+                      fileName.endsWith(".local.yml") ||
+                      fileName.endsWith(".local.ts") ||
+                      fileName.endsWith(".local.js");
+                    const isMockDataFile =
+                      filePath.includes("/mock/") ||
+                      filePath.includes("/mocks/") ||
+                      filePath.includes("/fixtures/") ||
+                      fileName.startsWith("mock-") ||
+                      fileName.startsWith("test-data");
+
+                    // Only allow Write (creating new files), not Edit (modifying existing)
+                    if (
+                      toolName === "Write" &&
+                      (isEnvFile || isLocalConfig || isMockDataFile)
+                    ) {
+                      await logToScreenshotCollector(
+                        `[hook] Allowing ${toolName} for setup file: ${filePath}`
+                      );
+                      return {};
+                    }
+
+                    await logToScreenshotCollector(
+                      `[hook] Blocked ${toolName} tool attempting to modify: ${filePath}`
+                    );
+
+                    return {
+                      decision: "block",
+                      reason: `Source code modifications are not allowed. You may only CREATE environment files (.env*), local config files (*.local.json/yaml/ts/js), or mock data files. You must NOT modify existing source files. Screenshots must be truthful to the current state of the code. Blocked file: ${filePath}`,
+                    };
+                  },
+                ],
+              },
+            ],
+          },
         },
       })) {
         // Format and log all message types

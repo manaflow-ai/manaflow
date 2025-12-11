@@ -369,35 +369,9 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
       // Determine which comment to update:
-      // 1. Use stored githubCommentId if available
-      // 2. Otherwise, search for an existing cmux comment on the PR (fallback)
-      // 3. If no existing comment found, create a new one
-      let commentIdToUpdate = previewRun.githubCommentId;
-
-      if (!commentIdToUpdate) {
-        console.log("[preview-jobs-http] No stored githubCommentId, searching for existing comment", {
-          taskRunId,
-          previewRunId: previewRun._id,
-        });
-
-        const findResult = await ctx.runAction(
-          internal.github_pr_comments.findExistingPreviewComment,
-          {
-            installationId: previewRun.repoInstallationId,
-            repoFullName: previewRun.repoFullName,
-            prNumber: previewRun.prNumber,
-          }
-        );
-
-        if (findResult.ok && findResult.commentId) {
-          commentIdToUpdate = findResult.commentId;
-          console.log("[preview-jobs-http] Found existing comment to update via search", {
-            taskRunId,
-            previewRunId: previewRun._id,
-            commentId: commentIdToUpdate,
-          });
-        }
-      }
+      // 1. Use stored githubCommentId if available - update it
+      // 2. Otherwise, create a new comment
+      const commentIdToUpdate = previewRun.githubCommentId;
 
       if (commentIdToUpdate) {
         console.log("[preview-jobs-http] Updating existing GitHub comment", {
@@ -448,8 +422,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           }, 500);
         }
       } else {
-        // No existing comment found - create a new one
-        console.log("[preview-jobs-http] Posting new GitHub comment (no existing comment found)", {
+        // No stored githubCommentId - create a new comment
+        console.log("[preview-jobs-http] Posting new GitHub comment (no stored githubCommentId)", {
           taskRunId,
           previewRunId: previewRun._id,
         });

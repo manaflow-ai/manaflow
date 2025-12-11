@@ -102,9 +102,20 @@ export function PersistentIframe({
   const [, forceRender] = useState(0);
   const loadTimeoutRef = useRef<number | null>(null);
   const preflightErrorRef = useRef<string | null>(null);
+  const prevPersistKeyRef = useRef<string>(persistKey);
+  const prevSrcRef = useRef<string>(src);
 
+  // Only reset to loading when persistKey or src actually changes to a different value
+  // This prevents flickering when references change but values are the same
   useEffect(() => {
-    setStatus("loading");
+    const persistKeyChanged = persistKey !== prevPersistKeyRef.current;
+    const srcChanged = src !== prevSrcRef.current;
+
+    if (persistKeyChanged || srcChanged) {
+      setStatus("loading");
+      prevPersistKeyRef.current = persistKey;
+      prevSrcRef.current = src;
+    }
   }, [persistKey, src]);
 
   const clearLoadTimeout = useCallback(() => {
