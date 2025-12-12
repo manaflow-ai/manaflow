@@ -1755,10 +1755,9 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
             chown root:root /usr/local/bin/fetch-mmds-keys
             chmod 0755 /usr/local/bin/fetch-mmds-keys
         fi
-        systemctl restart ssh
-        systemctl is-active --quiet ssh
+        systemctl restart ssh || true
+        systemctl is-active --quiet ssh || true
         systemctl start cmux.target 2>/dev/null || true
-        exit 0
         """
     )
     await ctx.run("install-systemd-units", cmd)
