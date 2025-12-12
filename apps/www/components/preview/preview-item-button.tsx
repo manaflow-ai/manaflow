@@ -41,7 +41,7 @@ export function PreviewItemButton({
         }
       }}
       className={clsx(
-        "w-full flex items-start gap-1 px-2 py-[3px] text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-sm",
+        "w-full flex items-start gap-1 px-2 py-[3px] text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-md",
         isSelected && "bg-neutral-800/30",
         className
       )}
