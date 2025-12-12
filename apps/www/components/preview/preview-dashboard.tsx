@@ -888,7 +888,16 @@ function MockGitHubPRBrowser() {
             </button>
           </div>
 
-          <div className="flex-1 flex items-center gap-3 px-3.5 py-1.5 bg-[#202124] rounded-full text-sm border border-transparent hover:border-[#5f6368] transition-colors cursor-text group">
+          <a
+            href={
+              activeTab === "github"
+                ? "https://github.com/manaflow-ai/cmux/pull/1124"
+                : "https://cmux.dev"
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 flex items-center gap-3 px-3.5 py-1.5 bg-[#202124] rounded-full text-sm border border-transparent hover:border-[#5f6368] transition-colors cursor-pointer group"
+          >
             <svg
               className="h-3.5 w-3.5 text-[#9AA0A6] shrink-0"
               viewBox="0 0 24 24"
@@ -908,11 +917,11 @@ function MockGitHubPRBrowser() {
               ) : (
                 <>
                   <span className="text-[#9AA0A6]">https://</span>
-                  <span>cmux.sh</span>
+                  <span>cmux.dev</span>
                 </>
               )}
             </span>
-          </div>
+          </a>
 
           <div className="flex items-center gap-1 px-1">
             <button className="p-2 text-[#E8EAED] opacity-60 hover:opacity-100 hover:bg-[#4A4B50] rounded-full transition-all">
