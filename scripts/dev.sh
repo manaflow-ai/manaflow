@@ -12,9 +12,11 @@
 #   --electron              Start Electron app
 #   --convex-agent          Run convex dev in agent mode
 #   --port-range=N          Run on port range N (shifts all ports by N*100)
-#                           Range 0: 5173, 9776, 9777, 9778, 9779 (default)
-#                           Range 1: 5273, 9876, 9877, 9878, 9879
-#                           Range 2: 5373, 9976, 9977, 9978, 9979
+#                           Auto-detected from directory name (cmux3 -> range 3)
+#                           Range 0: 9775, 9776, 9777, 9778, 9779
+#                           Range 1: 9875, 9876, 9877, 9878, 9879
+#                           Range 2: 9975, 9976, 9977, 9978, 9979
+#                           Range 3: 10075, 10076, 10077, 10078, 10079
 #                           etc.
 #
 # Environment variables:
@@ -33,7 +35,17 @@
 set -e
 
 # Port range configuration (can be overridden via --port-range or CMUX_PORT_RANGE env)
-PORT_RANGE="${CMUX_PORT_RANGE:-0}"
+# Auto-detect from directory name if not set (e.g., cmux3 -> range 3)
+if [[ -z "${CMUX_PORT_RANGE:-}" ]]; then
+    dir_name=$(basename "$PWD")
+    if [[ "$dir_name" =~ ^cmux([0-9]+)$ ]]; then
+        PORT_RANGE="${BASH_REMATCH[1]}"
+    else
+        PORT_RANGE=0
+    fi
+else
+    PORT_RANGE="${CMUX_PORT_RANGE}"
+fi
 
 if [ -f .env ]; then
     echo "Loading .env file"
@@ -179,9 +191,9 @@ done
 export SKIP_DOCKER_BUILD
 
 # Calculate ports based on port range
-# Base ports: CLIENT=5173, SERVER=9776, CONVEX=9777, CONVEX_PROXY=9778, WWW=9779
+# Base ports: CLIENT=9775, SERVER=9776, CONVEX=9777, CONVEX_PROXY=9778, WWW=9779
 PORT_OFFSET=$((PORT_RANGE * 100))
-export CMUX_CLIENT_PORT=$((5173 + PORT_OFFSET))
+export CMUX_CLIENT_PORT=$((9775 + PORT_OFFSET))
 export PORT=$((9776 + PORT_OFFSET))  # Server port
 export CONVEX_PORT=$((9777 + PORT_OFFSET))
 export CONVEX_SITE_PROXY_PORT=$((9778 + PORT_OFFSET))
@@ -191,11 +203,16 @@ export CMUX_WWW_PORT=$((9779 + PORT_OFFSET))
 export CMUX_PORT_RANGE="$PORT_RANGE"
 
 echo "Port range: $PORT_RANGE (offset: $PORT_OFFSET)"
-echo "  Client:       $CMUX_CLIENT_PORT"
-echo "  Server:       $PORT"
-echo "  Convex:       $CONVEX_PORT"
-echo "  Convex Proxy: $CONVEX_SITE_PROXY_PORT"
-echo "  WWW:          $CMUX_WWW_PORT"
+echo "  Client:       http://localhost:$CMUX_CLIENT_PORT"
+echo "  Server:       http://localhost:$PORT"
+if [ "$SKIP_CONVEX" = "true" ]; then
+    echo "  Convex:       http://localhost:$CONVEX_PORT (skipped)"
+    echo "  Convex Proxy: http://localhost:$CONVEX_SITE_PROXY_PORT (skipped)"
+else
+    echo "  Convex:       http://localhost:$CONVEX_PORT"
+    echo "  Convex Proxy: http://localhost:$CONVEX_SITE_PROXY_PORT"
+fi
+echo "  WWW:          http://localhost:$CMUX_WWW_PORT"
 
 # Only clean ports when not in devcontainer (devcontainer handles this)
 if [ "$IS_DEVCONTAINER" = "false" ]; then
