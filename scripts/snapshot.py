@@ -1,4 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "httpx",
+#     "paramiko",
+#     "python-dotenv",
+#     "morphcloud",
+# ]
+# ///
 """
 Provision Morph instances from an existing base snapshot, perform parallelized
 environment setup that mirrors the Dockerfile, validate critical tooling, and
@@ -12,9 +21,13 @@ The flow:
 5. Snapshot the configured instance, optionally prompt for manual verification, and
    record the snapshot in packages/shared/src/morph-snapshots.json
 
+Environment:
+The script requires MORPH_API_KEY. It will first check the environment, then
+attempt to load from .env files in the repository root (.env, .env.local).
+
 Examples:
-uv run --env-file .env ./scripts/snapshot.py
-uv run --env-file .env ./scripts/snapshot.py --require-verify # do not use this flag unless explicitly asked
+./scripts/snapshot.py
+./scripts/snapshot.py --require-verify  # do not use this flag unless explicitly asked
 """
 
 from __future__ import annotations
@@ -729,10 +742,49 @@ async def setup_exec_service(
 
 
 # ---------------------------------------------------------------------------
-# Task registry and task definitions
+# Environment loading
 # ---------------------------------------------------------------------------
 
-dotenv.load_dotenv()
+
+def _ensure_morph_api_key() -> None:
+    """Ensure MORPH_API_KEY is available, loading from .env files if needed."""
+    if os.environ.get("MORPH_API_KEY"):
+        return
+
+    # Find repo root (where this script lives is scripts/, so go up one level)
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # Try .env files in order of preference
+    env_files = [
+        repo_root / ".env",
+        repo_root / ".env.local",
+    ]
+
+    for env_file in env_files:
+        if env_file.exists():
+            dotenv.load_dotenv(env_file)
+            if os.environ.get("MORPH_API_KEY"):
+                return
+
+    # Still not found - provide helpful error
+    tried_paths = ", ".join(str(f) for f in env_files)
+    print(
+        f"Error: MORPH_API_KEY not found in environment or .env files.\n"
+        f"Checked: {tried_paths}\n\n"
+        f"Either:\n"
+        f"  1. Set MORPH_API_KEY in your environment, or\n"
+        f"  2. Add MORPH_API_KEY=<your-key> to {repo_root / '.env'}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+_ensure_morph_api_key()
+
+
+# ---------------------------------------------------------------------------
+# Task registry and task definitions
+# ---------------------------------------------------------------------------
 
 registry = TaskRegistry()
 

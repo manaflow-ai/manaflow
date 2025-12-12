@@ -66,10 +66,10 @@ xagi-server
 ```
 
 Morph snapshots capture RAM state. So after snapshot, running processes will still be running.
-To modify and rebuild all snapshots, edit `./scripts/snapshot.py` and run `uv run --env-file .env ./scripts/snapshot.py`
+To modify and rebuild all snapshots, edit `./scripts/snapshot.py` and run `./scripts/snapshot.py`
+The script automatically loads MORPH_API_KEY from the environment or .env files.
 After building a snapshot, you should always use the `say` command to notify the user to verify the changes that were made to the snapshot.
 After the say command, you should give the user a table with the snapshot preset and vnc/vscode/xterm urls.
-.env sometimes might not exist, but you can still run the script if `echo $MORPH_API_KEY` works.
 
 # Frontend
 
