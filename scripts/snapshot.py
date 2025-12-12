@@ -1434,17 +1434,18 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
             mv "${{tmpfile}}" "${{destination}}"
           fi
         }}
-        while IFS='|' read -r publisher name version; do
-          [ -z "${{publisher}}" ] && continue
+        extensions=(
+          "anthropic|claude-code|2.0.27"
+          "openai|chatgpt|0.5.27"
+          "ms-vscode|vscode-typescript-next|5.9.20250531"
+          "ms-python|python|2025.6.1"
+          "ms-python|vscode-pylance|2025.8.100"
+          "ms-python|debugpy|2025.14.0"
+        )
+        for ext in "${{extensions[@]}}"; do
+          IFS='|' read -r publisher name version <<< "$ext"
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
-        done <<'EXTENSIONS'
-        anthropic|claude-code|2.0.27
-        openai|chatgpt|0.5.27
-        ms-vscode|vscode-typescript-next|5.9.20250531
-        ms-python|python|2025.6.1
-        ms-python|vscode-pylance|2025.8.100
-        ms-python|debugpy|2025.14.0
-        EXTENSIONS
+        done
         wait
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
