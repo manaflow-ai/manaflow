@@ -1963,7 +1963,7 @@ function MockGitHubPRBrowser() {
                     Previews
                   </div>
                   <div className="pt-px space-y-px">
-                    <div className="px-1">
+                    <div className="px-1 space-y-px">
                       {/* Preview task 1 - PR #1168 */}
                       <div className="space-y-px">
                         <PreviewItemButton
@@ -2029,7 +2029,8 @@ function MockGitHubPRBrowser() {
                             {expandedTasks.has("task-1-run") && (
                               <>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-1");
                                     setViewMode("workspace");
                                   }}
@@ -2046,7 +2047,8 @@ function MockGitHubPRBrowser() {
                                   <span>VS Code</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-1");
                                     setViewMode("gitDiff");
                                   }}
@@ -2063,7 +2065,8 @@ function MockGitHubPRBrowser() {
                                   <span>Git diff</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-1");
                                     setViewMode("browser");
                                   }}
@@ -2080,7 +2083,8 @@ function MockGitHubPRBrowser() {
                                   <span>Browser</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-1");
                                     setViewMode("terminals");
                                   }}
@@ -2156,7 +2160,8 @@ function MockGitHubPRBrowser() {
                             {expandedTasks.has("task-2-run") && (
                               <>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-2");
                                     setViewMode("workspace");
                                   }}
@@ -2173,7 +2178,8 @@ function MockGitHubPRBrowser() {
                                   <span>VS Code</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-2");
                                     setViewMode("gitDiff");
                                   }}
@@ -2190,7 +2196,8 @@ function MockGitHubPRBrowser() {
                                   <span>Git diff</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-2");
                                     setViewMode("browser");
                                   }}
@@ -2207,7 +2214,8 @@ function MockGitHubPRBrowser() {
                                   <span>Browser</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-2");
                                     setViewMode("terminals");
                                   }}
@@ -2283,7 +2291,8 @@ function MockGitHubPRBrowser() {
                             {expandedTasks.has("task-3-run") && (
                               <>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-3");
                                     setViewMode("workspace");
                                   }}
@@ -2300,7 +2309,8 @@ function MockGitHubPRBrowser() {
                                   <span>VS Code</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-3");
                                     setViewMode("gitDiff");
                                   }}
@@ -2317,7 +2327,8 @@ function MockGitHubPRBrowser() {
                                   <span>Git diff</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-3");
                                     setViewMode("browser");
                                   }}
@@ -2334,7 +2345,8 @@ function MockGitHubPRBrowser() {
                                   <span>Browser</span>
                                 </button>
                                 <button
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setSelectedTaskId("task-3");
                                     setViewMode("terminals");
                                   }}
