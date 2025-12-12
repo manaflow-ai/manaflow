@@ -1745,8 +1745,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
-        systemctl daemon-reload || true
-        systemctl enable cmux.target || true
+        {{ systemctl daemon-reload || true; }}
+        {{ systemctl enable cmux.target || true; }}
         chown root:root /usr/local
         chown root:root /usr/local/bin
         chmod 0755 /usr/local
@@ -1755,9 +1755,10 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
             chown root:root /usr/local/bin/fetch-mmds-keys
             chmod 0755 /usr/local/bin/fetch-mmds-keys
         fi
-        systemctl restart ssh || true
-        systemctl is-active --quiet ssh || true
-        systemctl start cmux.target 2>/dev/null || true
+        {{ systemctl restart ssh || true; }}
+        {{ systemctl is-active --quiet ssh || true; }}
+        # Use explicit true exit to ensure || true works with envctl debug trap
+        {{ systemctl start cmux.target 2>/dev/null || true; }}
         """
     )
     await ctx.run("install-systemd-units", cmd)
