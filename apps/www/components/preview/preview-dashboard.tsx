@@ -401,6 +401,7 @@ type ChromeTabProps = {
   isActive: boolean;
   onClick: () => void;
   onClose?: () => void;
+  showTrailingDivider?: boolean;
 };
 
 function ChromeTab({
@@ -409,46 +410,59 @@ function ChromeTab({
   isActive,
   onClick,
   onClose,
+  showTrailingDivider,
 }: ChromeTabProps) {
   return (
-    <button
-      onMouseDown={onClick}
-      onClick={onClick}
-      className={clsx(
-        "group relative flex items-center gap-2 pl-3 pr-2 pb-0.5 text-xs font-medium w-[240px] h-[33px]",
-        isActive ? "bg-[#35363A] text-[#E8EAED] rounded-t-lg" : "text-[#9AA0A6]"
-      )}
-    >
-      {/* Active tab curved corners connectors */}
-      {isActive && (
-        <>
-          <div className="absolute bottom-0 -left-3 size-3 pointer-events-none shadow-[3px_3px_0_0_#35363A] rounded-br-full" />
-          <div className="absolute bottom-0 -right-3 size-3 pointer-events-none shadow-[-3px_3px_0_0_#35363A] rounded-bl-full" />
-        </>
-      )}
-      {/* Hover pill for inactive tab */}
-      {!isActive && (
-        <div className="absolute inset-x-0 top-0 bottom-[3px] rounded-[9px] bg-transparent group-hover:bg-[#35363A]/70 transition-colors" />
-      )}
-
-      <span className="shrink-0 relative z-10">{icon}</span>
-      <span className="truncate flex-1 text-left relative z-10">{label}</span>
-      <span
-        className="p-0.5 rounded-full hover:bg-white/20 transition-all relative z-10 active:bg-white/20"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose?.();
-        }}
+    <div className="group/tab flex items-end">
+      <button
+        onMouseDown={onClick}
+        onClick={onClick}
+        className={clsx(
+          "group/btn relative flex items-center gap-2 pl-3 pr-2 pb-0.5 text-xs font-medium w-[240px] h-[33px]",
+          isActive
+            ? "bg-[#35363A] text-[#E8EAED] rounded-t-lg"
+            : "text-[#9AA0A6]"
+        )}
       >
-        <svg
-          className="h-3 w-3 shrink-0"
-          viewBox="0 0 16 16"
-          fill="currentColor"
+        {/* Active tab curved corners connectors */}
+        {isActive && (
+          <>
+            <div className="absolute bottom-0 -left-3 size-3 pointer-events-none shadow-[3px_3px_0_0_#35363A] rounded-br-full" />
+            <div className="absolute bottom-0 -right-3 size-3 pointer-events-none shadow-[-3px_3px_0_0_#35363A] rounded-bl-full" />
+          </>
+        )}
+        {/* Hover pill for inactive tab */}
+        {!isActive && (
+          <div className="absolute inset-x-0 top-0 bottom-[3px] rounded-[9px] bg-transparent group-hover/btn:bg-[#35363A]/70 transition-colors" />
+        )}
+
+        <span className="shrink-0 relative z-10">{icon}</span>
+        <span className="truncate flex-1 text-left relative z-10">{label}</span>
+        <span
+          className="p-0.5 rounded-full hover:bg-white/20 transition-all relative z-10 active:bg-white/20"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose?.();
+          }}
         >
-          <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
-        </svg>
-      </span>
-    </button>
+          <svg
+            className="h-3 w-3 shrink-0"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+          </svg>
+        </span>
+      </button>
+      {showTrailingDivider && (
+        <div
+          className={clsx(
+            "h-[15.5px] w-[1.75px] bg-[#35363A] self-center translate-x-[2px] -translate-y-[1px] transition-opacity group-hover/tab:opacity-0 group-active/tab:opacity-0 rounded-full",
+            isActive && "opacity-0"
+          )}
+        />
+      )}
+    </div>
   );
 }
 
@@ -818,7 +832,7 @@ function MockGitHubPRBrowser() {
   return (
     <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
       {/* Browser window frame - Chrome Dark Mode style */}
-      <div className="rounded-2xl border border-[#35363A] bg-[#202124] overflow-hidden shadow-2xl w-full flex-1 flex flex-col min-h-0 max-w-[500px] sm:max-w-[600px] md:max-w-[700px] lg:max-w-[900px] xl:max-w-[1100px] 2xl:max-w-[1400px] 3xl:max-w-[1800px] mx-auto">
+      <div className="rounded-2xl border border-[#35363A] bg-[#202124] overflow-hidden shadow-2xl w-full flex-1 flex flex-col min-h-0 max-w-[500px] sm:max-w-[600px] md:max-w-[700px] lg:max-w-[900px] xl:max-w-[1100px] 2xl:max-w-[1600px] 3xl:max-w-[1800px] mx-auto">
         {/* Tab strip */}
         <div className="flex items-end h-[38px] bg-[#202124] px-2 select-none">
           {/* Traffic lights */}
@@ -849,6 +863,7 @@ function MockGitHubPRBrowser() {
               label="cmux"
               isActive={activeTab === "workspace"}
               onClick={() => setActiveTab("workspace")}
+              showTrailingDivider
             />
           </div>
         </div>
