@@ -33,7 +33,11 @@ import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
-import { parseModelConfigFromRecord } from "@/lib/services/code-review/model-config";
+import {
+  parseModelConfigFromRecord,
+  resolveModelSelectionFromRecord,
+  type HeatmapModelQueryValue,
+} from "@/lib/services/code-review/model-config";
 
 const ENABLE_IMMEDIATE_CODE_REVIEW = false;
 
@@ -152,6 +156,7 @@ export default async function PullRequestPage({ params, searchParams }: PageProp
   } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
   const modelConfig = parseModelConfigFromRecord(resolvedSearchParams);
+  const modelSelection = resolveModelSelectionFromRecord(resolvedSearchParams);
 
   if (pullNumber === null) {
     notFound();
@@ -281,6 +286,7 @@ export default async function PullRequestPage({ params, searchParams }: PageProp
             githubOwner={githubOwner}
             repo={repo}
             pullNumber={pullNumber}
+            initialModelSelection={modelSelection}
           />
         </Suspense>
       </div>
@@ -708,6 +714,7 @@ function PullRequestDiffSection({
   teamSlugOrId,
   repo,
   pullNumber,
+  initialModelSelection,
 }: {
   filesPromise: PullRequestFilesPromise;
   pullRequestPromise: PullRequestPromise;
@@ -715,6 +722,8 @@ function PullRequestDiffSection({
   teamSlugOrId: string;
   repo: string;
   pullNumber: number;
+  /** Initial model selection from URL params - takes precedence over localStorage */
+  initialModelSelection?: HeatmapModelQueryValue;
 }) {
   try {
     const files = use(filesPromise);
@@ -749,6 +758,7 @@ function PullRequestDiffSection({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        initialModelSelection={initialModelSelection}
       />
     );
   } catch (error) {

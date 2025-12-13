@@ -112,6 +112,8 @@ type PullRequestDiffViewerProps = {
   baseCommitRef?: string;
   pullRequestTitle?: string;
   pullRequestUrl?: string;
+  /** Initial model selection from URL params - takes precedence over localStorage on mount */
+  initialModelSelection?: HeatmapModelQueryValue;
 };
 
 type ParsedFileDiff = {
@@ -575,16 +577,27 @@ export function PullRequestDiffViewer({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  initialModelSelection,
 }: PullRequestDiffViewerProps) {
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
+  // Use initialModelSelection from URL params if provided, otherwise fall back to localStorage
   const [heatmapModelPreference, setHeatmapModelPreference] =
     useLocalStorage<HeatmapModelOptionValue>({
       key: "cmux-heatmap-model",
       defaultValue: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
     });
+  // Track whether we've applied the initial URL param model
+  const hasAppliedInitialModelRef = useRef(false);
+  // Determine effective model - prefer URL param on first render, then localStorage
+  const effectiveModel = (() => {
+    if (!hasAppliedInitialModelRef.current && initialModelSelection) {
+      return initialModelSelection as HeatmapModelOptionValue;
+    }
+    return heatmapModelPreference;
+  })();
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
-    heatmapModelPreference
+    effectiveModel
   );
   const hasFetchedReviewRef = useRef(false);
   const activeReviewControllerRef = useRef<AbortController | null>(null);
@@ -942,18 +955,30 @@ export function PullRequestDiffViewer({
   );
 
   useEffect(() => {
-    heatmapModelPreferenceRef.current = heatmapModelPreference;
-  }, [heatmapModelPreference]);
+    heatmapModelPreferenceRef.current = effectiveModel;
+  }, [effectiveModel]);
+
+  // Sync localStorage with URL param and mark as applied
+  useEffect(() => {
+    if (hasAppliedInitialModelRef.current) {
+      return;
+    }
+    hasAppliedInitialModelRef.current = true;
+    // If URL param provided a different model, sync to localStorage
+    if (initialModelSelection && initialModelSelection !== heatmapModelPreference) {
+      setHeatmapModelPreference(initialModelSelection as HeatmapModelOptionValue);
+    }
+  }, [initialModelSelection, heatmapModelPreference, setHeatmapModelPreference]);
 
   const handleHeatmapModelPreferenceChange = useCallback(
     (value: HeatmapModelOptionValue) => {
-      if (value === heatmapModelPreference) {
+      if (value === effectiveModel) {
         return;
       }
       setHeatmapModelPreference(value);
       fetchCodeReview(value);
     },
-    [fetchCodeReview, heatmapModelPreference, setHeatmapModelPreference]
+    [fetchCodeReview, effectiveModel, setHeatmapModelPreference]
   );
 
   useEffect(() => {
@@ -961,7 +986,8 @@ export function PullRequestDiffViewer({
       return;
     }
     hasFetchedReviewRef.current = true;
-    fetchCodeReview();
+    // Use effectiveModel which prefers URL param on initial load
+    fetchCodeReview(effectiveModel);
     // We intentionally only fetch once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2184,7 +2210,7 @@ export function PullRequestDiffViewer({
                 onCopyStyles={handleCopyHeatmapConfig}
                 onLoadConfig={handlePromptLoadColors}
                 copyStatus={clipboard.copied}
-                selectedModel={heatmapModelPreference}
+                selectedModel={effectiveModel}
                 onModelChange={handleHeatmapModelPreferenceChange}
               />
               <CmuxPromoCard />

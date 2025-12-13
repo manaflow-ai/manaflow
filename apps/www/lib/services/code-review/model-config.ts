@@ -122,7 +122,7 @@ function extractRecordValue(
   return value;
 }
 
-function resolveModelSelectionFromRecord(
+export function resolveModelSelectionFromRecord(
   searchParams: SearchParamsRecord
 ): HeatmapModelQueryValue {
   for (const paramKey of Object.keys(LEGACY_HEATMAP_MODEL_PARAM_MAP)) {

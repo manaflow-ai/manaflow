@@ -3,6 +3,7 @@ import { ExternalLink, GitPullRequest } from "lucide-react";
 
 import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
 import type { GithubFileChange } from "@/lib/github/fetch-pull-request";
+import type { HeatmapModelQueryValue } from "@/lib/services/code-review/model-config";
 
 export function summarizeFiles(files: GithubFileChange[]): {
   fileCount: number;
@@ -29,6 +30,7 @@ export function ReviewDiffContent({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  initialModelSelection,
 }: {
   files: GithubFileChange[];
   teamSlugOrId: string;
@@ -40,6 +42,8 @@ export function ReviewDiffContent({
   baseCommitRef?: string;
   pullRequestTitle?: string | null;
   pullRequestUrl?: string | null;
+  /** Initial model selection from URL params - takes precedence over localStorage */
+  initialModelSelection?: HeatmapModelQueryValue;
 }) {
   return (
     <section className="flex flex-col gap-1">
@@ -52,6 +56,7 @@ export function ReviewDiffContent({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        initialModelSelection={initialModelSelection}
       />
     </section>
   );
@@ -125,6 +130,7 @@ export function ReviewDiffViewerWrapper({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  initialModelSelection,
 }: {
   files: GithubFileChange[];
   teamSlugOrId: string;
@@ -136,6 +142,8 @@ export function ReviewDiffViewerWrapper({
   baseCommitRef?: string;
   pullRequestTitle?: string | null;
   pullRequestUrl?: string | null;
+  /** Initial model selection from URL params - takes precedence over localStorage */
+  initialModelSelection?: HeatmapModelQueryValue;
 }) {
   return (
     <PullRequestDiffViewer
@@ -153,6 +161,7 @@ export function ReviewDiffViewerWrapper({
       baseCommitRef={baseCommitRef}
       pullRequestTitle={pullRequestTitle ?? undefined}
       pullRequestUrl={pullRequestUrl ?? undefined}
+      initialModelSelection={initialModelSelection}
     />
   );
 }
