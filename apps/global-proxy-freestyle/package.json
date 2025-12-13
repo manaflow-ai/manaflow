@@ -4,12 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "bun run scripts/deploy.ts",
+    "deploy": "bun run scripts/deploy-sandbox.ts",
+    "deploy:ws-repro": "bun run scripts/deploy-ws-repro.ts",
+    "freestyle": "bun run scripts/freestyle-cli.ts",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@types/ws": "^8.18.1",
+    "freestyle-sandboxes": "^0.0.97",
+    "ws": "^8.18.3"
+  },
   "devDependencies": {
     "@cmux/freestyle-openapi-client": "workspace:*",
+    "@cmux/shared": "workspace:*",
     "@types/bun": "latest",
     "typescript": "^5.8.2"
   }

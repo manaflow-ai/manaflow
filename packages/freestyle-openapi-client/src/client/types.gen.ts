@@ -306,6 +306,11 @@ export type CreateVmRequest = {
      * and be recreated with the same configuration when something tries to start it.
      */
     recreate?: boolean | null;
+    /**
+     * Optional list of apt packages to install when setting up the VM.
+     * These packages will be installed using `apt-get install` on VM startup.
+     */
+    aptDeps?: Array<string> | null;
 };
 
 export type CreateVmResponse = {
@@ -775,6 +780,7 @@ export type FreestyleFile = {
 
 export type FreestyleGetLogsResponse = {
     logs: Array<FreestyleLogResponseObject>;
+    nextPageToken?: string | null;
 };
 
 export type FreestyleIdentity = {
@@ -1124,11 +1130,13 @@ export type RepositoryMetadata = {
 };
 
 export type ResizeVmRequest = {
-    sizeMb: number;
+    rootfsSizeGb?: number | null;
+    memSizeGb?: number | null;
+    vcpuCount?: number | null;
 };
 
 export type ResizeVmResponse = {
-    size_mb: number;
+    [key: string]: unknown;
 };
 
 export type RevokeGitTokenRequest = {
@@ -1580,10 +1588,9 @@ export type VmTemplate = {
      * created from the specified snapshot. Cannot be used together with fork_vm_id or docker_image.
      */
     snapshotId?: string | null;
-    /**
-     * Size of the ext4 rootfs in MB. Defaults to 16000MB if not provided.
-     */
-    rootfsSizeMb?: number | null;
+    rootfsSizeGb?: number | null;
+    memSizeGb?: number | null;
+    vcpuCount?: number | null;
     /**
      * Optional working directory for the VM. If not provided, the default to '/'
      */
@@ -1624,6 +1631,11 @@ export type VmTemplate = {
      * Optional discriminator to differentiate snapshots with otherwise identical configurations
      */
     discriminator?: string | null;
+    /**
+     * Optional list of apt packages to install when setting up the VM.
+     * These packages will be installed using `apt-get install` on VM startup.
+     */
+    aptDeps?: Array<string> | null;
 };
 
 export type WaitVmResponse = {
@@ -4186,6 +4198,16 @@ export type HandleGetLogsData = {
     query?: {
         deploymentId?: string | null;
         domain?: string | null;
+        pageToken?: string | null;
+        pageSize?: number | null;
+        /**
+         * Start time in RFC3339 format (e.g., "2024-01-01T00:00:00Z"). Defaults to 24 hours ago if not specified.
+         */
+        startTime?: string | null;
+        /**
+         * End time in RFC3339 format (e.g., "2024-01-02T00:00:00Z"). Defaults to now if not specified.
+         */
+        endTime?: string | null;
     };
     url: '/observability/v1/logs';
 };
@@ -5235,9 +5257,22 @@ export type HandleDeployWebV2Errors = {
         message: string;
     };
     /**
-     * Error: Internal
+     * Possible errors: Internal, DomainMappingError, UploadError, LockfileError
      */
     500: {
+        /**
+         * Error code in SCREAMING_SNAKE_CASE
+         */
+        error: string;
+        /**
+         * Human-readable error message
+         */
+        message: string;
+    };
+    /**
+     * Possible errors: CertificateProvisioningError, ServerDeploymentFailed
+     */
+    502: {
         /**
          * Error code in SCREAMING_SNAKE_CASE
          */

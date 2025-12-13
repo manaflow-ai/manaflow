@@ -1,14 +1,18 @@
 /**
  * Global Proxy for Freestyle Deployment
  *
- * This is a TypeScript port of the Rust global-proxy, designed to run on Freestyle's
- * edge deployment platform with custom domain support.
- *
  * Routing patterns:
- * - cmux-{morph_id}-{scope}-{port}.f.cmux.app -> port-39379-morphvm-{morph_id}.http.cloud.morph.so
- * - cmuf-{vm_id}-base-{port}.f.cmux.app -> {vm_id}.vm.freestyle.sh
- * - port-{port}-{morph_id}.f.cmux.app -> port-{port}-morphvm-{morph_id}.http.cloud.morph.so
+ * - {vm_id}-{port}.proxy.cmux.sh -> {vm_id}.vm.freestyle.sh (Freestyle, simple)
+ * - cmux-{morph_id}-{scope}-{port}.proxy.cmux.sh -> port-39379-morphvm-{morph_id}.http.cloud.morph.so
+ * - cmuf-{vm_id}-base-{port}.proxy.cmux.sh -> {vm_id}.vm.freestyle.sh (Freestyle, legacy)
+ * - port-{port}-{morph_id}.proxy.cmux.sh -> port-{port}-morphvm-{morph_id}.http.cloud.morph.so
+ *
+ * Supports both HTTP and WebSocket proxying.
  */
+
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
+import { WebSocketServer, WebSocket } from "ws";
 
 const MORPH_DOMAIN_SUFFIX = ".http.cloud.morph.so";
 const FREESTYLE_DOMAIN_SUFFIX = ".vm.freestyle.sh";
@@ -16,6 +20,7 @@ const FREESTYLE_DOMAIN_SUFFIX = ".vm.freestyle.sh";
 interface ParsedRoute {
   type: "cmux" | "cmuf" | "port" | "workspace" | "invalid" | "root";
   target?: string;
+  targetHost?: string;
   error?: string;
   port?: number;
   skipServiceWorker?: boolean;
@@ -25,16 +30,14 @@ interface ParsedRoute {
 function parseHost(host: string): { subdomain: string | null; domain: string } | null {
   const normalized = host.toLowerCase().replace(/:\d+$/, "");
 
-  // f.cmux.sh domain (Freestyle-hosted proxy)
-  if (normalized === "f.cmux.sh") {
-    return { subdomain: null, domain: "f.cmux.sh" };
+  if (normalized === "proxy.cmux.sh") {
+    return { subdomain: null, domain: "proxy.cmux.sh" };
   }
-  if (normalized.endsWith(".f.cmux.sh")) {
-    const prefix = normalized.slice(0, -".f.cmux.sh".length);
-    return { subdomain: prefix || null, domain: "f.cmux.sh" };
+  if (normalized.endsWith(".proxy.cmux.sh")) {
+    const prefix = normalized.slice(0, -".proxy.cmux.sh".length);
+    return { subdomain: prefix || null, domain: "proxy.cmux.sh" };
   }
 
-  // cmux.sh domain
   if (normalized === "cmux.sh") {
     return { subdomain: null, domain: "cmux.sh" };
   }
@@ -65,10 +68,12 @@ function parseRoute(subdomain: string): ParsedRoute {
       return { type: "invalid", error: "Invalid cmux proxy subdomain" };
     }
 
-    const target = `https://port-${port}-morphvm-${morphId}${MORPH_DOMAIN_SUFFIX}`;
+    const targetHost = `port-${port}-morphvm-${morphId}${MORPH_DOMAIN_SUFFIX}`;
+    const target = `https://${targetHost}`;
     return {
       type: "port",
       target,
+      targetHost,
       port,
       skipServiceWorker: port === 39378,
     };
@@ -93,11 +98,12 @@ function parseRoute(subdomain: string): ParsedRoute {
       return { type: "invalid", error: "Invalid port in cmux proxy subdomain" };
     }
 
-    // Route to port-39379 for cmux routes (the workspace proxy)
-    const target = `https://port-39379-morphvm-${morphId}${MORPH_DOMAIN_SUFFIX}`;
+    const targetHost = `port-39379-morphvm-${morphId}${MORPH_DOMAIN_SUFFIX}`;
+    const target = `https://${targetHost}`;
     return {
       type: "cmux",
       target,
+      targetHost,
       port,
       skipServiceWorker: true,
       addCors: port !== 39378,
@@ -123,18 +129,39 @@ function parseRoute(subdomain: string): ParsedRoute {
       return { type: "invalid", error: "Invalid port in cmuf proxy subdomain" };
     }
 
-    const target = `https://${vmId}${FREESTYLE_DOMAIN_SUFFIX}`;
+    const targetHost = `${vmId}${FREESTYLE_DOMAIN_SUFFIX}`;
+    const target = `https://${targetHost}`;
     return {
       type: "cmuf",
       target,
+      targetHost,
       port,
       skipServiceWorker: true,
       addCors: true,
     };
   }
 
-  // workspace pattern: {workspace}-{port}-{vm_slug}
+  // Simple Freestyle pattern: {vm_id}-{port}
+  // VM IDs are 5-character lowercase alphanumeric strings
   const parts = subdomain.split("-");
+  if (parts.length === 2) {
+    const [vmId, portSegment] = parts;
+    const port = parseInt(portSegment, 10);
+    if (vmId && /^[a-z0-9]{5}$/.test(vmId) && !isNaN(port)) {
+      const targetHost = `${vmId}${FREESTYLE_DOMAIN_SUFFIX}`;
+      const target = `https://${targetHost}`;
+      return {
+        type: "cmuf",
+        target,
+        targetHost,
+        port,
+        skipServiceWorker: true,
+        addCors: true,
+      };
+    }
+  }
+
+  // workspace pattern: {workspace}-{port}-{vm_slug}
   if (parts.length >= 3) {
     const portSegment = parts[parts.length - 2];
     const vmSlug = parts[parts.length - 1];
@@ -143,10 +170,12 @@ function parseRoute(subdomain: string): ParsedRoute {
     if (workspaceParts.length > 0 && vmSlug) {
       const port = parseInt(portSegment, 10);
       if (!isNaN(port)) {
-        const target = `https://${vmSlug}${FREESTYLE_DOMAIN_SUFFIX}`;
+        const targetHost = `${vmSlug}${FREESTYLE_DOMAIN_SUFFIX}`;
+        const target = `https://${targetHost}`;
         return {
           type: "workspace",
           target,
+          targetHost,
           port,
         };
       }
@@ -156,116 +185,274 @@ function parseRoute(subdomain: string): ParsedRoute {
   return { type: "invalid", error: "Invalid cmux subdomain" };
 }
 
-function addCorsHeaders(headers: Headers): void {
-  headers.set("access-control-allow-origin", "*");
-  headers.set("access-control-allow-methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD");
-  headers.set("access-control-allow-headers", "*");
-  headers.set("access-control-expose-headers", "*");
-  headers.set("access-control-allow-credentials", "true");
-  headers.set("access-control-max-age", "86400");
+function addCorsHeaders(res: ServerResponse): void {
+  res.setHeader("access-control-allow-origin", "*");
+  res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD");
+  res.setHeader("access-control-allow-headers", "*");
+  res.setHeader("access-control-expose-headers", "*");
+  res.setHeader("access-control-allow-credentials", "true");
+  res.setHeader("access-control-max-age", "86400");
 }
 
-async function handleRequest(request: Request): Promise<Response> {
-  const url = new URL(request.url);
+async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
   // Health check
   if (url.pathname === "/health") {
-    return Response.json({
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
       status: "healthy",
       timestamp: new Date().toISOString(),
-    });
+    }));
+    return;
   }
 
   // Get host from X-Forwarded-Host or Host header
-  const host =
-    request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "";
+  const host = (req.headers["x-forwarded-host"] as string) || req.headers.host || "";
+
+  // Debug headers endpoint
+  if (url.pathname === "/debug-headers") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      httpVersion: req.httpVersion,
+    }, null, 2));
+    return;
+  }
 
   // Version endpoint
   if (url.pathname === "/version") {
-    const parsed = parseHost(host);
-    if (!parsed || !parsed.subdomain) {
-      return Response.json({
-        version: "0.0.1",
-        runtime: "freestyle",
-      });
-    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      version: "0.1.0",
+      runtime: "freestyle",
+      features: ["http", "websocket"],
+    }));
+    return;
   }
 
   const parsed = parseHost(host);
   if (!parsed) {
-    return new Response("Not a cmux domain", { status: 502 });
+    res.writeHead(502, { "Content-Type": "text/plain" });
+    res.end("Not a cmux domain");
+    return;
   }
 
   if (!parsed.subdomain) {
-    return new Response("cmux!", { status: 200 });
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("cmux proxy!");
+    return;
   }
 
   const route = parseRoute(parsed.subdomain);
 
   if (route.type === "invalid") {
-    return new Response(route.error ?? "Invalid route", { status: 400 });
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end(route.error || "Invalid route");
+    return;
   }
 
   if (!route.target) {
-    return new Response("No target for route", { status: 500 });
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end("No target for route");
+    return;
   }
 
   // Handle OPTIONS preflight
-  if (request.method === "OPTIONS") {
+  if (req.method === "OPTIONS") {
     if (route.addCors) {
-      const headers = new Headers();
-      addCorsHeaders(headers);
-      return new Response(null, { status: 204, headers });
+      addCorsHeaders(res);
     }
-    return new Response(null, { status: 204 });
+    res.writeHead(204);
+    res.end();
+    return;
   }
 
   // Proxy the request
   const targetUrl = new URL(url.pathname + url.search, route.target);
 
-  const proxyHeaders = new Headers(request.headers);
-  proxyHeaders.set("host", new URL(route.target).host);
-  proxyHeaders.set("x-cmux-proxied", "true");
-  if (route.port) {
-    proxyHeaders.set("x-cmux-port-internal", route.port.toString());
+  const proxyHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value && key !== "host" && key !== "x-forwarded-host") {
+      proxyHeaders[key] = Array.isArray(value) ? value.join(", ") : value;
+    }
   }
-  // Remove headers that shouldn't be forwarded
-  proxyHeaders.delete("x-forwarded-host");
+  proxyHeaders["host"] = new URL(route.target).host;
+  proxyHeaders["x-cmux-proxied"] = "true";
+  if (route.port) {
+    proxyHeaders["x-cmux-port-internal"] = route.port.toString();
+  }
 
   try {
-    const response = await fetch(targetUrl.toString(), {
-      method: request.method,
-      headers: proxyHeaders,
-      body: request.body,
-      // @ts-expect-error duplex is required for streaming body in Node/Bun but not in DOM types
-      duplex: "half",
-    });
-
-    const responseHeaders = new Headers(response.headers);
-
-    // Add CORS headers if needed
-    if (route.addCors) {
-      addCorsHeaders(responseHeaders);
+    let body: Buffer | undefined;
+    const hasBody = req.method && ["POST", "PUT", "PATCH"].includes(req.method);
+    if (hasBody) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(chunk as Buffer);
+      }
+      body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
     }
 
-    // Strip CSP headers
-    responseHeaders.delete("content-security-policy");
-    responseHeaders.delete("content-security-policy-report-only");
-    responseHeaders.delete("x-frame-options");
-    responseHeaders.delete("frame-options");
-
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: responseHeaders,
+    const response = await fetch(targetUrl.toString(), {
+      method: req.method || "GET",
+      headers: proxyHeaders,
+      body: body ? new Uint8Array(body) : undefined,
     });
+
+    if (route.addCors) {
+      addCorsHeaders(res);
+    }
+
+    const skipHeaders = new Set([
+      "content-security-policy",
+      "content-security-policy-report-only",
+      "x-frame-options",
+      "frame-options",
+      "transfer-encoding",
+    ]);
+
+    response.headers.forEach((value, key) => {
+      if (!skipHeaders.has(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
+    });
+
+    res.writeHead(response.status, response.statusText);
+
+    if (response.body) {
+      const reader = response.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+    }
+    res.end();
   } catch (error) {
     console.error("Proxy error:", error);
-    return new Response("Upstream fetch failed", { status: 502 });
+    res.writeHead(502, { "Content-Type": "text/plain" });
+    res.end("Upstream fetch failed");
   }
 }
 
-// Export for Freestyle
-export default {
-  fetch: handleRequest,
-};
+const server = createServer((req, res) => {
+  handleRequest(req, res).catch((err) => {
+    console.error("Request handler error:", err);
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+    }
+    res.end("Internal server error");
+  });
+});
+
+// WebSocket server for handling upgrades
+const wss = new WebSocketServer({ noServer: true });
+
+// Handle WebSocket connections (for /ws-test echo)
+wss.on("connection", (ws) => {
+  console.log("[WS] Echo client connected");
+  ws.on("message", (message) => {
+    ws.send(message);
+  });
+  ws.on("close", () => {
+    console.log("[WS] Echo client disconnected");
+  });
+});
+
+// WebSocket upgrade handler
+server.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {
+  const host = (req.headers["x-forwarded-host"] as string) || req.headers.host || "";
+  const url = new URL(req.url || "/", `http://${host}`);
+
+  console.log(`[WS] Upgrade request: ${host}${req.url}`);
+
+  // Test endpoint: /ws-test - simple echo WebSocket
+  const parsed = parseHost(host);
+  if (url.pathname === "/ws-test" && (!parsed?.subdomain)) {
+    console.log("[WS] Handling /ws-test echo endpoint");
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+    return;
+  }
+
+  if (!parsed || !parsed.subdomain) {
+    console.log("[WS] Invalid host or no subdomain");
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  const route = parseRoute(parsed.subdomain);
+  if (route.type === "invalid" || !route.targetHost) {
+    console.log("[WS] Invalid route:", route.error);
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  console.log(`[WS] Proxying to wss://${route.targetHost}${url.pathname}`);
+
+  // Proxy WebSocket to upstream
+  const targetWsUrl = `wss://${route.targetHost}${url.pathname}${url.search}`;
+  const upstreamWs = new WebSocket(targetWsUrl, {
+    headers: {
+      "x-cmux-proxied": "true",
+      "x-cmux-port-internal": route.port?.toString() || "",
+    },
+  });
+
+  upstreamWs.on("open", () => {
+    console.log("[WS] Upstream connected");
+    // Complete the upgrade with the client
+    wss.handleUpgrade(req, socket, head, (clientWs) => {
+      console.log("[WS] Client upgraded, piping data");
+
+      // Pipe messages bidirectionally
+      clientWs.on("message", (data) => {
+        if (upstreamWs.readyState === WebSocket.OPEN) {
+          upstreamWs.send(data);
+        }
+      });
+
+      upstreamWs.on("message", (data) => {
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.send(data);
+        }
+      });
+
+      clientWs.on("close", () => {
+        console.log("[WS] Client closed");
+        upstreamWs.close();
+      });
+
+      upstreamWs.on("close", () => {
+        console.log("[WS] Upstream closed");
+        clientWs.close();
+      });
+
+      clientWs.on("error", (err) => {
+        console.error("[WS] Client error:", err.message);
+        upstreamWs.close();
+      });
+
+      upstreamWs.on("error", (err) => {
+        console.error("[WS] Upstream error:", err.message);
+        clientWs.close();
+      });
+    });
+  });
+
+  upstreamWs.on("error", (err) => {
+    console.error("[WS] Failed to connect to upstream:", err.message);
+    socket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    socket.destroy();
+  });
+});
+
+server.listen(3000, () => {
+  console.log("Global proxy running on port 3000");
+});

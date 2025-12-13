@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2025-12-02T01:10:16Z",
+  "updatedAt": "2025-12-04T03:01:57Z",
   "presets": [
     {
       "presetId": "morph_4vcpu_16gb_48gb",
@@ -126,6 +126,16 @@
           "version": 8,
           "snapshotId": "teccv",
           "capturedAt": "2025-12-02T01:10:16Z"
+        },
+        {
+          "version": 9,
+          "snapshotId": "xdymu",
+          "capturedAt": "2025-12-03T07:28:40Z"
+        },
+        {
+          "version": 10,
+          "snapshotId": "pytdi",
+          "capturedAt": "2025-12-04T03:01:57Z"
         }
       ],
       "description": "Freestyle cloud sandbox environment."

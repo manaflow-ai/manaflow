@@ -97,6 +97,10 @@
     "./providers/common/check-docker": {
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
+    },
+    "./vm-snapshots": {
+      "import": "./src/vm-snapshots.ts",
+      "types": "./src/vm-snapshots.ts"
     }
   },
   "dependencies": {

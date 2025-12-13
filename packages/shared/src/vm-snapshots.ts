@@ -160,3 +160,17 @@ export const DEFAULT_MORPH_SNAPSHOT_ID: MorphSnapshotId =
   defaultMorphPreset?.id ?? (() => {
     throw new Error("No Morph presets with versions found in the manifest");
   })();
+
+// Default Freestyle snapshot
+const defaultFreestylePreset = FREESTYLE_SNAPSHOT_PRESETS.find(
+  (p) => p.versions.length > 0 && p.id !== null,
+);
+
+export type FreestyleSnapshotId = string;
+
+export const DEFAULT_FREESTYLE_SNAPSHOT_ID: FreestyleSnapshotId =
+  defaultFreestylePreset?.id ?? (() => {
+    throw new Error("No Freestyle presets with versions found in the manifest");
+  })();
+
+export const DEFAULT_FREESTYLE_PRESET = defaultFreestylePreset;
