@@ -198,7 +198,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 min-w-[75vw] snap-start snap-always md:min-w-0 md:snap-align-none"
+      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 min-w-[75vw] max-w-64 snap-start snap-always md:min-w-0 md:max-w-none md:snap-align-none"
       style={{
         display: isHidden ? "none" : "flex",
         width: undefined,
