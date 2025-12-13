@@ -453,6 +453,11 @@ server.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {
   });
 });
 
+// Enable TCP_NODELAY on all connections for lower latency
+server.on("connection", (socket: Socket) => {
+  socket.setNoDelay(true);
+});
+
 server.listen(3000, () => {
   console.log("Global proxy running on port 3000");
 });

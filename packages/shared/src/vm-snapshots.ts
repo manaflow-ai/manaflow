@@ -174,3 +174,15 @@ export const DEFAULT_FREESTYLE_SNAPSHOT_ID: FreestyleSnapshotId =
   })();
 
 export const DEFAULT_FREESTYLE_PRESET = defaultFreestylePreset;
+
+// Helper to get snapshot ID by preset ID
+const getSnapshotIdByPresetId = (presetId: string): MorphSnapshotId | null => {
+  const preset = MORPH_SNAPSHOT_PRESETS.find(
+    (p) => p.presetId === `morph_${presetId}` || p.presetId === presetId,
+  );
+  return preset?.id ?? null;
+};
+
+// Default snapshot for preview configure (8vcpu for better performance)
+export const DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID: MorphSnapshotId =
+  getSnapshotIdByPresetId("8vcpu_32gb_48gb") ?? DEFAULT_MORPH_SNAPSHOT_ID;
