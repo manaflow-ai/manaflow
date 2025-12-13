@@ -34,14 +34,6 @@ export function PrivateRepoPrompt({
         );
       }
 
-      const githubAppSlug =
-        githubAppSlugProp || process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-      if (!githubAppSlug) {
-        setError("GitHub App is not configured. Please contact support.");
-        setIsRedirecting(false);
-        return;
-      }
-
       const response = await fetch("/api/integrations/github/install-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -70,11 +62,7 @@ export function PrivateRepoPrompt({
         return;
       }
 
-      const { state } = (await response.json()) as { state: string };
-      const installUrl = new URL(
-        `https://github.com/apps/${githubAppSlug}/installations/new`,
-      );
-      installUrl.searchParams.set("state", state);
+      const { installUrl } = await response.json();
 
       window.location.href = installUrl.toString();
     } catch (err) {

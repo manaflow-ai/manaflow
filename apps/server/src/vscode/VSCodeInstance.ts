@@ -27,6 +27,8 @@ export interface VSCodeInstanceInfo {
   instanceId: string;
   taskRunId: Id<"taskRuns">;
   provider: "docker" | "morph" | "daytona";
+  /** If true, VSCode URLs were already persisted to Convex by www */
+  vscodePersisted?: boolean;
 }
 
 export abstract class VSCodeInstance extends EventEmitter {

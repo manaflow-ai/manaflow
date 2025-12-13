@@ -1,7 +1,5 @@
 import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
-import * as http from "http";
-import { execFile, execSync } from "node:child_process";
-import { Server } from "socket.io";
+import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
 
@@ -12,9 +10,7 @@ const debugShowOutput = process.env.CMUX_DEBUG_SHOW_OUTPUT === "1";
 // Log immediately when module loads
 console.log("[cmux] Extension module loaded");
 
-// Socket.IO server instance
-let ioServer: Server | null = null;
-let httpServer: http.Server | null = null;
+// Socket.IO client for worker connection
 let workerSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null =
   null;
 
@@ -70,22 +66,6 @@ async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   return "origin/main";
 }
 
-async function hasTmuxSessions(): Promise<boolean> {
-  return new Promise((resolve) => {
-    try {
-      execFile("tmux", ["list-sessions"], (error, stdout) => {
-        if (error) {
-          // tmux not installed or no server/sessions
-          resolve(false);
-          return;
-        }
-        resolve(stdout.trim().length > 0);
-      });
-    } catch {
-      resolve(false);
-    }
-  });
-}
 
 function tryExecGit(repoPath: string, cmd: string): string | null {
   try {
@@ -126,11 +106,18 @@ async function openMultiDiffEditor(
   log("baseRef:", baseRef);
   log("useMergeBase:", useMergeBase);
 
-  // Get the Git extension
+  // Get the Git extension and ensure it's activated
   const gitExtension = vscode.extensions.getExtension("vscode.git");
   if (!gitExtension) {
     vscode.window.showErrorMessage("Git extension not found");
     return;
+  }
+
+  // Wait for git extension to be activated if it isn't already
+  if (!gitExtension.isActive) {
+    log("Waiting for git extension to activate...");
+    await gitExtension.activate();
+    log("Git extension activated");
   }
 
   const git = gitExtension.exports;
@@ -260,16 +247,26 @@ async function openMultiDiffEditor(
   }
 }
 
-async function waitForTmuxSessions(maxAttempts: number = 20, delayMs: number = 1000): Promise<boolean> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const hasSessions = await hasTmuxSessions();
-    if (hasSessions) {
-      log(`Tmux sessions found after ${attempt + 1} attempt(s)`);
+async function waitForTmuxSession(
+  sessionName: string,
+  maxAttempts: number = 20,
+  delayMs: number = 1000
+): Promise<boolean> {
+  for (let i = 1; i <= maxAttempts; i++) {
+    try {
+      execSync(`tmux has-session -t ${sessionName} 2>/dev/null`, {
+        encoding: "utf8",
+      });
+      log(`Tmux session '${sessionName}' found on attempt ${i}`);
       return true;
+    } catch {
+      log(`Waiting for tmux session '${sessionName}'... (attempt ${i}/${maxAttempts})`);
+      if (i < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
-    log(`No tmux sessions yet (attempt ${attempt + 1}/${maxAttempts}), waiting ${delayMs}ms...`);
-    await new Promise(resolve => setTimeout(resolve, delayMs));
   }
+  log(`Tmux session '${sessionName}' not found after ${maxAttempts} attempts`);
   return false;
 }
 
@@ -282,71 +279,50 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // Wait for tmux sessions to exist (they may be created by orchestrator for cloud workspaces)
-  const hasSessions = await waitForTmuxSessions(20, 1000);
-  if (!hasSessions) {
-    log("No tmux sessions found after waiting; skipping terminal setup and attach");
+  // If any meaningful editors exist (not just system/onboarding tabs), don't do anything
+  const isSystemTab = (label: string | undefined): boolean => {
+    if (!label) return false;
+    // Exact matches for known system tabs
+    if (label === "Welcome" || label === "Get Started") return true;
+    // Prefix matches for tabs that may have suffixes
+    if (label.startsWith("Walkthrough:") || label.startsWith("Release Notes")) return true;
+    return false;
+  };
+  const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+  const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
+  if (meaningfulTabs.length > 0) {
+    log(`Found ${meaningfulTabs.length} existing tab(s), skipping setup`);
     return;
-  }
-
-  // if an existing editor is called "bash", early return
-  const activeEditors = vscode.window.visibleTextEditors;
-  for (const editor of activeEditors) {
-    if (editor.document.fileName === "bash") {
-      log("Bash editor already exists, skipping terminal setup");
-      return;
-    }
   }
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
-  // Open Source Control view
-  log("Opening SCM view...");
-  await vscode.commands.executeCommand("workbench.view.scm");
+  // Wait for tmux session to exist before creating terminal
+  const tmuxSessionExists = await waitForTmuxSession("cmux");
+  if (!tmuxSessionExists) {
+    log("Tmux session not found, skipping terminal creation");
+    return;
+  }
 
-  // Open git changes view
-  log("Opening git changes view...");
-  await openMultiDiffEditor();
-
-  // Create terminal for default tmux session
-  log("Creating terminal for default tmux session");
-
+  // Create terminal and attach to tmux session
   const terminal = vscode.window.createTerminal({
-    name: `Default Session`,
+    name: "cmux",
     location: vscode.TerminalLocation.Editor,
     cwd: "/root/workspace",
     env: process.env,
   });
-
   terminal.show();
-
-  // Store terminal reference
   activeTerminals.set("default", terminal);
+  terminal.sendText("tmux attach-session -t cmux");
 
-  // Attach to default tmux session with a small delay to ensure it's ready
-  setTimeout(() => {
-    terminal.sendText(`tmux attach-session -t cmux`);
-    log("Attached to default tmux session");
-  }, 500); // 500ms delay to ensure tmux session is ready
+  // Run all UI setup in parallel
+  log("Setting up SCM view, multi-diff editor in parallel...");
+  await Promise.all([
+    vscode.commands.executeCommand("workbench.view.scm"),
+    openMultiDiffEditor(),
+  ]);
 
-  log("Created terminal successfully");
-
-  // After terminal is created, ensure the terminal is active and move to right group
-  setTimeout(async () => {
-    // Focus on the terminal tab
-    terminal.show();
-
-    // Move the active editor (terminal) to the right group
-    log("Moving terminal editor to right group");
-    await vscode.commands.executeCommand(
-      "workbench.action.moveEditorToRightGroup"
-    );
-
-    // Ensure terminal has focus
-    // await vscode.commands.executeCommand("workbench.action.terminal.focus");
-
-    log("Terminal setup complete");
-  }, 100);
+  log("Terminal setup complete");
 }
 
 function connectToWorker() {
@@ -393,75 +369,6 @@ function connectToWorker() {
   });
 }
 
-function startSocketServer() {
-  try {
-    const port = 39376;
-    httpServer = http.createServer();
-    ioServer = new Server(httpServer, {
-      cors: {
-        origin: "*",
-        methods: ["GET", "POST"],
-      },
-    });
-
-    ioServer.on("connection", (socket) => {
-      log("Socket client connected:", socket.id);
-
-      // Health check
-      socket.on("vscode:ping", (callback) => {
-        log("Received ping from client");
-        callback({ timestamp: Date.now() });
-        socket.emit("vscode:pong");
-      });
-
-      // Get status
-      socket.on("vscode:get-status", (callback) => {
-        const workspaceFolders =
-          vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || [];
-        const extensions = vscode.extensions.all.map((e) => e.id);
-
-        callback({
-          ready: true,
-          workspaceFolders,
-          extensions,
-        });
-      });
-
-      // Terminal operations
-      socket.on("vscode:create-terminal", (data, callback) => {
-        try {
-          const { name = "Terminal", command } = data;
-          const terminal = vscode.window.createTerminal({
-            name,
-            location: vscode.TerminalLocation.Panel,
-          });
-          terminal.show();
-          if (command) {
-            terminal.sendText(command);
-          }
-          callback({ success: true });
-        } catch (error: unknown) {
-          if (error instanceof Error) {
-            callback({ success: false, error: error.message });
-          } else {
-            callback({ success: false, error: "Unknown error" });
-          }
-        }
-      });
-
-      socket.on("disconnect", () => {
-        log("Socket client disconnected:", socket.id);
-      });
-    });
-
-    httpServer.listen(port, () => {
-      log(`Socket.IO server listening on port ${port}`);
-    });
-  } catch (error) {
-    log("Failed to start Socket.IO server:", error);
-  }
-}
-
 export function activate(context: vscode.ExtensionContext) {
   // Log activation
   console.log("[cmux] activate() called");
@@ -490,9 +397,6 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   log("cmux is being activated");
-
-  // Start Socket.IO server
-  startSocketServer();
 
   // Connect to worker immediately and set up handlers
   connectToWorker();
@@ -589,16 +493,6 @@ export function deactivate() {
     workerSocket.removeAllListeners();
     workerSocket.disconnect();
     workerSocket = null;
-  }
-
-  // Clean up Socket.IO server
-  if (ioServer) {
-    ioServer.close();
-    ioServer = null;
-  }
-  if (httpServer) {
-    httpServer.close();
-    httpServer = null;
   }
 
   // Clean up terminals

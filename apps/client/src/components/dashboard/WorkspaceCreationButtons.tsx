@@ -141,7 +141,7 @@ export function WorkspaceCreationButtons({
 
     try {
       // Create task in Convex with environment name
-      const taskId = await createTask({
+      const { taskId } = await createTask({
         teamSlugOrId,
         text: `Cloud Workspace: ${environmentName}`,
         projectFullName: undefined, // No repo for cloud environment workspaces

@@ -804,6 +804,7 @@ export function ElectronWebContentsView({
       style={{ ...style, borderRadius }}
       data-role="electron-web-contents-view"
       data-suspended={suspended ? "true" : "false"}
+      data-drag-disable-pointer
     >
       {shouldShowFallback ? (
         <div className="flex h-full w-full items-center justify-center rounded-md border border-dashed border-neutral-300 bg-white/80 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-300">

@@ -2,13 +2,22 @@
 # dependencies = [
 #   "morphcloud",
 #   "requests",
+#   "python-dotenv",
 # ]
 # ///
 
 #!/usr/bin/env python3
+"""
+Start a Morph instance from a snapshot for verification.
+Usage: uv run --env-file .env scripts/morph_start_instance.py [snapshot_id]
 
+Press Ctrl+C to stop the instance.
+"""
+
+import argparse
 import signal
 import sys
+import time
 
 import dotenv
 from morphcloud.api import MorphCloudClient
@@ -36,26 +45,52 @@ def cleanup_instance(signum=None, frame=None):
 # Register signal handler for Ctrl+C
 signal.signal(signal.SIGINT, cleanup_instance)
 
+parser = argparse.ArgumentParser(description="Start instance from snapshot")
+parser.add_argument("snapshot_id", nargs="?", default="snapshot_fx6g7tl7",
+                    help="Snapshot ID to start from (default: snapshot_fx6g7tl7)")
+parser.add_argument("--no-snapshot", action="store_true",
+                    help="Skip prompting to create a snapshot on exit")
+args = parser.parse_args()
+
 try:
+    print(f"Starting instance from {args.snapshot_id}...")
+    start_time = time.time()
     instance = client.instances.start(
-        snapshot_id="snapshot_hwmk73mg",
+        snapshot_id=args.snapshot_id,
         ttl_seconds=3600,
-        ttl_action="pause",
+        ttl_action="stop",
     )
+    start_elapsed = time.time() - start_time
+    print(f"  ↳ instances.start(): {start_elapsed:.2f}s")
+
+    wait_time = time.time()
     instance.wait_until_ready()
+    wait_elapsed = time.time() - wait_time
+    print(f"  ↳ wait_until_ready(): {wait_elapsed:.2f}s")
 
-    print("instance id:", instance.id)
+    print(f"Instance ID: {instance.id}")
+    print(f"Dashboard: https://cloud.morph.so/web/instances/{instance.id}?ssh=true")
 
-    expose_ports = [39375, 39376, 39377, 39378, 39379, 39380, 39381]
-    for port in expose_ports:
-        instance.expose_http_service(port=port, name=f"port-{port}")
+    total_elapsed = time.time() - start_time
+    print(f"  ↳ Total startup: {total_elapsed:.2f}s")
 
-    print(instance.networking.http_services)
+    # Print useful URLs
+    print("\n=== Verification URLs ===")
+    print(f"VS Code:   https://port-39378-{instance.id.replace('_', '-')}.http.cloud.morph.so")
+    print(f"VNC:       https://port-39380-{instance.id.replace('_', '-')}.http.cloud.morph.so/vnc.html")
+    print(f"xterm:     https://port-39383-{instance.id.replace('_', '-')}.http.cloud.morph.so")
+    print(f"Worker:    https://port-39377-{instance.id.replace('_', '-')}.http.cloud.morph.so/health")
 
-    # listen for any keypress, then snapshot
-    input("Press Enter to snapshot...")
-    final_snapshot = instance.snapshot()
-    print(f"Snapshot ID: {final_snapshot.id}")
+    print("\nPress Ctrl+C to stop the instance...")
+
+    if args.no_snapshot:
+        # Just wait forever
+        signal.pause()
+    else:
+        # listen for any keypress, then snapshot
+        input("Or press Enter to create a snapshot...")
+        final_snapshot = instance.snapshot()
+        print(f"Snapshot ID: {final_snapshot.id}")
 except KeyboardInterrupt:
     cleanup_instance()
 except Exception as e:

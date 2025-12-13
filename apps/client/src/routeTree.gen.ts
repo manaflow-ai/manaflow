@@ -23,9 +23,11 @@ import { Route as LayoutTeamPickerRouteImport } from './routes/_layout.team-pick
 import { Route as LayoutProfileRouteImport } from './routes/_layout.profile'
 import { Route as LayoutDebugRouteImport } from './routes/_layout.debug'
 import { Route as LayoutTeamSlugOrIdRouteImport } from './routes/_layout.$teamSlugOrId'
+import { Route as TeamSlugOrIdFeedRouteImport } from './routes/$teamSlugOrId.feed'
 import { Route as LayoutTeamSlugOrIdWorkspacesRouteImport } from './routes/_layout.$teamSlugOrId.workspaces'
 import { Route as LayoutTeamSlugOrIdSettingsRouteImport } from './routes/_layout.$teamSlugOrId.settings'
 import { Route as LayoutTeamSlugOrIdPrsRouteImport } from './routes/_layout.$teamSlugOrId.prs'
+import { Route as LayoutTeamSlugOrIdPreviewsRouteImport } from './routes/_layout.$teamSlugOrId.previews'
 import { Route as LayoutTeamSlugOrIdLogsRouteImport } from './routes/_layout.$teamSlugOrId.logs'
 import { Route as LayoutTeamSlugOrIdEnvironmentsRouteImport } from './routes/_layout.$teamSlugOrId.environments'
 import { Route as LayoutTeamSlugOrIdDiffRouteImport } from './routes/_layout.$teamSlugOrId.diff'
@@ -116,6 +118,11 @@ const LayoutTeamSlugOrIdRoute = LayoutTeamSlugOrIdRouteImport.update({
   path: '/$teamSlugOrId',
   getParentRoute: () => LayoutRoute,
 } as any)
+const TeamSlugOrIdFeedRoute = TeamSlugOrIdFeedRouteImport.update({
+  id: '/$teamSlugOrId/feed',
+  path: '/$teamSlugOrId/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LayoutTeamSlugOrIdWorkspacesRoute =
   LayoutTeamSlugOrIdWorkspacesRouteImport.update({
     id: '/workspaces',
@@ -133,6 +140,12 @@ const LayoutTeamSlugOrIdPrsRoute = LayoutTeamSlugOrIdPrsRouteImport.update({
   path: '/prs',
   getParentRoute: () => LayoutTeamSlugOrIdRoute,
 } as any)
+const LayoutTeamSlugOrIdPreviewsRoute =
+  LayoutTeamSlugOrIdPreviewsRouteImport.update({
+    id: '/previews',
+    path: '/previews',
+    getParentRoute: () => LayoutTeamSlugOrIdRoute,
+  } as any)
 const LayoutTeamSlugOrIdLogsRoute = LayoutTeamSlugOrIdLogsRouteImport.update({
   id: '/logs',
   path: '/logs',
@@ -261,6 +274,7 @@ export interface FileRoutesByFullPath {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
   '/profile': typeof LayoutProfileRoute
@@ -271,6 +285,7 @@ export interface FileRoutesByFullPath {
   '/$teamSlugOrId/diff': typeof LayoutTeamSlugOrIdDiffRoute
   '/$teamSlugOrId/environments': typeof LayoutTeamSlugOrIdEnvironmentsRouteWithChildren
   '/$teamSlugOrId/logs': typeof LayoutTeamSlugOrIdLogsRoute
+  '/$teamSlugOrId/previews': typeof LayoutTeamSlugOrIdPreviewsRoute
   '/$teamSlugOrId/prs': typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   '/$teamSlugOrId/settings': typeof LayoutTeamSlugOrIdSettingsRoute
   '/$teamSlugOrId/workspaces': typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -299,6 +314,7 @@ export interface FileRoutesByTo {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
   '/profile': typeof LayoutProfileRoute
@@ -308,6 +324,7 @@ export interface FileRoutesByTo {
   '/$teamSlugOrId/dashboard': typeof LayoutTeamSlugOrIdDashboardRoute
   '/$teamSlugOrId/diff': typeof LayoutTeamSlugOrIdDiffRoute
   '/$teamSlugOrId/logs': typeof LayoutTeamSlugOrIdLogsRoute
+  '/$teamSlugOrId/previews': typeof LayoutTeamSlugOrIdPreviewsRoute
   '/$teamSlugOrId/prs': typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   '/$teamSlugOrId/settings': typeof LayoutTeamSlugOrIdSettingsRoute
   '/$teamSlugOrId/workspaces': typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -337,6 +354,7 @@ export interface FileRoutesById {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/_layout/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/_layout/debug': typeof LayoutDebugRoute
   '/_layout/profile': typeof LayoutProfileRoute
@@ -347,6 +365,7 @@ export interface FileRoutesById {
   '/_layout/$teamSlugOrId/diff': typeof LayoutTeamSlugOrIdDiffRoute
   '/_layout/$teamSlugOrId/environments': typeof LayoutTeamSlugOrIdEnvironmentsRouteWithChildren
   '/_layout/$teamSlugOrId/logs': typeof LayoutTeamSlugOrIdLogsRoute
+  '/_layout/$teamSlugOrId/previews': typeof LayoutTeamSlugOrIdPreviewsRoute
   '/_layout/$teamSlugOrId/prs': typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   '/_layout/$teamSlugOrId/settings': typeof LayoutTeamSlugOrIdSettingsRoute
   '/_layout/$teamSlugOrId/workspaces': typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -377,6 +396,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/$teamSlugOrId'
     | '/debug'
     | '/profile'
@@ -387,6 +407,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/diff'
     | '/$teamSlugOrId/environments'
     | '/$teamSlugOrId/logs'
+    | '/$teamSlugOrId/previews'
     | '/$teamSlugOrId/prs'
     | '/$teamSlugOrId/settings'
     | '/$teamSlugOrId/workspaces'
@@ -415,6 +436,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/$teamSlugOrId'
     | '/debug'
     | '/profile'
@@ -424,6 +446,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/dashboard'
     | '/$teamSlugOrId/diff'
     | '/$teamSlugOrId/logs'
+    | '/$teamSlugOrId/previews'
     | '/$teamSlugOrId/prs'
     | '/$teamSlugOrId/settings'
     | '/$teamSlugOrId/workspaces'
@@ -452,6 +475,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/_layout/$teamSlugOrId'
     | '/_layout/debug'
     | '/_layout/profile'
@@ -462,6 +486,7 @@ export interface FileRouteTypes {
     | '/_layout/$teamSlugOrId/diff'
     | '/_layout/$teamSlugOrId/environments'
     | '/_layout/$teamSlugOrId/logs'
+    | '/_layout/$teamSlugOrId/previews'
     | '/_layout/$teamSlugOrId/prs'
     | '/_layout/$teamSlugOrId/settings'
     | '/_layout/$teamSlugOrId/workspaces'
@@ -492,6 +517,7 @@ export interface RootRouteChildren {
   ElectronWebContentsRoute: typeof ElectronWebContentsRoute
   MonacoSingleBufferRoute: typeof MonacoSingleBufferRoute
   SignInRoute: typeof SignInRoute
+  TeamSlugOrIdFeedRoute: typeof TeamSlugOrIdFeedRoute
   HandlerSplatRoute: typeof HandlerSplatRoute
 }
 
@@ -595,6 +621,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTeamSlugOrIdRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/$teamSlugOrId/feed': {
+      id: '/$teamSlugOrId/feed'
+      path: '/$teamSlugOrId/feed'
+      fullPath: '/$teamSlugOrId/feed'
+      preLoaderRoute: typeof TeamSlugOrIdFeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_layout/$teamSlugOrId/workspaces': {
       id: '/_layout/$teamSlugOrId/workspaces'
       path: '/workspaces'
@@ -614,6 +647,13 @@ declare module '@tanstack/react-router' {
       path: '/prs'
       fullPath: '/$teamSlugOrId/prs'
       preLoaderRoute: typeof LayoutTeamSlugOrIdPrsRouteImport
+      parentRoute: typeof LayoutTeamSlugOrIdRoute
+    }
+    '/_layout/$teamSlugOrId/previews': {
+      id: '/_layout/$teamSlugOrId/previews'
+      path: '/previews'
+      fullPath: '/$teamSlugOrId/previews'
+      preLoaderRoute: typeof LayoutTeamSlugOrIdPreviewsRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdRoute
     }
     '/_layout/$teamSlugOrId/logs': {
@@ -839,6 +879,7 @@ interface LayoutTeamSlugOrIdRouteChildren {
   LayoutTeamSlugOrIdDiffRoute: typeof LayoutTeamSlugOrIdDiffRoute
   LayoutTeamSlugOrIdEnvironmentsRoute: typeof LayoutTeamSlugOrIdEnvironmentsRouteWithChildren
   LayoutTeamSlugOrIdLogsRoute: typeof LayoutTeamSlugOrIdLogsRoute
+  LayoutTeamSlugOrIdPreviewsRoute: typeof LayoutTeamSlugOrIdPreviewsRoute
   LayoutTeamSlugOrIdPrsRoute: typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   LayoutTeamSlugOrIdSettingsRoute: typeof LayoutTeamSlugOrIdSettingsRoute
   LayoutTeamSlugOrIdWorkspacesRoute: typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -854,6 +895,7 @@ const LayoutTeamSlugOrIdRouteChildren: LayoutTeamSlugOrIdRouteChildren = {
   LayoutTeamSlugOrIdEnvironmentsRoute:
     LayoutTeamSlugOrIdEnvironmentsRouteWithChildren,
   LayoutTeamSlugOrIdLogsRoute: LayoutTeamSlugOrIdLogsRoute,
+  LayoutTeamSlugOrIdPreviewsRoute: LayoutTeamSlugOrIdPreviewsRoute,
   LayoutTeamSlugOrIdPrsRoute: LayoutTeamSlugOrIdPrsRouteWithChildren,
   LayoutTeamSlugOrIdSettingsRoute: LayoutTeamSlugOrIdSettingsRoute,
   LayoutTeamSlugOrIdWorkspacesRoute: LayoutTeamSlugOrIdWorkspacesRoute,
@@ -893,6 +935,7 @@ const rootRouteChildren: RootRouteChildren = {
   ElectronWebContentsRoute: ElectronWebContentsRoute,
   MonacoSingleBufferRoute: MonacoSingleBufferRoute,
   SignInRoute: SignInRoute,
+  TeamSlugOrIdFeedRoute: TeamSlugOrIdFeedRoute,
   HandlerSplatRoute: HandlerSplatRoute,
 }
 export const routeTree = rootRouteImport

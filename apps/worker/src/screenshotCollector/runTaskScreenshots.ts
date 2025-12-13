@@ -14,6 +14,10 @@ export interface RunTaskScreenshotsOptions {
   convexUrl?: string;
   anthropicApiKey?: string | null;
   taskRunJwt?: string | null;
+  /** Command to install dependencies (e.g., "bun install") */
+  installCommand?: string | null;
+  /** Command to start the dev server (e.g., "bun run dev") */
+  devCommand?: string | null;
 }
 
 function resolveContentType(filePath: string): string {
@@ -33,8 +37,10 @@ async function uploadScreenshotFile(params: {
   commitSha: string;
   token: string;
   convexUrl?: string;
+  description?: string;
 }): Promise<NonNullable<ScreenshotUploadPayload["images"]>[number]> {
-  const { screenshotPath, fileName, commitSha, token, convexUrl } = params;
+  const { screenshotPath, fileName, commitSha, token, convexUrl, description } =
+    params;
   const resolvedFileName = fileName ?? path.basename(screenshotPath);
   const contentType = resolveContentType(screenshotPath);
 
@@ -72,6 +78,7 @@ async function uploadScreenshotFile(params: {
     mimeType: contentType,
     fileName: resolvedFileName,
     commitSha,
+    description,
   };
 }
 
@@ -90,14 +97,21 @@ export async function runTaskScreenshots(
   const result = await startScreenshotCollection({
     anthropicApiKey: anthropicApiKey ?? undefined,
     taskRunJwt,
+    convexUrl,
+    installCommand: options.installCommand,
+    devCommand: options.devCommand,
   });
 
   let images: ScreenshotUploadPayload["images"];
+  let hasUiChanges: boolean | undefined;
   let status: ScreenshotUploadPayload["status"] = "failed";
   let error: string | undefined;
+  let commitSha: string | undefined;
 
   if (result.status === "completed") {
+    commitSha = result.commitSha;
     const capturedScreens = result.screenshots ?? [];
+    hasUiChanges = result.hasUiChanges;
     if (capturedScreens.length === 0) {
       status = "failed";
       error = "Claude collector returned no screenshots";
@@ -110,6 +124,7 @@ export async function runTaskScreenshots(
           commitSha: result.commitSha,
           token,
           convexUrl,
+          description: screenshot.description,
         })
       );
 
@@ -154,6 +169,7 @@ export async function runTaskScreenshots(
   } else if (result.status === "skipped") {
     status = "skipped";
     error = result.reason;
+    commitSha = result.commitSha;
     log("INFO", "Screenshot workflow skipped", {
       taskRunId,
       reason: result.reason,
@@ -161,6 +177,7 @@ export async function runTaskScreenshots(
   } else if (result.status === "failed") {
     status = "failed";
     error = result.error;
+    commitSha = result.commitSha;
     log("ERROR", "Screenshot workflow failed", {
       taskRunId,
       error: result.error,
@@ -173,6 +190,15 @@ export async function runTaskScreenshots(
       result,
     });
   }
+  // For completed status, commitSha is required
+  if (status === "completed" && !commitSha) {
+    log("ERROR", "Cannot upload completed screenshot result without commitSha", {
+      taskRunId,
+      status,
+      error,
+    });
+    return;
+  }
 
   await uploadScreenshot({
     token,
@@ -181,8 +207,11 @@ export async function runTaskScreenshots(
       taskId,
       runId: taskRunId,
       status,
+      // Only include commitSha if available (required for completed, optional for failed/skipped)
+      ...(commitSha && { commitSha }),
       images,
       error,
+      hasUiChanges,
     },
   });
 }

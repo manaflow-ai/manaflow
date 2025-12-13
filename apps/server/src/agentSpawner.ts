@@ -65,9 +65,13 @@ export async function spawnAgent(
     }>;
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
+    taskRunId?: Id<"taskRuns">; // Optional pre-created task run ID
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
+  // Declare taskRunId outside try block so it's accessible in catch for error reporting
+  let taskRunId: Id<"taskRuns"> | null = options.taskRunId ?? null;
+
   try {
     // Capture the current auth token and header JSON from AsyncLocalStorage so we can
     // re-enter the auth context inside async event handlers later.
@@ -83,18 +87,43 @@ export async function spawnAgent(
       }`
     );
 
-    // Create a task run for this specific agent
-    const { taskRunId, jwt: taskRunJwt } = await getConvex().mutation(
-      api.taskRuns.create,
-      {
-        teamSlugOrId,
-        taskId: taskId,
-        prompt: options.taskDescription,
-        agentName: agent.name,
-        newBranch,
-        environmentId: options.environmentId,
-      }
-    );
+    let taskRunJwt: string;
+
+    if (options.taskRunId) {
+      // Task run was pre-created - get JWT and update branch
+      const [jwtResult] = await Promise.all([
+        getConvex().mutation(api.taskRuns.getJwt, {
+          teamSlugOrId,
+          taskRunId: options.taskRunId,
+        }),
+        getConvex().mutation(api.taskRuns.updateBranch, {
+          teamSlugOrId,
+          id: options.taskRunId,
+          newBranch,
+        }),
+      ]);
+      taskRunJwt = jwtResult.jwt;
+      taskRunId = options.taskRunId;
+      serverLogger.info(
+        `[AgentSpawner] Using pre-created task run ${taskRunId}, updated branch to ${newBranch}`
+      );
+    } else {
+      // Create a task run for this specific agent (legacy path)
+      const { taskRunId: createdTaskRunId, jwt } =
+        await getConvex().mutation(api.taskRuns.create, {
+          teamSlugOrId,
+          taskId: taskId,
+          prompt: options.taskDescription,
+          agentName: agent.name,
+          newBranch,
+          environmentId: options.environmentId,
+        });
+      taskRunId = createdTaskRunId;
+      taskRunJwt = jwt;
+    }
+
+    // After this point, taskRunId is guaranteed to be non-null
+    const runId = taskRunId;
 
     // Fetch the task to get image storage IDs
     const task = await getConvex().query(api.tasks.getById, {
@@ -264,6 +293,7 @@ export async function spawnAgent(
 
     let authFiles: EnvironmentResult["files"] = [];
     let startupCommands: string[] = [];
+    let postStartCommands: EnvironmentResult["postStartCommands"] = [];
     let unsetEnvVars: string[] = [];
 
     // Fetch API keys from Convex BEFORE calling agent.environment()
@@ -286,6 +316,7 @@ export async function spawnAgent(
       };
       authFiles = envResult.files;
       startupCommands = envResult.startupCommands || [];
+      postStartCommands = envResult.postStartCommands || [];
       unsetEnvVars = envResult.unsetEnv || [];
     }
 
@@ -298,6 +329,9 @@ export async function spawnAgent(
       }
       if (applied.startupCommands && applied.startupCommands.length > 0) {
         startupCommands.push(...applied.startupCommands);
+      }
+      if (applied.postStartCommands && applied.postStartCommands.length > 0) {
+        postStartCommands = [...(postStartCommands || []), ...applied.postStartCommands];
       }
       if (applied.unsetEnv && applied.unsetEnv.length > 0) {
         unsetEnvVars.push(...applied.unsetEnv);
@@ -425,7 +459,7 @@ export async function spawnAgent(
     await retryOnOptimisticConcurrency(() =>
       getConvex().mutation(api.taskRuns.updateWorktreePath, {
         teamSlugOrId,
-        id: taskRunId,
+        id: runId,
         worktreePath: worktreePath,
       })
     );
@@ -488,7 +522,7 @@ export async function spawnAgent(
           retryOnOptimisticConcurrency(() =>
             getConvex().mutation(api.taskRuns.fail, {
               teamSlugOrId,
-              id: taskRunId,
+              id: runId,
               errorMessage: data.errorMessage || "Terminal failed",
               // WorkerTerminalFailed does not include exitCode in schema; default to 1
               exitCode: 1,
@@ -497,7 +531,7 @@ export async function spawnAgent(
         );
 
         serverLogger.info(
-          `[AgentSpawner] Marked taskRun ${taskRunId} as failed`
+          `[AgentSpawner] Marked taskRun ${runId} as failed`
         );
       } catch (error) {
         serverLogger.error(
@@ -533,24 +567,31 @@ export async function spawnAgent(
     }
 
     // Update VSCode instance information in Convex (retry on OCC)
-    await retryOnOptimisticConcurrency(() =>
-      getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
-        teamSlugOrId,
-        id: taskRunId,
-        vscode: {
-          provider: vscodeInfo.provider,
-          containerName: vscodeInstance.getName(),
-          status: "running",
-          url: vscodeInfo.url,
-          workspaceUrl: vscodeInfo.workspaceUrl,
-          startedAt: Date.now(),
-          ...(ports ? { ports } : {}),
-        },
-      })
-    );
+    // Skip if www already persisted the VSCode info (cloud mode optimization)
+    if (!vscodeInfo.vscodePersisted) {
+      await retryOnOptimisticConcurrency(() =>
+        getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
+          teamSlugOrId,
+          id: runId,
+          vscode: {
+            provider: vscodeInfo.provider,
+            containerName: vscodeInstance.getName(),
+            status: "running",
+            url: vscodeInfo.url,
+            workspaceUrl: vscodeInfo.workspaceUrl,
+            startedAt: Date.now(),
+            ...(ports ? { ports } : {}),
+          },
+        })
+      );
+    } else {
+      serverLogger.info(
+        `[AgentSpawner] Skipping updateVSCodeInstance - already persisted by www`
+      );
+    }
 
-    // Use taskRunId as terminal ID for compatibility
-    const terminalId = taskRunId;
+    // Use runId as terminal ID for compatibility
+    const terminalId = runId;
 
     // Log auth files if any
     if (authFiles.length > 0) {
@@ -676,6 +717,7 @@ export async function spawnAgent(
       agentModel: agent.name,
       authFiles,
       startupCommands,
+      postStartCommands,
       cwd: "/root/workspace",
     };
 
@@ -852,6 +894,9 @@ exit $EXIT_CODE
 
           const response = await fetch(uploadUrl, {
             method: "POST",
+            headers: {
+              "x-cmux-token": taskRunJwt,
+            },
             body: formData,
           });
 
@@ -923,13 +968,39 @@ exit $EXIT_CODE
     };
   } catch (error) {
     serverLogger.error("Error spawning agent", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+
+    // Mark the task run as failed in Convex so the UI shows the failure
+    if (taskRunId) {
+      const failedRunId = taskRunId; // Capture for TypeScript narrowing
+      try {
+        await retryOnOptimisticConcurrency(() =>
+          getConvex().mutation(api.taskRuns.fail, {
+            teamSlugOrId,
+            id: failedRunId,
+            errorMessage: `Agent spawn failed: ${errorMessage}`,
+            exitCode: 1,
+          })
+        );
+        serverLogger.info(
+          `[AgentSpawner] Marked taskRun ${failedRunId} as failed due to spawn error`
+        );
+      } catch (failError) {
+        serverLogger.error(
+          `[AgentSpawner] Failed to mark taskRun as failed`,
+          failError
+        );
+      }
+    }
+
     return {
       agentName: agent.name,
       terminalId: "",
-      taskRunId: "",
+      taskRunId: taskRunId ?? "",
       worktreePath: "",
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: errorMessage,
     };
   }
 }
@@ -941,7 +1012,9 @@ export async function spawnAllAgents(
     branch?: string;
     taskDescription: string;
     prTitle?: string;
+    branchNames?: string[]; // Pre-generated branch names (one per agent)
     selectedAgents?: string[];
+    taskRunIds?: Id<"taskRuns">[]; // Pre-created task run IDs (one per agent)
     isCloudMode?: boolean;
     environmentId?: Id<"environments">;
     images?: Array<{
@@ -960,22 +1033,37 @@ export async function spawnAllAgents(
         .filter((a): a is AgentConfig => Boolean(a))
     : AGENT_CONFIGS;
 
-  // Generate unique branch names for all agents at once to ensure no collisions
-  const branchNames = options.prTitle
-    ? await generateUniqueBranchNamesFromTitle(
-        options.prTitle!,
-        agentsToSpawn.length,
-        teamSlugOrId
-      )
-    : await generateUniqueBranchNames(
-        options.taskDescription,
-        agentsToSpawn.length,
-        teamSlugOrId
-      );
+  // Validate taskRunIds count matches agents count if provided
+  if (options.taskRunIds && options.taskRunIds.length !== agentsToSpawn.length) {
+    serverLogger.warn(
+      `[AgentSpawner] taskRunIds count (${options.taskRunIds.length}) doesn't match agents count (${agentsToSpawn.length})`
+    );
+  }
 
-  serverLogger.info(
-    `[AgentSpawner] Generated ${branchNames.length} unique branch names for agents`
-  );
+  // Use pre-generated branch names if provided, otherwise generate them
+  let branchNames: string[];
+  if (options.branchNames && options.branchNames.length >= agentsToSpawn.length) {
+    branchNames = options.branchNames;
+    serverLogger.info(
+      `[AgentSpawner] Using ${branchNames.length} pre-generated branch names`
+    );
+  } else {
+    // Generate unique branch names for all agents at once to ensure no collisions
+    branchNames = options.prTitle
+      ? await generateUniqueBranchNamesFromTitle(
+          options.prTitle,
+          agentsToSpawn.length,
+          teamSlugOrId
+        )
+      : await generateUniqueBranchNames(
+          options.taskDescription,
+          agentsToSpawn.length,
+          teamSlugOrId
+        );
+    serverLogger.info(
+      `[AgentSpawner] Generated ${branchNames.length} unique branch names for agents`
+    );
+  }
 
   // Spawn all agents in parallel with their pre-generated branch names
   const results = await Promise.all(
@@ -986,6 +1074,7 @@ export async function spawnAllAgents(
         {
           ...options,
           newBranch: branchNames[index],
+          taskRunId: options.taskRunIds?.[index],
         },
         teamSlugOrId
       )

@@ -6,6 +6,7 @@ import React, {
   useState,
   type CSSProperties,
 } from "react";
+import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
 
 interface ResizableColumnsProps {
   left: React.ReactNode;
@@ -74,20 +75,7 @@ export function ResizableColumns({
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    // Restore iframe pointer events
-    const iframes = Array.from(document.querySelectorAll("iframe"));
-    for (const el of iframes) {
-      if (el instanceof HTMLIFrameElement) {
-        const prev = el.dataset.prevPointerEvents;
-        if (prev !== undefined) {
-          if (prev === "__unset__") el.style.removeProperty("pointer-events");
-          else el.style.pointerEvents = prev;
-          delete el.dataset.prevPointerEvents;
-        } else {
-          el.style.removeProperty("pointer-events");
-        }
-      }
-    }
+    restoreDragPointerEvents();
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", stopResizing);
   }, [onMouseMove]);
@@ -102,15 +90,7 @@ export function ResizableColumns({
         const rect = containerRef.current.getBoundingClientRect();
         containerLeftRef.current = rect.left;
       }
-      // Disable pointer events on iframes while dragging
-      const iframes = Array.from(document.querySelectorAll("iframe"));
-      for (const el of iframes) {
-        if (el instanceof HTMLIFrameElement) {
-          const current = el.style.pointerEvents;
-          el.dataset.prevPointerEvents = current ? current : "__unset__";
-          el.style.pointerEvents = "none";
-        }
-      }
+      disableDragPointerEvents();
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", stopResizing);
     },

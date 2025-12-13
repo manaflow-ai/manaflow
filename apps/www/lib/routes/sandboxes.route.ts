@@ -5,6 +5,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import type { Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
@@ -27,6 +28,129 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
+import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
+
+/**
+ * Wait for the VSCode server to be ready by polling the service URL.
+ * This prevents "upstream connect error" when the iframe loads before the server is ready.
+ */
+async function waitForVSCodeReady(
+  vscodeUrl: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<boolean> {
+  const { timeoutMs = 15_000, intervalMs = 500 } = options;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // Use a simple HEAD request to check if the server is responding
+      const response = await fetch(vscodeUrl, {
+        method: "HEAD",
+        signal: AbortSignal.timeout(3_000),
+      });
+      // OpenVSCode server returns 200 for the root path when ready
+      if (response.ok || response.status === 302 || response.status === 301) {
+        return true;
+      }
+    } catch {
+      // Connection refused or timeout - server not ready yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return false;
+}
+
+/**
+ * Extract a safe, descriptive error message from sandbox start errors.
+ * Avoids leaking sensitive information like API keys, tokens, or internal paths.
+ */
+function getSandboxStartErrorMessage(error: unknown): string {
+  const baseMessage = "Failed to start sandbox";
+
+  if (!(error instanceof Error)) {
+    return baseMessage;
+  }
+
+  const message = error.message.toLowerCase();
+
+  // Check for common error patterns and provide helpful context
+  // Network/connectivity issues
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return `${baseMessage}: request timed out while provisioning instance`;
+  }
+  if (message.includes("econnrefused") || message.includes("connection refused")) {
+    return `${baseMessage}: could not connect to sandbox provider`;
+  }
+  if (message.includes("enotfound") || message.includes("getaddrinfo")) {
+    return `${baseMessage}: could not resolve sandbox provider address`;
+  }
+  if (message.includes("network") || message.includes("socket")) {
+    return `${baseMessage}: network error while provisioning instance`;
+  }
+
+  // Quota/resource issues (common with cloud providers)
+  if (message.includes("quota") || message.includes("limit") || message.includes("exceeded")) {
+    return `${baseMessage}: resource quota exceeded`;
+  }
+  if (message.includes("capacity") || message.includes("unavailable")) {
+    return `${baseMessage}: sandbox provider capacity unavailable`;
+  }
+
+  // Snapshot issues
+  if (message.includes("snapshot") && (message.includes("not found") || message.includes("invalid"))) {
+    return `${baseMessage}: snapshot not found or invalid`;
+  }
+
+  // Authentication/authorization (without revealing details)
+  if (message.includes("unauthorized") || message.includes("401")) {
+    return `${baseMessage}: authentication failed with sandbox provider`;
+  }
+  if (message.includes("forbidden") || message.includes("403")) {
+    return `${baseMessage}: access denied by sandbox provider`;
+  }
+
+  // Rate limiting
+  if (message.includes("rate limit") || message.includes("429") || message.includes("too many")) {
+    return `${baseMessage}: rate limited by sandbox provider`;
+  }
+
+  // Instance startup issues
+  if (message.includes("instance") && message.includes("start")) {
+    return `${baseMessage}: instance failed to start`;
+  }
+
+  // If error message is reasonably safe (no obvious secrets patterns), include part of it
+  const sensitivePatterns = [
+    /api[_-]?key/i,
+    /token/i,
+    /secret/i,
+    /password/i,
+    /credential/i,
+    /bearer/i,
+    /authorization/i,
+    /sk[_-][a-z0-9]/i,
+    /pk[_-][a-z0-9]/i,
+  ];
+
+  const hasSensitiveContent = sensitivePatterns.some((pattern) =>
+    pattern.test(error.message)
+  );
+
+  if (!hasSensitiveContent && error.message.length < 200) {
+    // Sanitize the message: remove potential file paths and URLs
+    const sanitized = error.message
+      .replace(/\/[^\s]+/g, "[path]") // Replace file paths
+      .replace(/https?:\/\/[^\s]+/g, "[url]") // Replace URLs
+      .trim();
+
+    if (sanitized.length > 0 && sanitized !== "[path]" && sanitized !== "[url]") {
+      return `${baseMessage}: ${sanitized}`;
+    }
+  }
+
+  return baseMessage;
+}
 
 export const sandboxesRouter = new OpenAPIHono();
 
@@ -57,6 +181,7 @@ const StartSandboxResponse = z
     vscodeUrl: z.string(),
     workerUrl: z.string(),
     provider: z.enum(["morph"]).default("morph"),
+    vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
 
@@ -242,6 +367,49 @@ sandboxesRouter.openapi(
         return c.text("VSCode or worker service not found", 500);
       }
 
+      // Wait for VSCode server to be ready before persisting URL
+      // This prevents "upstream connect error" when the frontend loads the iframe
+      // before the OpenVSCode server is actually listening
+      const vscodeReady = await waitForVSCodeReady(vscodeService.url);
+      if (!vscodeReady) {
+        console.warn(
+          `[sandboxes.start] VSCode server did not become ready within timeout for ${instance.id}, proceeding anyway`,
+        );
+      } else {
+        console.log(
+          `[sandboxes.start] VSCode server ready for ${instance.id}`,
+        );
+      }
+
+      // Persist VSCode URLs to Convex once the server is ready
+      // Status is "starting" to indicate hydration is still in progress
+      let vscodePersisted = false;
+      if (body.taskRunId) {
+        try {
+          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+            vscode: {
+              provider: "morph",
+              containerName: instance.id,
+              status: "starting",
+              url: vscodeService.url,
+              workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+            },
+          });
+          vscodePersisted = true;
+          console.log(
+            `[sandboxes.start] Persisted VSCode info for ${body.taskRunId}`,
+          );
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
+            error,
+          );
+        }
+      }
+
       // Get environment variables from the environment if configured
       const environmentEnvVarsContent = await environmentEnvVarsPromise;
 
@@ -340,6 +508,22 @@ sandboxesRouter.openapi(
         return c.text("Failed to hydrate sandbox", 500);
       }
 
+      // Update status to "running" after hydration completes
+      if (body.taskRunId && vscodePersisted) {
+        void convex
+          .mutation(api.taskRuns.updateVSCodeStatus, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+            status: "running",
+          })
+          .catch((error) => {
+            console.error(
+              "[sandboxes.start] Failed to update VSCode status to running:",
+              error,
+            );
+          });
+      }
+
       if (maintenanceScript || devScript) {
         (async () => {
           await runMaintenanceAndDevScripts({
@@ -366,6 +550,7 @@ sandboxesRouter.openapi(
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
         provider: "morph",
+        vscodePersisted,
       });
     } catch (error) {
       if (error instanceof HTTPException) {
@@ -376,7 +561,9 @@ sandboxesRouter.openapi(
         return c.text(message, error.status);
       }
       console.error("Failed to start sandbox:", error);
-      return c.text("Failed to start sandbox", 500);
+      // Provide a more descriptive error message without leaking sensitive details
+      const errorMessage = getSandboxStartErrorMessage(error);
+      return c.text(errorMessage, 500);
     }
   },
 );
@@ -494,6 +681,8 @@ sandboxesRouter.openapi(
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
+      // Kill all dev servers and user processes before pausing to avoid port conflicts on resume
+      await instance.exec(VM_CLEANUP_COMMANDS);
       await instance.pause();
       return c.body(null, 204);
     } catch (error) {

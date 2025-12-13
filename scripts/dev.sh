@@ -1,4 +1,27 @@
 #!/bin/bash
+#
+# dev.sh - Start the cmux development environment
+#
+# Usage: ./scripts/dev.sh [options]
+#
+# Options:
+#   --force-docker-build    Force rebuild the Docker image (overrides --skip-docker)
+#   --skip-docker[=BOOL]    Skip Docker image build (default: true)
+#   --skip-convex[=BOOL]    Skip Convex backend (default: true)
+#   --show-compose-logs     Show Docker Compose logs in console
+#   --electron              Start Electron app
+#   --convex-agent          Run convex dev in agent mode
+#
+# Environment variables:
+#   SKIP_DOCKER_BUILD       Set to "false" to build Docker image (default: true)
+#   SKIP_CONVEX             Set to "false" to run Convex (default: true)
+#
+# Examples:
+#   ./scripts/dev.sh                          # Start without Docker build
+#   ./scripts/dev.sh --force-docker-build     # Force Docker image rebuild
+#   ./scripts/dev.sh --skip-docker=false      # Build Docker image
+#   ./scripts/dev.sh --skip-convex=false      # Run with Convex enabled
+#
 
 set -e
 
@@ -37,7 +60,7 @@ SHOW_COMPOSE_LOGS=false
 # Default to skipping Convex unless explicitly disabled via env/flag
 SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
-SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-false}"
+SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-true}"
 CONVEX_AGENT_MODE=false
 
 while [[ $# -gt 0 ]]; do

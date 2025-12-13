@@ -1,20 +1,47 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { z } from "zod";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/connect-complete")(
   {
     component: ConnectComplete,
+    validateSearch: z.object({
+      popup: z.boolean().optional(),
+    }),
   }
 );
 
 function ConnectComplete() {
   const { teamSlugOrId } = Route.useParams();
+  const { popup } = Route.useSearch();
   const CLOSE_AFTER_SECONDS = 6;
   const [seconds, setSeconds] = useState(CLOSE_AFTER_SECONDS);
   const triedAutoClose = useRef(false);
 
   useEffect(() => {
+    // Check if this is a web popup flow via query param or window.opener
+    const isWebPopup = popup === true || window.opener !== null;
+
+    // For web popups, immediately post message and close
+    if (isWebPopup) {
+      try {
+        window.opener?.postMessage?.(
+          { type: "cmux/github-install-complete" },
+          window.location.origin
+        );
+        window.opener?.focus?.();
+        // Small delay to ensure message is sent before closing
+        setTimeout(() => {
+          window.close();
+        }, 100);
+      } catch (_e) {
+        // ignored - will fall back to countdown
+      }
+      return;
+    }
+
+    // For non-popup (Electron flow), try deep link
     const href = `cmux://github-connect-complete?team=${encodeURIComponent(
       teamSlugOrId
     )}`;
@@ -23,7 +50,7 @@ function ConnectComplete() {
     } catch {
       // non-fatal; user can return manually
     }
-  }, [teamSlugOrId]);
+  }, [teamSlugOrId, popup]);
 
   useEffect(() => {
     const iv = window.setInterval(() => {
@@ -38,7 +65,7 @@ function ConnectComplete() {
       try {
         window.opener?.postMessage?.(
           { type: "cmux/github-install-complete" },
-          "*"
+          window.location.origin
         );
         window.opener?.focus?.();
         window.close();

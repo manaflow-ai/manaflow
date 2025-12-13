@@ -33,6 +33,8 @@ interface DashboardInputControlsProps {
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (branches: string[]) => void;
+  onBranchSearchChange?: (search: string) => void;
+  isBranchSearchLoading?: boolean;
   selectedAgents: string[];
   onAgentChange: (agents: string[]) => void;
   isCloudMode: boolean;
@@ -60,6 +62,8 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   branchOptions,
   selectedBranch,
   onBranchChange,
+  onBranchSearchChange,
+  isBranchSearchLoading = false,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -123,7 +127,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   Setup required
                 </p>
                 <p className="text-xs text-neutral-300">
-                  Add credentials for this agent in Settings.
+                  {env.NEXT_PUBLIC_WEB_MODE
+                    ? "Add your API key for this agent in Settings."
+                    : "Add credentials for this agent in Settings."}
                 </p>
                 {missingRequirements.length > 0 ? (
                   <ul className="list-disc pl-4 text-xs text-neutral-400">
@@ -271,6 +277,18 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       resizeObserver?.disconnect();
     };
   }, []);
+
+  // Listen for GitHub install completion message from popup
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "cmux/github-install-complete") {
+        router.options.context?.queryClient?.invalidateQueries();
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [router.options.context?.queryClient]);
 
   const handleImageClick = useCallback(() => {
     // Trigger the file select from ImagePlugin
@@ -454,11 +472,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     const win = window.open("about:blank", name, features);
     if (win) {
       try {
-        (win as Window & { opener: null | Window }).opener = null;
-      } catch {
-        /* noop */
-      }
-      try {
         win.location.href = url;
       } catch {
         window.open(url, "_blank");
@@ -518,38 +531,45 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                 <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                 <span className="select-none">Create environment</span>
               </Link>
-              {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
-                <button
-                  type="button"
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
-                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                      const { state } = await mintState({ teamSlugOrId });
-                      const sep = baseUrl.includes("?") ? "&" : "?";
-                      const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                        state,
-                      )}`;
-                      const win = openCenteredPopup(
-                        url,
-                        { name: "github-install" },
-                        () => {
-                          router.options.context?.queryClient?.invalidateQueries();
-                        },
-                      );
-                      win?.focus?.();
-                    } catch (err) {
-                      console.error("Failed to start GitHub install:", err);
-                      alert("Failed to start installation. Please try again.");
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+                    if (!slug) {
+                      alert("GitHub App not configured. Please contact support.");
+                      return;
                     }
-                  }}
-                  className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                  <span className="select-none">Add repos from GitHub</span>
-                </button>
-              ) : null}
+                    const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+                    // For web users, pass returnUrl to connect-complete page which handles popup close
+                    // Include popup=true query param to signal this is a web popup flow
+                    const returnUrl = !isElectron
+                      ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+                      : undefined;
+                    const { state } = await mintState({ teamSlugOrId, returnUrl });
+                    const sep = baseUrl.includes("?") ? "&" : "?";
+                    const url = `${baseUrl}${sep}state=${encodeURIComponent(
+                      state,
+                    )}`;
+                    const win = openCenteredPopup(
+                      url,
+                      { name: "github-install" },
+                      () => {
+                        router.options.context?.queryClient?.invalidateQueries();
+                      },
+                    );
+                    win?.focus?.();
+                  } catch (err) {
+                    console.error("Failed to start GitHub install:", err);
+                    alert("Failed to start installation. Please try again.");
+                  }
+                }}
+                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              >
+                <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                <span className="select-none">Add repos from GitHub</span>
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
@@ -636,6 +656,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   options={branchOptions}
                   value={selectedBranch}
                   onChange={onBranchChange}
+                  onSearchChange={onBranchSearchChange}
+                  searchLoading={isBranchSearchLoading}
+                  disableClientFilter
                   placeholder="Branch"
                   singleSelect={true}
                   className="rounded-2xl"
@@ -674,12 +697,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       </div>
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
-        {/* Cloud/Local Mode Toggle */}
-        <ModeToggleTooltip
-          isCloudMode={isCloudMode}
-          onToggle={onCloudModeToggle}
-          disabled={cloudToggleDisabled}
-        />
+        {/* Cloud/Local Mode Toggle - hidden in web mode (always cloud) */}
+        {!env.NEXT_PUBLIC_WEB_MODE && (
+          <ModeToggleTooltip
+            isCloudMode={isCloudMode}
+            onToggle={onCloudModeToggle}
+            disabled={cloudToggleDisabled}
+          />
+        )}
 
         <button
           className={clsx(

@@ -256,7 +256,16 @@ export default async function LandingPage() {
               </div>
               {latestVersion ? (
                 <p className="text-xs text-neutral-400">
-                  Latest release: cmux {latestVersion}. Need another build? Visit the GitHub release page for all downloads.
+                  Latest release: cmux {latestVersion}. Need another build? Visit the{" "}
+                  <a
+                    href="https://github.com/manaflow-ai/cmux/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-neutral-300"
+                  >
+                    GitHub release page
+                  </a>{" "}
+                  for all downloads.
                 </p>
               ) : (
                 <p className="text-xs text-neutral-400">
@@ -545,10 +554,7 @@ export default async function LandingPage() {
             <Terminal className="h-4 w-4 text-neutral-600" aria-hidden />
             <span className="font-mono">cmux by manaflow</span>
           </div>
-          <div className="flex items-center gap-6">
-            {/* <a className="transition hover:text-white" href="/tutorial">
-              Tutorial
-            </a> */}
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
             <a
               className="transition hover:text-white"
               href="https://github.com/manaflow-ai/cmux"
@@ -573,6 +579,18 @@ export default async function LandingPage() {
             >
               Discord
             </a>
+            <Link className="transition hover:text-white" href="/privacy-policy">
+              Privacy
+            </Link>
+            <Link className="transition hover:text-white" href="/terms-of-service">
+              Terms
+            </Link>
+            <Link className="transition hover:text-white" href="/eula">
+              EULA
+            </Link>
+            <Link className="transition hover:text-white" href="/contact">
+              Contact
+            </Link>
           </div>
         </div>
       </footer>

@@ -1,5 +1,12 @@
 {
   "node": {
+    "externalPackages": [
+      "morphcloud",
+      "ssh2",
+      "node-ssh",
+      "cpu-features",
+      "@octokit/request"
+    ],
     "nodeVersion": "22"
   }
 }

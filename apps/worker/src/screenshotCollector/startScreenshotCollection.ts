@@ -11,27 +11,29 @@ import {
 } from "./logger";
 import { detectGitRepoPath, listGitRepoPaths } from "../crown/git";
 import { readPrDescription } from "./context";
-import {
-  SCREENSHOT_STORAGE_ROOT,
-  claudeCodeCapturePRScreenshots,
-  normalizeScreenshotOutputDir,
-  type ClaudeCodeAuthConfig,
-} from "./claudeScreenshotCollector";
+import { loadScreenshotCollector, type ScreenshotCollectorModule, type ClaudeCodeAuthConfig } from "./screenshotCollectorLoader";
 
 export interface StartScreenshotCollectionOptions {
   anthropicApiKey?: string | null;
   taskRunJwt?: string | null;
+  /** Convex site URL for fetching remote screenshot collector */
+  convexUrl?: string | null;
   outputPath?: string;
   prTitle?: string | null;
   prDescription?: string | null;
   headBranch?: string | null;
   baseBranch?: string | null;
   changedFiles?: string[] | null;
+  /** Command to install dependencies (e.g., "bun install") */
+  installCommand?: string | null;
+  /** Command to start the dev server (e.g., "bun run dev") */
+  devCommand?: string | null;
 }
 
 interface CapturedScreenshot {
   path: string;
   fileName: string;
+  description?: string;
 }
 
 export type ScreenshotCollectionResult =
@@ -39,9 +41,10 @@ export type ScreenshotCollectionResult =
       status: "completed";
       screenshots: CapturedScreenshot[];
       commitSha: string;
+      hasUiChanges?: boolean;
     }
-  | { status: "skipped"; reason: string }
-  | { status: "failed"; error: string };
+  | { status: "skipped"; reason: string; commitSha?: string }
+  | { status: "failed"; error: string; commitSha?: string };
 
 function sanitizeSegment(segment: string | null | undefined): string {
   if (!segment) {
@@ -103,8 +106,11 @@ function resolvePrTitle(params: {
 
 function resolveOutputDirectory(
   headBranch: string,
+  collectorModule: ScreenshotCollectorModule,
   requestedPath?: string
 ): { outputDir: string; copyTarget?: string } {
+  const { normalizeScreenshotOutputDir, SCREENSHOT_STORAGE_ROOT } = collectorModule;
+
   if (requestedPath) {
     const trimmed = requestedPath.trim();
     if (trimmed.length > 0) {
@@ -135,6 +141,11 @@ export async function startScreenshotCollection(
     path: SCREENSHOT_COLLECTOR_LOG_PATH,
     openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
   });
+
+  // Load the screenshot collector module from Convex storage
+  await logToScreenshotCollector("Loading screenshot collector module...");
+  const collectorModule = await loadScreenshotCollector(options.convexUrl ?? undefined);
+  await logToScreenshotCollector("Screenshot collector module loaded");
 
   const workspaceRoot = WORKSPACE_ROOT;
   const repoCandidates: string[] = [];
@@ -423,7 +434,7 @@ export async function startScreenshotCollection(
       `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}, anthropicApiKey=${options.anthropicApiKey ? "present" : "missing"}, env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? "present" : "missing"}`
     );
     log("ERROR", reason, { baseBranch, mergeBase });
-    return { status: "skipped", reason };
+    return { status: "skipped", reason, commitSha };
   }
 
   const headBranch =
@@ -438,13 +449,14 @@ export async function startScreenshotCollection(
 
   const { outputDir, copyTarget } = resolveOutputDirectory(
     headBranch,
+    collectorModule,
     options.outputPath
   );
 
   await logToScreenshotCollector(`Claude collector output dir: ${outputDir}`);
 
   try {
-    const claudeResult = await claudeCodeCapturePRScreenshots({
+    const claudeResult = await collectorModule.claudeCodeCapturePRScreenshots({
       workspaceDir,
       changedFiles: textFiles,
       prTitle,
@@ -453,38 +465,61 @@ export async function startScreenshotCollection(
       headBranch,
       outputDir,
       pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+      installCommand: options.installCommand ?? undefined,
+      devCommand: options.devCommand ?? undefined,
       ...claudeAuth,
     });
 
     if (claudeResult.status === "completed") {
-      const screenshotPaths = claudeResult.screenshotPaths ?? [];
-      if (screenshotPaths.length === 0) {
-        const error = "Claude collector reported success but returned no files";
+      const collectedScreenshots = claudeResult.screenshots ?? [];
+      if (collectedScreenshots.length === 0) {
+        // If Claude explicitly reported no UI changes, this is expected - not an error
+        if (claudeResult.hasUiChanges === false) {
+          const reason = "No UI changes detected in this PR";
+          await logToScreenshotCollector(reason);
+          log("INFO", reason, { headBranch, outputDir });
+          return { status: "skipped", reason, commitSha };
+        }
+        // Otherwise, Claude thought there were UI changes but returned no files - unexpected
+        const error =
+          "Claude collector reported success but returned no files";
         await logToScreenshotCollector(error);
         log("ERROR", error, { headBranch, outputDir });
-        return { status: "failed", error };
+        return { status: "failed", error, commitSha };
       }
 
-      const screenshotEntries: CapturedScreenshot[] = screenshotPaths.map(
-        (absolutePath) => ({
-          path: absolutePath,
-          fileName: path.basename(absolutePath),
-        })
-      );
+      const screenshotEntries: CapturedScreenshot[] =
+        collectedScreenshots.map((screenshot) => ({
+          path: screenshot.path,
+          fileName: path.basename(screenshot.path),
+          description: screenshot.description,
+        }));
 
       if (screenshotEntries.length === 0) {
         const error = "Claude collector produced no screenshot entries";
         await logToScreenshotCollector(error);
-        log("ERROR", error, { headBranch, outputDir, screenshotPaths });
-        return { status: "failed", error };
+        log("ERROR", error, {
+          headBranch,
+          outputDir,
+          screenshotPaths: collectedScreenshots.map(
+            (screenshot) => screenshot.path
+          ),
+        });
+        return { status: "failed", error, commitSha };
       }
 
       const initialPrimary = screenshotEntries[0];
       if (!initialPrimary) {
         const error = "Unable to determine primary screenshot entry";
         await logToScreenshotCollector(error);
-        log("ERROR", error, { headBranch, outputDir, screenshotPaths });
-        return { status: "failed", error };
+        log("ERROR", error, {
+          headBranch,
+          outputDir,
+          screenshotPaths: collectedScreenshots.map(
+            (screenshot) => screenshot.path
+          ),
+        });
+        return { status: "failed", error, commitSha };
       }
       let primaryScreenshot: CapturedScreenshot = initialPrimary;
 
@@ -495,6 +530,7 @@ export async function startScreenshotCollection(
           const updatedScreenshot: CapturedScreenshot = {
             path: copyTarget,
             fileName: path.basename(copyTarget),
+            description: primaryScreenshot.description,
           };
           screenshotEntries[0] = updatedScreenshot;
           primaryScreenshot = updatedScreenshot;
@@ -528,6 +564,28 @@ export async function startScreenshotCollection(
         );
       }
 
+      // Write manifest.json with hasUiChanges and image info for local docker workflows
+      const manifestPath = path.join(outputDir, "manifest.json");
+      const manifest = {
+        hasUiChanges: claudeResult.hasUiChanges,
+        images: screenshotEntries.map((entry) => ({
+          path: entry.path,
+          description: entry.description,
+        })),
+      };
+      try {
+        await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+        await logToScreenshotCollector(`Wrote manifest to ${manifestPath}`);
+      } catch (manifestError) {
+        const message =
+          manifestError instanceof Error
+            ? manifestError.message
+            : String(manifestError ?? "unknown manifest write error");
+        await logToScreenshotCollector(
+          `Failed to write manifest.json: ${message}`
+        );
+      }
+
       log("INFO", "Claude screenshot collector completed", {
         headBranch,
         baseBranch,
@@ -539,13 +597,14 @@ export async function startScreenshotCollection(
         status: "completed",
         screenshots: screenshotEntries,
         commitSha,
+        hasUiChanges: claudeResult.hasUiChanges,
       };
     }
 
     if (claudeResult.status === "skipped") {
       const reason = claudeResult.reason ?? "Claude collector skipped";
       await logToScreenshotCollector(reason);
-      return { status: "skipped", reason };
+      return { status: "skipped", reason, commitSha };
     }
 
     const error = claudeResult.error ?? "Claude collector failed";
@@ -555,7 +614,7 @@ export async function startScreenshotCollection(
       headBranch,
       baseBranch,
     });
-    return { status: "failed", error };
+    return { status: "failed", error, commitSha };
   } catch (error) {
     const reason =
       error instanceof Error ? error.message : String(error ?? "unknown error");
@@ -567,6 +626,6 @@ export async function startScreenshotCollection(
       openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
       error: reason,
     });
-    return { status: "failed", error: reason };
+    return { status: "failed", error: reason, commitSha };
   }
 }

@@ -1,7 +1,7 @@
 [Unit]
 Description=Cmux Worker Service
-After=cmux-openvscode.service
-Requires=cmux-openvscode.service
+After=cmux-ide.service
+Requires=cmux-ide.service
 
 [Service]
 Type=simple

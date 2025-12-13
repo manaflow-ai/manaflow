@@ -143,5 +143,5 @@ async fn ws_reconnect_and_reattach() {
         .unwrap();
     assert!(resp.status().is_success() || resp.status().as_u16() == 204);
 
-    let _ = server.abort();
+    server.abort();
 }

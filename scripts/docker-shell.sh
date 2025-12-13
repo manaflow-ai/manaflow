@@ -35,7 +35,6 @@ docker run -d \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -v docker-data:/var/lib/docker \
   -p 39375:39375 \
-  -p 39376:39376 \
   -p 39377:39377 \
   -p 39378:39378 \
   -p 39379:39379 \

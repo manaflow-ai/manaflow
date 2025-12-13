@@ -3,14 +3,14 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { serverLogger } from "./fileLogger";
-import { getGitHubTokenFromKeychain } from "./getGitHubToken";
+import { getGitHubOAuthToken } from "./getGitHubToken";
 
 export async function setupGitCredentialsForDocker(
   instanceId: string,
   _convex?: ConvexHttpClient
 ): Promise<string | null> {
   try {
-    const githubToken = await getGitHubTokenFromKeychain();
+    const githubToken = await getGitHubOAuthToken();
     if (!githubToken) {
       return null;
     }

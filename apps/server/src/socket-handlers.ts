@@ -1,11 +1,11 @@
 import { api } from "@cmux/convex/api";
+import { env } from "./utils/server-env";
 import type { Id } from "@cmux/convex/dataModel";
 import type { WorkspaceConfigResponse } from "@cmux/www-openapi-client";
 import {
   ArchiveTaskSchema,
   GitFullDiffRequestSchema,
   GitHubCreateDraftPrSchema,
-  GitHubFetchBranchesSchema,
   GitHubFetchReposSchema,
   GitHubMergeBranchSchema,
   GitHubSyncPrStateSchema,
@@ -45,16 +45,20 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
-import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
+import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
-import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
+import { getGitHubOAuthToken } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
-import { checkAllProvidersStatus } from "./utils/providerStatus";
+import {
+  checkAllProvidersStatus,
+  checkAllProvidersStatusWebMode,
+} from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
+import { extractSandboxStartError } from "./utils/sandboxErrors";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -382,7 +386,8 @@ export function setupSocketHandlers(
         });
       });
       // Start Docker container state sync after first authenticated connection
-      if (!dockerEventsStarted) {
+      // Skip in web mode since Docker is not used
+      if (!dockerEventsStarted && !env.NEXT_PUBLIC_WEB_MODE) {
         dockerEventsStarted = true;
         runWithAuth(initialToken, initialAuthJson, () => {
           serverLogger.info(
@@ -452,6 +457,23 @@ export function setupSocketHandlers(
     });
 
     void (async () => {
+      // In web mode, skip detecting local editors entirely
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        const emptyAvailability: AvailableEditors = {
+          vscode: false,
+          cursor: false,
+          windsurf: false,
+          finder: false,
+          iterm: false,
+          terminal: false,
+          ghostty: false,
+          alacritty: false,
+          xcode: false,
+        };
+        socket.emit("available-editors", emptyAvailability);
+        return;
+      }
+
       const commandExists = async (cmd: string) => {
         try {
           await execAsync(`command -v ${cmd}`);
@@ -525,6 +547,15 @@ export function setupSocketHandlers(
       serverLogger.info("starting task!", taskData);
       const taskId = taskData.taskId;
       try {
+        // In web mode, local (Docker) tasks are not supported
+        if (env.NEXT_PUBLIC_WEB_MODE && !taskData.isCloudMode) {
+          callback({
+            taskId,
+            error: "Local mode is not available in the web version. Please use Cloud mode.",
+          });
+          return;
+        }
+
         // For local mode, ensure Docker is running before attempting to spawn
         if (!taskData.isCloudMode) {
           try {
@@ -560,30 +591,40 @@ export function setupSocketHandlers(
 
         (async () => {
           try {
-            // Generate PR title early from the task description
+            // Determine number of agents to spawn
+            const agentCount = taskData.selectedAgents?.length || 1;
+
+            // Generate PR title and branch names in a single API call
             let generatedTitle: string | null = null;
+            let branchNames: string[] | undefined;
             try {
-              generatedTitle = await getPRTitleFromTaskDescription(
+              const prInfo = await generatePRInfoAndBranchNames(
                 taskData.taskDescription,
+                agentCount,
                 safeTeam
               );
-              // Persist to Convex immediately
+              generatedTitle = prInfo.prTitle;
+              branchNames = prInfo.branchNames;
+
+              // Persist PR title to Convex
               await getConvex().mutation(api.tasks.setPullRequestTitle, {
                 teamSlugOrId: safeTeam,
                 id: taskId,
                 pullRequestTitle: generatedTitle,
               });
               serverLogger.info(
-                `[Server] Saved early PR title: ${generatedTitle}`
+                `[Server] Generated PR title and ${branchNames.length} branch names in single call`
               );
             } catch (e) {
               serverLogger.error(
-                `[Server] Failed generating/saving early PR title:`,
+                `[Server] Failed generating PR info:`,
                 e
               );
             }
 
-            // Spawn all agents in parallel (each will create its own taskRun)
+            // Spawn all agents in parallel
+            // - If taskRunIds provided, uses pre-created runs (fast path)
+            // - If branchNames generated above, passes them to avoid re-generating
             const agentResults = await spawnAllAgents(
               taskId,
               {
@@ -591,7 +632,9 @@ export function setupSocketHandlers(
                 branch: taskData.branch,
                 taskDescription: taskData.taskDescription,
                 prTitle: generatedTitle ?? undefined,
+                branchNames, // Pass pre-generated branch names to avoid second API call
                 selectedAgents: taskData.selectedAgents,
+                taskRunIds: taskData.taskRunIds,
                 isCloudMode: taskData.isCloudMode,
                 images: taskData.images,
                 theme: taskData.theme,
@@ -705,6 +748,11 @@ export function setupSocketHandlers(
         if (!callback) {
           return;
         }
+        // In web mode, local VSCode serve-web is not used
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          callback({ baseUrl: null, port: null });
+          return;
+        }
         try {
           callback({
             baseUrl: getVSCodeServeWebBaseUrl(),
@@ -729,6 +777,15 @@ export function setupSocketHandlers(
         rawData,
         callback: (response: CreateLocalWorkspaceResponse) => void
       ) => {
+        // In web mode, local workspaces are not supported
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          callback({
+            success: false,
+            error: "Local workspaces are not available in the web version. Please use Cloud mode.",
+          });
+          return;
+        }
+
         const parsed = CreateLocalWorkspaceSchema.safeParse(rawData);
         if (!parsed.success) {
           serverLogger.error(
@@ -1225,7 +1282,7 @@ export function setupSocketHandlers(
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         const convex = getConvex();
-        let taskId: Id<"tasks"> | undefined = providedTaskId;
+        const taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
 
@@ -1304,7 +1361,8 @@ export function setupSocketHandlers(
 
           const data = startRes.data;
           if (!data) {
-            throw new Error("Failed to start sandbox");
+            const errorMessage = extractSandboxStartError(startRes);
+            throw new Error(errorMessage);
           }
 
           const sandboxId = data.instanceId;
@@ -1435,7 +1493,7 @@ export function setupSocketHandlers(
           return;
         }
 
-        const githubToken = await getGitHubTokenFromKeychain();
+        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           callback({
             success: false,
@@ -1548,7 +1606,7 @@ export function setupSocketHandlers(
         const { run, task, branchName, baseBranch } =
           await ensureRunWorktreeAndBranch(taskRunId, safeTeam);
 
-        const githubToken = await getGitHubTokenFromKeychain();
+        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           return callback({
             success: false,
@@ -1653,6 +1711,12 @@ export function setupSocketHandlers(
     // (I'll include the rest of the handlers in the next message due to length)
 
     socket.on("open-in-editor", async (data, callback) => {
+      // In web mode, opening local editors is not supported
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback?.({ success: false, error: "Opening local editors is not available in the web version." });
+        return;
+      }
+
       try {
         const { editor, path } = OpenInEditorSchema.parse(data);
 
@@ -1965,6 +2029,17 @@ export function setupSocketHandlers(
     });
 
     socket.on("github-test-auth", async (callback) => {
+      // In web mode, this debug feature is not available
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback({
+          authStatus: "Not available in web mode",
+          whoami: "N/A",
+          home: "N/A",
+          ghConfig: "N/A",
+        });
+        return;
+      }
+
       try {
         // Run all commands in parallel
         const [authStatus, whoami, home, ghConfig] = await Promise.all([
@@ -2078,7 +2153,7 @@ Context:
 Please address the issue mentioned in the comment above.`;
 
         // Create a new task in Convex
-        const taskId = await getConvex().mutation(api.tasks.create, {
+        const { taskId } = await getConvex().mutation(api.tasks.create, {
           teamSlugOrId: safeTeam,
           text: formattedPrompt,
           projectFullName: "manaflow-ai/cmux",
@@ -2165,31 +2240,7 @@ Please address the issue mentioned in the comment above.`;
       }
     });
 
-    socket.on("github-fetch-branches", async (data, callback) => {
-      try {
-        const { repo } = GitHubFetchBranchesSchema.parse(data);
-
-        const { listRemoteBranches } = await import("./native/git.js");
-        const branches = await listRemoteBranches({ repoFullName: repo });
-        const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
-
-        callback({
-          success: true,
-          branches,
-          defaultBranch,
-        });
-        return;
-      } catch (error) {
-        serverLogger.error("Error fetching branches:", error);
-        callback({
-          success: false,
-          branches: [],
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    });
-
-    // Create a draft PR for a crowned run: commits, pushes, then creates a draft PR
+// Create a draft PR for a crowned run: commits, pushes, then creates a draft PR
     socket.on("github-create-draft-pr", async (data, callback) => {
       try {
         const { taskRunId } = GitHubCreateDraftPrSchema.parse(data);
@@ -2233,7 +2284,7 @@ Please address the issue mentioned in the comment above.`;
           return;
         }
 
-        const githubToken = await getGitHubTokenFromKeychain();
+        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           callback({
             success: false,
@@ -2365,9 +2416,10 @@ ${title}`;
 
     socket.on("check-provider-status", async (callback) => {
       try {
-        const status = await checkAllProvidersStatus({
-          teamSlugOrId: safeTeam,
-        });
+        // In web mode, only check API keys from Convex (no local files/keychains)
+        const status = env.NEXT_PUBLIC_WEB_MODE
+          ? await checkAllProvidersStatusWebMode({ teamSlugOrId: safeTeam })
+          : await checkAllProvidersStatus({ teamSlugOrId: safeTeam });
         callback({ success: true, ...status });
       } catch (error) {
         serverLogger.error("Error checking provider status:", error);
@@ -2381,6 +2433,13 @@ ${title}`;
     socket.on("archive-task", async (data, callback) => {
       try {
         const { taskId } = ArchiveTaskSchema.parse(data);
+
+        // In web mode, skip Docker container operations (managed by cloud provider)
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          serverLogger.info(`Skipping container cleanup for task ${taskId} in web mode`);
+          callback({ success: true });
+          return;
+        }
 
         // Stop/pause all containers via helper (handles querying + logging)
         const results = await stopContainersForRuns(taskId, safeTeam);

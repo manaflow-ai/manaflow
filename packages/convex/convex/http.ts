@@ -15,6 +15,16 @@ import { githubSetup } from "./github_setup";
 import { githubWebhook } from "./github_webhook";
 import { reportEnvironmentError } from "./taskRuns_http";
 import { stackWebhook } from "./stack_webhook";
+import {
+  updatePreviewStatus,
+  createScreenshotSet,
+  dispatchPreviewJob,
+  completePreviewJob,
+} from "./preview_jobs_http";
+import {
+  syncRelease as syncHostScreenshotCollectorRelease,
+  getLatest as getLatestHostScreenshotCollector,
+} from "./hostScreenshotCollector_http";
 
 const http = httpRouter();
 
@@ -94,6 +104,42 @@ http.route({
   path: "/api/task-runs/report-environment-error",
   method: "POST",
   handler: reportEnvironmentError,
+});
+
+http.route({
+  path: "/api/preview/jobs/dispatch",
+  method: "POST",
+  handler: dispatchPreviewJob,
+});
+
+http.route({
+  path: "/api/preview/update-status",
+  method: "POST",
+  handler: updatePreviewStatus,
+});
+
+http.route({
+  path: "/api/preview/create-screenshot-set",
+  method: "POST",
+  handler: createScreenshotSet,
+});
+
+http.route({
+  path: "/api/preview/complete",
+  method: "POST",
+  handler: completePreviewJob,
+});
+
+http.route({
+  path: "/api/host-screenshot-collector/sync",
+  method: "POST",
+  handler: syncHostScreenshotCollectorRelease,
+});
+
+http.route({
+  path: "/api/host-screenshot-collector/latest",
+  method: "GET",
+  handler: getLatestHostScreenshotCollector,
 });
 
 export default http;

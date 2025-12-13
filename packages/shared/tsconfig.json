@@ -9,7 +9,8 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "jsx": "react-jsx"
   },
   "include": ["src"]
 }

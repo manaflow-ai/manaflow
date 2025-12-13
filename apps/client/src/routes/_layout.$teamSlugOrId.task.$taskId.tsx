@@ -126,8 +126,17 @@ function TaskDetailPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [flatRuns, taskId, navigate, teamSlugOrId]);
 
-  if (!task || !taskRuns) {
+  // Distinguish between loading (undefined) and not found (null)
+  if (task === undefined || taskRuns === undefined) {
     return <div className="p-8">Loading...</div>;
+  }
+
+  if (task === null) {
+    return (
+      <div className="p-8 text-neutral-500 dark:text-neutral-400">
+        Task not found or you don't have access to it.
+      </div>
+    );
   }
 
   return (

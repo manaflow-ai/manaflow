@@ -23,12 +23,13 @@ type CommandInputProps = React.ComponentPropsWithoutRef<
   typeof CommandPrimitive.Input
 > & {
   showIcon?: boolean;
+  rightElement?: React.ReactNode;
 };
 
 const CommandInput = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Input>,
   CommandInputProps
->(({ className, showIcon = true, ...props }, ref) => (
+>(({ className, showIcon = true, rightElement, ...props }, ref) => (
   <div
     className="flex items-center border-b border-neutral-200 dark:border-neutral-800 px-3"
     cmdk-input-wrapper=""
@@ -42,6 +43,7 @@ const CommandInput = React.forwardRef<
       )}
       {...props}
     />
+    {rightElement}
   </div>
 ));
 CommandInput.displayName = CommandPrimitive.Input.displayName;

@@ -96,6 +96,7 @@ const convexSchema = defineSchema({
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
     pinned: v.optional(v.boolean()),
+    isPreview: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
     description: v.optional(v.string()),
@@ -162,7 +163,9 @@ const convexSchema = defineSchema({
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
-    .index("by_pinned", ["pinned", "teamId", "userId"]),
+    .index("by_pinned", ["pinned", "teamId", "userId"])
+    .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
+    .index("by_team_preview", ["teamId", "isPreview"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
@@ -174,11 +177,13 @@ const convexSchema = defineSchema({
       v.literal("pending"),
       v.literal("running"),
       v.literal("completed"),
-      v.literal("failed")
+      v.literal("failed"),
+      v.literal("skipped")
     ),
     isArchived: v.optional(v.boolean()), // Whether this run is hidden from default views
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
+    isPreviewJob: v.optional(v.boolean()), // Whether this is a preview job that should auto-run screenshots
     // Optional log retained for backward compatibility; no longer written to.
     log: v.optional(v.string()), // CLI output log (deprecated)
     worktreePath: v.optional(v.string()), // Path to the git worktree for this run
@@ -298,7 +303,21 @@ const convexSchema = defineSchema({
     .index("by_vscode_status", ["vscode.status"])
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_pull_request_url", ["pullRequestUrl"]),
+
+  // Junction table linking taskRuns to pull requests by PR identity
+  // Enables efficient lookup of taskRuns when a PR webhook fires
+  taskRunPullRequests: defineTable({
+    taskRunId: v.id("taskRuns"),
+    teamId: v.string(),
+    repoFullName: v.string(), // owner/repo
+    prNumber: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId"])
+    .index("by_pr", ["teamId", "repoFullName", "prNumber"]),
+
   taskRunScreenshotSets: defineTable({
     taskId: v.id("tasks"),
     runId: v.id("taskRuns"),
@@ -307,6 +326,7 @@ const convexSchema = defineSchema({
       v.literal("failed"),
       v.literal("skipped"),
     ),
+    hasUiChanges: v.optional(v.boolean()),
     commitSha: v.optional(v.string()),
     capturedAt: v.number(),
     error: v.optional(v.string()),
@@ -315,7 +335,9 @@ const convexSchema = defineSchema({
         storageId: v.id("_storage"),
         mimeType: v.string(),
         fileName: v.optional(v.string()),
+        // @deprecated - use the top-level commitSha field instead
         commitSha: v.optional(v.string()),
+        description: v.optional(v.string()),
       }),
     ),
     createdAt: v.number(),
@@ -543,6 +565,66 @@ const convexSchema = defineSchema({
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user_repo", ["teamId", "userId", "projectFullName"]),
+  previewConfigs: defineTable({
+    teamId: v.string(),
+    createdByUserId: v.string(),
+    repoFullName: v.string(),
+    repoProvider: v.optional(v.literal("github")),
+    repoInstallationId: v.number(),
+    repoDefaultBranch: v.optional(v.string()),
+    environmentId: v.optional(v.id("environments")),
+    status: v.optional(
+      v.union(
+        v.literal("active"),
+        v.literal("paused"),
+        v.literal("disabled"),
+      ),
+    ),
+    lastRunAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_team_repo", ["teamId", "repoFullName"])
+    .index("by_team", ["teamId", "updatedAt"])
+    .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_environment", ["environmentId"])
+    .index("by_installation_repo", ["repoInstallationId", "repoFullName"]),
+  previewRuns: defineTable({
+    previewConfigId: v.id("previewConfigs"),
+    teamId: v.string(),
+    repoFullName: v.string(),
+    repoInstallationId: v.optional(v.number()),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    prTitle: v.optional(v.string()), // PR title from GitHub
+    prDescription: v.optional(v.string()), // PR body/description from GitHub
+    headSha: v.string(),
+    baseSha: v.optional(v.string()),
+    headRef: v.optional(v.string()), // Branch name in head repo
+    headRepoFullName: v.optional(v.string()), // Fork repo full name (if from fork)
+    headRepoCloneUrl: v.optional(v.string()), // Fork repo clone URL (if from fork)
+    taskRunId: v.optional(v.id("taskRuns")),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    stateReason: v.optional(v.string()),
+    dispatchedAt: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+    githubCommentUrl: v.optional(v.string()),
+    githubCommentId: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_config_status", ["previewConfigId", "status", "createdAt"])
+    .index("by_config_head", ["previewConfigId", "headSha"])
+    .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
+    .index("by_team_created", ["teamId", "createdAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),
@@ -963,6 +1045,20 @@ const convexSchema = defineSchema({
     .index("by_statusId", ["statusId"])
     .index("by_sha_context", ["sha", "context", "updatedAt"])
     .index("by_sha", ["sha", "updatedAt"]),
+
+  // Host screenshot collector releases synced from GitHub releases
+  hostScreenshotCollectorReleases: defineTable({
+    version: v.string(), // e.g., "0.1.0-20241211120000-abc1234"
+    commitSha: v.string(), // Full git commit SHA
+    storageId: v.id("_storage"), // Convex file storage ID for the bundled JS
+    isStaging: v.boolean(), // Whether this is for staging (cmux-internal-dev-agent) or production (cmux-agent)
+    isLatest: v.boolean(), // Whether this is the latest release for its environment
+    releaseUrl: v.optional(v.string()), // GitHub release URL
+    createdAt: v.number(),
+  })
+    .index("by_version", ["version"])
+    .index("by_staging_latest", ["isStaging", "isLatest", "createdAt"])
+    .index("by_staging_created", ["isStaging", "createdAt"]),
 });
 
 export default convexSchema;

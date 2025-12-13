@@ -189,16 +189,28 @@ function checkoutBranch(workspacePath: string, baseBranch: string, newBranch?: s
   if (checkoutResult.exitCode === 0) {
     log(`Checked out ${baseBranch}`);
 
-    // Pull latest changes
-    const { exitCode: pullExitCode } = exec(
+    // Pull latest changes (fast-forward only)
+    const { exitCode: pullExitCode, stderr: pullStderr } = exec(
       `git pull --ff-only`,
       { cwd: workspacePath, throwOnError: false }
     );
 
     if (pullExitCode === 0) {
       log("Pulled latest changes");
+    } else if (pullStderr.includes("divergent") || pullStderr.includes("Not possible to fast-forward")) {
+      // Handle divergent branches by resetting to remote
+      log("Divergent branches detected, resetting to remote", "debug");
+      const { exitCode: resetExitCode } = exec(
+        `git reset --hard "origin/${baseBranch}"`,
+        { cwd: workspacePath, throwOnError: false }
+      );
+      if (resetExitCode === 0) {
+        log(`Reset to origin/${baseBranch}`);
+      } else {
+        log(`Could not reset to origin/${baseBranch}`, "error");
+      }
     } else {
-      log("Could not pull latest changes (may be up to date or have conflicts)", "debug");
+      log("Could not pull latest changes (may be up to date)", "debug");
     }
   } else {
     log(`Could not checkout ${baseBranch}: ${checkoutResult.stderr}`, "error");
@@ -232,7 +244,16 @@ function hydrateSubdirectories(workspacePath: string) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
         log(`Pulling updates in ${dir}`);
-        exec(`git pull --ff-only`, { cwd: dir, throwOnError: false });
+        const { exitCode, stderr } = exec(`git pull --ff-only`, { cwd: dir, throwOnError: false });
+        if (exitCode !== 0 && (stderr.includes("divergent") || stderr.includes("Not possible to fast-forward"))) {
+          // Get current branch and reset to remote
+          const { stdout: branch } = exec(`git rev-parse --abbrev-ref HEAD`, { cwd: dir, throwOnError: false });
+          const branchName = branch.trim();
+          if (branchName) {
+            log(`Divergent branches in ${dir}, resetting to origin/${branchName}`, "debug");
+            exec(`git reset --hard "origin/${branchName}"`, { cwd: dir, throwOnError: false });
+          }
+        }
       }
     }
   } catch (error) {

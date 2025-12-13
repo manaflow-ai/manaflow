@@ -35,6 +35,8 @@ export const StartTaskSchema = z.object({
   taskDescription: z.string(),
   projectFullName: z.string(),
   taskId: typedZid("tasks"),
+  // Pre-created task run IDs (one per agent) - if provided, server skips creating runs
+  taskRunIds: z.array(typedZid("taskRuns")).optional(),
   selectedAgents: z.array(z.string()).optional(),
   isCloudMode: z.boolean().optional().default(false),
   images: z
@@ -288,11 +290,6 @@ export const GitHubFetchReposSchema = z.object({
   teamSlugOrId: z.string(),
 });
 
-export const GitHubFetchBranchesSchema = z.object({
-  teamSlugOrId: z.string(),
-  repo: z.string(),
-});
-
 export const GitHubBranchSchema = z.object({
   name: z.string(),
   lastCommitSha: z.string().optional(),
@@ -300,13 +297,6 @@ export const GitHubBranchSchema = z.object({
   isDefault: z.boolean().optional(),
   lastKnownBaseSha: z.string().optional(),
   lastKnownMergeCommitSha: z.string().optional(),
-});
-
-export const GitHubBranchesResponseSchema = z.object({
-  success: z.boolean(),
-  branches: z.array(GitHubBranchSchema),
-  defaultBranch: z.string().optional(),
-  error: z.string().optional(),
 });
 
 export const GitHubReposResponseSchema = z.object({
@@ -471,10 +461,6 @@ export type FileInfo = z.infer<typeof FileInfoSchema>;
 export type ListFilesResponse = z.infer<typeof ListFilesResponseSchema>;
 export type VSCodeSpawned = z.infer<typeof VSCodeSpawnedSchema>;
 export type GitHubBranch = z.infer<typeof GitHubBranchSchema>;
-export type GitHubFetchBranches = z.infer<typeof GitHubFetchBranchesSchema>;
-export type GitHubBranchesResponse = z.infer<
-  typeof GitHubBranchesResponseSchema
->;
 export type GitHubReposResponse = z.infer<typeof GitHubReposResponseSchema>;
 export type GitHubAuthResponse = z.infer<typeof GitHubAuthResponseSchema>;
 export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
@@ -533,10 +519,6 @@ export interface ClientToServerEvents {
   "github-fetch-repos": (
     data: GitHubFetchRepos,
     callback: (response: GitHubReposResponse) => void
-  ) => void;
-  "github-fetch-branches": (
-    data: GitHubFetchBranches,
-    callback: (response: GitHubBranchesResponse) => void
   ) => void;
   // Create a draft pull request for a given task run
   "github-create-draft-pr": (

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MonitorUp } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskRunTerminalSession } from "./task-run-terminal-session";
+import { WorkspaceLoadingIndicator } from "./workspace-loading-indicator";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
@@ -202,58 +202,66 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
 
   if (!workspaceUrl || !baseUrl) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-        <MonitorUp className="size-4 animate-pulse" aria-hidden />
-        <span>Terminal is starting...</span>
+      <div className="flex h-full items-center justify-center">
+        <WorkspaceLoadingIndicator variant="terminal" status="loading" />
       </div>
     );
   }
 
   if (isTabsLoading) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-        <MonitorUp className="size-4 animate-pulse" aria-hidden />
-        <span>Loading terminal...</span>
+      <div className="flex h-full items-center justify-center">
+        <WorkspaceLoadingIndicator
+          variant="terminal"
+          status="loading"
+          loadingTitle="Loading terminal"
+          loadingDescription="Fetching terminal sessions..."
+        />
       </div>
     );
   }
 
   if (isTabsError) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-        <MonitorUp className="size-4 text-red-500" aria-hidden />
-        <span className="text-red-500 dark:text-red-400">
-          {tabsError instanceof Error ? tabsError.message : "Failed to load terminal"}
-        </span>
+      <div className="flex h-full items-center justify-center">
+        <WorkspaceLoadingIndicator
+          variant="terminal"
+          status="error"
+          errorDescription={
+            tabsError instanceof Error ? tabsError.message : undefined
+          }
+        />
       </div>
     );
   }
 
   if (terminalIds.length === 0) {
+    const retryButton = autoCreateError ? (
+      <button
+        type="button"
+        onClick={handleManualRetry}
+        className="inline-flex items-center justify-center rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-400 hover:text-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
+      >
+        Retry terminal
+      </button>
+    ) : null;
+
+    const attemptInfo =
+      !autoCreateError && autoCreateAttemptCount > 0
+        ? `Attempt ${Math.min(autoCreateAttemptCount, MAX_AUTO_CREATE_ATTEMPTS)} of ${MAX_AUTO_CREATE_ATTEMPTS}`
+        : undefined;
+
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-neutral-500 dark:text-neutral-400">
-        <MonitorUp className="size-4 animate-pulse" aria-hidden />
-        <div className="flex flex-col gap-1">
-          <span>
-            {autoCreateError
-              ? autoCreateError
-              : "Waiting for a terminal session..."}
-          </span>
-          {!autoCreateError && autoCreateAttemptCount > 0 ? (
-            <span className="text-xs text-neutral-400 dark:text-neutral-500">
-              {`Attempt ${Math.min(autoCreateAttemptCount, MAX_AUTO_CREATE_ATTEMPTS)} of ${MAX_AUTO_CREATE_ATTEMPTS}`}
-            </span>
-          ) : null}
-        </div>
-        {autoCreateError ? (
-          <button
-            type="button"
-            onClick={handleManualRetry}
-            className="inline-flex items-center justify-center rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-400 hover:text-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
-          >
-            Retry terminal
-          </button>
-        ) : null}
+      <div className="flex h-full items-center justify-center">
+        <WorkspaceLoadingIndicator
+          variant="terminal"
+          status={autoCreateError ? "error" : "loading"}
+          loadingTitle="Connecting to terminal"
+          loadingDescription={attemptInfo ?? "Waiting for a terminal session..."}
+          errorTitle="Terminal connection failed"
+          errorDescription={autoCreateError ?? undefined}
+          action={retryButton}
+        />
       </div>
     );
   }

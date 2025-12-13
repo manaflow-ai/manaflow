@@ -24,7 +24,7 @@ export function initPosthog() {
     return posthog;
   }
 
-  if (!env.NEXT_PUBLIC_POSTHOG_KEY) {
+  if (!env.NEXT_PUBLIC_POSTHOG_KEY || import.meta.env.DEV) {
     return null;
   }
 

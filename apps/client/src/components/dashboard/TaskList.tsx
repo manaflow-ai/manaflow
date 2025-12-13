@@ -1,10 +1,11 @@
 import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import { useLocalStorage } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
 import { memo, useCallback, useMemo, useState } from "react";
 import { TaskItem } from "./TaskItem";
+import { PreviewItem } from "./PreviewItem";
 import { ChevronRight } from "lucide-react";
 
 type TaskCategoryKey =
@@ -109,6 +110,74 @@ const createCollapsedCategoryState = (
   merged: defaultValue,
 });
 
+// Preview run types
+type PreviewRunWithConfig = Doc<"previewRuns"> & {
+  configRepoFullName?: string;
+  taskId?: Id<"tasks">;
+};
+
+type PreviewCategoryKey = "in_progress" | "completed";
+
+const PREVIEW_CATEGORY_ORDER: PreviewCategoryKey[] = ["in_progress", "completed"];
+
+const PREVIEW_CATEGORY_META: Record<
+  PreviewCategoryKey,
+  { title: string; emptyLabel: string }
+> = {
+  in_progress: {
+    title: "In Progress",
+    emptyLabel: "No previews are currently in progress.",
+  },
+  completed: {
+    title: "Completed",
+    emptyLabel: "No completed previews yet.",
+  },
+};
+
+const createEmptyPreviewCategoryBuckets = (): Record<
+  PreviewCategoryKey,
+  PreviewRunWithConfig[]
+> => ({
+  in_progress: [],
+  completed: [],
+});
+
+const getPreviewCategory = (run: PreviewRunWithConfig): PreviewCategoryKey | null => {
+  if (run.status === "pending" || run.status === "running") {
+    return "in_progress";
+  }
+  // Only "completed" and "skipped" should show as completed (green circles)
+  if (run.status === "completed" || run.status === "skipped") {
+    return "completed";
+  }
+  // "failed" runs are excluded from both categories
+  return null;
+};
+
+const categorizePreviewRuns = (
+  runs: PreviewRunWithConfig[] | undefined
+): Record<PreviewCategoryKey, PreviewRunWithConfig[]> | null => {
+  if (!runs) {
+    return null;
+  }
+  const buckets = createEmptyPreviewCategoryBuckets();
+  for (const run of runs) {
+    const key = getPreviewCategory(run);
+    // Skip runs that don't belong to any category (e.g., failed runs)
+    if (key !== null) {
+      buckets[key].push(run);
+    }
+  }
+  return buckets;
+};
+
+const createCollapsedPreviewCategoryState = (
+  defaultValue = false
+): Record<PreviewCategoryKey, boolean> => ({
+  in_progress: defaultValue,
+  completed: defaultValue,
+});
+
 export const TaskList = memo(function TaskList({
   teamSlugOrId,
 }: {
@@ -120,7 +189,8 @@ export const TaskList = memo(function TaskList({
     archived: true,
   });
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
-  const [tab, setTab] = useState<"all" | "archived">("all");
+  const previewRuns = useQuery(api.previewRuns.listByTeam, { teamSlugOrId });
+  const [tab, setTab] = useState<"all" | "archived" | "previews">("all");
 
   const categorizedTasks = useMemo(() => {
     const categorized = categorizeTasks(allTasks);
@@ -163,6 +233,36 @@ export const TaskList = memo(function TaskList({
     }));
   }, [setCollapsedCategories]);
 
+  // Preview runs categorization
+  const categorizedPreviewRuns = useMemo(
+    () => categorizePreviewRuns(previewRuns),
+    [previewRuns]
+  );
+  const previewCategoryBuckets = categorizedPreviewRuns ?? createEmptyPreviewCategoryBuckets();
+
+  const collapsedPreviewStorageKey = useMemo(
+    () => `dashboard-collapsed-preview-categories-${teamSlugOrId}`,
+    [teamSlugOrId]
+  );
+  const defaultCollapsedPreviewState = useMemo(
+    () => createCollapsedPreviewCategoryState(),
+    []
+  );
+  const [collapsedPreviewCategories, setCollapsedPreviewCategories] = useLocalStorage<
+    Record<PreviewCategoryKey, boolean>
+  >({
+    key: collapsedPreviewStorageKey,
+    defaultValue: defaultCollapsedPreviewState,
+    getInitialValueInEffect: true,
+  });
+
+  const togglePreviewCategoryCollapse = useCallback((categoryKey: PreviewCategoryKey) => {
+    setCollapsedPreviewCategories((prev) => ({
+      ...prev,
+      [categoryKey]: !prev[categoryKey],
+    }));
+  }, [setCollapsedPreviewCategories]);
+
   return (
     <div className="mt-6 w-full">
       <div className="mb-3 px-4">
@@ -178,6 +278,18 @@ export const TaskList = memo(function TaskList({
             onClick={() => setTab("all")}
           >
             Tasks
+          </button>
+          <button
+            className={
+              "text-sm font-medium transition-colors " +
+              (tab === "previews"
+                ? "text-neutral-900 dark:text-neutral-100"
+                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
+            }
+            onMouseDown={() => setTab("previews")}
+            onClick={() => setTab("previews")}
+          >
+            Previews
           </button>
           <button
             className={
@@ -211,6 +323,29 @@ export const TaskList = memo(function TaskList({
                 teamSlugOrId={teamSlugOrId}
               />
             ))
+          )
+        ) : tab === "previews" ? (
+          previewRuns === undefined ? (
+            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
+              Loading...
+            </div>
+          ) : previewRuns.length === 0 ? (
+            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
+              No preview runs
+            </div>
+          ) : (
+            <div className="mt-1 w-full flex flex-col space-y-[-1px] transform -translate-y-px">
+              {PREVIEW_CATEGORY_ORDER.map((categoryKey) => (
+                <PreviewCategorySection
+                  key={categoryKey}
+                  categoryKey={categoryKey}
+                  previewRuns={previewCategoryBuckets[categoryKey]}
+                  teamSlugOrId={teamSlugOrId}
+                  collapsed={Boolean(collapsedPreviewCategories[categoryKey])}
+                  onToggle={togglePreviewCategoryCollapse}
+                />
+              ))}
+            </div>
           )
         ) : allTasks === undefined ? (
           <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
@@ -298,6 +433,76 @@ function TaskCategorySection({
         <div id={contentId} className="flex flex-col w-full">
           {tasks.map((task) => (
             <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
+          ))}
+        </div>
+      ) : (
+        <div className="flex w-full items-center px-4 py-3">
+          <p className="pl-5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+            {meta.emptyLabel}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PreviewCategorySection({
+  categoryKey,
+  previewRuns,
+  teamSlugOrId,
+  collapsed,
+  onToggle,
+}: {
+  categoryKey: PreviewCategoryKey;
+  previewRuns: PreviewRunWithConfig[];
+  teamSlugOrId: string;
+  collapsed: boolean;
+  onToggle: (key: PreviewCategoryKey) => void;
+}) {
+  const meta = PREVIEW_CATEGORY_META[categoryKey];
+  const handleToggle = useCallback(
+    () => onToggle(categoryKey),
+    [categoryKey, onToggle]
+  );
+  const contentId = `preview-category-${categoryKey}`;
+  const toggleLabel = collapsed
+    ? `Expand ${meta.title}`
+    : `Collapse ${meta.title}`;
+  return (
+    <div className="w-full">
+      <div
+        className="sticky top-0 z-10 flex w-full border-y border-neutral-200 dark:border-neutral-900 bg-neutral-100 dark:bg-neutral-800 select-none"
+        onDoubleClick={handleToggle}
+      >
+        <div className="flex w-full items-center pr-4">
+          <button
+            type="button"
+            onClick={handleToggle}
+            aria-label={toggleLabel}
+            aria-expanded={!collapsed}
+            aria-controls={contentId}
+            className="flex h-9 w-9 items-center justify-center text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-300 dark:focus-visible:outline-neutral-700 transition-colors"
+          >
+            <ChevronRight
+              className={clsx(
+                "h-3 w-3 transition-transform duration-200",
+                !collapsed && "rotate-90"
+              )}
+              aria-hidden="true"
+            />
+          </button>
+          <div className="flex items-center gap-2 text-xs font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
+            <span>{meta.title}</span>
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              {previewRuns.length}
+            </span>
+          </div>
+        </div>
+      </div>
+      {collapsed ? null : previewRuns.length > 0 ? (
+        <div id={contentId} className="flex flex-col w-full">
+          {previewRuns.map((run) => (
+            <PreviewItem key={run._id} previewRun={run} teamSlugOrId={teamSlugOrId} />
           ))}
         </div>
       ) : (

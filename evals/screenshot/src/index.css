@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}
+
+/* Better markdown code blocks */
+.prose pre {
+  @apply rounded-lg border border-neutral-200 dark:border-neutral-700;
+}
+
+.prose code {
+  @apply rounded px-1.5 py-0.5 font-mono text-sm;
+}
+
+.prose :not(pre) > code {
+  @apply bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200;
+}
+
+.prose :not(pre) > code::before,
+.prose :not(pre) > code::after {
+  content: none;
+}
+
+/* Better table styles */
+.prose table {
+  @apply w-full border-collapse;
+}
+
+.prose th,
+.prose td {
+  @apply border border-neutral-200 dark:border-neutral-700 px-3 py-2 text-left;
+}
+
+.prose th {
+  @apply bg-neutral-100 dark:bg-neutral-800 font-semibold;
+}
+
+.prose tr:nth-child(even) {
+  @apply bg-neutral-50 dark:bg-neutral-900/50;
+}
+
+/* Better blockquote */
+.prose blockquote {
+  @apply border-l-4 border-neutral-300 dark:border-neutral-600 pl-4 italic text-neutral-600 dark:text-neutral-400;
+}
+
+/* Better lists */
+.prose ul {
+  @apply list-disc pl-6;
+}
+
+.prose ol {
+  @apply list-decimal pl-6;
+}
+
+.prose li {
+  @apply my-1;
+}
+
+/* Task lists */
+.prose ul.contains-task-list {
+  @apply list-none pl-0;
+}
+
+.prose li.task-list-item {
+  @apply flex items-start gap-2;
+}
+
+.prose li.task-list-item input {
+  @apply mt-1.5;
+}
+
+/* Links */
+.prose a {
+  @apply text-blue-600 dark:text-blue-400 hover:underline;
+}
+
+/* Headings */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  @apply font-semibold text-neutral-900 dark:text-neutral-100;
+}
+
+.prose h1 {
+  @apply text-2xl mt-6 mb-4;
+}
+
+.prose h2 {
+  @apply text-xl mt-5 mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-700;
+}
+
+.prose h3 {
+  @apply text-lg mt-4 mb-2;
+}
+
+/* Horizontal rule */
+.prose hr {
+  @apply border-neutral-200 dark:border-neutral-700 my-6;
+}
+
+/* Images */
+.prose img {
+  @apply rounded-lg max-w-full;
+}

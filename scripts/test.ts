@@ -225,11 +225,27 @@ async function runTests() {
   console.log(
     `🧵 Stage 1 — workspaces (excluding @cmux/server) (${otherPkgs.length}): ${otherNames}`
   );
+  const skipCargoCrates =
+    process.env.CMUX_SKIP_CARGO_CRATES?.split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0) ?? [];
+  const skipCargoSet = new Set(skipCargoCrates);
   const cargoCrates = findCargoCrates();
-  const cargoNames = cargoCrates.map((c) => `cargo:${c.name}`).join(", ");
-  console.log(
-    `🧵 Stage 1 — cargo crates (${cargoCrates.length}): ${cargoNames}`
+  const cargoCratesToRun = cargoCrates.filter(
+    (c) => !skipCargoSet.has(c.name)
   );
+  const skippedCargoCrates = cargoCrates
+    .filter((c) => skipCargoSet.has(c.name))
+    .map((c) => c.name);
+  const cargoNames = cargoCratesToRun.map((c) => `cargo:${c.name}`).join(", ");
+  console.log(
+    `🧵 Stage 1 — cargo crates (${cargoCratesToRun.length}): ${cargoNames}`
+  );
+  if (skippedCargoCrates.length > 0) {
+    console.log(
+      `🚫 Skipping cargo crates via CMUX_SKIP_CARGO_CRATES: ${skippedCargoCrates.join(", ")}`
+    );
+  }
 
   const allPerTests: PerTestTiming[] = [];
 
@@ -238,15 +254,15 @@ async function runTests() {
       return new Promise<Result>((resolve) => {
         let combined = "";
         const start = performance.now();
-        const cmd = "pnpm";
+        const cmd = "bun";
         let args: string[];
         const useJson = showTimings && isVitest;
         if (useJson) {
-          // Prefer pnpm exec to avoid the extra `--` being forwarded to vitest
+          // Prefer bun exec to avoid the extra `--` being forwarded to vitest
           if (usesDotenv) {
             // Replicate `dotenv -e <path> -- vitest run` with JSON reporter
             args = [
-              "exec",
+              "x",
               "dotenv",
               ...(dotenvEnvPath ? ["-e", dotenvEnvPath] : []),
               "--",
@@ -256,7 +272,7 @@ async function runTests() {
               "--silent",
             ];
           } else {
-            args = ["exec", "vitest", "run", "--reporter=json", "--silent"];
+            args = ["x", "vitest", "run", "--reporter=json", "--silent"];
           }
         } else {
           // Normal run (no JSON reporter), preserves raw console logs
@@ -312,7 +328,7 @@ async function runTests() {
   );
 
   // Run Stage 1 — non-server packages and cargo crates concurrently
-  const cargoTasks = cargoCrates.map((c) =>
+  const cargoTasks = cargoCratesToRun.map((c) =>
     new Promise<Result>((resolve) => {
       console.log(`▶️  cargo:${c.name}: starting tests`);
       const start = performance.now();
@@ -357,7 +373,7 @@ async function runTests() {
   const resultsStage1 = await Promise.all([...tasksStage1, ...cargoTasks]);
 
   // Build native Node-API addons for cargo crates (if they define a build script)
-  await buildNativeAddons(cargoCrates);
+  await buildNativeAddons(cargoCratesToRun);
 
   // Stage 3 — run @cmux/server tests (after cargo)
   let serverResults: Result[] = [];
@@ -366,14 +382,14 @@ async function runTests() {
     const r = await new Promise<Result>((resolve) => {
       let combined = "";
       const start = performance.now();
-      const cmd = "pnpm";
+      const cmd = "bun";
       const useJson = showTimings && serverPkg.isVitest;
       let args: string[];
       const skipDocker = process.env.CMUX_SKIP_DOCKER_TESTS === "1";
       if (useJson) {
         if (serverPkg.usesDotenv) {
           args = [
-            "exec",
+            "x",
             "dotenv",
             ...(serverPkg.dotenvEnvPath ? ["-e", serverPkg.dotenvEnvPath] : []),
             "--",
@@ -385,7 +401,7 @@ async function runTests() {
           ];
         } else {
           args = [
-            "exec",
+            "x",
             "vitest",
             "run",
             "--reporter=json",
@@ -467,7 +483,7 @@ async function runTests() {
         // If we ran vitest with --silent for JSON, re-run to print raw logs.
         try {
           const retry = await new Promise<string>((resolve) => {
-            const child = spawn("pnpm", ["run", "test"], {
+            const child = spawn("bun", ["run", "test"], {
               cwd: r.dir,
               shell: true,
               env: process.env,

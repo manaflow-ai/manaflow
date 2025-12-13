@@ -16,6 +16,7 @@ import {
   fetchPrMetadata,
   type GithubPrMetadata,
 } from "../scripts/pr-review/github";
+import { VM_CLEANUP_COMMANDS } from "../lib/routes/sandboxes/cleanup";
 
 const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_vb7uqz8o";
 const OPEN_VSCODE_PORT = 39378;
@@ -591,6 +592,8 @@ export async function startAutomatedPrReview(
 
     if (instance) {
       try {
+        // Kill all dev servers before pausing to avoid port conflicts on resume
+        await instance.exec(VM_CLEANUP_COMMANDS);
         await instance.pause();
       } catch (pauseError) {
         const pauseMessage =

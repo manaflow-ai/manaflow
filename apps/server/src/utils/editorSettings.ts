@@ -42,17 +42,40 @@ export interface EditorSettingsUpload {
 
 const homeDir = os.homedir();
 const posix = path.posix;
-const OPENVSCODE_USER_DIR = "/root/.openvscode-server/data/User";
-const OPENVSCODE_PROFILE_DIR = posix.join(
-  OPENVSCODE_USER_DIR,
-  "profiles",
-  "default-profile"
-);
-const OPENVSCODE_MACHINE_DIR = "/root/.openvscode-server/data/Machine";
-const OPENVSCODE_SNIPPETS_DIR = posix.join(OPENVSCODE_USER_DIR, "snippets");
+
+// IDE Provider path configurations
+type IdeProvider = "coder" | "openvscode";
+
+interface IdePaths {
+  userDir: string;
+  profileDir: string | null;
+  machineDir: string;
+  snippetsDir: string;
+  extensionsDir: string;
+  binaryPath: string;
+}
+
+const IDE_PATHS: Record<IdeProvider, IdePaths> = {
+  coder: {
+    userDir: "/root/.code-server/User",
+    profileDir: null, // Coder doesn't use profiles
+    machineDir: "/root/.code-server/Machine",
+    snippetsDir: "/root/.code-server/User/snippets",
+    extensionsDir: "/root/.code-server/extensions",
+    binaryPath: "/app/code-server/bin/code-server",
+  },
+  openvscode: {
+    userDir: "/root/.openvscode-server/data/User",
+    profileDir: "/root/.openvscode-server/data/User/profiles/default-profile",
+    machineDir: "/root/.openvscode-server/data/Machine",
+    snippetsDir: "/root/.openvscode-server/data/User/snippets",
+    extensionsDir: "/root/.openvscode-server/extensions",
+    binaryPath: "/app/openvscode-server/bin/openvscode-server",
+  },
+};
+
 const CMUX_INTERNAL_DIR = "/root/.cmux";
 const EXTENSION_LIST_PATH = posix.join(CMUX_INTERNAL_DIR, "user-extensions.txt");
-const OPENVSCODE_EXT_DIR = "/root/.openvscode-server/extensions";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedResult:
@@ -303,25 +326,51 @@ function encode(content: string): string {
 }
 
 function buildExtensionInstallCommand(listPath: string): string {
+  // Build a script that auto-detects IDE provider from /etc/cmux/ide.env
   const scriptBody = [
     "set -euo pipefail",
     `EXT_LIST="${listPath}"`,
-    `EXT_DIR="${OPENVSCODE_EXT_DIR}"`,
-    `USER_DIR="${OPENVSCODE_USER_DIR}"`,
     "mkdir -p /root/.cmux",
     'LOG_FILE="/root/.cmux/install-extensions.log"',
     'touch "$LOG_FILE"',
     'if [ ! -s "$EXT_LIST" ]; then echo "No extensions to install (list empty)" >>"$LOG_FILE"; exit 0; fi',
-    'CLI_PATH="${OPENVSCODE_CLI:-}"',
-    'if [ -z "$CLI_PATH" ] && [ -x /app/openvscode-server/bin/openvscode-server ]; then',
+    "",
+    "# Detect IDE provider from env file",
+    'IDE_PROVIDER="openvscode"',
+    'if [ -f /etc/cmux/ide.env ]; then',
+    '  . /etc/cmux/ide.env',
+    "fi",
+    "",
+    '# Set paths based on IDE provider',
+    'if [ "$IDE_PROVIDER" = "coder" ]; then',
+    '  EXT_DIR="/root/.code-server/extensions"',
+    '  USER_DIR="/root/.code-server"',
+    '  CLI_PATH="/app/code-server/bin/code-server"',
+    "else",
+    '  EXT_DIR="/root/.openvscode-server/extensions"',
+    '  USER_DIR="/root/.openvscode-server/data"',
     '  CLI_PATH="/app/openvscode-server/bin/openvscode-server"',
     "fi",
-    'if [ -z "$CLI_PATH" ] && [ -x /app/openvscode-server/bin/remote-cli/openvscode-server ]; then',
-      '  CLI_PATH="/app/openvscode-server/bin/remote-cli/openvscode-server"',
+    "",
+    '# Fallback CLI detection',
+    'if [ ! -x "$CLI_PATH" ]; then',
+    '  if [ -x /app/code-server/bin/code-server ]; then',
+    '    CLI_PATH="/app/code-server/bin/code-server"',
+    '    EXT_DIR="/root/.code-server/extensions"',
+    '    USER_DIR="/root/.code-server"',
+    '  elif [ -x /app/openvscode-server/bin/openvscode-server ]; then',
+    '    CLI_PATH="/app/openvscode-server/bin/openvscode-server"',
+    '    EXT_DIR="/root/.openvscode-server/extensions"',
+    '    USER_DIR="/root/.openvscode-server/data"',
+    "  fi",
     "fi",
-    'if [ -z "$CLI_PATH" ]; then CLI_PATH="$(command -v openvscode-server || true)"; fi',
-    'if [ -z "$CLI_PATH" ]; then echo "openvscode CLI not found in PATH or standard locations" >>"$LOG_FILE"; exit 0; fi',
-    'echo "Installing extensions with $CLI_PATH" >>"$LOG_FILE"',
+    "",
+    'if [ ! -x "$CLI_PATH" ]; then',
+    '  echo "No IDE CLI found in standard locations" >>"$LOG_FILE"',
+    "  exit 0",
+    "fi",
+    "",
+    'echo "Installing extensions with $CLI_PATH (provider: $IDE_PROVIDER)" >>"$LOG_FILE"',
     'chmod +x "$CLI_PATH" || true',
     'mkdir -p "$EXT_DIR" "$USER_DIR"',
     'ext=""',
@@ -329,21 +378,21 @@ function buildExtensionInstallCommand(listPath: string): string {
     'pids=()',
     'had_failure=0',
     'while IFS= read -r ext; do',
-      '  [ -z "$ext" ] && continue',
-      '  installed_any=1',
-      '  echo "-> Installing $ext" >>"$LOG_FILE"',
+    '  [ -z "$ext" ] && continue',
+    '  installed_any=1',
+    '  echo "-> Installing $ext" >>"$LOG_FILE"',
     '  (',
     '    if "$CLI_PATH" --install-extension "$ext" --force --extensions-dir "$EXT_DIR" --user-data-dir "$USER_DIR" >>"$LOG_FILE" 2>&1; then',
-      '      echo "✓ Installed $ext" >>"$LOG_FILE"',
-      "    else",
-      '      echo "Failed to install $ext" >>"$LOG_FILE"',
-      "      exit 1",
-      "    fi",
+    '      echo "✓ Installed $ext" >>"$LOG_FILE"',
+    "    else",
+    '      echo "Failed to install $ext" >>"$LOG_FILE"',
+    "      exit 1",
+    "    fi",
     '  ) &',
     '  pids+=("$!")',
-    "done < \"$EXT_LIST\"",
+    'done < "$EXT_LIST"',
     'if [ "$installed_any" -eq 0 ]; then',
-      '  echo "No valid extension identifiers found" >>"$LOG_FILE"',
+    '  echo "No valid extension identifiers found" >>"$LOG_FILE"',
     "fi",
     'for pid in "${pids[@]}"; do',
     '  if ! wait "$pid"; then',
@@ -372,10 +421,16 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
 
   if (editor.settings) {
     const encodedSettings = encode(editor.settings.content);
+    // Write settings to both IDE provider locations for compatibility
+    // The correct one will be used based on which IDE is installed
     const targets = [
-      posix.join(OPENVSCODE_USER_DIR, "settings.json"),
-      posix.join(OPENVSCODE_PROFILE_DIR, "settings.json"),
-      posix.join(OPENVSCODE_MACHINE_DIR, "settings.json"),
+      // OpenVSCode paths
+      posix.join(IDE_PATHS.openvscode.userDir, "settings.json"),
+      posix.join(IDE_PATHS.openvscode.profileDir ?? IDE_PATHS.openvscode.userDir, "settings.json"),
+      posix.join(IDE_PATHS.openvscode.machineDir, "settings.json"),
+      // Coder paths
+      posix.join(IDE_PATHS.coder.userDir, "settings.json"),
+      posix.join(IDE_PATHS.coder.machineDir, "settings.json"),
     ];
     for (const destinationPath of targets) {
       authFiles.push({
@@ -387,8 +442,14 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
   }
 
   if (editor.keybindings) {
+    // Write keybindings to both IDE provider locations
     authFiles.push({
-      destinationPath: posix.join(OPENVSCODE_USER_DIR, "keybindings.json"),
+      destinationPath: posix.join(IDE_PATHS.openvscode.userDir, "keybindings.json"),
+      contentBase64: encode(editor.keybindings.content),
+      mode: "644",
+    });
+    authFiles.push({
+      destinationPath: posix.join(IDE_PATHS.coder.userDir, "keybindings.json"),
       contentBase64: encode(editor.keybindings.content),
       mode: "644",
     });
@@ -398,8 +459,14 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
     for (const snippet of editor.snippets) {
       const name = path.basename(snippet.path);
       if (!name) continue;
+      // Write snippets to both IDE provider locations
       authFiles.push({
-        destinationPath: posix.join(OPENVSCODE_SNIPPETS_DIR, name),
+        destinationPath: posix.join(IDE_PATHS.openvscode.snippetsDir, name),
+        contentBase64: encode(snippet.content),
+        mode: "644",
+      });
+      authFiles.push({
+        destinationPath: posix.join(IDE_PATHS.coder.snippetsDir, name),
         contentBase64: encode(snippet.content),
         mode: "644",
       });

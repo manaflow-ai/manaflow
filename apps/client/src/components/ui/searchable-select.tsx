@@ -97,6 +97,14 @@ export interface SearchableSelectProps {
   popoverSide?: PopoverContentProps["side"];
   popoverAlign?: PopoverContentProps["align"];
   popoverSideOffset?: number;
+  // Callback when the popover opens or closes (for lazy loading)
+  onOpenChange?: (open: boolean) => void;
+  // Callback when the search input changes (for server-side filtering)
+  onSearchChange?: (search: string) => void;
+  // Whether search results are being fetched (shows loading indicator in input)
+  searchLoading?: boolean;
+  // Disable client-side filtering (use when server handles filtering)
+  disableClientFilter?: boolean;
 }
 
 interface WarningIndicatorProps {
@@ -251,6 +259,10 @@ const SearchableSelect = forwardRef<
     popoverSide = "bottom",
     popoverAlign = "start",
     popoverSideOffset = 2,
+    onOpenChange,
+    onSearchChange,
+    searchLoading = false,
+    disableClientFilter = false,
   },
   ref
 ) {
@@ -266,9 +278,21 @@ const SearchableSelect = forwardRef<
     ? Math.max(1, Math.floor(maxCountPerValue))
     : 1;
   const allowValueCountAdjustments = !singleSelect && resolvedMaxPerValue > 1;
-  const [open, setOpen] = useState(false);
+  const [open, setOpenInternal] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearchInternal] = useState("");
+
+  // Wrapper to call onOpenChange callback when open state changes
+  const setOpen = useCallback((newOpen: boolean) => {
+    setOpenInternal(newOpen);
+    onOpenChange?.(newOpen);
+  }, [onOpenChange]);
+
+  // Wrapper to call onSearchChange callback when search changes
+  const setSearch = useCallback((newSearch: string) => {
+    setSearchInternal(newSearch);
+    onSearchChange?.(newSearch);
+  }, [onSearchChange]);
   const [_recalcTick, setRecalcTick] = useState(0);
   // Popover width is fixed; no need to track trigger width
   const pendingFocusRef = useRef<string | null>(null);
@@ -294,10 +318,12 @@ const SearchableSelect = forwardRef<
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, setOpen]);
 
   const displayContent = useMemo(() => {
-    if (loading) {
+    // Only show skeleton when loading AND no value is selected
+    // This keeps the current selection visible during search/refresh
+    if (loading && value.length === 0) {
       return <Skeleton className="h-4 w-18 rounded-lg" />;
     }
     if (value.length === 0) {
@@ -404,17 +430,22 @@ const SearchableSelect = forwardRef<
     normOptions,
     placeholder,
     selectedLabels,
+    setOpen,
     value,
     valueToOption,
   ]);
 
   const filteredOptions = useMemo(() => {
+    // Skip client-side filtering when disabled (e.g., server handles filtering)
+    if (disableClientFilter) {
+      return normOptions;
+    }
     const q = search.trim().toLowerCase();
     if (!q) return normOptions;
     return normOptions.filter((o) =>
       `${o.label} ${o.value}`.toLowerCase().includes(q)
     );
-  }, [normOptions, search]);
+  }, [normOptions, search, disableClientFilter]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
@@ -441,6 +472,33 @@ const SearchableSelect = forwardRef<
       });
     }
   }, [open, rowVirtualizer]);
+
+  // Track the first non-heading option to select it when options change
+  const firstSelectableOption = useMemo(() => {
+    return filteredOptions.find((o) => !o.heading);
+  }, [filteredOptions]);
+
+  // cmdk value state - reset to first option when filtered options change
+  const [cmdkValue, setCmdkValue] = useState<string>("");
+
+  // Reset selection to first option when filtered options change
+  const prevFirstOptionRef = useRef<string | undefined>(firstSelectableOption?.value);
+  useEffect(() => {
+    if (open && firstSelectableOption && prevFirstOptionRef.current !== firstSelectableOption.value) {
+      // Use setTimeout to let cmdk process new items first
+      const timeoutId = setTimeout(() => {
+        setCmdkValue(`${firstSelectableOption.label} ${firstSelectableOption.value}`);
+        try {
+          rowVirtualizer.scrollToIndex(0, { align: "start", behavior: "auto" });
+        } catch {
+          /* noop */
+        }
+      }, 0);
+      prevFirstOptionRef.current = firstSelectableOption.value;
+      return () => clearTimeout(timeoutId);
+    }
+    prevFirstOptionRef.current = firstSelectableOption?.value;
+  }, [open, firstSelectableOption, rowVirtualizer]);
 
   const handleOpenAutoFocus = useCallback(
     (_event: Event) => {
@@ -505,7 +563,7 @@ const SearchableSelect = forwardRef<
         setOpen(false);
       },
     }),
-    [filteredOptions, open, rowVirtualizer]
+    [filteredOptions, open, rowVirtualizer, setOpen, setSearch]
   );
 
   const updateValueCount = (val: string, nextCount: number) => {
@@ -580,6 +638,8 @@ const SearchableSelect = forwardRef<
           <Command
             loop
             shouldFilter={false}
+            value={cmdkValue}
+            onValueChange={setCmdkValue}
             className={clsx("text-[13.5px]", classNames.command)}
           >
             {showSearch ? (
@@ -614,6 +674,11 @@ const SearchableSelect = forwardRef<
                   }
                 }}
                 className={clsx("text-[13.5px] py-2", classNames.commandInput)}
+                rightElement={
+                  searchLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-neutral-400 ml-2" />
+                  ) : null
+                }
               />
             ) : null}
             {loading ? (

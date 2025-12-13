@@ -95,7 +95,7 @@ before_free="$(capture_output free -h || true)"
 before_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
 before_zram="$(capture_output zramctl || true)"
 
-declare -a candidate_units=(ssh.service sshd.service cmux-openvscode.service code-server.service openvscode-server.service)
+declare -a candidate_units=(ssh.service sshd.service cmux-ide.service cmux-openvscode.service code-server.service openvscode-server.service)
 declare -a report_units=()
 
 for unit in "${candidate_units[@]}"; do
@@ -399,6 +399,7 @@ summary+=("Set vm.swappiness to 70.")
 declare -A memory_low_map=(
   [ssh.service]="256M"
   [sshd.service]="256M"
+  [cmux-ide.service]="2G"
   [cmux-openvscode.service]="2G"
   [code-server.service]="2G"
   [openvscode-server.service]="2G"

@@ -168,11 +168,20 @@ export const setCrownWinner = authMutation({
       teamId,
     });
 
-    // Mark PR creation needed
+    // Mark PR creation needed and clear any existing PR associations
     await ctx.db.patch(args.taskRunId, {
       pullRequestUrl: "pending",
       pullRequests: undefined,
     });
+
+    // Clear junction table entries for this taskRun
+    const existingJunctionEntries = await ctx.db
+      .query("taskRunPullRequests")
+      .withIndex("by_task_run", (q) => q.eq("taskRunId", args.taskRunId))
+      .collect();
+    for (const entry of existingJunctionEntries) {
+      await ctx.db.delete(entry._id);
+    }
 
     return args.taskRunId;
   },
@@ -184,13 +193,11 @@ export const getCrownedRun = authQuery({
     taskId: v.id("tasks"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const crownedRun = await ctx.db
       .query("taskRuns")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .filter((q) => q.eq(q.field("isCrowned"), true))
       .first();
 
@@ -213,13 +220,11 @@ export const getCrownEvaluation = authQuery({
       return null;
     }
 
-    const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const evaluation = await ctx.db
       .query("crownEvaluations")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId as Id<"tasks">))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .first();
 
     return evaluation;

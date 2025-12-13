@@ -178,13 +178,14 @@ const RestartTaskForm = memo(function RestartTaskForm({
           ? [...existingImages, ...newImages]
           : undefined;
 
-      const newTaskId = await createTask({
+      const { taskId: newTaskId, taskRunIds } = await createTask({
         teamSlugOrId,
         text: combinedPrompt,
         projectFullName: task.projectFullName ?? undefined,
         baseBranch: task.baseBranch ?? undefined,
         images: imagesPayload,
         environmentId: task.environmentId ?? undefined,
+        selectedAgents: [...restartAgents],
       });
 
       addTaskToExpand(newTaskId);
@@ -218,6 +219,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
           taskDescription: combinedPrompt,
           projectFullName: projectFullNameForSocket,
           taskId: newTaskId,
+          taskRunIds,
           selectedAgents: [...restartAgents],
           isCloudMode: restartIsCloudMode,
           ...(task.environmentId ? { environmentId: task.environmentId } : {}),

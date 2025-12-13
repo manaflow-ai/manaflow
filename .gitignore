@@ -17,6 +17,7 @@ out
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
 .idea
 .DS_Store
 *.suo
@@ -57,3 +58,5 @@ apps/www/scripts/pr-review/pr-review-inject.bundle.js
 apps/www/scripts/pr-review/evals/data/
 !apps/www/scripts/pr-review/evals/data/**/*.annotated.diff
 apps/www/scripts/pr-review/evals/results/
+
+.local_version

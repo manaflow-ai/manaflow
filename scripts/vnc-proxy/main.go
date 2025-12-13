@@ -108,6 +108,20 @@ func (cfg proxyConfig) listenAddr() string {
 	return net.JoinHostPort(cfg.listenHost, strconv.Itoa(cfg.listenPort))
 }
 
+// noDelayListener wraps a TCPListener and sets TCP_NODELAY on all accepted connections
+type noDelayListener struct {
+	*net.TCPListener
+}
+
+func (l *noDelayListener) Accept() (net.Conn, error) {
+	conn, err := l.TCPListener.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetNoDelay(true)
+	return conn, nil
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
@@ -125,7 +139,6 @@ func main() {
 	}
 
 	httpServer := &http.Server{
-		Addr:              cfg.listenAddr(),
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
@@ -139,7 +152,14 @@ func main() {
 		filepath.Clean(cfg.webRoot),
 	)
 
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// Use a custom listener to enable TCP_NODELAY on all accepted connections
+	ln, err := net.Listen("tcp", cfg.listenAddr())
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	ln = &noDelayListener{ln.(*net.TCPListener)}
+
+	if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server exited: %v", err)
 	}
 }
@@ -234,6 +254,11 @@ func newWebsocketHandler(cfg proxyConfig) http.Handler {
 		}
 
 		defer backend.Close()
+
+		// Disable Nagle's algorithm for lower latency
+		if tcpConn, ok := backend.(*net.TCPConn); ok {
+			_ = tcpConn.SetNoDelay(true)
+		}
 
 		opts := &websocket.AcceptOptions{InsecureSkipVerify: true}
 		if subprotocols := readRequestedSubprotocols(r); len(subprotocols) > 0 {

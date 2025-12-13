@@ -1,6 +1,10 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { api } from "@cmux/convex/api";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { createAppAuth } from "@octokit/auth-app";
+import { Octokit } from "octokit";
+import { env } from "@/lib/utils/www-env";
+import { githubPrivateKey } from "../utils/githubPrivateKey";
 import { getConvex } from "../utils/get-convex";
 
 export const githubInstallStateRouter = new OpenAPIHono();
@@ -25,6 +29,7 @@ const RequestBody = z
 const ResponseBody = z
   .object({
     state: z.string(),
+    installUrl: z.string().url(),
   })
   .openapi("GithubInstallStateResponse");
 
@@ -73,7 +78,27 @@ githubInstallStateRouter.openapi(
         ...(body.returnUrl ? { returnUrl: body.returnUrl } : {}),
       });
 
-      return c.json({ state: result.state });
+      const octokit = new Octokit({
+        authStrategy: createAppAuth,
+        auth: {
+          appId: env.CMUX_GITHUB_APP_ID,
+          privateKey: githubPrivateKey,
+        },
+      });
+
+      const appMeta = await octokit.request("GET /app");
+      const appSlug =
+        appMeta.data?.slug || process.env.NEXT_PUBLIC_GITHUB_APP_SLUG || null;
+      if (!appSlug) {
+        return c.text("GitHub App slug is not configured", 500);
+      }
+
+      const installUrl = new URL(
+        `https://github.com/apps/${appSlug}/installations/new`,
+      );
+      installUrl.searchParams.set("state", result.state);
+
+      return c.json({ state: result.state, installUrl: installUrl.toString() });
     } catch (error) {
       console.error("[githubInstallState] Failed to mint install state", error);
       const message = error instanceof Error ? error.message : "Unknown error";

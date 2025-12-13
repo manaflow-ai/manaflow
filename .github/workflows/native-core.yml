@@ -1,0 +1,45 @@
+name: native-core (Rust)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/server/native/core/**
+      - .github/workflows/native-core.yml
+  pull_request:
+    paths:
+      - apps/server/native/core/**
+      - .github/workflows/native-core.yml
+  workflow_dispatch:
+
+jobs:
+  rust-checks:
+    name: Rust checks
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/server/native/core
+
+      - name: Format
+        run: cargo fmt --all -- --check
+        working-directory: apps/server/native/core
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: apps/server/native/core
+
+      - name: Tests
+        run: cargo test --all-features --locked
+        working-directory: apps/server/native/core

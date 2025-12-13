@@ -1,17 +1,11 @@
-import { PersistentWebView } from "@/components/persistent-webview";
-import type { PersistentIframeStatus } from "@/components/persistent-iframe";
+import { VncViewer, type VncConnectionStatus } from "@cmux/shared/components/vnc-viewer";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import { getTaskRunBrowserPersistKey } from "@/lib/persistent-webview-keys";
-import {
-  TASK_RUN_IFRAME_ALLOW,
-  TASK_RUN_IFRAME_SANDBOX,
-} from "@/lib/preloadTaskRunIframes";
-import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toMorphVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import z from "zod";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useQuery } from "convex/react";
@@ -49,24 +43,18 @@ function BrowserComponent() {
 
   const vscodeInfo = taskRun?.vscode ?? null;
   const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const vncUrl = useMemo(() => {
+  const vncWebsocketUrl = useMemo(() => {
     if (!rawMorphUrl) {
       return null;
     }
-    return toMorphVncUrl(rawMorphUrl);
+    return toMorphVncWebsocketUrl(rawMorphUrl);
   }, [rawMorphUrl]);
 
-  const persistKey = getTaskRunBrowserPersistKey(taskRunId);
-  const hasBrowserView = Boolean(vncUrl);
+  const hasBrowserView = Boolean(vncWebsocketUrl);
   const isMorphProvider = vscodeInfo?.provider === "morph";
   const showLoader = isMorphProvider && !hasBrowserView;
 
-  const [iframeStatus, setIframeStatus] =
-    useState<PersistentIframeStatus>("loading");
-
-  useEffect(() => {
-    setIframeStatus("loading");
-  }, [vncUrl]);
+  const [vncStatus, setVncStatus] = useState<VncConnectionStatus>("disconnected");
 
   const overlayMessage = useMemo(() => {
     if (!isMorphProvider) {
@@ -78,15 +66,14 @@ function BrowserComponent() {
     return "Launching browser preview...";
   }, [hasBrowserView, isMorphProvider]);
 
-  const onLoad = useCallback(() => {
-    console.log(`Browser view loaded for task run ${taskRunId}`);
+  const onConnect = useCallback(() => {
+    console.log(`Browser VNC connected for task run ${taskRunId}`);
   }, [taskRunId]);
 
-  const onError = useCallback(
-    (error: Error) => {
-      console.error(
-        `Failed to load browser view for task run ${taskRunId}:`,
-        error
+  const onDisconnect = useCallback(
+    (_rfb: unknown, detail: { clean: boolean }) => {
+      console.log(
+        `Browser VNC disconnected for task run ${taskRunId} (clean: ${detail.clean})`
       );
     },
     [taskRunId]
@@ -101,7 +88,7 @@ function BrowserComponent() {
     []
   );
 
-  const isBrowserBusy = !hasBrowserView || iframeStatus !== "loaded";
+  const isBrowserBusy = !hasBrowserView || vncStatus !== "connected";
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
@@ -110,23 +97,22 @@ function BrowserComponent() {
           className="flex flex-row grow min-h-0 relative"
           aria-busy={isBrowserBusy}
         >
-          {vncUrl ? (
-            <PersistentWebView
-              persistKey={persistKey}
-              src={vncUrl}
-              className="grow flex relative"
-              iframeClassName="select-none"
-              sandbox={TASK_RUN_IFRAME_SANDBOX}
-              allow={TASK_RUN_IFRAME_ALLOW}
-              retainOnUnmount
-              onLoad={onLoad}
-              onError={onError}
-              fallback={loadingFallback}
-              fallbackClassName="bg-neutral-50 dark:bg-black"
+          {vncWebsocketUrl ? (
+            <VncViewer
+              url={vncWebsocketUrl}
+              className="grow"
+              background="#000000"
+              scaleViewport
+              autoConnect
+              autoReconnect
+              reconnectDelay={1000}
+              maxReconnectDelay={30000}
+              focusOnClick
+              onConnect={onConnect}
+              onDisconnect={onDisconnect}
+              onStatusChange={setVncStatus}
+              loadingFallback={loadingFallback}
               errorFallback={errorFallback}
-              errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-              onStatusChange={setIframeStatus}
-              loadTimeoutMs={60_000}
             />
           ) : (
             <div className="grow" />

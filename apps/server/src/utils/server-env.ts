@@ -7,6 +7,11 @@ export const env = createEnv({
     // Public origin used across the app; prefer this for WWW base URL
     NEXT_PUBLIC_WWW_ORIGIN: z.string().min(1).optional(),
     NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
+    // When enabled, restricts features to web-compatible only (e.g., cloud mode only, no local Docker)
+    NEXT_PUBLIC_WEB_MODE: z
+      .enum(["true", "false"])
+      .optional()
+      .transform((v) => v === "true"),
   },
   // Handle both Node and Vite/Bun
   runtimeEnv: { ...import.meta.env, ...process.env },

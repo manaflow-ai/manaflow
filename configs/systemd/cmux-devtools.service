@@ -1,7 +1,7 @@
 [Unit]
 Description=Cmux Chrome DevTools browser
-After=cmux-tigervnc.service
-Requires=cmux-tigervnc.service
+After=cmux-openbox.service
+Requires=cmux-openbox.service
 
 [Service]
 Type=simple

@@ -5,6 +5,7 @@ import { ScriptTextareaField } from "@/components/ScriptTextareaField";
 import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
 import { RenderPanel } from "@/components/TaskPanelFactory";
+import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import type { PanelPosition, PanelType } from "@/lib/panel-config";
 import {
@@ -313,43 +314,6 @@ export function EnvironmentConfiguration({
     []
   );
 
-  const disableIframePointerEvents = useCallback(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    const iframes = document.querySelectorAll("iframe");
-    for (const node of Array.from(iframes)) {
-      if (!(node instanceof HTMLIFrameElement)) {
-        continue;
-      }
-      const current = node.style.pointerEvents;
-      node.dataset.prevPointerEvents = current ? current : "__unset__";
-      node.style.pointerEvents = "none";
-    }
-  }, []);
-
-  const restoreIframePointerEvents = useCallback(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    const iframes = document.querySelectorAll("iframe");
-    for (const node of Array.from(iframes)) {
-      if (!(node instanceof HTMLIFrameElement)) {
-        continue;
-      }
-      const prev = node.dataset.prevPointerEvents;
-      if (prev !== undefined) {
-        if (prev === "__unset__") {
-          node.style.removeProperty("pointer-events");
-        } else {
-          node.style.pointerEvents = prev;
-        }
-        delete node.dataset.prevPointerEvents;
-      } else {
-        node.style.removeProperty("pointer-events");
-      }
-    }
-  }, []);
 
   const updateSplitFromEvent = useCallback(
     (event: MouseEvent) => {
@@ -389,10 +353,10 @@ export function EnvironmentConfiguration({
     }
     document.body.style.cursor = "";
     document.body.classList.remove("select-none");
-    restoreIframePointerEvents();
+    restoreDragPointerEvents();
     window.removeEventListener("mousemove", handleSplitDragMove);
     window.removeEventListener("mouseup", stopSplitDragging);
-  }, [handleSplitDragMove, restoreIframePointerEvents]);
+  }, [handleSplitDragMove]);
 
   const startSplitDragging = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -405,11 +369,11 @@ export function EnvironmentConfiguration({
       event.preventDefault();
       document.body.style.cursor = "row-resize";
       document.body.classList.add("select-none");
-      disableIframePointerEvents();
+      disableDragPointerEvents();
       window.addEventListener("mousemove", handleSplitDragMove);
       window.addEventListener("mouseup", stopSplitDragging);
     },
-    [disableIframePointerEvents, handleSplitDragMove, previewMode, stopSplitDragging]
+    [handleSplitDragMove, previewMode, stopSplitDragging]
   );
 
   useEffect(() => {
@@ -424,9 +388,9 @@ export function EnvironmentConfiguration({
         document.body.style.cursor = "";
         document.body.classList.remove("select-none");
       }
-      restoreIframePointerEvents();
+      restoreDragPointerEvents();
     };
-  }, [handleSplitDragMove, restoreIframePointerEvents, stopSplitDragging]);
+  }, [handleSplitDragMove, stopSplitDragging]);
 
   const createEnvironmentMutation = useRQMutation(
     postApiEnvironmentsMutation()

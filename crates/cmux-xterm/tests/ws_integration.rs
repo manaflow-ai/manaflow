@@ -96,5 +96,5 @@ async fn ws_echo_cat() {
         .unwrap();
     assert!(resp.status().is_success() || resp.status().as_u16() == 204);
 
-    let _ = server.abort();
+    server.abort();
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createPortal } from "react-dom";
+import * as Dialog from "@radix-ui/react-dialog";
 import type { LucideIcon } from "lucide-react";
 import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, PanelsLeftBottom, PanelsRightBottom, PanelsTopLeft, Trash2 } from "lucide-react";
 import clsx from "clsx";
@@ -7,8 +7,8 @@ import type { PanelConfig, PanelType, LayoutMode, PanelPosition } from "@/lib/pa
 import { PANEL_LABELS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions, getAvailablePanels, removePanelFromAllPositions } from "@/lib/panel-config";
 
 interface PanelConfigModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   config: PanelConfig;
   onChange: (config: PanelConfig) => void;
 }
@@ -36,12 +36,10 @@ const LAYOUT_ICON_CONFIGS: Record<LayoutMode, LayoutIconConfig> = {
   "three-bottom": { Icon: PanelsTopLeft, className: "rotate-180" },
 };
 
-export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelConfigModalProps) {
+export function PanelConfigModal({ open, onOpenChange, config, onChange }: PanelConfigModalProps) {
   const [draggedType, setDraggedType] = useState<PanelType | null>(null);
   const [draggedFrom, setDraggedFrom] = useState<PanelPosition | null>(null);
   const [showAddMenu, setShowAddMenu] = useState<PanelPosition | null>(null);
-
-  if (!isOpen) return null;
 
   const activePanelPositions = getActivePanelPositions(config.layoutMode);
   const availablePanels = getAvailablePanels(config);
@@ -255,96 +253,98 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
     );
   };
 
-  const modalContent = (
-    <div className="fixed inset-0 z-[var(--z-global-blocking)] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="relative w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-6 shadow-xl dark:border-neutral-800 dark:bg-neutral-900">
-        {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-white">
-            Panel Layout Settings
-          </h2>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-white"
-            aria-label="Close"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
-
-        {/* Description */}
-        <p className="mb-6 text-sm text-neutral-600 dark:text-neutral-400">
-          Choose a layout mode and drag and drop panels to customize your workspace. Your configuration will be saved automatically.
-        </p>
-
-        {/* Layout Mode Selection */}
-        <div className="mb-6">
-          <h3 className="mb-3 text-sm font-semibold text-neutral-900 dark:text-white">
-            Layout Mode
-          </h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {(Object.keys(LAYOUT_LABELS) as LayoutMode[]).map((layoutMode) => {
-              const { Icon: LayoutIcon, className: iconClassName } = LAYOUT_ICON_CONFIGS[layoutMode];
-              const isSelected = config.layoutMode === layoutMode;
-              return (
-                <button
-                  key={layoutMode}
-                  type="button"
-                  onClick={() => handleLayoutModeChange(layoutMode)}
-                  className={clsx(
-                    "flex flex-col items-center gap-2 rounded-lg border-2 p-3 transition-all",
-                    isSelected
-                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
-                  )}
-                  title={LAYOUT_DESCRIPTIONS[layoutMode]}
-                >
-                  <LayoutIcon className={clsx("size-5", iconClassName)} />
-                  <span className="text-xs font-medium text-center leading-tight">
-                    {LAYOUT_LABELS[layoutMode].replace(/\s*\(.*?\)\s*/g, "")}
-                  </span>
-                </button>
-              );
-            })}
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[var(--z-global-blocking)] bg-black/50 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[var(--z-global-blocking)] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-neutral-200 bg-white p-6 shadow-xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-900">
+          {/* Header */}
+          <div className="mb-6 flex items-center justify-between">
+            <Dialog.Title className="text-lg font-semibold text-neutral-900 dark:text-white">
+              Panel Layout Settings
+            </Dialog.Title>
+            <Dialog.Close asChild>
+              <button
+                type="button"
+                className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/40 dark:hover:bg-neutral-800 dark:hover:text-white"
+                aria-label="Close"
+              >
+                <X className="size-5" />
+              </button>
+            </Dialog.Close>
           </div>
-        </div>
 
-        {/* Grid Preview */}
-        <div className="mb-6">
-          <h3 className="mb-3 text-sm font-semibold text-neutral-900 dark:text-white">
-            Panel Configuration
-          </h3>
-          <div className="grid grid-cols-2 gap-4">
-            {renderPanel("topLeft", "Top Left")}
-            {renderPanel("topRight", "Top Right")}
-            {renderPanel("bottomLeft", "Bottom Left")}
-            {renderPanel("bottomRight", "Bottom Right")}
+          {/* Description */}
+          <Dialog.Description className="mb-6 text-sm text-neutral-600 dark:text-neutral-400">
+            Choose a layout mode and drag and drop panels to customize your workspace. Your configuration will be saved automatically.
+          </Dialog.Description>
+
+          {/* Layout Mode Selection */}
+          <div className="mb-6">
+            <h3 className="mb-3 text-sm font-semibold text-neutral-900 dark:text-white">
+              Layout Mode
+            </h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {(Object.keys(LAYOUT_LABELS) as LayoutMode[]).map((layoutMode) => {
+                const { Icon: LayoutIcon, className: iconClassName } = LAYOUT_ICON_CONFIGS[layoutMode];
+                const isSelected = config.layoutMode === layoutMode;
+                return (
+                  <button
+                    key={layoutMode}
+                    type="button"
+                    onClick={() => handleLayoutModeChange(layoutMode)}
+                    className={clsx(
+                      "flex flex-col items-center gap-2 rounded-lg border-2 p-3 transition-all",
+                      isSelected
+                        ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+                        : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
+                    )}
+                    title={LAYOUT_DESCRIPTIONS[layoutMode]}
+                  >
+                    <LayoutIcon className={clsx("size-5", iconClassName)} />
+                    <span className="text-xs font-medium text-center leading-tight">
+                      {LAYOUT_LABELS[layoutMode].replace(/\s*\(.*?\)\s*/g, "")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Actions */}
-        <div className="flex items-center justify-between border-t border-neutral-200 pt-4 dark:border-neutral-800">
-          <button
-            onClick={handleReset}
-            className="flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
-            <RotateCcw className="size-4" />
-            Reset to Default
-          </button>
-          <button
-            onClick={onClose}
-            className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            Done
-          </button>
-        </div>
-      </div>
-    </div>
+          {/* Grid Preview */}
+          <div className="mb-6">
+            <h3 className="mb-3 text-sm font-semibold text-neutral-900 dark:text-white">
+              Panel Configuration
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              {renderPanel("topLeft", "Top Left")}
+              {renderPanel("topRight", "Top Right")}
+              {renderPanel("bottomLeft", "Bottom Left")}
+              {renderPanel("bottomRight", "Bottom Right")}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-between border-t border-neutral-200 pt-4 dark:border-neutral-800">
+            <button
+              type="button"
+              onClick={handleReset}
+              className="flex items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              <RotateCcw className="size-4" />
+              Reset to Default
+            </button>
+            <Dialog.Close asChild>
+              <button
+                type="button"
+                className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
+              >
+                Done
+              </button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
-
-  if (typeof document === "undefined") {
-    return modalContent;
-  }
-
-  return createPortal(modalContent, document.body);
 }

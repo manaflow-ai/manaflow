@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import type { LayoutMode } from "@/lib/panel-config";
+import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
 
 const PANEL_GAP = 4;
 const PANEL_GAP_HALF = PANEL_GAP / 2;
@@ -90,20 +91,7 @@ export function FlexiblePanelLayout({
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    // Restore iframe pointer events
-    const iframes = Array.from(document.querySelectorAll("iframe"));
-    for (const el of iframes) {
-      if (el instanceof HTMLIFrameElement) {
-        const prev = el.dataset.prevPointerEvents;
-        if (prev !== undefined) {
-          if (prev === "__unset__") el.style.removeProperty("pointer-events");
-          else el.style.pointerEvents = prev;
-          delete el.dataset.prevPointerEvents;
-        } else {
-          el.style.removeProperty("pointer-events");
-        }
-      }
-    }
+    restoreDragPointerEvents();
     window.removeEventListener("mousemove", onMouseMoveHorizontal);
     window.removeEventListener("mousemove", onMouseMoveVertical);
     window.removeEventListener("mouseup", stopResizing);
@@ -114,15 +102,7 @@ export function FlexiblePanelLayout({
       e.preventDefault();
       document.body.style.cursor = "col-resize";
       document.body.classList.add("select-none");
-      // Disable pointer events on iframes while dragging
-      const iframes = Array.from(document.querySelectorAll("iframe"));
-      for (const el of iframes) {
-        if (el instanceof HTMLIFrameElement) {
-          const current = el.style.pointerEvents;
-          el.dataset.prevPointerEvents = current ? current : "__unset__";
-          el.style.pointerEvents = "none";
-        }
-      }
+      disableDragPointerEvents();
       window.addEventListener("mousemove", onMouseMoveHorizontal);
       window.addEventListener("mouseup", stopResizing);
     },
@@ -134,15 +114,7 @@ export function FlexiblePanelLayout({
       e.preventDefault();
       document.body.style.cursor = "row-resize";
       document.body.classList.add("select-none");
-      // Disable pointer events on iframes while dragging
-      const iframes = Array.from(document.querySelectorAll("iframe"));
-      for (const el of iframes) {
-        if (el instanceof HTMLIFrameElement) {
-          const current = el.style.pointerEvents;
-          el.dataset.prevPointerEvents = current ? current : "__unset__";
-          el.style.pointerEvents = "none";
-        }
-      }
+      disableDragPointerEvents();
       window.addEventListener("mousemove", onMouseMoveVertical);
       window.addEventListener("mouseup", stopResizing);
     },

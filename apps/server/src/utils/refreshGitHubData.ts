@@ -1,8 +1,8 @@
 import { api } from "@cmux/convex/api";
-import { ghApi } from "../ghApi";
-import { listRemoteBranches } from "../native/git";
+import { createGitHubApiClient, ghApi } from "../ghApi";
 import { getConvex } from "./convexClient";
 import { serverLogger } from "./fileLogger";
+import { getGitHubOAuthToken } from "./getGitHubToken";
 
 export async function refreshGitHubData({
   teamSlugOrId,
@@ -91,22 +91,18 @@ export async function refreshBranchesForRepo(
   teamSlugOrId: string
 ) {
   try {
-    // Prefer local git via Rust (gitoxide) for branch listing, sorted by recency
-    let branches: {
-      name: string;
-      lastCommitSha?: string;
-      lastActivityAt?: number;
-    }[];
-    try {
-      branches = await listRemoteBranches({ repoFullName: repo });
-    } catch (e) {
-      // Fallback to GitHub API if native unavailable or errors
-      const nativeMsg = e instanceof Error ? e.message : String(e);
+    // Get OAuth token for authenticated GitHub API access
+    const githubToken = await getGitHubOAuthToken();
+    if (!githubToken) {
       serverLogger.info(
-        `Native branch listing failed for ${repo}; falling back to GitHub API: ${nativeMsg}`
+        "No GitHub authentication found, skipping branch refresh"
       );
-      branches = await ghApi.getRepoBranchesWithActivity(repo);
+      return [];
     }
+
+    // Use GitHub API with OAuth token for branch listing (works for private repos)
+    const ghClient = createGitHubApiClient(githubToken);
+    const branches = await ghClient.getRepoBranchesWithActivity(repo);
 
     if (branches.length > 0) {
       await getConvex().mutation(api.github.bulkUpsertBranchesWithActivity, {

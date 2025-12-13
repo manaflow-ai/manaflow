@@ -20,7 +20,12 @@ const testImportMetaEnv = {
 };
 
 export default defineConfig({
-  plugins: [tsconfigPaths()],
+  plugins: [
+    tsconfigPaths({
+      // Only scan from apps/client to avoid dev-docs submodules with unresolved tsconfig extends
+      root: import.meta.dirname,
+    }),
+  ],
   test: {
     environment: "node",
     env: testClientEnv,

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 export type WorkspaceLoadingStatus = "loading" | "error";
 
-type WorkspaceLoadingVariant = "vscode" | "browser";
+type WorkspaceLoadingVariant = "vscode" | "browser" | "terminal";
 
 export interface WorkspaceLoadingIndicatorProps {
   status: WorkspaceLoadingStatus;
@@ -14,6 +14,7 @@ export interface WorkspaceLoadingIndicatorProps {
   loadingDescription?: string;
   errorTitle?: string;
   errorDescription?: string;
+  action?: React.ReactNode;
 }
 
 const VARIANT_COPY: Record<
@@ -39,6 +40,12 @@ const VARIANT_COPY: Record<
     errorTitle: "We couldn't launch the browser preview",
     errorDescription: "Refresh the page or switch to cloud mode, then try again.",
   },
+  terminal: {
+    loadingTitle: "Starting terminal",
+    loadingDescription: "Connecting to the workspace terminal session.",
+    errorTitle: "We couldn't connect to the terminal",
+    errorDescription: "Refresh the page or try again.",
+  },
 };
 
 export const WorkspaceLoadingIndicator = memo(function WorkspaceLoadingIndicator({
@@ -49,6 +56,7 @@ export const WorkspaceLoadingIndicator = memo(function WorkspaceLoadingIndicator
   loadingDescription,
   errorTitle,
   errorDescription,
+  action,
 }: WorkspaceLoadingIndicatorProps) {
   const copy = VARIANT_COPY[variant];
   const isError = status === "error";
@@ -82,6 +90,7 @@ export const WorkspaceLoadingIndicator = memo(function WorkspaceLoadingIndicator
           {resolvedDescription}
         </p>
       </div>
+      {action}
     </div>
   );
 });

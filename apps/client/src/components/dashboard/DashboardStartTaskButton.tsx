@@ -6,15 +6,17 @@ interface DashboardStartTaskButtonProps {
   canSubmit: boolean;
   onStartTask: () => void;
   disabledReason?: string;
+  isStarting: boolean;
 }
 
 export function DashboardStartTaskButton({
   canSubmit,
   onStartTask,
   disabledReason,
+  isStarting,
 }: DashboardStartTaskButtonProps) {
   const isMac = navigator.userAgent.toUpperCase().indexOf("MAC") >= 0;
-  const isDisabled = !canSubmit || !!disabledReason;
+  const isDisabled = isStarting || !canSubmit || !!disabledReason;
 
   return (
     <Tooltip delayDuration={0}>
@@ -31,8 +33,9 @@ export function DashboardStartTaskButton({
             className="!h-7 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900"
             onClick={onStartTask}
             disabled={isDisabled}
+            aria-busy={isStarting}
           >
-            Start task
+            {isStarting ? "Starting..." : "Start task"}
           </Button>
         </span>
       </TooltipTrigger>

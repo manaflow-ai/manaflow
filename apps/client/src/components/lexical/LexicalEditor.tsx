@@ -1,7 +1,4 @@
-import Prism from "prismjs";
-if (typeof globalThis.Prism === "undefined") {
-  globalThis.Prism = Prism;
-}
+import "./prism-setup";
 
 import { editorStorage } from "@/lib/editorStorage";
 import { CodeNode } from "@lexical/code";
@@ -171,7 +168,10 @@ function KeyboardCommandPlugin({ onSubmit }: { onSubmit?: () => void }) {
           return false;
         }
 
-        if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+        if (
+          typeof navigator === "undefined" ||
+          !navigator.clipboard?.readText
+        ) {
           return false;
         }
 

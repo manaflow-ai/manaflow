@@ -4,23 +4,23 @@ use std::{
     sync::Arc,
 };
 
+use brotli::Decompressor;
 use bytes::Bytes;
+use flate2::read::{GzDecoder, ZlibDecoder};
 use http::{
     HeaderMap, Method, Request, Response, StatusCode, Uri, Version,
-    header::{self, HeaderValue, CONNECTION, UPGRADE},
+    header::{self, CONNECTION, HeaderValue, UPGRADE},
     uri::Scheme,
 };
+use hyper::upgrade::Upgraded;
 use hyper::{
     Body, Client, body,
     client::HttpConnector,
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnectorBuilder;
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
-use flate2::read::{GzDecoder, ZlibDecoder};
-use brotli::Decompressor;
 use tokio::{
     io::{copy_bidirectional_with_sizes, AsyncWriteExt},
     sync::oneshot,
@@ -404,8 +404,36 @@ async fn forward_request(
     target: Target,
     behavior: ProxyBehavior,
 ) -> Response<Body> {
-    if is_upgrade_request(&req) {
-        return handle_websocket(state, req, target, behavior).await;
+    match check_upgrade_request(&req) {
+        UpgradeCheck::NativeUpgrade => {
+            // Ensure upgrade headers are present for hyper's upgrade mechanism to work.
+            // Use insert() to handle cases where Connection: keep-alive was set instead.
+            req.headers_mut()
+                .insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+            req.headers_mut()
+                .insert(UPGRADE, HeaderValue::from_static("websocket"));
+            return handle_websocket(state, req, target, behavior).await;
+        }
+        UpgradeCheck::FallbackDetection => {
+            // WebSocket detected via Sec-WebSocket-Key, but Connection/Upgrade headers
+            // are missing. This typically happens when requests come through HTTP/2 load
+            // balancers that strip hop-by-hop headers. Unfortunately, hyper's upgrade
+            // mechanism requires these headers at parse time to create the OnUpgrade
+            // extension. Without it, we cannot complete the client-side upgrade.
+            warn!(
+                "WebSocket request detected via Sec-WebSocket-Key but missing Connection/Upgrade headers - upgrade not possible"
+            );
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("content-type", "text/plain")
+                .body(Body::from(
+                    "WebSocket upgrade failed: Connection and Upgrade headers are required. \
+                     This may occur when requests are proxied through HTTP/2 without proper \
+                     WebSocket support.",
+                ))
+                .unwrap();
+        }
+        UpgradeCheck::NotUpgrade => {}
     }
 
     let (scheme, host, port_opt) = match target {
@@ -481,14 +509,11 @@ async fn forward_request(
             response.status(),
             StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
         )
+        && let Some(context) = head_fallback_context
+        && let Some(fallback) =
+            handle_head_method_not_allowed(state, context, behavior.clone()).await
     {
-        if let Some(context) = head_fallback_context {
-            if let Some(fallback) =
-                handle_head_method_not_allowed(state, context, behavior.clone()).await
-            {
-                return fallback;
-            }
-        }
+        return fallback;
     }
 
     transform_response(response, behavior).await
@@ -518,10 +543,7 @@ async fn handle_head_method_not_allowed(
     get_request.headers_mut().remove(header::CONTENT_LENGTH);
 
     match state.client.request(get_request).await {
-        Ok(resp) => match transform_head_response_from_get(resp, behavior).await {
-            Ok(head_response) => Some(head_response),
-            Err(_) => None,
-        },
+        Ok(resp) => (transform_head_response_from_get(resp, behavior).await).ok(),
         Err(_) => None,
     }
 }
@@ -573,15 +595,15 @@ fn build_head_response(
     if force_cors_headers && !behavior.strip_cors_headers {
         add_cors_headers(&mut new_headers);
     }
-    if let Some(frame_ancestors) = behavior.frame_ancestors {
-        if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
-            new_headers.insert("content-security-policy", value);
-        }
+    if let Some(frame_ancestors) = behavior.frame_ancestors
+        && let Ok(value) = HeaderValue::from_str(frame_ancestors)
+    {
+        new_headers.insert("content-security-policy", value);
     }
-    if let Some(len) = body_len {
-        if let Ok(value) = HeaderValue::from_str(&len.to_string()) {
-            new_headers.insert(header::CONTENT_LENGTH, value);
-        }
+    if let Some(len) = body_len
+        && let Ok(value) = HeaderValue::from_str(&len.to_string())
+    {
+        new_headers.insert(header::CONTENT_LENGTH, value);
     }
     let headers_mut = builder.headers_mut().unwrap();
     for (name, value) in new_headers.iter() {
@@ -616,15 +638,16 @@ async fn handle_websocket(
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
-    let backend_uri = match format!("{}://{}{}", scheme.as_str(), authority, path_and_query).parse::<Uri>() {
-        Ok(uri) => uri,
-        Err(_) => {
-            return text_response(
-                StatusCode::BAD_GATEWAY,
-                "Failed to build upstream websocket URI",
-            );
-        }
-    };
+    let backend_uri =
+        match format!("{}://{}{}", scheme.as_str(), authority, path_and_query).parse::<Uri>() {
+            Ok(uri) => uri,
+            Err(_) => {
+                return text_response(
+                    StatusCode::BAD_GATEWAY,
+                    "Failed to build upstream websocket URI",
+                );
+            }
+        };
 
     let headers_to_forward = collect_forward_headers(req.headers(), &behavior);
 
@@ -652,10 +675,21 @@ async fn handle_websocket(
             .insert(name.clone(), value.clone());
     }
 
-    let (backend_stream, backend_headers) = match connect_upstream_websocket(state.client.clone(), backend_request).await {
-        Ok(result) => result,
-        Err(response) => return response,
-    };
+    // Ensure WebSocket upgrade headers are correctly set for the backend connection.
+    // The client request is guaranteed to have these headers (we check for NativeUpgrade),
+    // but we use insert() to ensure they're set correctly (e.g., not Connection: keep-alive).
+    backend_request
+        .headers_mut()
+        .insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+    backend_request
+        .headers_mut()
+        .insert(UPGRADE, HeaderValue::from_static("websocket"));
+
+    let (backend_stream, backend_headers) =
+        match connect_upstream_websocket(state.client.clone(), backend_request).await {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
 
     let client_upgrade = hyper::upgrade::on(req);
     let response = build_websocket_response(&backend_headers);
@@ -688,19 +722,19 @@ fn collect_forward_headers(
         http::HeaderMap::new()
     };
     headers.remove(header::HOST);
-    if let Some(port) = &behavior.port_header {
-        if let Ok(value) = HeaderValue::from_str(port) {
-            headers.insert("X-Cmux-Port-Internal", value);
-        }
+    if let Some(port) = &behavior.port_header
+        && let Ok(value) = HeaderValue::from_str(port)
+    {
+        headers.insert("X-Cmux-Port-Internal", value);
     }
     if let Some(workspace) = behavior.workspace_header.as_ref() {
         if let Ok(value) = HeaderValue::from_str(workspace) {
             headers.insert("X-Cmux-Workspace-Internal", value);
         }
-    } else if let Some(workspace) = derive_workspace_scope_from_headers(original) {
-        if let Ok(value) = HeaderValue::from_str(&workspace) {
-            headers.insert("X-Cmux-Workspace-Internal", value);
-        }
+    } else if let Some(workspace) = derive_workspace_scope_from_headers(original)
+        && let Ok(value) = HeaderValue::from_str(&workspace)
+    {
+        headers.insert("X-Cmux-Workspace-Internal", value);
     }
     headers.insert("X-Cmux-Proxied", HeaderValue::from_static("true"));
 
@@ -734,9 +768,7 @@ fn scope_from_cmux_subdomain(subdomain: &str) -> Option<String> {
     }
 
     let port_segment = segments.last()?;
-    if port_segment.parse::<u16>().ok().is_none() {
-        return None;
-    }
+    port_segment.parse::<u16>().ok()?;
 
     let scope_segments = &segments[1..segments.len() - 1];
     if scope_segments.is_empty()
@@ -748,10 +780,24 @@ fn scope_from_cmux_subdomain(subdomain: &str) -> Option<String> {
     }
 }
 
-fn is_upgrade_request(req: &Request<Body>) -> bool {
+/// Result of checking if a request is an upgrade request.
+enum UpgradeCheck {
+    /// Not an upgrade request.
+    NotUpgrade,
+    /// Upgrade request with proper Connection/Upgrade headers (hyper created OnUpgrade).
+    NativeUpgrade,
+    /// WebSocket detected via Sec-WebSocket-Key but missing Connection/Upgrade headers.
+    /// This happens when HTTP/2 load balancers strip hop-by-hop headers.
+    /// hyper won't have created the OnUpgrade extension, so upgrade will fail.
+    FallbackDetection,
+}
+
+fn check_upgrade_request(req: &Request<Body>) -> UpgradeCheck {
     if req.method() == Method::CONNECT {
-        return true;
+        return UpgradeCheck::NativeUpgrade;
     }
+
+    // HTTP/1.1 style upgrade: Connection: Upgrade + Upgrade: websocket
     let has_conn_upgrade = req
         .headers()
         .get(CONNECTION)
@@ -759,7 +805,20 @@ fn is_upgrade_request(req: &Request<Body>) -> bool {
         .map(|v| v.to_ascii_lowercase().contains("upgrade"))
         .unwrap_or(false);
     let has_upgrade_hdr = req.headers().get(UPGRADE).is_some();
-    has_conn_upgrade && has_upgrade_hdr
+    if has_conn_upgrade && has_upgrade_hdr {
+        return UpgradeCheck::NativeUpgrade;
+    }
+
+    // HTTP/2 fallback: When requests come through HTTP/2 load balancers (like Cloud Run),
+    // the hop-by-hop headers (Connection, Upgrade) are stripped. However, the WebSocket-specific
+    // headers (Sec-WebSocket-Key, Sec-WebSocket-Version) are preserved.
+    // NOTE: In this case, hyper won't have created the OnUpgrade extension at parse time,
+    // so we cannot complete the upgrade. We detect this to return a clear error.
+    if req.headers().get("sec-websocket-key").is_some() {
+        return UpgradeCheck::FallbackDetection;
+    }
+
+    UpgradeCheck::NotUpgrade
 }
 
 async fn connect_upstream_websocket(
@@ -770,7 +829,7 @@ async fn connect_upstream_websocket(
         error!(%err, "upstream websocket request error");
         text_response(
             StatusCode::BAD_GATEWAY,
-            "Failed to connect to websocket backend".into(),
+            "Failed to connect to websocket backend",
         )
     })?;
 
@@ -779,12 +838,10 @@ async fn connect_upstream_websocket(
         let body_bytes = body::to_bytes(response.into_body())
             .await
             .unwrap_or_else(|_| Bytes::new());
-        return Err(
-            Response::builder()
-                .status(status)
-                .body(Body::from(body_bytes))
-                .unwrap(),
-        );
+        return Err(Response::builder()
+            .status(status)
+            .body(Body::from(body_bytes))
+            .unwrap());
     }
 
     let headers = response.headers().clone();
@@ -794,7 +851,7 @@ async fn connect_upstream_websocket(
             error!(%err, "upstream websocket upgrade failed");
             Err(text_response(
                 StatusCode::BAD_GATEWAY,
-                "Failed to upgrade websocket backend".into(),
+                "Failed to upgrade websocket backend",
             ))
         }
     }
@@ -847,20 +904,21 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
     if content_type.contains("text/html") {
         match body::to_bytes(response.into_body()).await {
             Ok(bytes) => {
-                let decoded = match decode_body_with_encoding(bytes.as_ref(), content_encoding.as_deref()) {
-                    Ok(body) => Bytes::from(body),
-                    Err(err) => {
-                        warn!(%err, "failed to decode upstream body; skipping rewrite");
-                        return forward_response_with_body(
-                            status,
-                            version,
-                            &headers,
-                            &behavior,
-                            Body::from(bytes),
-                            /* strip_payload_headers */ false,
-                        );
-                    }
-                };
+                let decoded =
+                    match decode_body_with_encoding(bytes.as_ref(), content_encoding.as_deref()) {
+                        Ok(body) => Bytes::from(body),
+                        Err(err) => {
+                            warn!(%err, "failed to decode upstream body; skipping rewrite");
+                            return forward_response_with_body(
+                                status,
+                                version,
+                                &headers,
+                                &behavior,
+                                Body::from(bytes),
+                                /* strip_payload_headers */ false,
+                            );
+                        }
+                    };
                 match rewrite_html(decoded, behavior.skip_service_worker) {
                     Ok(body) => {
                         let mut builder = Response::builder().status(status).version(version);
@@ -872,10 +930,10 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                         } else if behavior.add_cors {
                             add_cors_headers(&mut new_headers);
                         }
-                        if let Some(frame_ancestors) = behavior.frame_ancestors {
-                            if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
-                                new_headers.insert("content-security-policy", value);
-                            }
+                        if let Some(frame_ancestors) = behavior.frame_ancestors
+                            && let Ok(value) = HeaderValue::from_str(frame_ancestors)
+                        {
+                            new_headers.insert("content-security-policy", value);
                         }
                         new_headers.insert(
                             header::CONTENT_LENGTH,
@@ -887,7 +945,9 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                         }
                         builder.body(Body::from(body)).unwrap()
                     }
-                    Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed"),
+                    Err(_) => {
+                        text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed")
+                    }
                 }
             }
             Err(_) => text_response(StatusCode::BAD_GATEWAY, "Failed to read upstream body"),
@@ -920,10 +980,10 @@ fn forward_response_with_body(
     } else if behavior.add_cors {
         add_cors_headers(&mut new_headers);
     }
-    if let Some(frame_ancestors) = behavior.frame_ancestors {
-        if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
-            new_headers.insert("content-security-policy", value);
-        }
+    if let Some(frame_ancestors) = behavior.frame_ancestors
+        && let Ok(value) = HeaderValue::from_str(frame_ancestors)
+    {
+        new_headers.insert("content-security-policy", value);
     }
     let headers_mut = builder.headers_mut().unwrap();
     for (name, value) in new_headers.iter() {
@@ -966,51 +1026,6 @@ fn decode_body_with_encoding(bytes: &[u8], encoding: Option<&str>) -> io::Result
                 format!("unsupported content-encoding: {}", other),
             )),
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::decode_body_with_encoding;
-    use flate2::{write::GzEncoder, Compression};
-    use std::io::Write;
-
-    #[test]
-    fn decodes_identity_and_none_encodings() {
-        let payload = b"hello world";
-        assert_eq!(
-            decode_body_with_encoding(payload, None).unwrap(),
-            payload
-        );
-        assert_eq!(
-            decode_body_with_encoding(payload, Some("identity")).unwrap(),
-            payload
-        );
-        assert_eq!(
-            decode_body_with_encoding(payload, Some("")).unwrap(),
-            payload
-        );
-    }
-
-    #[test]
-    fn decodes_gzip_payloads() {
-        let payload = b"compressed content";
-        let compressed = gzip(payload);
-        let decoded = decode_body_with_encoding(&compressed, Some("gzip")).unwrap();
-        assert_eq!(decoded, payload);
-    }
-
-    #[test]
-    fn errors_on_unsupported_encoding() {
-        let payload = b"noop";
-        let err = decode_body_with_encoding(payload, Some("unknown-enc")).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    }
-
-    fn gzip(payload: &[u8]) -> Vec<u8> {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(payload).unwrap();
-        encoder.finish().unwrap()
     }
 }
 
@@ -1095,10 +1110,10 @@ fn rewrite_html(
                     Ok(())
                 }),
                 element!("meta", |el| {
-                    if let Some(value) = el.get_attribute("http-equiv") {
-                        if value.eq_ignore_ascii_case("content-security-policy") {
-                            el.remove();
-                        }
+                    if let Some(value) = el.get_attribute("http-equiv")
+                        && value.eq_ignore_ascii_case("content-security-policy")
+                    {
+                        el.remove();
                     }
                     Ok(())
                 }),
@@ -1365,10 +1380,10 @@ fn extract_host(req: &Request<Body>) -> Option<String> {
 
 fn normalize_host(value: &str) -> String {
     let mut host = value.to_ascii_lowercase();
-    if let Some(idx) = host.rfind(':') {
-        if host[idx + 1..].chars().all(|c| c.is_ascii_digit()) {
-            host.truncate(idx);
-        }
+    if let Some(idx) = host.rfind(':')
+        && host[idx + 1..].chars().all(|c| c.is_ascii_digit())
+    {
+        host.truncate(idx);
     }
     host
 }
@@ -1503,4 +1518,46 @@ fn service_worker_response() -> Response<Body> {
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(SERVICE_WORKER_JS))
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_body_with_encoding;
+    use flate2::{Compression, write::GzEncoder};
+    use std::io::Write;
+
+    #[test]
+    fn decodes_identity_and_none_encodings() {
+        let payload = b"hello world";
+        assert_eq!(decode_body_with_encoding(payload, None).unwrap(), payload);
+        assert_eq!(
+            decode_body_with_encoding(payload, Some("identity")).unwrap(),
+            payload
+        );
+        assert_eq!(
+            decode_body_with_encoding(payload, Some("")).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn decodes_gzip_payloads() {
+        let payload = b"compressed content";
+        let compressed = gzip(payload);
+        let decoded = decode_body_with_encoding(&compressed, Some("gzip")).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn errors_on_unsupported_encoding() {
+        let payload = b"noop";
+        let err = decode_body_with_encoding(payload, Some("unknown-enc")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    fn gzip(payload: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).unwrap();
+        encoder.finish().unwrap()
+    }
 }

@@ -13,7 +13,7 @@ if (!agentConfig) {
 
 console.log("Running with agent config:", agentConfig);
 
-const taskId = await getConvex().mutation(api.tasks.create, {
+const { taskId } = await getConvex().mutation(api.tasks.create, {
   teamSlugOrId: "default",
   projectFullName: "manaflow-ai/cmux",
   text: "whats the time rn?",

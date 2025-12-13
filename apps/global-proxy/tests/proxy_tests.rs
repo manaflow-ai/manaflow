@@ -14,7 +14,8 @@ use hyper::{
 use reqwest::Method;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::tungstenite::{
-    Message, client::IntoClientRequest,
+    Message,
+    client::IntoClientRequest,
     handshake::server::{Request as WsHandshakeRequest, Response as WsHandshakeResponse},
 };
 
@@ -26,9 +27,11 @@ struct TestProxy {
 
 impl TestProxy {
     async fn spawn() -> Self {
-        let mut config = ProxyConfig::default();
-        config.bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-        config.backend_host = "127.0.0.1".to_string();
+        let config = ProxyConfig {
+            bind_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            backend_host: "127.0.0.1".to_string(),
+            ..Default::default()
+        };
 
         let handle = spawn_proxy(config).await.expect("failed to start proxy");
 
@@ -241,19 +244,16 @@ impl TestWsBackend {
         }
     }
 
-    async fn spawn_with_handshake(
-        protocol: Option<&str>,
-        extensions: Option<&str>,
-    ) -> Self {
+    async fn spawn_with_handshake(protocol: Option<&str>, extensions: Option<&str>) -> Self {
         let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
             .expect("ws bind");
         let addr = listener.local_addr().expect("ws addr");
         let (tx, mut rx) = oneshot::channel();
-        let protocol_value = protocol
-            .map(|value| HeaderValue::from_str(value).expect("protocol header"));
-        let extensions_value = extensions
-            .map(|value| HeaderValue::from_str(value).expect("extensions header"));
+        let protocol_value =
+            protocol.map(|value| HeaderValue::from_str(value).expect("protocol header"));
+        let extensions_value =
+            extensions.map(|value| HeaderValue::from_str(value).expect("extensions header"));
 
         let task = tokio::spawn(async move {
             loop {
@@ -756,8 +756,7 @@ async fn html_responses_inject_scripts() {
 
 #[tokio::test]
 async fn html_with_unsupported_encoding_skips_rewrite() {
-    static HTML_BODY: &str =
-        "<!DOCTYPE html><html><head><title>Encoded</title></head><body>Encoded Content</body></html>";
+    static HTML_BODY: &str = "<!DOCTYPE html><html><head><title>Encoded</title></head><body>Encoded Content</body></html>";
     let backend = TestHttpBackend::serve(Arc::new(|_req| {
         Response::builder()
             .status(StatusCode::OK)
@@ -897,19 +896,12 @@ async fn port_39378_strips_cors_and_applies_csp() {
         );
     }
     assert!(
-        cmux_headers
-            .get("content-security-policy")
-            .is_none(),
+        cmux_headers.get("content-security-policy").is_none(),
         "CSP should remain stripped for cmux host"
     );
 
     let cmux_localhost_response = proxy
-        .request(
-            Method::GET,
-            "cmux-test-base-39378.cmux.localhost",
-            "/",
-            &[],
-        )
+        .request(Method::GET, "cmux-test-base-39378.cmux.localhost", "/", &[])
         .await;
     assert_eq!(cmux_localhost_response.status(), StatusCode::OK);
     for name in [
@@ -1180,8 +1172,7 @@ async fn websocket_proxy_for_cmux_route() {
 
 #[tokio::test]
 async fn websocket_subprotocol_matches_backend_choice() {
-    let backend =
-        TestWsBackend::spawn_with_handshake(Some("vite-hmr"), None).await;
+    let backend = TestWsBackend::spawn_with_handshake(Some("vite-hmr"), None).await;
     let proxy = TestProxy::spawn().await;
     let host = format!("cmux-demo-feature-{}.cmux.sh", backend.port());
 
@@ -1190,9 +1181,10 @@ async fn websocket_subprotocol_matches_backend_choice() {
     request
         .headers_mut()
         .insert("Host", host.parse().expect("host header"));
-    request
-        .headers_mut()
-        .insert("Sec-WebSocket-Protocol", HeaderValue::from_str("foo, vite-hmr").unwrap());
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_str("foo, vite-hmr").unwrap(),
+    );
 
     let (mut ws, response) = tokio_tungstenite::connect_async(request)
         .await
@@ -1216,8 +1208,7 @@ async fn websocket_subprotocol_matches_backend_choice() {
 
 #[tokio::test]
 async fn websocket_extensions_are_forwarded() {
-    let backend =
-        TestWsBackend::spawn_with_handshake(None, Some("permessage-deflate")).await;
+    let backend = TestWsBackend::spawn_with_handshake(None, Some("permessage-deflate")).await;
     let proxy = TestProxy::spawn().await;
     let host = format!("cmux-demo-feature-{}.cmux.sh", backend.port());
 
@@ -1226,9 +1217,10 @@ async fn websocket_extensions_are_forwarded() {
     request
         .headers_mut()
         .insert("Host", host.parse().expect("host header"));
-    request
-        .headers_mut()
-        .insert("Sec-WebSocket-Extensions", HeaderValue::from_static("permessage-deflate"));
+    request.headers_mut().insert(
+        "Sec-WebSocket-Extensions",
+        HeaderValue::from_static("permessage-deflate"),
+    );
 
     let (mut ws, response) = tokio_tungstenite::connect_async(request)
         .await

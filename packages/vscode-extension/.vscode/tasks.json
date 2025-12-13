@@ -4,8 +4,8 @@
     {
       "label": "Build cmux extension",
       "type": "shell",
-      "command": "pnpm",
-      "args": ["-w", "--filter", "cmux-vscode-extension", "run", "compile-bun"],
+      "command": "bun",
+      "args": ["--filter", "cmux-vscode-extension", "run", "compile-bun"],
       "problemMatcher": []
     }
   ]

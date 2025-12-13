@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
 """
-Provision VM instances from existing base snapshots for multiple providers (Morph, Freestyle),
-perform parallelized environment setup, validate critical tooling, and snapshot the
-configured systems.
-
-Supported providers:
-- Morph: Full-featured sandbox with multiple port exposures and resource configuration
-- Freestyle: Cloud sandbox with default port 3000 exposure
+Provision Morph instances from an existing base snapshot, perform parallelized
+environment setup that mirrors the Dockerfile, validate critical tooling, and
+snapshot the configured system for multiple presets (standard + boosted by default).
 
 The flow:
-1. Boot an instance per preset from the provided base snapshot for each provider
-2. Expose the standard cmux HTTP services (where supported)
-3. Execute dependency graph tasks concurrently using async APIs
+1. Boot an instance per preset from the provided base snapshot (default snapshot_i7l4i12s)
+2. Expose the standard cmux HTTP services
+3. Execute dependency graph tasks concurrently using Morph's async APIs
 4. Run in-instance sanity checks (cargo/node/bun/uv/envd/envctl + service curls)
 5. Snapshot the configured instance, optionally prompt for manual verification, and
-   record the snapshot in packages/shared/src/vm-snapshots.json
+   record the snapshot in packages/shared/src/morph-snapshots.json
 
 Examples:
 uv run --env-file .env ./scripts/snapshot.py
-uv run --env-file .env ./scripts/snapshot.py --require-verify
+uv run --env-file .env ./scripts/snapshot.py --require-verify # do not use this flag unless explicitly asked
 """
 
 from __future__ import annotations
@@ -30,7 +26,6 @@ import json
 import os
 import shutil
 import shlex
-import socket
 import ssl
 import subprocess
 import sys
@@ -38,45 +33,32 @@ import tarfile
 import tempfile
 import textwrap
 import traceback
-import time
 import typing as t
-import urllib.error
 import urllib.parse
-import urllib.request
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import dotenv
 import httpx
 import paramiko
-from morphcloud.api import (
-    ApiError,
-    Instance,
-    InstanceExecResponse,
-    MorphCloudClient,
-    Snapshot,
+from morphcloud.api import ApiError, Instance, MorphCloudClient, Snapshot
+
+from snapshot import (
+    TaskRegistry,
+    TaskContext,
+    Console,
+    ResourceProfile,
+    TimingsCollector,
+    HttpExecClient,
+    run_task_graph,
+    format_dependency_graph,
 )
 
-# Support both `python -m scripts.snapshot` and `./scripts/snapshot.py`
-try:
-    from .providers import FreestyleProvider, FreestyleInstance
-    from .providers.base import ExecResponse as ProviderExecResponse, ProviderType
-except ImportError:
-    from providers import FreestyleProvider, FreestyleInstance  # type: ignore[import-not-found] # pyright: ignore[reportImplicitRelativeImport]
-    from providers.base import ExecResponse as ProviderExecResponse, ProviderType  # type: ignore[import-not-found] # pyright: ignore[reportImplicitRelativeImport]
-
-
-# Union type for instances from different providers
-# Both Morph Instance and FreestyleInstance implement the same core interface
-ProviderInstance = Instance | FreestyleInstance
-
-# Union type for exec responses from different providers
-ExecResponseUnion = InstanceExecResponse | ProviderExecResponse
-
-Command = str | Sequence[str]
-TaskFunc = Callable[["TaskContext"], Awaitable[None]]
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 EXEC_HTTP_PORT = 39375
 EXEC_BINARY_NAME = "cmux-execd"
@@ -92,79 +74,95 @@ CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
-VM_SNAPSHOT_MANIFEST_PATH = (
-    Path(__file__).resolve().parent.parent / "packages/shared/src/vm-snapshots.json"
+MORPH_SNAPSHOT_MANIFEST_PATH = (
+    Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
 )
+CURRENT_MANIFEST_SCHEMA_VERSION = 1
+
+# ---------------------------------------------------------------------------
+# IDE Provider Configuration
+# ---------------------------------------------------------------------------
+
+IDE_PROVIDER_CODER = "coder"
+IDE_PROVIDER_OPENVSCODE = "openvscode"
+DEFAULT_IDE_PROVIDER = IDE_PROVIDER_OPENVSCODE
+
+# Module-level IDE provider setting (set from args before task graph runs)
+_ide_provider: str = DEFAULT_IDE_PROVIDER
 
 
-VMProviderType = t.Literal["morph", "freestyle"]
+def set_ide_provider(provider: str) -> None:
+    global _ide_provider
+    _ide_provider = provider
 
 
-class VMSnapshotVersionEntry(t.TypedDict):
+def get_ide_provider() -> str:
+    return _ide_provider
+
+# ---------------------------------------------------------------------------
+# Manifest types and helpers
+# ---------------------------------------------------------------------------
+
+
+class MorphSnapshotVersionEntry(t.TypedDict):
     version: int
     snapshotId: str
     capturedAt: str
 
 
-class VMSnapshotPresetEntry(t.TypedDict):
+class MorphSnapshotPresetEntry(t.TypedDict):
     presetId: str
-    provider: VMProviderType
     label: str
     cpu: str
     memory: str
     disk: str
-    versions: list[VMSnapshotVersionEntry]
+    versions: list[MorphSnapshotVersionEntry]
     description: t.NotRequired[str]
 
 
-class VMSnapshotManifestEntry(t.TypedDict):
+class MorphSnapshotManifestEntry(t.TypedDict):
     schemaVersion: int
     updatedAt: str
-    presets: list[VMSnapshotPresetEntry]
+    presets: list[MorphSnapshotPresetEntry]
 
 
 @dataclass(slots=True, frozen=True)
 class SnapshotPresetPlan:
     preset_id: str
-    provider: VMProviderType
     label: str
     cpu_display: str
     memory_display: str
     disk_display: str
-    vcpus: int | None
-    memory_mib: int | None
-    disk_size_mib: int | None
-    base_snapshot_id: str | None = None
+    vcpus: int
+    memory_mib: int
+    disk_size_mib: int
 
 
 @dataclass(slots=True)
 class SnapshotRunResult:
     preset: SnapshotPresetPlan
-    snapshot_id: str
+    snapshot: Snapshot
     captured_at: str
-    vscode_url: str | None
-    vnc_url: str | None
+    vscode_url: str
+    vnc_url: str
     instance_id: str
 
     def __init__(
         self,
         *,
         preset: SnapshotPresetPlan,
-        snapshot_id: str,
+        snapshot: Snapshot,
         captured_at: str,
-        vscode_url: str | None,
-        vnc_url: str | None,
+        vscode_url: str,
+        vnc_url: str,
         instance_id: str,
     ) -> None:
         self.preset = preset
-        self.snapshot_id = snapshot_id
+        self.snapshot = snapshot
         self.captured_at = captured_at
         self.vscode_url = vscode_url
         self.vnc_url = vnc_url
         self.instance_id = instance_id
-
-
-CURRENT_MANIFEST_SCHEMA_VERSION = 2
 
 
 def _iso_timestamp() -> str:
@@ -176,10 +174,7 @@ def _iso_timestamp() -> str:
     )
 
 
-def _coalesce_str(
-    value: t.Any,
-    default: str,
-) -> str:
+def _coalesce_str(value: t.Any, default: str) -> str:
     if isinstance(value, str) and value:
         return value
     return default
@@ -193,27 +188,24 @@ def _coalesce_int(value: t.Any, default: int) -> int:
     return parsed
 
 
-def _normalize_manifest(manifest: VMSnapshotManifestEntry) -> VMSnapshotManifestEntry:
-    presets: list[VMSnapshotPresetEntry] = []
+def _normalize_manifest(manifest: MorphSnapshotManifestEntry) -> MorphSnapshotManifestEntry:
+    presets: list[MorphSnapshotPresetEntry] = []
     for preset in manifest.get("presets", []):
         if not isinstance(preset, dict):
             continue
-        versions: list[VMSnapshotVersionEntry] = []
+        versions: list[MorphSnapshotVersionEntry] = []
         for version in preset.get("versions", []):
             if not isinstance(version, dict):
                 continue
-            version_entry: VMSnapshotVersionEntry = {
+            version_entry: MorphSnapshotVersionEntry = {
                 "version": _coalesce_int(version.get("version"), 0),
                 "snapshotId": _coalesce_str(version.get("snapshotId"), ""),
                 "capturedAt": _coalesce_str(version.get("capturedAt"), _iso_timestamp()),
             }
             versions.append(version_entry)
         versions.sort(key=lambda entry: entry["version"])
-        raw_provider = preset.get("provider", "morph")
-        provider: VMProviderType = raw_provider if raw_provider in ("morph", "freestyle") else "morph"
-        preset_entry: VMSnapshotPresetEntry = {
+        preset_entry: MorphSnapshotPresetEntry = {
             "presetId": _coalesce_str(preset.get("presetId"), ""),
-            "provider": provider,
             "label": _coalesce_str(preset.get("label"), ""),
             "cpu": _coalesce_str(preset.get("cpu"), ""),
             "memory": _coalesce_str(preset.get("memory"), ""),
@@ -234,18 +226,18 @@ def _normalize_manifest(manifest: VMSnapshotManifestEntry) -> VMSnapshotManifest
     }
 
 
-def _load_manifest(console: Console) -> VMSnapshotManifestEntry:
-    if not VM_SNAPSHOT_MANIFEST_PATH.exists():
+def _load_manifest(console: Console) -> MorphSnapshotManifestEntry:
+    if not MORPH_SNAPSHOT_MANIFEST_PATH.exists():
         return {
             "schemaVersion": CURRENT_MANIFEST_SCHEMA_VERSION,
             "updatedAt": _iso_timestamp(),
             "presets": [],
         }
     try:
-        raw_manifest = json.loads(VM_SNAPSHOT_MANIFEST_PATH.read_text())
-    except Exception as exc:  # noqa: BLE001
+        raw_manifest = json.loads(MORPH_SNAPSHOT_MANIFEST_PATH.read_text())
+    except Exception as exc:
         raise RuntimeError(
-            f"Failed to read VM snapshot manifest at {VM_SNAPSHOT_MANIFEST_PATH}: {exc}"
+            f"Failed to read morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}: {exc}"
         ) from exc
     manifest = _normalize_manifest(raw_manifest)
     if manifest["schemaVersion"] != CURRENT_MANIFEST_SCHEMA_VERSION:
@@ -256,21 +248,21 @@ def _load_manifest(console: Console) -> VMSnapshotManifestEntry:
     return manifest
 
 
-def _write_manifest(manifest: VMSnapshotManifestEntry) -> None:
+def _write_manifest(manifest: MorphSnapshotManifestEntry) -> None:
     manifest_to_write = _normalize_manifest(manifest)
-    VM_SNAPSHOT_MANIFEST_PATH.write_text(
+    MORPH_SNAPSHOT_MANIFEST_PATH.write_text(
         json.dumps(manifest_to_write, indent=2, sort_keys=False)
     )
 
 
 def _update_manifest_with_snapshot(
-    manifest: VMSnapshotManifestEntry,
+    manifest: MorphSnapshotManifestEntry,
     preset: SnapshotPresetPlan,
     snapshot_id: str,
     captured_at: str,
-) -> VMSnapshotManifestEntry:
+) -> MorphSnapshotManifestEntry:
     updated_manifest = _normalize_manifest(manifest)
-    preset_entry: VMSnapshotPresetEntry | None = None
+    preset_entry: MorphSnapshotPresetEntry | None = None
     for candidate in updated_manifest["presets"]:
         if candidate.get("presetId") == preset.preset_id:
             preset_entry = candidate
@@ -279,7 +271,6 @@ def _update_manifest_with_snapshot(
     if preset_entry is None:
         preset_entry = {
             "presetId": preset.preset_id,
-            "provider": preset.provider,
             "label": preset.label,
             "cpu": preset.cpu_display,
             "memory": preset.memory_display,
@@ -288,7 +279,6 @@ def _update_manifest_with_snapshot(
         }
         updated_manifest["presets"].append(preset_entry)
     else:
-        preset_entry["provider"] = preset.provider
         preset_entry["label"] = preset.label
         preset_entry["cpu"] = preset.cpu_display
         preset_entry["memory"] = preset.memory_display
@@ -312,6 +302,11 @@ def _update_manifest_with_snapshot(
     return updated_manifest
 
 
+# ---------------------------------------------------------------------------
+# Preset helpers
+# ---------------------------------------------------------------------------
+
+
 def _render_verification_table(
     results: list[SnapshotRunResult],
     console: Console,
@@ -320,7 +315,6 @@ def _render_verification_table(
         return
     headers = (
         "Preset",
-        "Provider",
         "CPU",
         "Memory",
         "Disk",
@@ -332,12 +326,11 @@ def _render_verification_table(
         rows.append(
             (
                 result.preset.preset_id,
-                result.preset.provider,
                 result.preset.cpu_display,
                 result.preset.memory_display,
                 result.preset.disk_display,
-                result.vscode_url or "N/A",
-                result.vnc_url or "N/A",
+                result.vscode_url,
+                result.vnc_url,
             )
         )
     col_widths = [max(len(row[idx]) for row in rows) for idx in range(len(headers))]
@@ -378,338 +371,73 @@ def _format_disk_display(disk_size_mib: int) -> str:
 
 
 def _preset_id_from_resources(
-    provider: VMProviderType,
     vcpus: int,
     memory_mib: int,
     disk_size_mib: int,
 ) -> str:
     memory_gb = max(memory_mib // 1024, 1)
     disk_gb = max(disk_size_mib // 1024, 1)
-    return f"{provider}_{vcpus}vcpu_{memory_gb}gb_{disk_gb}gb"
+    return f"{vcpus}vcpu_{memory_gb}gb_{disk_gb}gb"
 
 
 def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, ...]:
-    plans: list[SnapshotPresetPlan] = []
+    standard_plan = SnapshotPresetPlan(
+        preset_id=_preset_id_from_resources(
+            args.standard_vcpus, args.standard_memory, args.standard_disk_size
+        ),
+        label="Standard workspace",
+        cpu_display=_format_cpu_display(args.standard_vcpus),
+        memory_display=_format_memory_display(args.standard_memory),
+        disk_display=_format_disk_display(args.standard_disk_size),
+        vcpus=args.standard_vcpus,
+        memory_mib=args.standard_memory,
+        disk_size_mib=args.standard_disk_size,
+    )
+    boosted_plan = SnapshotPresetPlan(
+        preset_id=_preset_id_from_resources(
+            args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
+        ),
+        label="Performance workspace",
+        cpu_display=_format_cpu_display(args.boosted_vcpus),
+        memory_display=_format_memory_display(args.boosted_memory),
+        disk_display=_format_disk_display(args.boosted_disk_size),
+        vcpus=args.boosted_vcpus,
+        memory_mib=args.boosted_memory,
+        disk_size_mib=args.boosted_disk_size,
+    )
+    return (standard_plan, boosted_plan)
 
-    # Morph presets
-    if not getattr(args, "skip_morph", False):
-        morph_standard_plan = SnapshotPresetPlan(
-            preset_id=_preset_id_from_resources(
-                "morph", args.standard_vcpus, args.standard_memory, args.standard_disk_size
-            ),
-            provider="morph",
-            label="Standard workspace",
-            cpu_display=_format_cpu_display(args.standard_vcpus),
-            memory_display=_format_memory_display(args.standard_memory),
-            disk_display=_format_disk_display(args.standard_disk_size),
-            vcpus=args.standard_vcpus,
-            memory_mib=args.standard_memory,
-            disk_size_mib=args.standard_disk_size,
-            base_snapshot_id=args.morph_snapshot_id,
-        )
-        plans.append(morph_standard_plan)
 
-        morph_boosted_plan = SnapshotPresetPlan(
-            preset_id=_preset_id_from_resources(
-                "morph", args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
-            ),
-            provider="morph",
-            label="Performance workspace",
-            cpu_display=_format_cpu_display(args.boosted_vcpus),
-            memory_display=_format_memory_display(args.boosted_memory),
-            disk_display=_format_disk_display(args.boosted_disk_size),
-            vcpus=args.boosted_vcpus,
-            memory_mib=args.boosted_memory,
-            disk_size_mib=args.boosted_disk_size,
-            base_snapshot_id=args.morph_snapshot_id,
-        )
-        plans.append(morph_boosted_plan)
-
-    # Freestyle preset - always create fresh VMs, no base snapshot needed
-    if not getattr(args, "skip_freestyle", False):
-        freestyle_plan = SnapshotPresetPlan(
-            preset_id="freestyle_default",
-            provider="freestyle",
-            label="Freestyle sandbox",
-            cpu_display="Default",
-            memory_display="Default",
-            disk_display="Default",
-            vcpus=None,
-            memory_mib=None,
-            disk_size_mib=None,
-            base_snapshot_id=None,
-        )
-        plans.append(freestyle_plan)
-
-    return tuple(plans)
-
-@dataclass(slots=True)
-class ResourceProfile:
-    name: str
+def _build_resource_profile(
+    vcpus: int,
+    memory_mib: int,
+) -> ResourceProfile:
+    cpu_period = 100_000
     cpu_quota: int | None = None
-    cpu_period: int | None = None
-    cpu_weight: int | None = None
+    if vcpus > 0:
+        cpu_quota = max(int(vcpus * cpu_period * 0.9), cpu_period)
+
     memory_high: int | None = None
     memory_max: int | None = None
-    io_weight: int | None = None
+    memory_bytes = memory_mib * 1024 * 1024
+    if memory_bytes > 0:
+        memory_high = max(memory_bytes * 9 // 10, 1)
+        memory_max = max(memory_bytes * 95 // 100, memory_high)
+
+    return ResourceProfile(
+        name="cmux-provision",
+        cpu_quota=cpu_quota,
+        cpu_period=cpu_quota and cpu_period,
+        cpu_weight=80,
+        memory_high=memory_high,
+        memory_max=memory_max,
+        io_weight=200,
+    )
 
 
-dotenv.load_dotenv()
-
-
-class Console:
-    def __init__(self) -> None:
-        self.quiet = False
-
-    def info(self, value: str) -> None:
-        if not self.quiet:
-            print(value)
-
-    def always(self, value: str) -> None:
-        print(value)
-
-
-class TimingsCollector:
-    def __init__(self) -> None:
-        self._entries: list[tuple[str, float]] = []
-
-    def add(self, label: str, duration: float) -> None:
-        self._entries.append((label, duration))
-
-    def summary(self) -> list[str]:
-        if not self._entries:
-            return []
-
-        lines: list[str] = []
-        task_timings: dict[str, float] = {}
-        layer_timings: list[tuple[str, float, list[str]]] = []
-
-        # Separate task and layer timings
-        for label, duration in self._entries:
-            if label.startswith("task:"):
-                task_name = label[5:]
-                task_timings[task_name] = duration
-            elif label.startswith("layer:"):
-                layer_tasks = label[6:].split("+")
-                layer_timings.append((label[6:], duration, layer_tasks))
-
-        # Show layer-by-layer breakdown
-        if layer_timings:
-            lines.append("Parallel Execution Layers:")
-            for layer_name, layer_duration, tasks in layer_timings:
-                lines.append(f"\n  Layer (wall time: {layer_duration:.2f}s):")
-                for task_name in sorted(tasks):
-                    task_duration = task_timings.get(task_name, 0.0)
-                    lines.append(f"    ├─ {task_name}: {task_duration:.2f}s")
-
-        # Calculate totals
-        total_wall_time = sum(d for label, d in self._entries if label.startswith("layer:"))
-        total_cpu_time = sum(task_timings.values())
-
-        lines.append(f"\nTotal wall time: {total_wall_time:.2f}s")
-        lines.append(f"Total CPU time: {total_cpu_time:.2f}s")
-        if total_wall_time > 0:
-            parallelism = total_cpu_time / total_wall_time
-            lines.append(f"Effective parallelism: {parallelism:.2f}x")
-
-        return lines
-
-
-
-async def _run_command(
-    ctx: "TaskContext",
-    label: str,
-    command: Command,
-    *,
-    timeout: float | None = None,
-) -> ExecResponseUnion:
-    ctx.console.info(f"[{label}] running...")
-    command_parts = _shell_command(command)
-    attempts = 0
-    max_attempts = 3
-    while True:
-        attempts += 1
-        try:
-            result = await ctx.instance.aexec(
-                command_parts,
-                timeout=timeout,
-            )
-        except (httpx.HTTPError, OSError, socket.error) as exc:
-            if attempts < max_attempts:
-                delay = min(2**attempts, 8)
-                ctx.console.info(
-                    f"[{label}] retrying after remote exec failure ({exc}) "
-                    f"(attempt {attempts}/{max_attempts}) in {delay}s"
-                )
-                await asyncio.sleep(delay)
-                continue
-            raise
-        stdout_lines = result.stdout.splitlines()
-        stderr_lines = result.stderr.splitlines()
-        for line in stdout_lines:
-            ctx.console.info(f"[{label}] {line}")
-        for line in stderr_lines:
-            ctx.console.info(f"[{label}][stderr] {line}")
-        exit_code = result.exit_code
-        if exit_code not in (0, None):
-            error_parts = [f"{label} failed with exit code {exit_code}"]
-            if result.stdout.strip():
-                error_parts.append(f"stdout:\n{result.stdout.rstrip()}")
-            if result.stderr.strip():
-                error_parts.append(f"stderr:\n{result.stderr.rstrip()}")
-            raise RuntimeError("\n".join(error_parts))
-        return result
-
-
-@dataclass(slots=True)
-class TaskContext:
-    instance: ProviderInstance
-    repo_root: Path
-    remote_repo_root: str
-    remote_repo_tar: str
-    console: Console
-    timings: TimingsCollector
-    provider_type: ProviderType  # morph or freestyle
-    exec_service_url: str | None = None  # None for Freestyle (uses direct exec)
-    resource_profile: ResourceProfile | None = None
-    cgroup_path: str | None = None
-    use_git_clone: bool = False  # If True, clone repo from GitHub instead of uploading
-    exec_client: HttpExecClient | None = field(default=None, init=False)
-    environment_prelude: str = field(default="", init=False)
-
-    def __post_init__(self) -> None:
-        exports = textwrap.dedent(
-            """
-            export RUSTUP_HOME=/usr/local/rustup
-            export CARGO_HOME=/usr/local/cargo
-            export NVM_DIR=/root/.nvm
-            export GOPATH=/usr/local/go-workspace
-            export GOMODCACHE="${GOPATH}/pkg/mod"
-            export GOCACHE=/usr/local/go-cache
-            export PATH="/root/.local/bin:/usr/local/cargo/bin:/usr/local/go/bin:${GOPATH}/bin:/usr/local/bin:$PATH"
-            """
-        ).strip()
-        self.environment_prelude = exports
-
-    async def run(
-        self,
-        label: str,
-        command: Command,
-        *,
-        timeout: float | None = None,
-    ) -> ExecResponseUnion:
-        command_with_env = self._apply_environment(command)
-        command_to_run = (
-            _wrap_command_with_cgroup(self.cgroup_path, command_with_env)
-            if self.cgroup_path
-            else command_with_env
-        )
-        if self.exec_client is not None:
-            try:
-                return await self.exec_client.run(
-                    label,
-                    command_to_run,
-                    timeout=timeout,
-                )
-            except Exception as exc:
-                # Best-effort: capture recent exec daemon logs to aid debugging.
-                log_tail = await self._collect_execd_log()
-                if log_tail:
-                    raise RuntimeError(
-                        f"{exc}\n\ncmux-execd.log (tail):\n{log_tail}".rstrip()
-                    ) from exc
-                raise
-        return await _run_command(self, label, command_to_run, timeout=timeout)
-
-    async def run_via_ssh(
-        self,
-        label: str,
-        command: Command,
-        *,
-        timeout: float | None = None,
-        use_cgroup: bool = True,
-    ) -> ExecResponseUnion:
-        command_with_env = self._apply_environment(command)
-        command_to_run = (
-            _wrap_command_with_cgroup(self.cgroup_path, command_with_env)
-            if use_cgroup and self.cgroup_path
-            else command_with_env
-        )
-        return await _run_command(self, label, command_to_run, timeout=timeout)
-
-    def _apply_environment(self, command: Command) -> Command:
-        if not self.environment_prelude:
-            return command
-        if isinstance(command, str):
-            return f"{self.environment_prelude}\n{command}"
-        quoted = " ".join(shlex.quote(str(part)) for part in command)
-        return f"{self.environment_prelude}\n{quoted}"
-
-    async def _collect_execd_log(self) -> str | None:
-        """Best-effort tail of the exec daemon log without using the exec service."""
-        log_path = "/var/log/cmux-execd.log"
-        try:
-            result = await self.instance.aexec(
-                ["bash", "-lc", f'if [ -f {log_path} ]; then tail -n 200 {log_path}; fi'],
-                timeout=5,
-            )
-        except Exception:
-            return None
-        if result.exit_code not in (0, None):
-            return None
-        output = result.stdout.strip()
-        return output or None
-
-
-@dataclass(frozen=True)
-class TaskDefinition:
-    name: str
-    func: TaskFunc
-    dependencies: tuple[str, ...]
-    description: str | None = None
-    providers: tuple[ProviderType, ...] | None = None  # None = all providers
-
-
-class TaskRegistry:
-    def __init__(self) -> None:
-        self._tasks: dict[str, TaskDefinition] = {}
-
-    def task(
-        self,
-        *,
-        name: str,
-        deps: t.Iterable[str] = (),
-        description: str | None = None,
-        providers: t.Iterable[ProviderType] | None = None,
-    ) -> t.Callable[[TaskFunc], TaskFunc]:
-        def decorator(func: TaskFunc) -> TaskFunc:
-            if name in self._tasks:
-                raise ValueError(f"Task '{name}' already registered")
-            self._tasks[name] = TaskDefinition(
-                name=name,
-                func=func,
-                dependencies=tuple(deps),
-                description=description,
-                providers=tuple(providers) if providers is not None else None,
-            )
-            return func
-
-        return decorator
-
-    @property
-    def tasks(self) -> dict[str, TaskDefinition]:
-        return dict(self._tasks)
-
-    def tasks_for_provider(self, provider_type: ProviderType) -> dict[str, TaskDefinition]:
-        """Return tasks filtered by provider type."""
-        return {
-            name: task
-            for name, task in self._tasks.items()
-            if task.providers is None or provider_type in task.providers
-        }
-
-
-registry = TaskRegistry()
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
 
 
 def send_macos_notification(console: Console, title: str, message: str) -> None:
@@ -720,7 +448,7 @@ def send_macos_notification(console: Console, title: str, message: str) -> None:
     script = f"display notification {json.dumps(message, ensure_ascii=False)} with title {json.dumps(title, ensure_ascii=False)}"
     try:
         subprocess.run(["osascript", "-e", script], check=False)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         console.info(f"Failed to send macOS notification: {exc}")
 
 
@@ -737,8 +465,12 @@ def send_scary_notification(message: str) -> None:
     try:
         subprocess.run(["osascript", "-e", script], check=False)
     except Exception:
-        # Intentionally ignore secondary failures to avoid masking the root error
         pass
+
+
+# ---------------------------------------------------------------------------
+# Git / repo helpers
+# ---------------------------------------------------------------------------
 
 
 def _exec_git(repo_root: Path, args: list[str]) -> str | None:
@@ -801,13 +533,17 @@ def create_repo_archive(repo_root: Path) -> Path:
     return tmp_path
 
 
+# ---------------------------------------------------------------------------
+# Instance helpers
+# ---------------------------------------------------------------------------
+
+
 async def _expose_standard_ports(
     instance: Instance,
     console: Console,
 ) -> dict[int, str]:
     ports = [
         EXEC_HTTP_PORT,
-        39376,
         39377,
         VSCODE_HTTP_PORT,
         39379,
@@ -840,178 +576,13 @@ def _stop_instance(instance: Instance, console: Console) -> None:
         console.info(f"Stopping instance {instance.id}...")
         instance.stop()
         console.info(f"Instance {instance.id} stopped")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         console.always(f"Failed to stop instance {instance.id}: {exc}")
 
 
-def _shell_command(command: Command) -> list[str]:
-    if isinstance(command, str):
-        script = f"set -euo pipefail\n{command}"
-        return ["bash", "-lc", script]
-    return list(command)
-
-
-def _wrap_command_with_cgroup(cgroup_path: str, command: Command) -> Command:
-    cgroup = shlex.quote(cgroup_path)
-    prelude = textwrap.dedent(
-        f"""
-        if [ -d {cgroup} ] && [ -w {cgroup}/cgroup.procs ]; then
-            printf '%d\\n' $$ > {cgroup}/cgroup.procs || true
-        fi
-        """
-    ).strip()
-    if isinstance(command, str):
-        return f"{prelude}\n{command}"
-    quoted = " ".join(shlex.quote(str(part)) for part in command)
-    return f"{prelude}\n{quoted}"
-
-
-class HttpExecClient:
-    def __init__(self, base_url: str, console: Console) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._console = console
-        parsed = urllib.parse.urlparse(self._base_url)
-        self._ssl_context: ssl.SSLContext | None
-        if parsed.scheme == "https":
-            self._ssl_context = ssl.create_default_context()
-        else:
-            self._ssl_context = None
-
-    async def wait_ready(
-        self,
-        *,
-        retries: int = 20,
-        delay: float = 0.5,
-    ) -> None:
-        for attempt in range(1, retries + 1):
-            try:
-                await asyncio.to_thread(self._check_health)
-                return
-            except Exception:
-                if attempt == retries:
-                    break
-                await asyncio.sleep(delay)
-        raise RuntimeError("exec service did not become ready")
-
-    def _check_health(self) -> None:
-        url = urllib.parse.urljoin(f"{self._base_url}/", "healthz")
-        request = urllib.request.Request(url, method="GET")
-        kwargs: dict[str, t.Any] = {"timeout": 5}
-        if self._ssl_context is not None:
-            kwargs["context"] = self._ssl_context
-        with urllib.request.urlopen(request, **kwargs) as response:
-            status = response.getcode()
-            if status != 200:
-                raise RuntimeError(f"unexpected health status {status}")
-
-    async def run(
-        self,
-        label: str,
-        command: Command,
-        *,
-        timeout: float | None,
-    ) -> InstanceExecResponse:
-        return await asyncio.to_thread(
-            self._run_sync,
-            label,
-            command,
-            timeout,
-        )
-
-    def _run_sync(
-        self,
-        label: str,
-        command: Command,
-        timeout: float | None,
-    ) -> InstanceExecResponse:
-        exec_cmd = _shell_command(command)
-        command_str = exec_cmd if isinstance(exec_cmd, str) else shlex.join(exec_cmd)
-        url = urllib.parse.urljoin(f"{self._base_url}/", "exec")
-        payload: dict[str, t.Any] = {"command": command_str}
-        if timeout is not None:
-            payload["timeout_ms"] = max(int(timeout * 1000), 1)
-        data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        kwargs: dict[str, t.Any] = {}
-        if timeout is not None:
-            kwargs["timeout"] = max(timeout + 5, 30.0)
-        if self._ssl_context is not None:
-            kwargs["context"] = self._ssl_context
-
-        try:
-            response = urllib.request.urlopen(request, **kwargs)
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"exec service request failed: {exc}") from exc
-
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
-        exit_code: int | None = None
-        try:
-            status = response.getcode()
-            if status != 200:
-                body = response.read().decode("utf-8", "replace")
-                raise RuntimeError(
-                    f"exec service returned status {status}: {body.strip()}"
-                )
-            for raw_line in response:
-                line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    stderr_parts.append(f"invalid exec response: {line}")
-                    self._console.info(
-                        f"[{label}][stderr] invalid exec response: {line}"
-                    )
-                    continue
-                event_type = event.get("type")
-                if event_type == "stdout":
-                    data_value = str(event.get("data", ""))
-                    stdout_parts.append(data_value)
-                    for sub_line in data_value.splitlines():
-                        self._console.info(f"[{label}] {sub_line}")
-                elif event_type == "stderr":
-                    data_value = str(event.get("data", ""))
-                    stderr_parts.append(data_value)
-                    for sub_line in data_value.splitlines():
-                        self._console.info(f"[{label}][stderr] {sub_line}")
-                elif event_type == "exit":
-                    try:
-                        exit_code = int(event.get("code", 0))
-                    except (TypeError, ValueError):
-                        exit_code = 1
-                elif event_type == "error":
-                    message = str(event.get("message", ""))
-                    stderr_parts.append(message)
-                    self._console.info(f"[{label}][stderr] {message}")
-                else:
-                    stderr_parts.append(f"unknown event type: {line}")
-                    self._console.info(f"[{label}][stderr] unknown event: {line}")
-        finally:
-            response.close()
-
-        stdout_text = "".join(stdout_parts)
-        stderr_text = "".join(stderr_parts)
-        if exit_code is None:
-            self._console.info(
-                f"[{label}] Warning: exec service did not report exit code, assuming success"
-            )
-            exit_code = 0
-        if exit_code not in (0, None):
-            # downstream code expects non-zero exit to raise
-            error_parts = [f"{label} failed with exit code {exit_code}"]
-            if stdout_text.strip():
-                error_parts.append(f"stdout:\n{stdout_text.rstrip()}")
-            if stderr_text.strip():
-                error_parts.append(f"stderr:\n{stderr_text.rstrip()}")
-            raise RuntimeError("\n".join(error_parts))
-        return InstanceExecResponse(
-            exit_code=exit_code,
-            stdout=stdout_text,
-            stderr=stderr_text,
-        )
+# ---------------------------------------------------------------------------
+# Exec binary build and setup
+# ---------------------------------------------------------------------------
 
 
 def _parse_go_target(target: str) -> tuple[str, str]:
@@ -1052,7 +623,7 @@ def _build_exec_binary_sync(repo_root: Path, console: Console) -> Path:
     target = os.environ.get(EXEC_BUILD_TARGET_ENV, DEFAULT_EXEC_BUILD_TARGET)
     try:
         goos, goarch = _parse_go_target(target)
-    except ValueError as exc:  # noqa: F841
+    except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
     output_dir = repo_root / EXEC_BUILD_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1087,6 +658,7 @@ def _build_exec_binary_sync(repo_root: Path, console: Console) -> Path:
         )
     console.info(f"Built exec binary at {binary_path}")
     return binary_path
+
 
 async def setup_exec_service(
     ctx: TaskContext,
@@ -1156,10 +728,18 @@ async def setup_exec_service(
     return client
 
 
+# ---------------------------------------------------------------------------
+# Task registry and task definitions
+# ---------------------------------------------------------------------------
+
+dotenv.load_dotenv()
+
+registry = TaskRegistry()
+
+
 @registry.task(
     name="build-setup-exec-binary",
     description="Build and setup exec binary",
-    providers=(ProviderType.MORPH,),  # Freestyle uses its native exec API
 )
 async def build_exec_binary(ctx: TaskContext) -> None:
     repo_root = ctx.repo_root
@@ -1168,38 +748,10 @@ async def build_exec_binary(ctx: TaskContext) -> None:
     exec_binary_path = await asyncio.to_thread(_build_exec_binary_sync, repo_root, console)
     ctx.console.info("Built exec binary")
 
-    if ctx.exec_service_url is None:
-        raise RuntimeError("exec_service_url is required for Morph provider")
     ctx.console.info(f"Setting up exec service at {ctx.exec_service_url}")
     await setup_exec_service(ctx, binary_path=exec_binary_path, service_url=ctx.exec_service_url)
     ctx.console.info("Exec service setup complete")
 
-
-def _build_resource_profile(
-    vcpus: int,
-    memory_mib: int,
-) -> ResourceProfile:
-    cpu_period = 100_000
-    cpu_quota: int | None = None
-    if vcpus > 0:
-        cpu_quota = max(int(vcpus * cpu_period * 0.9), cpu_period)
-
-    memory_high: int | None = None
-    memory_max: int | None = None
-    memory_bytes = memory_mib * 1024 * 1024
-    if memory_bytes > 0:
-        memory_high = max(memory_bytes * 9 // 10, 1)
-        memory_max = max(memory_bytes * 95 // 100, memory_high)
-
-    return ResourceProfile(
-        name="cmux-provision",
-        cpu_quota=cpu_quota,
-        cpu_period=cpu_quota and cpu_period,
-        cpu_weight=80,
-        memory_high=memory_high,
-        memory_max=memory_max,
-        io_weight=200,
-    )
 
 @registry.task(
     name="configure-provisioning-cgroup",
@@ -1311,7 +863,7 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        
+
         # Configure APT for parallel downloads (16 parallel to saturate 2gbps)
         cat > /etc/apt/apt.conf.d/99parallel << 'EOF'
         Acquire::Queue-Mode "host";
@@ -1319,13 +871,13 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
         Acquire::http::Pipeline-Depth "10";
         Acquire::https::Pipeline-Depth "10";
         EOF
-        
+
         # Update and install core utilities needed for source setup
         DEBIAN_FRONTEND=noninteractive apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             ca-certificates curl wget jq git gnupg lsb-release \
-            tar unzip xz-utils zip bzip2 gzip htop
-        
+            tar unzip xz-utils zip bzip2 gzip htop lsof
+
         # Setup GitHub CLI repository
         install -m 0755 -d /usr/share/keyrings
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -1334,7 +886,7 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
         arch="$(dpkg --print-architecture)"
         echo "deb [arch=${arch} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
             > /etc/apt/sources.list.d/github-cli.list
-        
+
         rm -rf /var/lib/apt/lists/*
         """
     )
@@ -1350,10 +902,10 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        
+
         # Single apt-get update to pick up all configured sources
         DEBIAN_FRONTEND=noninteractive apt-get update
-        
+
         # Install all packages in parallel in a single command
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential make pkg-config g++ libssl-dev \
@@ -1361,13 +913,14 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             tigervnc-standalone-server tigervnc-common \
             xvfb \
             x11-xserver-utils xterm novnc \
+            dbus-x11 openbox \
             tmux \
             gh \
             zsh \
             zsh-autosuggestions \
             ripgrep
 
-        
+
         # Download and install Chrome
         arch="$(dpkg --print-architecture)"
         case "${arch}" in
@@ -1387,7 +940,7 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
         DEBIAN_FRONTEND=noninteractive apt-get install -y ./chrome.deb || true
         DEBIAN_FRONTEND=noninteractive apt-get install -yf
         rm -f chrome.deb
-        
+
         # Clean up
         rm -rf /var/lib/apt/lists/*
         """
@@ -1649,6 +1202,9 @@ async def task_install_rust_toolchain(ctx: TaskContext) -> None:
     description="Install OpenVSCode server",
 )
 async def task_install_openvscode(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_OPENVSCODE:
+        ctx.console.info("Skipping install-openvscode (IDE provider is not openvscode)")
+        return
     cmd = textwrap.dedent(
         """
         set -eux
@@ -1668,6 +1224,52 @@ async def task_install_openvscode(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-openvscode", cmd)
+
+
+@registry.task(
+    name="install-coder",
+    deps=("apt-bootstrap",),
+    description="Install Coder (code-server)",
+)
+async def task_install_coder(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_CODER:
+        ctx.console.info("Skipping install-coder (IDE provider is not coder)")
+        return
+    cmd = textwrap.dedent(
+        """
+        set -eux
+        CODER_RELEASE="$(curl -fsSL https://api.github.com/repos/coder/code-server/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        arch="$(dpkg --print-architecture)"
+        case "${arch}" in
+          amd64) ARCH="amd64" ;;
+          arm64) ARCH="arm64" ;;
+          *) echo "Unsupported architecture ${arch}" >&2; exit 1 ;;
+        esac
+        mkdir -p /app/code-server
+        url="https://github.com/coder/code-server/releases/download/v${CODER_RELEASE}/code-server-${CODER_RELEASE}-linux-${ARCH}.tar.gz"
+        curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "${url}" || \
+          curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "${url}"
+        tar xf /tmp/code-server.tar.gz -C /app/code-server --strip-components=1
+        rm -f /tmp/code-server.tar.gz
+
+        # Create code-server config directory and config.yaml
+        mkdir -p /root/.config/code-server
+        cat > /root/.config/code-server/config.yaml << 'EOF'
+bind-addr: 0.0.0.0:39378
+auth: none
+cert: false
+EOF
+
+        # Create code-server user settings to disable welcome screen
+        mkdir -p /root/.code-server/User
+        cat > /root/.code-server/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none"
+}
+EOF
+        """
+    )
+    await ctx.run("install-coder", cmd)
 
 
 @registry.task(
@@ -1695,85 +1297,97 @@ async def task_package_vscode_extension(ctx: TaskContext) -> None:
 
 
 @registry.task(
-    name="install-openvscode-extensions",
-    deps=("install-openvscode", "package-vscode-extension"),
-    description="Preinstall language extensions for OpenVSCode",
+    name="install-ide-extensions",
+    deps=("install-openvscode", "install-coder", "package-vscode-extension"),
+    description="Preinstall language extensions for the IDE",
 )
-async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
+async def task_install_ide_extensions(ctx: TaskContext) -> None:
+    ide_provider = get_ide_provider()
+    if ide_provider == IDE_PROVIDER_CODER:
+        server_root = "/app/code-server"
+        bin_path = f"{server_root}/bin/code-server"
+        extensions_dir = "/root/.code-server/extensions"
+        user_data_dir = "/root/.code-server"
+    else:
+        server_root = "/app/openvscode-server"
+        bin_path = f"{server_root}/bin/openvscode-server"
+        extensions_dir = "/root/.openvscode-server/extensions"
+        user_data_dir = "/root/.openvscode-server/data"
+
     cmd = textwrap.dedent(
-        """
+        f"""
         set -eux
         export HOME=/root
-        server_root="/app/openvscode-server"
-        bin_path="${server_root}/bin/openvscode-server"
-        if [ ! -x "${bin_path}" ]; then
-          echo "OpenVSCode binary not found at ${bin_path}" >&2
+        server_root="{server_root}"
+        bin_path="{bin_path}"
+        if [ ! -x "${{bin_path}}" ]; then
+          echo "IDE binary not found at ${{bin_path}}" >&2
           exit 1
         fi
-        extensions_dir="/root/.openvscode-server/extensions"
-        user_data_dir="/root/.openvscode-server/data"
-        mkdir -p "${extensions_dir}" "${user_data_dir}"
+        extensions_dir="{extensions_dir}"
+        user_data_dir="{user_data_dir}"
+        mkdir -p "${{extensions_dir}}" "${{user_data_dir}}"
         cmux_vsix="/tmp/cmux-vscode-extension.vsix"
-        if [ ! -f "${cmux_vsix}" ]; then
-          echo "cmux extension package missing at ${cmux_vsix}" >&2
+        if [ ! -f "${{cmux_vsix}}" ]; then
+          echo "cmux extension package missing at ${{cmux_vsix}}" >&2
           exit 1
         fi
-        install_from_file() {
+        install_from_file() {{
           local package_path="$1"
-          "${bin_path}" \
-            --install-extension "${package_path}" \
-            --force \
-            --extensions-dir "${extensions_dir}" \
-            --user-data-dir "${user_data_dir}"
-        }
-        install_from_file "${cmux_vsix}"
-        rm -f "${cmux_vsix}"
+          "${{bin_path}}" \\
+            --install-extension "${{package_path}}" \\
+            --force \\
+            --extensions-dir "${{extensions_dir}}" \\
+            --user-data-dir "${{user_data_dir}}"
+        }}
+        install_from_file "${{cmux_vsix}}"
+        rm -f "${{cmux_vsix}}"
         download_dir="$(mktemp -d)"
-        cleanup() {
-          rm -rf "${download_dir}"
-        }
+        cleanup() {{
+          rm -rf "${{download_dir}}"
+        }}
         trap cleanup EXIT
-        download_extension() {
+        download_extension() {{
           local publisher="$1"
           local name="$2"
           local version="$3"
           local destination="$4"
-          local tmpfile="${destination}.download"
-          local curl_stderr="${tmpfile}.stderr"
-          local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage"
+          local tmpfile="${{destination}}.download"
+          local curl_stderr="${{tmpfile}}.stderr"
+          local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${{publisher}}/vsextensions/${{name}}/${{version}}/vspackage"
           local attempt=1
           local max_attempts=3
-          while [ "${attempt}" -le "${max_attempts}" ]; do
-            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}" 2>"${curl_stderr}"; then
-              rm -f "${curl_stderr}"
+          while [ "${{attempt}}" -le "${{max_attempts}}" ]; do
+            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${{tmpfile}}" "${{url}}" 2>"${{curl_stderr}}"; then
+              rm -f "${{curl_stderr}}"
               break
             fi
-            echo "Download attempt ${attempt}/${max_attempts} failed for ${publisher}.${name}@${version}; retrying..." >&2
-            if [ -s "${curl_stderr}" ]; then
-              cat "${curl_stderr}" >&2
+            echo "Download attempt ${{attempt}}/${{max_attempts}} failed for ${{publisher}}.${{name}}@${{version}}; retrying..." >&2
+            if [ -s "${{curl_stderr}}" ]; then
+              cat "${{curl_stderr}}" >&2
             fi
-            rm -f "${tmpfile}"
+            rm -f "${{tmpfile}}"
             attempt=$((attempt + 1))
             sleep $((attempt * 2))
           done
-          if [ "${attempt}" -gt "${max_attempts}" ]; then
-            echo "Failed to download ${publisher}.${name}@${version} after ${max_attempts} attempts" >&2
-            if [ -s "${curl_stderr}" ]; then
-              cat "${curl_stderr}" >&2
+          if [ "${{attempt}}" -gt "${{max_attempts}}" ]; then
+            echo "Failed to download ${{publisher}}.${{name}}@${{version}} after ${{max_attempts}} attempts" >&2
+            if [ -s "${{curl_stderr}}" ]; then
+              cat "${{curl_stderr}}" >&2
             fi
-            rm -f "${curl_stderr}"
+            rm -f "${{curl_stderr}}"
             return 1
           fi
-          if gzip -t "${tmpfile}" >/dev/null 2>&1; then
-            gunzip -c "${tmpfile}" > "${destination}"
-            rm -f "${tmpfile}"
+          if gzip -t "${{tmpfile}}" >/dev/null 2>&1; then
+            gunzip -c "${{tmpfile}}" > "${{destination}}"
+            rm -f "${{tmpfile}}"
           else
-            mv "${tmpfile}" "${destination}"
+            mv "${{tmpfile}}" "${{destination}}"
           fi
-        }
+        }}
         while IFS='|' read -r publisher name version; do
-          [ -z "${publisher}" ] && continue
-          download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
+          [ -z "${{publisher}}" ] && continue
+          download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
         done <<'EXTENSIONS'
         anthropic|claude-code|2.0.27
         openai|chatgpt|0.5.27
@@ -1783,15 +1397,15 @@ async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
         ms-python|debugpy|2025.14.0
         EXTENSIONS
         wait
-        set -- "${download_dir}"/*.vsix
+        set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
-          if [ -f "${vsix}" ]; then
-            install_from_file "${vsix}"
+          if [ -f "${{vsix}}" ]; then
+            install_from_file "${{vsix}}"
           fi
         done
         """
     )
-    await ctx.run("install-openvscode-extensions", cmd)
+    await ctx.run("install-ide-extensions", cmd)
 
 
 @registry.task(
@@ -1809,8 +1423,6 @@ async def task_install_cursor(ctx: TaskContext) -> None:
     await ctx.run("install-cursor-cli", cmd)
 
 
-
-
 @registry.task(
     name="install-global-cli",
     deps=("install-bun", "install-node-runtime"),
@@ -1819,7 +1431,7 @@ async def task_install_cursor(ctx: TaskContext) -> None:
 async def task_install_global_cli(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
-        bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 \
+        bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.54 \
           @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff \
           @devcontainers/cli @sourcegraph/amp
         """
@@ -1860,7 +1472,7 @@ if [ -s /etc/profile.d/nvm.sh ]; then
   . /etc/profile.d/nvm.sh
 fi
 
-alias code='/app/openvscode-server/bin/openvscode-server'
+alias code='/usr/local/bin/code'
 alias c='code'
 alias g='git'
 
@@ -1910,32 +1522,42 @@ EOF
 
 
 @registry.task(
+    name="configure-openbox",
+    deps=("upload-repo", "install-base-packages"),
+    description="Install openbox configuration for desktop menu",
+)
+async def task_configure_openbox(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
+    cmd = textwrap.dedent(
+        f"""
+        set -eux
+        mkdir -p /root/.config/openbox
+        install -Dm0644 {repo}/configs/openbox/menu.xml /root/.config/openbox/menu.xml
+        """
+    )
+    await ctx.run("configure-openbox", cmd)
+
+
+@registry.task(
     name="upload-repo",
     deps=("apt-bootstrap",),
-    description="Upload repository to the instance (or git clone if configured)",
+    description="Upload repository to the instance",
 )
 async def task_upload_repo(ctx: TaskContext) -> None:
-    if ctx.use_git_clone:
-        # Clone from GitHub instead of uploading (useful when put_file API has size limits)
-        ctx.console.info("Using git clone instead of upload...")
-        clone_cmd = f"git clone --depth 1 https://github.com/manaflow-ai/cmux.git {shlex.quote(ctx.remote_repo_root)}"
-        await ctx.run("git-clone-repo", clone_cmd)
-    else:
-        # Upload repository archive
-        archive = await asyncio.to_thread(create_repo_archive, ctx.repo_root)
-        try:
-            await ctx.instance.aupload(str(archive), ctx.remote_repo_tar)
-            extract_cmd = textwrap.dedent(
-                f"""
-                rm -rf {shlex.quote(ctx.remote_repo_root)}
-                mkdir -p {shlex.quote(ctx.remote_repo_root)}
-                tar -xf {shlex.quote(ctx.remote_repo_tar)} -C {shlex.quote(ctx.remote_repo_root)}
-                rm -f {shlex.quote(ctx.remote_repo_tar)}
-                """
-            )
-            await ctx.run("extract-repo", extract_cmd)
-        finally:
-            archive.unlink(missing_ok=True)
+    archive = await asyncio.to_thread(create_repo_archive, ctx.repo_root)
+    try:
+        await ctx.instance.aupload(str(archive), ctx.remote_repo_tar)
+        extract_cmd = textwrap.dedent(
+            f"""
+            rm -rf {shlex.quote(ctx.remote_repo_root)}
+            mkdir -p {shlex.quote(ctx.remote_repo_root)}
+            tar -xf {shlex.quote(ctx.remote_repo_tar)} -C {shlex.quote(ctx.remote_repo_root)}
+            rm -f {shlex.quote(ctx.remote_repo_tar)}
+            """
+        )
+        await ctx.run("extract-repo", extract_cmd)
+    finally:
+        archive.unlink(missing_ok=True)
 
 
 @registry.task(
@@ -2006,8 +1628,7 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
     name="install-systemd-units",
     deps=(
         "upload-repo",
-        "install-openvscode",
-        "install-openvscode-extensions",
+        "install-ide-extensions",
         "install-service-scripts",
         "build-worker",
         "build-cdp-proxy",
@@ -2018,24 +1639,40 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
 )
 async def task_install_systemd_units(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
+    ide_provider = get_ide_provider()
+
+    # Determine IDE-specific service and configure script
+    if ide_provider == IDE_PROVIDER_CODER:
+        ide_service = "cmux-coder.service"
+        ide_configure_script = "configure-coder"
+        ide_env_file = "ide.env.coder"
+    else:
+        ide_service = "cmux-openvscode.service"
+        ide_configure_script = "configure-openvscode"
+        ide_env_file = "ide.env.openvscode"
+
     cmd = textwrap.dedent(
         f"""
         set -euo pipefail
 
         install -d /usr/local/lib/cmux
+        install -d /etc/cmux
         install -Dm0644 {repo}/configs/systemd/cmux.target /usr/lib/systemd/system/cmux.target
-        install -Dm0644 {repo}/configs/systemd/cmux-openvscode.service /usr/lib/systemd/system/cmux-openvscode.service
+        install -Dm0644 {repo}/configs/systemd/{ide_service} /usr/lib/systemd/system/cmux-ide.service
         install -Dm0644 {repo}/configs/systemd/cmux-worker.service /usr/lib/systemd/system/cmux-worker.service
         install -Dm0644 {repo}/configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
         install -Dm0644 {repo}/configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
         install -Dm0644 {repo}/configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
         install -Dm0644 {repo}/configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+        install -Dm0644 {repo}/configs/systemd/cmux-openbox.service /usr/lib/systemd/system/cmux-openbox.service
         install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
-        install -Dm0755 {repo}/configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
+        install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
+        install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
+        install -Dm0755 {repo}/configs/systemd/bin/code /usr/local/bin/code
         touch /usr/local/lib/cmux/dockerd.flag
         mkdir -p /var/log/cmux
         mkdir -p /root/workspace
@@ -2043,12 +1680,13 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         mkdir -p /etc/systemd/system/cmux.target.wants
         mkdir -p /etc/systemd/system/swap.target.wants
         ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
-        ln -sf /usr/lib/systemd/system/cmux-openvscode.service /etc/systemd/system/cmux.target.wants/cmux-openvscode.service
+        ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.wants/cmux-ide.service
         ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
         ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
         ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
         ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
+        ln -sf /usr/lib/systemd/system/cmux-openbox.service /etc/systemd/system/cmux.target.wants/cmux-openbox.service
         ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
@@ -2101,11 +1739,11 @@ async def task_install_tmux_conf(ctx: TaskContext) -> None:
     )
     await ctx.run("install-tmux-conf", cmd)
 
+
 @registry.task(
     name="configure-memory-protection",
     deps=("install-systemd-units",),
     description="Configure swapfile and systemd resource protections",
-    providers=(ProviderType.MORPH,),  # Freestyle's 16GB disk can't fit 6GB swap
 )
 async def task_configure_memory_protection(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -2326,6 +1964,7 @@ PROFILE
     deps=(
         "configure-memory-protection",
         "configure-envctl",
+        "configure-openbox",
         "install-prompt-wrapper",
         "install-tmux-conf",
         "install-collect-scripts",
@@ -2334,54 +1973,6 @@ PROFILE
 )
 async def task_cleanup_build_artifacts(ctx: TaskContext) -> None:
     await cleanup_instance_disk(ctx)
-
-
-async def run_task_graph(registry: TaskRegistry, ctx: TaskContext) -> None:
-    # Filter tasks by provider type
-    all_tasks = registry.tasks
-    remaining = registry.tasks_for_provider(ctx.provider_type)
-
-    # Track skipped tasks (not applicable to this provider) as "completed"
-    # so dependent tasks can still run
-    skipped_tasks = set(all_tasks.keys()) - set(remaining.keys())
-    completed: set[str] = skipped_tasks.copy()
-
-    if skipped_tasks:
-        ctx.console.info(f"Skipping {len(skipped_tasks)} tasks not applicable to {ctx.provider_type.value}")
-
-    while remaining:
-        ready = [
-            name
-            for name, task in remaining.items()
-            if all(dep in completed for dep in task.dependencies)
-        ]
-        if not ready:
-            unresolved = ", ".join(remaining)
-            raise RuntimeError(f"Dependency cycle detected: {unresolved}")
-        tasks_to_run = [remaining[name] for name in ready]
-        for task in tasks_to_run:
-            ctx.console.info(f"→ starting task {task.name}")
-        start = time.perf_counter()
-        await asyncio.gather(
-            *(_run_task_with_timing(ctx, task) for task in tasks_to_run)
-        )
-        duration = time.perf_counter() - start
-        layer_label = f"layer:{'+'.join(ready)}"
-        ctx.timings.add(layer_label, duration)
-        ctx.console.info(
-            f"✓ Layer completed in {duration:.2f}s (tasks: {', '.join(ready)})"
-        )
-        for task in tasks_to_run:
-            completed.add(task.name)
-            remaining.pop(task.name, None)
-
-
-async def _run_task_with_timing(ctx: TaskContext, task: TaskDefinition) -> None:
-    start = time.perf_counter()
-    await task.func(ctx)
-    duration = time.perf_counter() - start
-    ctx.timings.add(f"task:{task.name}", duration)
-    ctx.console.info(f"✓ {task.name} completed in {duration:.2f}s")
 
 
 @registry.task(
@@ -2476,13 +2067,13 @@ async def task_check_vscode(ctx: TaskContext) -> None:
         """
         for attempt in $(seq 1 15); do
           if curl -fsS -o /dev/null http://127.0.0.1:39378/; then
-            echo "VS Code endpoint is reachable"
+            echo "IDE endpoint is reachable"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: VS Code endpoint not reachable after 30s" >&2
-        systemctl status cmux-openvscode.service --no-pager || true
+        echo "ERROR: IDE endpoint not reachable after 30s" >&2
+        systemctl status cmux-ide.service --no-pager || true
         exit 1
         """
     )
@@ -2495,20 +2086,22 @@ async def task_check_vscode(ctx: TaskContext) -> None:
     description="Verify VS Code endpoint is accessible through cmux-proxy",
 )
 async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
+    ide_provider = get_ide_provider()
+    log_file = "coder.log" if ide_provider == IDE_PROVIDER_CODER else "openvscode.log"
     cmd = textwrap.dedent(
-        """
+        f"""
         for attempt in $(seq 1 15); do
           if curl -fsS -H 'X-Cmux-Port-Internal: 39378' http://127.0.0.1:39379/ >/dev/null; then
-            echo "VS Code endpoint is reachable via cmux-proxy"
+            echo "IDE endpoint is reachable via cmux-proxy"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: VS Code endpoint via cmux-proxy not reachable after 30s" >&2
+        echo "ERROR: IDE endpoint via cmux-proxy not reachable after 30s" >&2
         systemctl status cmux-proxy.service --no-pager || true
-        systemctl status cmux-openvscode.service --no-pager || true
+        systemctl status cmux-ide.service --no-pager || true
         tail -n 80 /var/log/cmux/cmux-proxy.log || true
-        tail -n 80 /var/log/cmux/openvscode.log || true
+        tail -n 80 /var/log/cmux/{log_file} || true
         exit 1
         """
     )
@@ -2553,7 +2146,7 @@ async def task_check_vnc(ctx: TaskContext) -> None:
           echo "cmux-vnc-proxy binary missing" >&2
           exit 1
         fi
-        
+
         # Verify VNC endpoint is accessible
         sleep 5
         for attempt in $(seq 1 15); do
@@ -2623,7 +2216,7 @@ async def task_check_devtools(ctx: TaskContext) -> None:
         """
         # Verify Chrome is installed
         google-chrome --version
-        
+
         # Verify DevTools endpoint is accessible
         sleep 5
         for attempt in $(seq 1 45); do
@@ -2643,6 +2236,7 @@ async def task_check_devtools(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("check-devtools", cmd)
+
 
 @registry.task(
     name="check-worker",
@@ -2669,6 +2263,11 @@ async def task_check_worker(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("check-worker", cmd)
+
+
+# ---------------------------------------------------------------------------
+# Cleanup and verification helpers
+# ---------------------------------------------------------------------------
 
 
 async def verify_devtools_via_exposed_url(
@@ -2700,7 +2299,7 @@ async def verify_devtools_via_exposed_url(
                     f"Attempt {attempt}/{max_attempts} failed to reach DevTools via Morph: {exc}"
                 )
             else:
-                if response.status_code == 200:
+                if response.status_code == httpx.codes.OK:
                     console.info("DevTools endpoint is reachable via Morph exposed URL")
                     return
                 console.info(
@@ -2807,6 +2406,11 @@ async def report_disk_usage(ctx: TaskContext) -> None:
     await ctx.run("disk-usage-summary", disk_script)
 
 
+# ---------------------------------------------------------------------------
+# Main provisioning flow
+# ---------------------------------------------------------------------------
+
+
 async def provision_and_snapshot_for_preset(
     args: argparse.Namespace,
     *,
@@ -2823,20 +2427,15 @@ async def provision_and_snapshot_for_preset(
     )
     timings = TimingsCollector()
 
-    if preset.vcpus is None or preset.memory_mib is None or preset.disk_size_mib is None:
-        raise ValueError(
-            f"Morph preset {preset.preset_id} must have vcpus, memory_mib, and disk_size_mib"
-        )
-
-    base_snapshot = preset.base_snapshot_id or args.morph_snapshot_id
     instance = await client.instances.aboot(
-        base_snapshot,
+        args.snapshot_id,
         vcpus=preset.vcpus,
         memory=preset.memory_mib,
         disk_size=preset.disk_size_mib,
         ttl_seconds=args.ttl_seconds,
         ttl_action=args.ttl_action,
     )
+    await instance.aset_wake_on(wake_on_http=True)
     started_instances.append(instance)
     await _await_instance_ready(instance, console=console)
     console.always(
@@ -2856,9 +2455,8 @@ async def provision_and_snapshot_for_preset(
         remote_repo_tar="/tmp/cmux-repo.tar",
         console=console,
         timings=timings,
-        provider_type=ProviderType.MORPH,
-        exec_service_url=exec_service_url,
         resource_profile=resource_profile,
+        exec_service_url=exec_service_url,
     )
 
     await run_task_graph(registry, ctx)
@@ -2914,7 +2512,7 @@ async def provision_and_snapshot_for_preset(
 
     return SnapshotRunResult(
         preset=preset,
-        snapshot_id=snapshot.id,
+        snapshot=snapshot,
         captured_at=captured_at,
         vscode_url=vscode_url,
         vnc_url=vnc_url,
@@ -2922,119 +2520,12 @@ async def provision_and_snapshot_for_preset(
     )
 
 
-async def provision_and_snapshot_for_freestyle_preset(
-    args: argparse.Namespace,
-    *,
-    preset: SnapshotPresetPlan,
-    console: Console,
-    repo_root: Path,
-    require_verify: bool,
-    show_dependency_graph: bool = False,
-) -> SnapshotRunResult:
-    """Provision and snapshot a Freestyle VM instance using the task graph.
-
-    Freestyle VMs run the same task graph as Morph, but with provider-specific
-    tasks filtered out (e.g., no exec service setup, simplified port exposure).
-    """
-    console.always(
-        f"\n=== Provisioning Freestyle preset {preset.preset_id} ({preset.label}) ==="
-    )
-
-    provider = FreestyleProvider()
-    timings = TimingsCollector()
-
-    try:
-        # Create a fresh VM instance
-        instance = await provider.create_fresh_instance(
-            ttl_seconds=args.ttl_seconds,
-            ports=[{"port": 443, "targetPort": 39379}],
-        )
-
-        console.always(f"[{preset.preset_id}] Freestyle VM started: {instance.id}")
-        domain = instance.domains[0] if hasattr(instance, "domains") and instance.domains else None
-        if domain:
-            console.always(f"[{preset.preset_id}] Domain: https://{domain}")
-            # Freestyle console URL format
-            console.always(f"[{preset.preset_id}] Console: https://{domain}/__console/")
-
-        # Wait for instance to be ready
-        await instance.await_until_ready()
-        console.always(f"[{preset.preset_id}] Instance ready")
-
-        # Create TaskContext for Freestyle
-        use_git_clone = getattr(args, "use_git_clone", False)
-        ctx = TaskContext(
-            instance=instance,
-            repo_root=repo_root,
-            remote_repo_root="/cmux",
-            remote_repo_tar="/tmp/cmux-repo.tar",
-            console=console,
-            timings=timings,
-            provider_type=ProviderType.FREESTYLE,
-            exec_service_url=None,  # Freestyle uses native exec API
-            resource_profile=None,  # No resource limits on Freestyle
-            use_git_clone=use_git_clone,
-        )
-
-        # Run the task graph (filtered for Freestyle provider)
-        await run_task_graph(registry, ctx)
-
-        if show_dependency_graph:
-            graph = format_dependency_graph(registry)
-            if graph:
-                console.always("\nDependency Graph")
-                for line in graph.splitlines():
-                    console.always(line)
-
-        summary = timings.summary()
-        if summary:
-            console.always("\nTiming Summary")
-            for line in summary:
-                console.always(line)
-
-        await report_disk_usage(ctx)
-
-        # Build verification URLs
-        console_url = f"https://{domain}/__console/" if domain else None
-
-        console.always(f"[{preset.preset_id}] Console: {console_url or 'N/A'}")
-
-        send_macos_notification(
-            console,
-            f"Verify cmux workspace – {preset.label}",
-            f"Console: {console_url or 'N/A'}",
-        )
-
-        # Verification step
-        if require_verify:
-            console.always(
-                f"\n[{preset.preset_id}] Verification required. "
-                f"Console: {console_url or 'N/A'}"
-            )
-            input(f"[{preset.preset_id}] Press Enter to continue with snapshot...")
-
-        await cleanup_instance_disk(ctx)
-        snapshot = await instance.asnapshot()
-        captured_at = _iso_timestamp()
-
-        console.always(f"[{preset.preset_id}] Snapshot created: {snapshot.id}")
-        console.always(f"[{preset.preset_id}] Provisioning complete")
-
-        return SnapshotRunResult(
-            preset=preset,
-            snapshot_id=snapshot.id,
-            captured_at=captured_at,
-            vscode_url=console_url,  # Use console URL for Freestyle
-            vnc_url=None,
-            instance_id=instance.id,
-        )
-    finally:
-        provider.close()
-
-
 async def provision_and_snapshot(args: argparse.Namespace) -> None:
+    # Set the IDE provider before running tasks
+    set_ide_provider(args.ide_provider)
+
     console = Console()
-    morph_client = MorphCloudClient()
+    client = MorphCloudClient()
     started_instances: list[Instance] = []
     manifest = _load_manifest(console)
     results: list[SnapshotRunResult] = []
@@ -3053,57 +2544,33 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     preset_plans = _build_preset_plans(args)
 
-    # Group presets by provider
-    morph_presets = [p for p in preset_plans if p.provider == "morph"]
-    freestyle_presets = [p for p in preset_plans if p.provider == "freestyle"]
-
     console.always(
         "Starting snapshot runs for presets "
-        + f"{', '.join(plan.preset_id for plan in preset_plans)}"
+        f"{', '.join(plan.preset_id for plan in preset_plans)} "
+        f"from base snapshot {args.snapshot_id} "
+        f"(IDE provider: {args.ide_provider})"
     )
-    if morph_presets:
-        console.always(f"  Morph base snapshot: {args.morph_snapshot_id}")
-    if freestyle_presets:
-        console.always("  Freestyle: will create fresh VMs")
 
     preset_order: dict[str, int] = {
         plan.preset_id: index for index, plan in enumerate(preset_plans)
     }
-
-    # Create tasks for Morph presets
-    morph_tasks = [
+    tasks = [
         asyncio.create_task(
             provision_and_snapshot_for_preset(
                 args,
                 preset=preset_plan,
                 console=console,
-                client=morph_client,
+                client=client,
                 repo_root=repo_root,
                 started_instances=started_instances,
                 require_verify=args.require_verify,
                 show_dependency_graph=index == 0,
             )
         )
-        for index, preset_plan in enumerate(morph_presets)
+        for index, preset_plan in enumerate(preset_plans)
     ]
 
-    # Create tasks for Freestyle presets
-    freestyle_tasks = [
-        asyncio.create_task(
-            provision_and_snapshot_for_freestyle_preset(
-                args,
-                preset=preset_plan,
-                console=console,
-                repo_root=repo_root,
-                require_verify=args.require_verify,
-                show_dependency_graph=(index == 0 and not morph_presets),  # Show graph only if no Morph presets
-            )
-        )
-        for index, preset_plan in enumerate(freestyle_presets)
-    ]
-
-    all_tasks = morph_tasks + freestyle_tasks
-    results = await asyncio.gather(*all_tasks)
+    results = await asyncio.gather(*tasks)
     ordered_results = sorted(
         results,
         key=lambda item: preset_order.get(item.preset.preset_id, 0),
@@ -3111,106 +2578,44 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     if not args.require_verify:
         for result in ordered_results:
-            if result.preset.provider == "morph":
-                try:
-                    inst = morph_client.instances.get(instance_id=result.instance_id)
-                    inst.set_ttl(ttl_seconds=600, ttl_action="pause")
-                    console.always(
-                        f"[{result.preset.preset_id}] Instance {result.instance_id} "
-                        "will pause in ~10 minutes (TTL set)."
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    console.always(
-                        f"[{result.preset.preset_id}] Failed to set TTL on instance "
-                        f"{result.instance_id}: {exc}"
-                    )
-            # Freestyle instances have idle_timeout set during fork
+            try:
+                inst = client.instances.get(instance_id=result.instance_id)
+                inst.set_ttl(ttl_seconds=600, ttl_action="pause")
+                console.always(
+                    f"[{result.preset.preset_id}] Instance {result.instance_id} "
+                    "will pause in ~10 minutes (TTL set)."
+                )
+            except Exception as exc:
+                console.always(
+                    f"[{result.preset.preset_id}] Failed to set TTL on instance "
+                    f"{result.instance_id}: {exc}"
+                )
 
     for result in ordered_results:
         manifest = _update_manifest_with_snapshot(
-            manifest, result.preset, result.snapshot_id, result.captured_at
+            manifest, result.preset, result.snapshot.id, result.captured_at
         )
     _write_manifest(manifest)
 
     _render_verification_table(ordered_results, console)
 
     console.always(
-        f"\nUpdated VM snapshot manifest at {VM_SNAPSHOT_MANIFEST_PATH}"
+        f"\nUpdated morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}"
     )
     for result in ordered_results:
         console.always(
-            f"[{result.preset.preset_id}] Snapshot {result.snapshot_id} captured at {result.captured_at}"
+            f"[{result.preset.preset_id}] Snapshot {result.snapshot.id} captured at {result.captured_at}"
         )
-
-
-def format_dependency_graph(registry: TaskRegistry) -> str:
-    tasks = registry.tasks
-    if not tasks:
-        return ""
-
-    children: dict[str, list[str]] = {name: [] for name in tasks}
-    for task in tasks.values():
-        for dependency in task.dependencies:
-            children.setdefault(dependency, []).append(task.name)
-    for child_list in children.values():
-        child_list.sort()
-
-    roots = sorted(
-        name for name, definition in tasks.items() if not definition.dependencies
-    )
-
-    lines: list[str] = []
-
-    def render_node(
-        node: str,
-        prefix: str,
-        is_last: bool,
-        path: set[str],
-    ) -> None:
-        connector = "└─" if is_last else "├─"
-        lines.append(f"{prefix}{connector} {node}")
-        if node in path:
-            lines.append(f"{prefix}   ↻ cycle")
-            return
-        descendants = children.get(node, [])
-        if not descendants:
-            return
-        next_prefix = f"{prefix}   " if is_last else f"{prefix}│  "
-        next_path = set(path)
-        next_path.add(node)
-        for index, child in enumerate(descendants):
-            render_node(child, next_prefix, index == len(descendants) - 1, next_path)
-
-    for root_index, root in enumerate(roots):
-        if root_index:
-            lines.append("")
-        lines.append(root)
-        descendants = children.get(root, [])
-        for index, child in enumerate(descendants):
-            render_node(child, "", index == len(descendants) - 1, {root})
-
-    orphaned = sorted(
-        name
-        for name in tasks
-        if name not in roots
-        and all(name not in children.get(other, []) for other in tasks)
-    )
-    for orphan in orphaned:
-        if lines:
-            lines.append("")
-        lines.append(orphan)
-
-    return "\n".join(lines)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Provision VM instances with parallel setup for multiple providers"
+        description="Provision Morph instance with parallel setup"
     )
     parser.add_argument(
-        "--morph-snapshot-id",
+        "--snapshot-id",
         default="snapshot_3fjuvxbs",
-        help="Base Morph snapshot id to boot from",
+        help="Base snapshot id to boot from",
     )
     parser.add_argument(
         "--repo-root",
@@ -3283,20 +2688,10 @@ def parse_args() -> argparse.Namespace:
         help="Require manual verification (VS Code/VNC) before snapshotting each preset",
     )
     parser.add_argument(
-        "--skip-freestyle",
-        action="store_true",
-        help="Skip Freestyle preset (useful when Freestyle API has issues)",
-    )
-    parser.add_argument(
-        "--skip-morph",
-        action="store_true",
-        help="Skip Morph presets (useful for testing Freestyle only)",
-    )
-    parser.add_argument(
-        "--use-git-clone",
-        action="store_true",
-        default=False,
-        help="Use git clone instead of uploading repo archive (useful when put_file API has size limits)",
+        "--ide-provider",
+        choices=(IDE_PROVIDER_CODER, IDE_PROVIDER_OPENVSCODE),
+        default=DEFAULT_IDE_PROVIDER,
+        help=f"IDE provider to install (default: {DEFAULT_IDE_PROVIDER})",
     )
     return parser.parse_args()
 
@@ -3310,7 +2705,7 @@ def main() -> None:
         return
     try:
         asyncio.run(provision_and_snapshot(args))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         traceback.print_exc()
         send_scary_notification(f"Snapshot run failed: {exc}")
         raise

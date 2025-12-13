@@ -1,0 +1,123 @@
+name: Host Screenshot Collector Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/host-screenshot-collector/**
+      - .github/workflows/host-screenshot-collector.yml
+  workflow_dispatch:
+
+concurrency:
+  group: host-screenshot-collector-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_url: ${{ steps.release.outputs.url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build screenshot collector
+        working-directory: packages/host-screenshot-collector
+        run: bun run build
+
+      - name: Get version and commit info
+        id: version
+        working-directory: packages/host-screenshot-collector
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          FULL_VERSION="${VERSION}-${TIMESTAMP}-${SHORT_SHA}"
+          echo "version=${FULL_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${FULL_VERSION}"
+
+      - name: Create release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="host-screenshot-collector-v${VERSION}"
+
+          # Check if release already exists
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, deleting..."
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
+            git push --delete origin "$TAG" || true
+          fi
+
+          # Create release with the bundled JS file
+          echo "Creating release $TAG..."
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Host Screenshot Collector v${VERSION}" \
+            --notes "Automated release of host-screenshot-collector
+
+          Version: ${VERSION}
+          Commit: ${GITHUB_SHA}
+
+          This release contains the bundled screenshot collector script that runs inside Morph sandbox environments." \
+            packages/host-screenshot-collector/dist/index.js
+
+          RELEASE_URL=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q '.url')
+          echo "url=${RELEASE_URL}" >> "$GITHUB_OUTPUT"
+          echo "Release URL: ${RELEASE_URL}"
+
+  sync-to-convex:
+    name: Sync to Convex (Production)
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    environment: electron
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-and-release.outputs.version }}
+        run: |
+          TAG="host-screenshot-collector-v${VERSION}"
+          mkdir -p /tmp/release-artifact
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "index.js" \
+            --dir /tmp/release-artifact
+
+      - name: Sync to Convex
+        env:
+          VERSION: ${{ needs.build-and-release.outputs.version }}
+          RELEASE_URL: ${{ needs.build-and-release.outputs.release_url }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+        run: |
+          # Convert .convex.cloud to .convex.site for HTTP actions
+          CONVEX_SITE_URL="${NEXT_PUBLIC_CONVEX_URL/.convex.cloud/.convex.site}"
+          echo "Using Convex site URL: ${CONVEX_SITE_URL}"
+
+          # Upload the file to Convex via HTTP endpoint
+          curl -X POST "${CONVEX_SITE_URL}/api/host-screenshot-collector/sync" \
+            -H "Content-Type: application/octet-stream" \
+            -H "X-Version: ${VERSION}" \
+            -H "X-Commit-SHA: ${GITHUB_SHA}" \
+            -H "X-Is-Staging: false" \
+            -H "X-Release-URL: ${RELEASE_URL}" \
+            --data-binary @/tmp/release-artifact/index.js \
+            --fail-with-body

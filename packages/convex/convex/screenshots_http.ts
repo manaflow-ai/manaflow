@@ -81,9 +81,16 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     mimeType: image.mimeType,
     fileName: image.fileName,
     commitSha: image.commitSha,
+    description: image.description,
   }));
 
   if (payload.status === "completed") {
+    if (!payload.commitSha) {
+      return jsonResponse(
+        { code: 400, message: "commitSha is required for completed status" },
+        400
+      );
+    }
     if (!payload.images || payload.images.length === 0) {
       return jsonResponse(
         { code: 400, message: "At least one screenshot image is required" },
@@ -98,6 +105,8 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       taskId: run.taskId,
       runId: payload.runId,
       status: payload.status,
+      commitSha: payload.commitSha,
+      hasUiChanges: payload.hasUiChanges,
       screenshots: storedScreens,
       error: payload.error,
     }
@@ -118,8 +127,10 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       screenshotSetId: resolvedScreenshotSetId,
     });
   } else if (payload.status !== "completed") {
+    // For failed/skipped status, preserve the screenshotSetId so we can surface errors in PR comments
     await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
       id: payload.runId,
+      screenshotSetId: resolvedScreenshotSetId,
     });
   }
 

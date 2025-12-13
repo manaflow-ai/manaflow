@@ -35,6 +35,7 @@ jobs:
       - name: Checks and tests (parallel on one runner)
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
           STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}
           STACK_DATA_VAULT_SECRET: ${{ secrets.STACK_DATA_VAULT_SECRET }}

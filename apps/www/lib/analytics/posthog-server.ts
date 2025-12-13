@@ -22,6 +22,10 @@ function createServerPosthogClient(): PostHog {
 export async function captureServerPosthogEvent(
   payload: ServerPosthogEvent
 ): Promise<void> {
+  if (process.env.NODE_ENV === "development") {
+    return;
+  }
+
   if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
     console.warn(missingKeyWarning);
     return;

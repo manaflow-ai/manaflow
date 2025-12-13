@@ -4,5 +4,6 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "relatedProjects": ["prj_2WNSLqIZWRGIIRMQLQrDom5DhivV"]
 }

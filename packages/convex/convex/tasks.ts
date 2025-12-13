@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
@@ -26,6 +26,9 @@ export const get = authQuery({
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
 
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
     if (args.projectFullName) {
       q = q.filter((qq) =>
         qq.eq(qq.field("projectFullName"), args.projectFullName),
@@ -38,6 +41,39 @@ export const get = authQuery({
   },
 });
 
+export const getPreviewTasks = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+
+    // Get preview tasks using the dedicated index (team-wide, not user-specific)
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_preview", (idx) =>
+        idx.eq("teamId", teamId).eq("isPreview", true),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    // Sort: in-progress (not completed) first, then by createdAt desc
+    const sorted = tasks.sort((a, b) => {
+      // In-progress first
+      const aInProgress = !a.isCompleted;
+      const bInProgress = !b.isCompleted;
+      if (aInProgress && !bInProgress) return -1;
+      if (!aInProgress && bInProgress) return 1;
+      // Then by createdAt desc
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+
+    return sorted.slice(0, take);
+  },
+});
+
 export const getPinned = authQuery({
   args: {
     teamSlugOrId: v.string(),
@@ -46,13 +82,14 @@ export const getPinned = authQuery({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Get pinned tasks
+    // Get pinned tasks (excluding archived and preview tasks)
     const pinnedTasks = await ctx.db
       .query("tasks")
       .withIndex("by_pinned", (idx) =>
         idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
+      .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
     return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -79,6 +116,9 @@ export const getTasksWithTaskRuns = authQuery({
     } else {
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
+
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -142,6 +182,8 @@ export const create = authMutation({
     ),
     environmentId: v.optional(v.id("environments")),
     isCloudWorkspace: v.optional(v.boolean()),
+    // Optional: create task runs atomically with the task
+    selectedAgents: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -169,7 +211,28 @@ export const create = authMutation({
       isCloudWorkspace: args.isCloudWorkspace,
     });
 
-    return taskId;
+    // If selectedAgents provided, create task runs atomically
+    let taskRunIds: Id<"taskRuns">[] | undefined;
+    if (args.selectedAgents && args.selectedAgents.length > 0) {
+      taskRunIds = await Promise.all(
+        args.selectedAgents.map(async (agentName) => {
+          return ctx.db.insert("taskRuns", {
+            taskId,
+            prompt: args.text,
+            agentName,
+            status: "pending",
+            createdAt: now,
+            updatedAt: now,
+            userId,
+            teamId,
+            environmentId: args.environmentId,
+            isCloudWorkspace: args.isCloudWorkspace,
+          });
+        }),
+      );
+    }
+
+    return { taskId, taskRunIds };
   },
 });
 
@@ -260,10 +323,9 @@ export const getById = authQuery({
       return null;
     }
 
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const task = await ctx.db.get(args.id as Id<"tasks">);
-    if (!task || task.teamId !== teamId || task.userId !== userId) return null;
+    if (!task || task.teamId !== teamId) return null;
 
     if (task.images && task.images.length > 0) {
       const imagesWithUrls = await Promise.all(
@@ -288,13 +350,11 @@ export const getById = authQuery({
 export const getVersions = authQuery({
   args: { teamSlugOrId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     return await ctx.db
       .query("taskVersions")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
   },
 });
@@ -597,6 +657,9 @@ export const recordScreenshotResult = internalMutation({
       v.literal("failed"),
       v.literal("skipped"),
     ),
+    /** Required for completed status, optional for failed/skipped */
+    commitSha: v.optional(v.string()),
+    hasUiChanges: v.optional(v.boolean()),
     screenshots: v.optional(
       v.array(
         v.object({
@@ -604,6 +667,7 @@ export const recordScreenshotResult = internalMutation({
           mimeType: v.string(),
           fileName: v.optional(v.string()),
           commitSha: v.string(),
+          description: v.optional(v.string()),
         }),
       ),
     ),
@@ -627,14 +691,15 @@ export const recordScreenshotResult = internalMutation({
       taskId: args.taskId,
       runId: args.runId,
       status: args.status,
-      commitSha: screenshots[0]?.commitSha,
+      hasUiChanges: args.hasUiChanges ?? undefined,
+      commitSha: args.commitSha,
       capturedAt: now,
       error: args.error ?? undefined,
       images: screenshots.map((screenshot) => ({
         storageId: screenshot.storageId,
         mimeType: screenshot.mimeType,
         fileName: screenshot.fileName,
-        commitSha: screenshot.commitSha,
+        description: screenshot.description,
       })),
       createdAt: now,
       updatedAt: now,
@@ -822,5 +887,62 @@ export const getByIdInternal = internalQuery({
   args: { id: v.id("tasks") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const createForPreview = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    previewRunId: v.id("previewRuns"),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    headSha: v.string(),
+    baseBranch: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      text: `Preview screenshots for PR #${args.prNumber}`,
+      description: `Capture UI screenshots for ${args.prUrl}`,
+      projectFullName: args.repoFullName,
+      baseBranch: args.baseBranch,
+      worktreePath: undefined,
+      isCompleted: false,
+      isPreview: true,
+      createdAt: now,
+      updatedAt: now,
+      images: undefined,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: undefined,
+      isCloudWorkspace: undefined,
+    });
+    return taskId;
+  },
+});
+
+export const setCompletedInternal = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    isCompleted: v.boolean(),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskId, {
+      isCompleted: args.isCompleted,
+      updatedAt: Date.now(),
+      ...(args.crownEvaluationStatus && {
+        crownEvaluationStatus: args.crownEvaluationStatus,
+      }),
+    });
   },
 });

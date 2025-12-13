@@ -24,8 +24,8 @@
     "@sentry/core": "10.27.0",
     "@sentry/types": "10.27.0",
     "node-abi": "^4.14.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "^19.2.2",
+    "react-dom": "^19.2.2",
     "monaco-editor": "^0.53.0",
     "convex": "1.29.3"
   },
@@ -48,7 +48,7 @@
     "typecheck:cmux": "cd packages/cmux && bun run typecheck",
     "typecheck:morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run typecheck",
     "typecheck:www-openapi-client": "cd packages/www-openapi-client && bun run typecheck",
-    "typecheck:www": "cd apps/www && pnpm run typecheck",
+    "typecheck:www": "cd apps/www && bun run typecheck",
     "gen": "run-p generate-openapi-client generate-morphcloud-openapi-client generate-routes",
     "generate-routes": "cd apps/client && bun run generate-routes",
     "generate-openapi-client": "cd apps/www && bun run generate-openapi-client",
@@ -64,10 +64,12 @@
     "scripts"
   ],
   "dependencies": {
+    "@novnc/novnc": "1.7.0-beta",
     "@sentry/browser": "10.27.0",
     "@sentry/core": "10.27.0",
     "@sentry/electron": "7.3.0",
     "@sentry/nextjs": "10.27.0",
+    "@sentry/node": "^10.29.0",
     "@sentry/react": "10.27.0",
     "@sentry/types": "10.27.0",
     "@sentry/vite-plugin": "4.6.1",

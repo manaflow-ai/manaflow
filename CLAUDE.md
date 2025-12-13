@@ -6,9 +6,8 @@ Use bun to install dependencies and run the project.
 `./scripts/dev.sh` will start the project. Optional flags:
 
 - `--force-docker-build`: Rebuild worker image even if cached.
-- `--show-compose-logs`: Also stream Docker Compose logs to the console (they are always written to `logs/docker-compose.log`). Docker build logs are always shown.
 
-After finishing a task, run `bun run check` in root to typecheck and lint everything. You should always cd to root and run this command; do not manually run tsc or eslint any other way.
+If you make code changes, run `bun check` and fix errors after completing a task.
 
 # Backend
 
@@ -47,21 +46,42 @@ app.openapi(
 ## Convex
 
 Schemas are defined in packages/convex/convex/schema.ts.
-If you're working in Convex dir, you cannot use node APIs/import from "node:*"
+If you're working in Convex dir, you cannot use node APIs/import from "node:\*"
 Use crypto.subtle instead of node:crypto
 Exception is if the file defines only actions and includes a "use node" directive at the top of the file
+To query Convex data during development, first cd into packages/convex, and run `bunx convex data <table> --format jsonl | rg "pattern"` (e.g., `bunx convex data sessions --format jsonl | rg "mn7abc123"`).
+
+## Sandboxes
+
+This project uses Morph sandboxes for running Claude Code/Codex/other coding CLIs inside.
+To inspect Morph instances, use the morphcloud cli with the corresponding morphvm\_ id:
+
+```bash
+uvx --env-file .env morphcloud instance exec morphvm_q11mhv3p "ls"
+🏁  Command execution complete!
+--- Stdout ---
+server.log
+xagi-server
+--- Exit Code: 0 ---
+```
+
+Morph snapshots capture RAM state. So after snapshot, running processes will still be running.
+To modify and rebuild all snapshots, edit `./scripts/snapshot.py` and run `uv run --env-file .env ./scripts/snapshot.py`
+After building a snapshot, you should always use the `say` command to notify the user to verify the changes that were made to the snapshot.
+After the say command, you should give the user a table with the snapshot preset and vnc/vscode/xterm urls.
+.env sometimes might not exist, but you can still run the script if `echo $MORPH_API_KEY` works.
 
 # Frontend
 
 This project uses React, TanStack Router, TanStack Query, Shadcn UI, and Tailwind CSS.
 Always use tailwind `neutral` instead of `gray` for gray colors.
-Always support dark mode.
+Always support both light and dark mode.
 
 # Misc
 
 Always use "node:" prefixes for node imports
 Do not use the "any" type
-Do not use casts unless absolutely necessary (eg. it's better )
+Do not use casts unless absolutely necessary. Most casts may be solved with zod parsing.
 Don't modify README.md unless explicitly asked
 Do not write docs unless explicitly asked
 Do not use dynamic imports unless absolutely necessary. Exceptions include when you're following existing patterns in the codebase

@@ -3,12 +3,14 @@
 set -euo pipefail
 
 IMAGE_NAME="cmux-shell"
-CONTAINER_NAME="cmux-screenshot"
-WORKER_PORT=39377
-POLLING_BASE="http://localhost:${WORKER_PORT}/socket.io/?EIO=4&transport=polling"
+# Default run ID is empty (uses base ports), or can be specified for parallel runs
+RUN_ID=""
 PR_URL=""
 EXEC_COMMAND=""
 NON_INTERACTIVE=false
+INITIAL_SCREENSHOT_DIR=""
+INITIAL_SCREENSHOT_MTIME=""
+RUN_START_TS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,6 +24,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pr=*)
       PR_URL="${1#*=}"
+      shift 1
+      ;;
+    --run-id)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --run-id requires an argument" >&2
+        exit 1
+      fi
+      RUN_ID="$2"
+      shift 2
+      ;;
+    --run-id=*)
+      RUN_ID="${1#*=}"
       shift 1
       ;;
     --exec)
@@ -44,6 +58,32 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Generate unique container name and port offset based on run ID
+if [ -n "$RUN_ID" ]; then
+  CONTAINER_NAME="cmux-screenshot-${RUN_ID}"
+  # Use hash of run ID to generate port offset (0-99)
+  PORT_OFFSET=$(($(echo "$RUN_ID" | cksum | cut -d' ' -f1) % 100))
+else
+  CONTAINER_NAME="cmux-screenshot"
+  PORT_OFFSET=0
+fi
+
+# Base ports offset for parallel runs (each run gets 10 consecutive ports)
+BASE_PORT=$((39375 + PORT_OFFSET * 10))
+WORKER_PORT=$((BASE_PORT + 2))  # 39377 equivalent
+
+# Output directories - unique per run
+HOST_OUTPUT_ROOT="$(pwd)/tmp"
+if [ -n "$RUN_ID" ]; then
+  HOST_OUTPUT_TGZ="$HOST_OUTPUT_ROOT/cmux-screenshots-${RUN_ID}.tgz"
+  HOST_OUTPUT_DIR="$HOST_OUTPUT_ROOT/cmux-screenshots-${RUN_ID}"
+else
+  HOST_OUTPUT_TGZ="$HOST_OUTPUT_ROOT/cmux-screenshots-latest.tgz"
+  HOST_OUTPUT_DIR="$HOST_OUTPUT_ROOT/cmux-screenshots-latest"
+fi
+
+POLLING_BASE="http://localhost:${WORKER_PORT}/socket.io/?EIO=4&transport=polling"
 
 container_started=false
 
@@ -92,15 +132,14 @@ docker run -d \
   --tmpfs /run/lock \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -v docker-data:/var/lib/docker \
-  -p 39375:39375 \
-  -p 39376:39376 \
-  -p 39377:39377 \
-  -p 39378:39378 \
-  -p 39379:39379 \
-  -p 39380:39380 \
-  -p 39381:39381 \
-  -p 39382:39382 \
-  -p 39383:39383 \
+  -p "${BASE_PORT}:39375" \
+  -p "$((BASE_PORT + 2)):39377" \
+  -p "$((BASE_PORT + 3)):39378" \
+  -p "$((BASE_PORT + 4)):39379" \
+  -p "$((BASE_PORT + 5)):39380" \
+  -p "$((BASE_PORT + 6)):39381" \
+  -p "$((BASE_PORT + 7)):39382" \
+  -p "$((BASE_PORT + 8)):39383" \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   --name "$CONTAINER_NAME" \
   "$IMAGE_NAME"
@@ -246,6 +285,14 @@ if (Object.keys(config).length > 0) {
 process.stdout.write(JSON.stringify(payload));
 ' "$ANTHROPIC_API_KEY")
 
+RUN_START_TS=$(date +%s)
+INITIAL_SCREENSHOT_DIR=$(docker exec "$CONTAINER_NAME" bash -lc 'ls -1t /root/screenshots 2>/dev/null | head -1 || true')
+if [ -n "$INITIAL_SCREENSHOT_DIR" ]; then
+  INITIAL_SCREENSHOT_MTIME=$(docker exec "$CONTAINER_NAME" bash -lc 'stat -c %Y "/root/screenshots/'"$INITIAL_SCREENSHOT_DIR"'" 2>/dev/null || true')
+else
+  INITIAL_SCREENSHOT_MTIME=""
+fi
+
 echo "Triggering worker:start-screenshot-collection..."
 curl -s \
   -X POST \
@@ -253,14 +300,17 @@ curl -s \
   --data-binary "42/management,${SOCKET_PAYLOAD}" \
   "${POLLING_BASE}&sid=${SID}&t=$(date +%s%3N)" >/dev/null
 
-echo "Screenshot collection trigger sent. View logs via http://localhost:39378/?folder=/var/log/cmux"
+VSCODE_PORT=$((BASE_PORT + 3))  # 39378 equivalent
+NOVNC_PORT=$((BASE_PORT + 5))   # 39380 equivalent
+
+echo "Screenshot collection trigger sent. View logs via http://localhost:${VSCODE_PORT}/?folder=/var/log/cmux"
 
 echo ""
 echo "================================ URLs ================================="
-printf "| %-18s | %s |\n" "Worker Logs" "http://localhost:39378/?folder=/var/log/cmux"
-printf "| %-18s | %s |\n" "Workspace" "http://localhost:39378/?folder=/root/workspace"
-printf "| %-18s | %s |\n" "VS Code" "http://localhost:39378/?folder=/root/workspace"
-printf "| %-18s | %s |\n" "noVNC" "http://localhost:39380/vnc.html"
+printf "| %-18s | %s |\n" "Worker Logs" "http://localhost:${VSCODE_PORT}/?folder=/var/log/cmux"
+printf "| %-18s | %s |\n" "Workspace" "http://localhost:${VSCODE_PORT}/?folder=/root/workspace"
+printf "| %-18s | %s |\n" "VS Code" "http://localhost:${VSCODE_PORT}/?folder=/root/workspace"
+printf "| %-18s | %s |\n" "noVNC" "http://localhost:${NOVNC_PORT}/vnc.html"
 echo "========================================================================"
 
 if [ -n "$EXEC_COMMAND" ]; then
@@ -278,6 +328,129 @@ elif [ "$NON_INTERACTIVE" = false ]; then
   echo "Non-interactive shell detected; keeping the container alive for 5 minutes before cleanup."
   sleep 300
 fi
+
+fetch_screenshots() {
+  if ! docker ps --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then
+    echo "Container is not running; skipping automatic screenshot download."
+    return
+  fi
+
+  echo "Waiting for screenshots to appear in the container..."
+  local latest=""
+  local latest_mtime=""
+  local has_files=""
+  local target_dir=""
+  local starting_latest="$INITIAL_SCREENSHOT_DIR"
+  local starting_mtime="$INITIAL_SCREENSHOT_MTIME"
+  local run_started_at="$RUN_START_TS"
+
+  if [ -z "$run_started_at" ]; then
+    run_started_at=$(date +%s)
+  fi
+
+  for _ in {1..36}; do
+    latest=$(docker exec "$CONTAINER_NAME" bash -lc 'ls -1t /root/screenshots 2>/dev/null | head -1 || true')
+    if [ -n "$latest" ]; then
+      latest_mtime=$(docker exec "$CONTAINER_NAME" bash -lc 'stat -c %Y "/root/screenshots/'"$latest"'" 2>/dev/null || true')
+      has_files=$(docker exec "$CONTAINER_NAME" bash -lc 'ls -A "/root/screenshots/'"$latest"'" 2>/dev/null | head -1 || true')
+      is_new_dir=false
+      if [ "$latest" != "$starting_latest" ]; then
+        is_new_dir=true
+      elif [ -n "$latest_mtime" ] && [ "$latest_mtime" -ge "$run_started_at" ]; then
+        is_new_dir=true
+      elif [ -n "$starting_mtime" ] && [ -n "$latest_mtime" ] && [ "$latest_mtime" -gt "$starting_mtime" ]; then
+        is_new_dir=true
+      fi
+
+      if [ "$is_new_dir" = true ] && [ -n "$has_files" ]; then
+        target_dir="$latest"
+        break
+      fi
+    fi
+    sleep 10
+  done
+
+  if [ -z "$target_dir" ]; then
+    echo "No new screenshots were found in the container after waiting."
+    return
+  fi
+
+  echo "Found screenshots in /root/screenshots/$target_dir. Copying to host..."
+  docker exec "$CONTAINER_NAME" bash -lc 'tar -czf /tmp/cmux-screenshots.tgz -C /root/screenshots '"$target_dir"'' || {
+    echo "Failed to create screenshots archive inside container."
+    return
+  }
+
+  mkdir -p "$HOST_OUTPUT_ROOT"
+  rm -rf "$HOST_OUTPUT_DIR" "$HOST_OUTPUT_TGZ"
+  docker cp "$CONTAINER_NAME:/tmp/cmux-screenshots.tgz" "$HOST_OUTPUT_TGZ" || {
+    echo "Failed to copy screenshots archive from container."
+    return
+  }
+
+  mkdir -p "$HOST_OUTPUT_DIR"
+  tar -xzf "$HOST_OUTPUT_TGZ" -C "$HOST_OUTPUT_DIR"
+  local extracted_dir="$HOST_OUTPUT_DIR/$target_dir"
+
+  # Write a simple structured output JSON alongside the images using host paths
+  # If the container wrote a manifest.json, use its hasUiChanges value and image descriptions
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<PY
+import json, os, glob
+latest = "${target_dir}"
+base_dir = os.path.join("${HOST_OUTPUT_DIR}", latest)
+images = sorted(glob.glob(os.path.join(base_dir, "*.*")))
+# Filter out manifest.json from images list
+images = [img for img in images if not img.endswith("manifest.json")]
+
+# Try to read the container's manifest.json for hasUiChanges and descriptions
+container_manifest_path = os.path.join(base_dir, "manifest.json")
+has_ui_changes = bool(images)  # default: true if there are images
+description_map = {}
+
+if os.path.exists(container_manifest_path):
+    try:
+        with open(container_manifest_path, "r") as f:
+            container_manifest = json.load(f)
+        if "hasUiChanges" in container_manifest:
+            has_ui_changes = container_manifest["hasUiChanges"]
+            print(f"Read hasUiChanges={has_ui_changes} from container manifest")
+        # Build a map of filename -> description for matching
+        for img_info in container_manifest.get("images", []):
+            img_path = img_info.get("path", "")
+            img_desc = img_info.get("description")
+            if img_path and img_desc:
+                filename = os.path.basename(img_path)
+                description_map[filename] = img_desc
+    except Exception as e:
+        print(f"Warning: Could not read container manifest: {e}")
+
+# Build payload with descriptions from container manifest
+image_entries = []
+for path in images:
+    entry = {"path": os.path.abspath(path)}
+    filename = os.path.basename(path)
+    if filename in description_map:
+        entry["description"] = description_map[filename]
+    image_entries.append(entry)
+
+payload = {
+    "hasUiChanges": has_ui_changes,
+    "images": image_entries,
+}
+out_path = os.path.join("${HOST_OUTPUT_ROOT}", "cmux-screenshots-latest.json")
+with open(out_path, "w") as f:
+    json.dump(payload, f, indent=2)
+print(f"Wrote JSON manifest: {out_path}")
+PY
+  else
+    echo "python3 not available; skipping JSON manifest generation."
+  fi
+
+  echo "Screenshots extracted to: $extracted_dir"
+}
+
+fetch_screenshots
 
 # Drain any pending poll so server can close cleanly once we're done
 curl -s "${POLLING_BASE}&sid=${SID}&t=$(date +%s%3N)" >/dev/null || true

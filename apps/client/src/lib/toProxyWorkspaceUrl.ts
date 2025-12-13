@@ -2,6 +2,7 @@ import {
   LOCAL_VSCODE_PLACEHOLDER_HOST,
   isLoopbackHostname,
 } from "@cmux/shared";
+import { env } from "../client-env";
 
 const MORPH_HOST_REGEX = /^port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so$/;
 
@@ -115,6 +116,11 @@ export function toProxyWorkspaceUrl(
     return normalizedUrl;
   }
 
+  // In web mode, use the Morph URLs directly without proxy rewriting
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    return normalizedUrl;
+  }
+
   const scope = "base"; // Default scope
   const proxiedUrl = new URL(components.url.toString());
   proxiedUrl.hostname = `cmux-${components.morphId}-${scope}-${components.port}.cmux.app`;
@@ -142,11 +148,40 @@ export function toMorphVncUrl(sourceUrl: string): string | null {
   return vncUrl.toString();
 }
 
+/**
+ * Convert a workspace URL to a VNC websocket URL for direct noVNC/RFB connection.
+ * This returns a wss:// URL pointing to the /websockify endpoint.
+ */
+export function toMorphVncWebsocketUrl(sourceUrl: string): string | null {
+  const components = parseMorphUrl(sourceUrl);
+
+  if (!components) {
+    return null;
+  }
+
+  const wsUrl = createMorphPortUrl(components, 39380);
+  wsUrl.protocol = "wss:";
+  wsUrl.pathname = "/websockify";
+  wsUrl.search = "";
+  wsUrl.hash = "";
+
+  return wsUrl.toString();
+}
+
 export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
   const components = parseMorphUrl(sourceUrl);
 
   if (!components) {
     return null;
+  }
+
+  // In web mode, use the Morph URLs directly without proxy rewriting
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    const morphUrl = createMorphPortUrl(components, 39383);
+    morphUrl.pathname = "/";
+    morphUrl.search = "";
+    morphUrl.hash = "";
+    return morphUrl.toString();
   }
 
   const scope = "base";

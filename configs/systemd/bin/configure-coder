@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p /var/log/cmux
+
+# Create code-server config directory and config.yaml
+mkdir -p /root/.config/code-server
+cat > /root/.config/code-server/config.yaml << 'EOF'
+bind-addr: 0.0.0.0:39378
+auth: none
+cert: false
+EOF
+
+# Determine color theme based on VSCODE_THEME env var
+color=""
+case "${VSCODE_THEME:-}" in
+  dark)
+    color="Default Dark Modern"
+    ;;
+  light)
+    color="Default Light Modern"
+    ;;
+  system)
+    color="Default Dark Modern"
+    ;;
+esac
+
+SETTINGS=$(jq -n \
+  --arg theme "$color" \
+  '{
+    "workbench.startupEditor": "none",
+    "workbench.secondarySideBar.defaultVisibility": "hidden",
+    "terminal.integrated.shellIntegration.enabled": false,
+    "terminal.integrated.macOptionClickForcesSelection": true,
+    "terminal.integrated.shell.linux": "/usr/bin/zsh",
+    "terminal.integrated.shellArgs.linux": ["-l"],
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.profiles.linux": {
+      "zsh": {
+        "path": "/usr/bin/zsh",
+        "args": ["-l"]
+      }
+    },
+    "python.languageServer": "Pylance",
+    "python.defaultInterpreterPath": "/usr/bin/python3",
+    "git.openDiffOnClick": true,
+    "scm.defaultViewMode": "tree",
+    "git.showPushSuccessNotification": true,
+    "git.autorefresh": true,
+    "git.branchCompareWith": "main"
+  } + (if $theme != "" then {"workbench.colorTheme": $theme} else {} end)')
+
+home="${HOME:-/root}"
+user_dir="${home}/.code-server/User"
+machine_dir="${home}/.code-server/Machine"
+
+mkdir -p "${user_dir}" "${machine_dir}"
+
+printf '%s' "$SETTINGS" > "${user_dir}/settings.json"
+printf '%s' "$SETTINGS" > "${machine_dir}/settings.json"

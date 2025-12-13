@@ -9,6 +9,14 @@ export const AuthFileSchema = z.object({
   mode: z.string().optional(),
 });
 
+// Post-start command schema for commands that run after TUI starts
+export const PostStartCommandSchema = z.object({
+  description: z.string(),
+  command: z.string(),
+  timeoutMs: z.number().optional(),
+  continueOnError: z.boolean().optional(),
+});
+
 // Worker Registration
 export const WorkerRegisterSchema = z.object({
   workerId: z.string(),
@@ -55,6 +63,7 @@ export const WorkerTaskRunContextSchema = z.object({
   taskRunToken: z.string(),
   prompt: z.string(),
   convexUrl: z.string(),
+  isPreviewJob: z.boolean().optional(),
 });
 
 // Terminal operation schemas for server<>worker communication
@@ -74,6 +83,8 @@ export const WorkerCreateTerminalSchema = z.object({
   agentModel: z.string().optional(),
   authFiles: z.array(AuthFileSchema).optional(),
   startupCommands: z.array(z.string()).optional(),
+  // Commands to run AFTER the TUI/agent process has started
+  postStartCommands: z.array(PostStartCommandSchema).optional(),
 });
 
 export const WorkerTerminalInputSchema = z.object({
@@ -185,6 +196,20 @@ export const WorkerExecResultSchema = z.object({
 export const WorkerStartScreenshotCollectionSchema = z.object({
   anthropicApiKey: z.string().min(1).optional(),
   outputPath: z.string().optional(),
+  /** Command to install dependencies (e.g., "bun install") */
+  installCommand: z.string().optional(),
+  /** Command to start the dev server (e.g., "bun run dev") */
+  devCommand: z.string().optional(),
+});
+
+export const WorkerRunTaskScreenshotsSchema = z.object({
+  token: z.string(),
+  anthropicApiKey: z.string().optional(),
+  convexUrl: z.string().min(1).optional(),
+  /** Command to install dependencies (e.g., "bun install") */
+  installCommand: z.string().optional(),
+  /** Command to start the dev server (e.g., "bun run dev") */
+  devCommand: z.string().optional(),
 });
 
 // Server to Worker Events
@@ -195,6 +220,7 @@ export const ServerToWorkerCommandSchema = z.object({
 
 // Type exports
 export type AuthFile = z.infer<typeof AuthFileSchema>;
+export type PostStartCommand = z.infer<typeof PostStartCommandSchema>;
 export type WorkerRegister = z.infer<typeof WorkerRegisterSchema>;
 export type WorkerHeartbeat = z.infer<typeof WorkerHeartbeatSchema>;
 export type TerminalAssignment = z.infer<typeof TerminalAssignmentSchema>;
@@ -218,6 +244,9 @@ export type WorkerExec = z.infer<typeof WorkerExecSchema>;
 export type WorkerExecResult = z.infer<typeof WorkerExecResultSchema>;
 export type WorkerStartScreenshotCollection = z.infer<
   typeof WorkerStartScreenshotCollectionSchema
+>;
+export type WorkerRunTaskScreenshots = z.infer<
+  typeof WorkerRunTaskScreenshotsSchema
 >;
 
 // Socket.io event maps for Server <-> Worker communication
@@ -259,6 +288,10 @@ export interface ServerToWorkerEvents {
   "worker:stop-file-watch": (data: { taskRunId: Id<"taskRuns"> }) => void;
   "worker:start-screenshot-collection": (
     data: WorkerStartScreenshotCollection | undefined
+  ) => void;
+  "worker:run-task-screenshots": (
+    data: WorkerRunTaskScreenshots,
+    callback: (result: ErrorOr<{ success: true }>) => void
   ) => void;
 
   // Management events

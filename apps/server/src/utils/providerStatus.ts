@@ -19,7 +19,7 @@ export async function checkAllProvidersStatus(
   dockerStatus: DockerStatus;
 }> {
   // Check Docker status
-  const [dockerStatus] = await Promise.all([checkDockerStatus()]);
+  const dockerStatus = await checkDockerStatus();
 
   let apiKeys: ProviderRequirementsContext["apiKeys"] = undefined;
 
@@ -55,6 +55,62 @@ export async function checkAllProvidersStatus(
       };
     })
   );
+
+  return {
+    providers: providerChecks,
+    dockerStatus,
+  };
+}
+
+/**
+ * Web-mode variant of checkAllProvidersStatus.
+ * Only checks if required API keys are present in Convex - does not check
+ * local files, keychains, or Docker status (which don't exist in web deployments).
+ */
+export async function checkAllProvidersStatusWebMode(options: {
+  teamSlugOrId: string;
+}): Promise<{
+  providers: SharedProviderStatus[];
+  dockerStatus: DockerStatus;
+}> {
+  // In web mode, Docker is managed by cloud provider - always report as ready
+  const dockerStatus: DockerStatus = { isRunning: true, version: "web-mode" };
+
+  let apiKeys: Record<string, string> = {};
+
+  try {
+    apiKeys =
+      (await getConvex().query(api.apiKeys.getAllForAgents, {
+        teamSlugOrId: options.teamSlugOrId,
+      })) ?? {};
+  } catch (error) {
+    console.warn(
+      `Failed to load API keys for team ${options.teamSlugOrId}:`,
+      error
+    );
+  }
+
+  // Check each agent's required API keys (skip local file checks)
+  const providerChecks = AGENT_CONFIGS.map((agent) => {
+    const missingRequirements: string[] = [];
+
+    // Check if required API keys are present
+    if (agent.apiKeys && agent.apiKeys.length > 0) {
+      for (const keyConfig of agent.apiKeys) {
+        const keyValue = apiKeys[keyConfig.envVar];
+        if (!keyValue || keyValue.trim() === "") {
+          missingRequirements.push(keyConfig.displayName);
+        }
+      }
+    }
+
+    return {
+      name: agent.name,
+      isAvailable: missingRequirements.length === 0,
+      missingRequirements:
+        missingRequirements.length > 0 ? missingRequirements : undefined,
+    };
+  });
 
   return {
     providers: providerChecks,

@@ -1,6 +1,7 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import { api } from "@cmux/convex/api";
@@ -18,6 +19,7 @@ import {
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
+import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 
@@ -109,15 +111,19 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       if (
         e.ctrlKey &&
         e.shiftKey &&
+        !e.altKey &&
+        !e.metaKey &&
         (e.code === "KeyS" || e.key.toLowerCase() === "s")
       ) {
         e.preventDefault();
+        e.stopPropagation();
         setIsHidden((prev) => !prev);
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // Use capture phase to intercept before browser default handlers
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, []);
 
   // Listen for storage events from command bar (sidebar visibility sync)
@@ -156,24 +162,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    // Restore iframe pointer events
-    const iframes = Array.from(document.querySelectorAll("iframe"));
-    for (const el of iframes) {
-      if (el instanceof HTMLIFrameElement) {
-        const prev = el.dataset.prevPointerEvents;
-        if (prev !== undefined) {
-          if (prev === "__unset__") {
-            el.style.removeProperty("pointer-events");
-          } else {
-            el.style.pointerEvents = prev;
-          }
-          delete el.dataset.prevPointerEvents;
-        } else {
-          // Fallback to clearing
-          el.style.removeProperty("pointer-events");
-        }
-      }
-    }
+    restoreDragPointerEvents();
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", stopResizing);
   }, [onMouseMove]);
@@ -190,15 +179,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         const rect = containerRef.current.getBoundingClientRect();
         containerLeftRef.current = rect.left;
       }
-      // Disable pointer events on all iframes so dragging works over them
-      const iframes = Array.from(document.querySelectorAll("iframe"));
-      for (const el of iframes) {
-        if (el instanceof HTMLIFrameElement) {
-          const current = el.style.pointerEvents;
-          el.dataset.prevPointerEvents = current ? current : "__unset__";
-          el.style.pointerEvents = "none";
-        }
-      }
+      disableDragPointerEvents();
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", stopResizing);
     },
@@ -338,6 +319,19 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="mt-2 flex flex-col gap-0.5">
+            <SidebarSectionLink
+              to="/$teamSlugOrId/previews"
+              params={{ teamSlugOrId }}
+              exact
+            >
+              Previews
+            </SidebarSectionLink>
+          </div>
+          <div className="ml-2 pt-px">
+            <SidebarPreviewList teamSlugOrId={teamSlugOrId} />
           </div>
         </div>
       </nav>

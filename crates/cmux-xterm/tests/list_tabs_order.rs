@@ -56,5 +56,5 @@ async fn list_tabs_is_ordered_by_creation_time() {
             .await;
     }
 
-    let _ = server.abort();
+    server.abort();
 }

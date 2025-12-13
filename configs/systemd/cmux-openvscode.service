@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-/opt/app/app.env
+EnvironmentFile=-/etc/cmux/ide.env
 Environment=HOME=/root
 LogsDirectory=cmux
 ExecStartPre=/bin/mkdir -p /var/log/cmux

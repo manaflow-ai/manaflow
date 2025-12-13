@@ -87,6 +87,10 @@ export async function runMaintenanceAndDevScripts({
   const maintenanceScriptContent = hasMaintenanceScript
     ? `#!/bin/zsh
 set -eux
+
+# Source system profile for environment variables (RUSTUP_HOME, etc.)
+[[ -f /etc/profile ]] && source /etc/profile
+
 cd ${WORKSPACE_ROOT}
 
 echo "=== Maintenance Script Started at \\$(date) ==="
@@ -99,6 +103,10 @@ echo "=== Maintenance Script Completed at \\$(date) ==="
   const devScriptContent = hasDevScript
     ? `#!/bin/zsh
 set -ux
+
+# Source system profile for environment variables (RUSTUP_HOME, etc.)
+[[ -f /etc/profile ]] && source /etc/profile
+
 cd ${WORKSPACE_ROOT}
 
 echo "=== Dev Script Started at \\$(date) ==="
