@@ -8,6 +8,7 @@ pub mod models;
 pub mod mux;
 pub mod notifications;
 pub mod palette;
+pub mod sandbox_handle;
 pub mod service;
 pub mod settings;
 pub mod sync_files;
@@ -23,6 +24,7 @@ pub use keyring::{
     build_default_env_vars, extract_api_key_from_output, get_claude_token, store_claude_token,
 };
 pub use mux::run_mux_tui;
+pub use sandbox_handle::{ExecOutput, SandboxBuilder, SandboxHandle, SandboxPool};
 
 pub const DEFAULT_HTTP_PORT: u16 = 46831;
 pub const DEFAULT_WS_PORT: u16 = 46832;
