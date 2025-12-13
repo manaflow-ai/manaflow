@@ -741,6 +741,7 @@ exit $EXIT_CODE
         cwd: "/root/workspace",
         env: {
           CMUX_BRANCH_NAME: newBranch,
+          CMUX_BASE_BRANCH: options.branch || "main",
         },
         timeout: 60000,
       });

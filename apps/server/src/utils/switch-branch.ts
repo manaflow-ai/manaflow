@@ -7,6 +7,7 @@ import { $ } from "bun";
 
 const workspaceDir = "/root/workspace";
 const branchName = process.env.CMUX_BRANCH_NAME;
+const baseBranch = process.env.CMUX_BASE_BRANCH || "main";
 
 const logPrefix = "[cmux switch-branch]";
 const log = (...parts: Array<string>) => {
@@ -63,6 +64,20 @@ const getCurrentBranch = async (repoPath: string): Promise<string | null> => {
     return branch;
   } catch {
     return null;
+  }
+};
+
+const updateBaseBranch = async (repoPath: string): Promise<boolean> => {
+  try {
+    // Fetch the latest base branch from origin
+    log("repo=", repoPath, "-> fetching origin/" + baseBranch);
+    await $`git -C ${repoPath} fetch origin ${baseBranch}`.quiet();
+    return true;
+  } catch (error) {
+    const { stderr } = extractShellOutputs(error);
+    const message = stderr?.trim() ?? formatError(error);
+    log("repo=", repoPath, "-> failed to fetch base branch:", message);
+    return false;
   }
 };
 
@@ -138,6 +153,9 @@ for (const repoPath of repoPaths) {
     continue;
   }
 
+  // Always fetch the base branch first to ensure we have the latest state
+  await updateBaseBranch(repoPath);
+
   try {
     await $`git -C ${repoPath} switch ${branchName}`.quiet();
     log("repo=", repoPath, "-> switched to existing branch", branchName ?? "(missing)");
@@ -153,18 +171,34 @@ for (const repoPath of repoPaths) {
     );
   }
 
+  // Create new branch from origin/baseBranch to ensure it's based on latest remote
   try {
-    await $`git -C ${repoPath} switch -c ${branchName}`.quiet();
-    log("repo=", repoPath, "-> created branch", branchName ?? "(missing)");
+    await $`git -C ${repoPath} switch -c ${branchName} origin/${baseBranch}`.quiet();
+    log("repo=", repoPath, "-> created branch from origin/" + baseBranch, branchName ?? "(missing)");
   } catch (createError) {
     const { stderr } = extractShellOutputs(createError);
     const message = stderr?.trim() ?? formatError(createError);
     log(
       "repo=",
       repoPath,
-      "-> failed to create branch:",
+      "-> failed to create branch from origin/" + baseBranch + ":",
       message,
     );
+
+    // Fallback: try creating from current HEAD if origin/baseBranch doesn't exist
+    try {
+      await $`git -C ${repoPath} switch -c ${branchName}`.quiet();
+      log("repo=", repoPath, "-> created branch from HEAD (fallback)", branchName ?? "(missing)");
+      continue;
+    } catch (fallbackError) {
+      const { stderr: fallbackStderr } = extractShellOutputs(fallbackError);
+      log(
+        "repo=",
+        repoPath,
+        "-> fallback creation also failed:",
+        fallbackStderr?.trim() ?? formatError(fallbackError),
+      );
+    }
 
     const branchAfterFailure = await getCurrentBranch(repoPath);
     if (branchAfterFailure === branchName) {
