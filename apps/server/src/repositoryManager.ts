@@ -1035,6 +1035,40 @@ export class RepositoryManager {
         );
       } else {
         // Neither local nor remote branch exists; create a new branch from base
+        // First, fetch the latest base branch to avoid divergent branches
+        serverLogger.info(
+          `Fetching latest origin/${baseBranch} before creating new branch ${branchName}`
+        );
+        await this.removeStaleGitLock(originPath, "shallow.lock", 15_000);
+        try {
+          await this.executeGitCommand(
+            `git fetch --depth ${this.config.fetchDepth} origin +refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`,
+            { cwd: originPath }
+          );
+        } catch (fetchError) {
+          const msg =
+            fetchError instanceof Error
+              ? `${fetchError.message}\n${fetchError || ""}`
+              : String(fetchError);
+          const lockHit =
+            msg.includes("shallow.lock") ||
+            msg.includes("could not lock shallow") ||
+            msg.includes("Another git process seems to be running");
+          if (lockHit) {
+            // Force-remove lock and retry once
+            await this.removeStaleGitLock(originPath, "shallow.lock", 0, true);
+            await new Promise((r) => setTimeout(r, 150));
+            await this.executeGitCommand(
+              `git fetch --depth ${this.config.fetchDepth} origin +refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`,
+              { cwd: originPath }
+            );
+          } else {
+            serverLogger.warn(
+              `Failed to fetch latest ${baseBranch}, proceeding with existing ref:`,
+              fetchError
+            );
+          }
+        }
         await this.executeGitCommand(
           `git worktree add -b "${branchName}" "${worktreePath}" origin/${baseBranch}`,
           { cwd: originPath }
