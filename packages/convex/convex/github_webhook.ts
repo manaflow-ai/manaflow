@@ -13,7 +13,10 @@ import type {
 import { env } from "../_shared/convex-env";
 import { hmacSha256, safeEqualHex, sha256Hex } from "../_shared/crypto";
 import { bytesToHex } from "../_shared/encoding";
-import { streamInstallationRepositories } from "../_shared/githubApp";
+import {
+  checkOrganizationMembership,
+  streamInstallationRepositories,
+} from "../_shared/githubApp";
 import { internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
 
@@ -548,6 +551,13 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               const headRepoFullName = prPayload.pull_request?.head?.repo?.full_name ?? undefined;
               const headRepoCloneUrl = prPayload.pull_request?.head?.repo?.clone_url ?? undefined;
 
+              // Extract PR author information
+              const prAuthorLogin = prPayload.pull_request?.user?.login ?? undefined;
+
+              // Extract org from repo full name (format: "org/repo")
+              const repoOwner = repoFullName.split("/")[0];
+              const repoOwnerType = prPayload.repository?.owner?.type;
+
               console.log("[preview-jobs] Preview config found for PR", {
                 repoFullName,
                 prNumber,
@@ -557,7 +567,31 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                 headRepoFullName,
                 isFromFork: headRepoFullName && headRepoFullName !== repoFullName,
                 previewConfigId: previewConfig._id,
+                prAuthorLogin,
+                repoOwner,
+                repoOwnerType,
               });
+
+              // Block external PRs: only allow PRs from organization members
+              // This prevents untrusted code from external contributors from being run
+              if (repoOwnerType === "Organization" && prAuthorLogin && repoOwner) {
+                const isMember = await checkOrganizationMembership(
+                  installation,
+                  repoOwner,
+                  prAuthorLogin,
+                );
+
+                if (!isMember) {
+                  console.log("[preview-jobs] Blocking PR from non-org member", {
+                    repoFullName,
+                    prNumber,
+                    prAuthorLogin,
+                    repoOwner,
+                  });
+                  // Skip the preview run - don't process PRs from external contributors
+                  break;
+                }
+              }
 
               if (prNumber && prUrl && headSha) {
                 try {

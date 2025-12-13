@@ -340,6 +340,65 @@ export type InstallationRepoPageHandler = (
   pageIndex: number,
 ) => Promise<void> | void;
 
+/**
+ * Check if a user is a member of a GitHub organization.
+ * Uses the installation access token to check membership.
+ *
+ * @returns true if the user is a member, false otherwise
+ */
+export async function checkOrganizationMembership(
+  installationId: number,
+  org: string,
+  username: string,
+): Promise<boolean> {
+  const accessToken = await fetchInstallationAccessToken(installationId);
+  if (!accessToken) {
+    console.warn(
+      `[github_app] Failed to get access token for org membership check`,
+      { installationId, org, username },
+    );
+    return false;
+  }
+
+  try {
+    // Check if user is a member of the organization
+    // GET /orgs/{org}/members/{username} returns 204 if member, 404 if not
+    const response = await fetch(
+      `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(username)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "cmux-github-setup",
+        },
+      },
+    );
+
+    if (response.status === 204) {
+      return true;
+    }
+
+    if (response.status === 404) {
+      // Not a member
+      return false;
+    }
+
+    // For other status codes (302 redirect for public members when requester is not org member, etc)
+    // we'll treat as not being able to verify membership
+    console.warn(
+      `[github_app] Unexpected status checking org membership: ${response.status}`,
+      { org, username, installationId },
+    );
+    return false;
+  } catch (error) {
+    console.error(
+      `[github_app] Error checking org membership`,
+      { org, username, installationId, error },
+    );
+    return false;
+  }
+}
+
 export async function streamInstallationRepositories(
   installationId: number,
   onPage: InstallationRepoPageHandler,
