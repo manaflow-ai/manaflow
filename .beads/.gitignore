@@ -1,5 +1,6 @@
-# SQLite databases (runtime cache, not source of truth)
+# SQLite databases
 *.db
+*.db?*
 *.db-journal
 *.db-wal
 *.db-shm
@@ -9,15 +10,20 @@ daemon.lock
 daemon.log
 daemon.pid
 bd.sock
-bd.sock.*
 
-# Merge artifacts
+# Legacy database files
+db.sqlite
+bd.db
+
+# Merge artifacts (temporary files from 3-way merge)
 beads.base.jsonl
 beads.base.meta.json
 beads.left.jsonl
 beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
 
-# Keep JSONL and config (source of truth for git)
+# Keep JSONL exports and config (source of truth for git)
 !issues.jsonl
 !metadata.json
 !config.json

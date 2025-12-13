@@ -13,7 +13,8 @@ import typing as t
 from dataclasses import dataclass, field
 
 import httpx
-from morphcloud.api import Instance, InstanceExecResponse
+
+from providers.base import BaseInstance, ExecResponse
 
 from ._types import Command, Console, TimingsCollector
 
@@ -60,7 +61,7 @@ async def _run_command(
     command: Command,
     *,
     timeout: float | None = None,
-) -> InstanceExecResponse:
+) -> ExecResponse:
     ctx.console.info(f"[{label}] running...")
     command_parts = _shell_command(command)
     attempts: int = 0
@@ -102,7 +103,7 @@ async def _run_command(
 class TaskContext:
     """Execution context passed to every task."""
 
-    instance: Instance
+    instance: BaseInstance
     repo_root: t.Any  # Path, but avoid import
     remote_repo_root: str
     remote_repo_tar: str
@@ -134,7 +135,7 @@ class TaskContext:
         command: Command,
         *,
         timeout: float | None = None,
-    ) -> InstanceExecResponse:
+    ) -> ExecResponse:
         """Run a command, preferring the exec service if available."""
         command_with_env = self._apply_environment(command)
         command_to_run = (
@@ -165,7 +166,7 @@ class TaskContext:
         *,
         timeout: float | None = None,
         use_cgroup: bool = True,
-    ) -> InstanceExecResponse:
+    ) -> ExecResponse:
         """Run a command directly via SSH, bypassing the exec service."""
         command_with_env = self._apply_environment(command)
         command_to_run = (

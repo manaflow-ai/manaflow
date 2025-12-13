@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from morphcloud.api import InstanceExecResponse
+from providers.base import ExecResponse
 
 from ._types import Console, Command
 
@@ -93,7 +93,7 @@ class HttpExecClient:
         command: Command,
         *,
         timeout: float | None,
-    ) -> InstanceExecResponse:
+    ) -> ExecResponse:
         """Execute a command via the HTTP exec service."""
         return await asyncio.to_thread(
             self._run_sync,
@@ -107,7 +107,7 @@ class HttpExecClient:
         label: str,
         command: Command,
         timeout: float | None,
-    ) -> InstanceExecResponse:
+    ) -> ExecResponse:
         exec_cmd = shell_command(command)
         command_str = exec_cmd if isinstance(exec_cmd, str) else shlex.join(exec_cmd)
         url = urllib.parse.urljoin(f"{self._base_url}/", "exec")
@@ -193,7 +193,7 @@ class HttpExecClient:
             if stderr_text.strip():
                 error_parts.append(f"stderr:\n{stderr_text.rstrip()}")
             raise RuntimeError("\n".join(error_parts))
-        return InstanceExecResponse(
+        return ExecResponse(
             exit_code=exit_code,
             stdout=stdout_text,
             stderr=stderr_text,

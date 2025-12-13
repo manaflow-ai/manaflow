@@ -6,9 +6,15 @@ import asyncio
 import base64
 import os
 import shlex
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, override
+
+# Add freestyle-client-pkg to path for local imports
+_freestyle_client_pkg = Path(__file__).resolve().parent.parent / "freestyle-client-pkg"
+if str(_freestyle_client_pkg) not in sys.path:
+    sys.path.insert(0, str(_freestyle_client_pkg))
 
 from freestyle_client import ApiClient, Configuration, VMApi
 from freestyle_client.models.create_snapshot_request import CreateSnapshotRequest

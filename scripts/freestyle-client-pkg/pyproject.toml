@@ -36,6 +36,10 @@ mypy = ">= 1.5"
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["freestyle_client*"]
+exclude = ["test", "tests"]
+
 [tool.pylint.'MESSAGES CONTROL']
 extension-pkg-whitelist = "pydantic"
 
