@@ -3,7 +3,7 @@ import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
 
 const ANTHROPIC_API_URL =
-  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
+  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-preview-new/anthropic/v1/messages";
 const TEMPORARY_DISABLE_AUTH = true;
 
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
