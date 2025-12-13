@@ -60,6 +60,13 @@ export const checkPreviewQuota = internalAction({
       { userId, cap: PREVIEW_PAYWALL_FREE_PR_LIMIT },
     );
 
+    console.log("[preview_quota] Checking free tier limit", {
+      userId,
+      usedRuns,
+      limit: PREVIEW_PAYWALL_FREE_PR_LIMIT,
+      exceedsLimit: usedRuns >= PREVIEW_PAYWALL_FREE_PR_LIMIT,
+    });
+
     if (usedRuns >= PREVIEW_PAYWALL_FREE_PR_LIMIT) {
       console.log("[preview_quota] User exceeded free tier limit", {
         userId,
@@ -74,6 +81,12 @@ export const checkPreviewQuota = internalAction({
         limit: PREVIEW_PAYWALL_FREE_PR_LIMIT,
       };
     }
+
+    console.log("[preview_quota] User has remaining quota", {
+      userId,
+      usedRuns,
+      remainingRuns: PREVIEW_PAYWALL_FREE_PR_LIMIT - usedRuns,
+    });
 
     return {
       allowed: true,
