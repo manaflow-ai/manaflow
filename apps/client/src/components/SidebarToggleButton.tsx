@@ -29,7 +29,7 @@ export function SidebarToggleButton({
     >
       <ChevronRight
         className={clsx(
-          "transition-transform w-3 h-3",
+          "w-3 h-3",
           isExpanded && "rotate-90",
           iconClassName
         )}
