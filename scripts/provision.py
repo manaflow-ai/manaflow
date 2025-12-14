@@ -24,16 +24,16 @@ import sys
 from pathlib import Path
 
 try:
-    import dotenv
+    import dotenv  # pyright: ignore[reportMissingImports]
 except ImportError:
-    dotenv = None  # type: ignore
+    dotenv = None  # type: ignore[assignment]
 
 # Add scripts directory to path for providers import
 scripts_dir = Path(__file__).resolve().parent
 if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
-from providers import ProviderType, get_provider
+from providers import get_provider  # pyright: ignore[reportImplicitRelativeImport]
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,7 +135,7 @@ async def run_morph_provision(args: argparse.Namespace) -> None:
 
 async def run_freestyle_provision(args: argparse.Namespace) -> None:
     """Run provisioning for Freestyle provider."""
-    from providers import FreestyleProvider
+    from providers import FreestyleProvider  # pyright: ignore[reportImplicitRelativeImport]
 
     if not args.snapshot_id:
         print("Error: --snapshot-id is required for Freestyle")
