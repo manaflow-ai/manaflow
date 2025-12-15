@@ -98,7 +98,11 @@ import {
   HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_QUERY_KEY,
+  HEATMAP_LANGUAGE_QUERY_KEY,
+  TOOLTIP_LANGUAGE_OPTIONS,
+  detectBrowserLanguage,
   type HeatmapModelQueryValue,
+  type TooltipLanguageValue,
 } from "@/lib/services/code-review/model-config";
 
 type PullRequestDiffViewerProps = {
@@ -583,18 +587,30 @@ export function PullRequestDiffViewer({
       key: "cmux-heatmap-model",
       defaultValue: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
     });
+  const [tooltipLanguagePreference, setTooltipLanguagePreference] =
+    useLocalStorage<TooltipLanguageValue>({
+      key: "cmux-tooltip-language",
+      defaultValue: detectBrowserLanguage(),
+    });
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
     heatmapModelPreference
+  );
+  const tooltipLanguagePreferenceRef = useRef<TooltipLanguageValue>(
+    tooltipLanguagePreference
   );
   const hasFetchedReviewRef = useRef(false);
   const activeReviewControllerRef = useRef<AbortController | null>(null);
   const activeReviewModelRef = useRef<HeatmapModelOptionValue | null>(null);
+  const activeReviewLanguageRef = useRef<TooltipLanguageValue | null>(null);
   const [streamStateByFile, setStreamStateByFile] = useState<
     Map<string, StreamFileState>
   >(() => new Map());
 
   const fetchCodeReview = useCallback(
-    (modelOverride?: HeatmapModelOptionValue) => {
+    (options?: {
+      modelOverride?: HeatmapModelOptionValue;
+      languageOverride?: TooltipLanguageValue;
+    }) => {
       if (normalizedJobType !== "pull_request") {
         return;
       }
@@ -605,11 +621,14 @@ export function PullRequestDiffViewer({
         return;
       }
 
-      const model = modelOverride ?? heatmapModelPreferenceRef.current;
+      const model = options?.modelOverride ?? heatmapModelPreferenceRef.current;
+      const language =
+        options?.languageOverride ?? tooltipLanguagePreferenceRef.current;
       const existingController = activeReviewControllerRef.current;
       const hasActiveMatchingRequest =
         existingController &&
         activeReviewModelRef.current === model &&
+        activeReviewLanguageRef.current === language &&
         !existingController.signal.aborted;
       if (hasActiveMatchingRequest) {
         return;
@@ -619,6 +638,7 @@ export function PullRequestDiffViewer({
       const controller = new AbortController();
       activeReviewControllerRef.current = controller;
       activeReviewModelRef.current = model;
+      activeReviewLanguageRef.current = language;
 
       setStreamStateByFile(new Map());
       const params = new URLSearchParams({
@@ -626,6 +646,7 @@ export function PullRequestDiffViewer({
         prNumber: String(prNumber),
       });
       params.set(HEATMAP_MODEL_QUERY_KEY, model);
+      params.set(HEATMAP_LANGUAGE_QUERY_KEY, language);
 
       (async () => {
         try {
@@ -945,15 +966,30 @@ export function PullRequestDiffViewer({
     heatmapModelPreferenceRef.current = heatmapModelPreference;
   }, [heatmapModelPreference]);
 
+  useEffect(() => {
+    tooltipLanguagePreferenceRef.current = tooltipLanguagePreference;
+  }, [tooltipLanguagePreference]);
+
   const handleHeatmapModelPreferenceChange = useCallback(
     (value: HeatmapModelOptionValue) => {
       if (value === heatmapModelPreference) {
         return;
       }
       setHeatmapModelPreference(value);
-      fetchCodeReview(value);
+      fetchCodeReview({ modelOverride: value });
     },
     [fetchCodeReview, heatmapModelPreference, setHeatmapModelPreference]
+  );
+
+  const handleTooltipLanguagePreferenceChange = useCallback(
+    (value: TooltipLanguageValue) => {
+      if (value === tooltipLanguagePreference) {
+        return;
+      }
+      setTooltipLanguagePreference(value);
+      fetchCodeReview({ languageOverride: value });
+    },
+    [fetchCodeReview, tooltipLanguagePreference, setTooltipLanguagePreference]
   );
 
   useEffect(() => {
@@ -2186,6 +2222,8 @@ export function PullRequestDiffViewer({
                 copyStatus={clipboard.copied}
                 selectedModel={heatmapModelPreference}
                 onModelChange={handleHeatmapModelPreferenceChange}
+                selectedLanguage={tooltipLanguagePreference}
+                onLanguageChange={handleTooltipLanguagePreferenceChange}
               />
               <CmuxPromoCard />
               {targetCount > 0 ? (
@@ -2489,6 +2527,8 @@ function HeatmapThresholdControl({
   copyStatus,
   selectedModel,
   onModelChange,
+  selectedLanguage,
+  onLanguageChange,
 }: {
   value: number;
   onChange: (next: number) => void;
@@ -2499,6 +2539,8 @@ function HeatmapThresholdControl({
   copyStatus: boolean;
   selectedModel: HeatmapModelOptionValue;
   onModelChange: (next: HeatmapModelOptionValue) => void;
+  selectedLanguage: TooltipLanguageValue;
+  onLanguageChange: (next: TooltipLanguageValue) => void;
 }) {
   const sliderId = useId();
   const descriptionId = `${sliderId}-description`;
@@ -2543,6 +2585,14 @@ function HeatmapThresholdControl({
       onModelChange(nextValue);
     },
     [onModelChange]
+  );
+
+  const handleLanguageSelectChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const nextValue = event.target.value as TooltipLanguageValue;
+      onLanguageChange(nextValue);
+    },
+    [onLanguageChange]
   );
 
   return (
@@ -2627,25 +2677,50 @@ function HeatmapThresholdControl({
           </button>
         </div>
       </div>
-      <div className="mt-4 space-y-2">
-        <p className="text-xs font-semibold text-neutral-700">Model</p>
-        <div className="relative max-w-[220px]">
-          <select
-            value={selectedModel}
-            onChange={handleModelSelectChange}
-            aria-label="Heatmap model preference"
-            className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          >
-            {HEATMAP_MODEL_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute right-3 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500"
-            aria-hidden
-          />
+      <div className="mt-4 grid grid-cols-1 gap-4">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-neutral-700">Model</p>
+          <div className="relative">
+            <select
+              value={selectedModel}
+              onChange={handleModelSelectChange}
+              aria-label="Heatmap model preference"
+              className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              {HEATMAP_MODEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-3 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500"
+              aria-hidden
+            />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-neutral-700">
+            Tooltip Language
+          </p>
+          <div className="relative">
+            <select
+              value={selectedLanguage}
+              onChange={handleLanguageSelectChange}
+              aria-label="Tooltip language preference"
+              className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-3 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500"
+              aria-hidden
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -6,7 +6,12 @@
 #
 # This script runs in parallel:
 #   - bun install
-#   - git submodule update --init --recursive
+#   - git submodule update --init --recursive --depth 1 --jobs 8
+#
+# Note: Submodules are cloned with --depth 1 for faster setup and --jobs 8
+# to clone multiple submodules in parallel. Git submodules work by commit SHA
+# (not branch name), so this works regardless of whether the upstream repo
+# uses main, master, dev, or any other default branch.
 #
 
 set -e
@@ -38,8 +43,10 @@ GIT_EXIT=0
 (bun install) &
 BUN_PID=$!
 
-# Start git submodule update in background
-(git submodule update --init --recursive) &
+# Start git submodule update in background with shallow clone
+# Using --depth 1 for faster clones since we only need the latest state
+# Using --jobs 8 to clone multiple submodules in parallel
+(git submodule update --init --recursive --depth 1 --jobs 8) &
 GIT_PID=$!
 
 # Wait for both and capture exit codes

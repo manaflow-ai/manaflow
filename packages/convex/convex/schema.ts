@@ -596,6 +596,8 @@ const convexSchema = defineSchema({
     repoInstallationId: v.optional(v.number()),
     prNumber: v.number(),
     prUrl: v.string(),
+    prTitle: v.optional(v.string()), // PR title from GitHub
+    prDescription: v.optional(v.string()), // PR body/description from GitHub
     headSha: v.string(),
     baseSha: v.optional(v.string()),
     headRef: v.optional(v.string()), // Branch name in head repo
@@ -1043,6 +1045,20 @@ const convexSchema = defineSchema({
     .index("by_statusId", ["statusId"])
     .index("by_sha_context", ["sha", "context", "updatedAt"])
     .index("by_sha", ["sha", "updatedAt"]),
+
+  // Host screenshot collector releases synced from GitHub releases
+  hostScreenshotCollectorReleases: defineTable({
+    version: v.string(), // e.g., "0.1.0-20241211120000-abc1234"
+    commitSha: v.string(), // Full git commit SHA
+    storageId: v.id("_storage"), // Convex file storage ID for the bundled JS
+    isStaging: v.boolean(), // Whether this is for staging (cmux-internal-dev-agent) or production (cmux-agent)
+    isLatest: v.boolean(), // Whether this is the latest release for its environment
+    releaseUrl: v.optional(v.string()), // GitHub release URL
+    createdAt: v.number(),
+  })
+    .index("by_version", ["version"])
+    .index("by_staging_latest", ["isStaging", "isLatest", "createdAt"])
+    .index("by_staging_created", ["isStaging", "createdAt"]),
 });
 
 export default convexSchema;

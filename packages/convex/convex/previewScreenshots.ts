@@ -157,6 +157,31 @@ export const triggerGithubComment = internalAction({
       return;
     }
 
+    // Build workspace and dev server URLs if we have a taskRunId
+    let workspaceUrl: string | undefined;
+    let devServerUrl: string | undefined;
+
+    if (previewRun.taskRunId) {
+      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+        id: previewRun.taskRunId,
+      });
+
+      if (taskRun) {
+        const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+          teamId: previewRun.teamId,
+        });
+        const teamSlug = team?.slug ?? previewRun.teamId;
+        workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
+        devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
+
+        console.log("[previewScreenshots] Built workspace URLs", {
+          previewRunId: args.previewRunId,
+          workspaceUrl,
+          devServerUrl,
+        });
+      }
+    }
+
     // Check if we have an existing comment to update (from initial posting)
     if (previewRun.githubCommentId) {
       console.log("[previewScreenshots] Updating existing GitHub comment", {
@@ -174,6 +199,8 @@ export const triggerGithubComment = internalAction({
         commentId: previewRun.githubCommentId,
         screenshotSetId: previewRun.screenshotSetId,
         previewRunId: args.previewRunId,
+        workspaceUrl,
+        devServerUrl,
         includePreviousRuns: true,
         previewConfigId: previewRun.previewConfigId,
       });
@@ -197,6 +224,8 @@ export const triggerGithubComment = internalAction({
         prNumber: previewRun.prNumber,
         screenshotSetId: previewRun.screenshotSetId,
         previewRunId: args.previewRunId,
+        workspaceUrl,
+        devServerUrl,
         includePreviousRuns: true,
         previewConfigId: previewRun.previewConfigId,
       });

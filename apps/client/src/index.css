@@ -511,3 +511,12 @@ pre,
   -webkit-user-drag: none;
   user-drag: none;
 }
+
+/* Sidebar responsive width */
+@media (min-width: 768px) {
+  [style*="--sidebar-width"] {
+    width: var(--sidebar-width) !important;
+    min-width: var(--sidebar-width) !important;
+    max-width: var(--sidebar-width) !important;
+  }
+}

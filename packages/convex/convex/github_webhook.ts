@@ -540,6 +540,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             if (previewConfig) {
               const prNumber = Number(prPayload.pull_request?.number ?? 0);
               const prUrl = prPayload.pull_request?.html_url ?? null;
+              const prTitle = prPayload.pull_request?.title ?? undefined;
+              const prDescription = prPayload.pull_request?.body ?? undefined;
               const headSha = prPayload.pull_request?.head?.sha ?? null;
               const baseSha = prPayload.pull_request?.base?.sha ?? undefined;
               const headRef = prPayload.pull_request?.head?.ref ?? undefined;
@@ -570,6 +572,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       repoInstallationId: installation,
                       prNumber,
                       prUrl,
+                      prTitle,
+                      prDescription,
                       headSha,
                       baseSha,
                       headRef,

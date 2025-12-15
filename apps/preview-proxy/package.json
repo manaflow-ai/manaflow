@@ -13,8 +13,8 @@
     "bun-plugin-tailwind": "^0.0.15",
     "convex": "1.29.3",
     "lucide-react": "^0.540.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^19.2.2",
+    "react-dom": "^19.2.2",
     "tailwindcss": "^4.1.11",
     "xpath-generator": "^1.1.0"
   },

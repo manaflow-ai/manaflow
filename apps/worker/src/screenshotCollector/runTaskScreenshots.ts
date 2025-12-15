@@ -97,6 +97,7 @@ export async function runTaskScreenshots(
   const result = await startScreenshotCollection({
     anthropicApiKey: anthropicApiKey ?? undefined,
     taskRunJwt,
+    convexUrl,
     installCommand: options.installCommand,
     devCommand: options.devCommand,
   });
