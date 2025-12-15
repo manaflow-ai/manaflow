@@ -13,21 +13,21 @@ function normalizeRepoFullName(value: string): string {
   return value.trim().replace(/\.git$/i, "").toLowerCase();
 }
 
-async function countUniquePullRequestsForUser(
+async function countUniquePullRequestsForTeam(
   ctx: QueryCtx,
-  userId: string,
+  teamId: string,
   cap: number,
 ): Promise<number> {
   const maxUnique = Math.max(1, cap);
   const unique = new Set<string>();
 
   // Fetch enough runs to reliably count unique PRs up to the cap.
-  // If a user has 10 unique PRs averaging ~5 runs each, we need ~50 runs.
+  // If a team has 10 unique PRs averaging ~5 runs each, we need ~50 runs.
   // Using 500 gives us margin for heavy users while avoiding pagination
   // (Convex doesn't allow multiple paginated queries in a single function).
   const runs = await ctx.db
     .query("previewRuns")
-    .withIndex("by_user_created", (q) => q.eq("createdByUserId", userId))
+    .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
     .order("desc")
     .take(500);
 
@@ -46,7 +46,7 @@ export const enqueueFromWebhook = internalMutation({
   args: {
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),
-    createdByUserId: v.string(),
+    createdByUserId: v.optional(v.string()), // Deprecated: no longer used for quota, kept for backwards compat
     repoFullName: v.string(),
     repoInstallationId: v.optional(v.number()),
     prNumber: v.number(),
@@ -613,32 +613,32 @@ export const hasPaywallRunForPullRequest = internalQuery({
   },
 });
 
-export const getUniquePullRequestCountByUser = internalQuery({
+export const getUniquePullRequestCountByTeam = internalQuery({
   args: {
-    userId: v.string(),
+    teamId: v.string(),
     cap: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const cap = Math.max(1, Math.min(args.cap ?? PREVIEW_PAYWALL_FREE_PR_LIMIT, 10_000));
-    return await countUniquePullRequestsForUser(ctx, args.userId, cap);
+    return await countUniquePullRequestsForTeam(ctx, args.teamId, cap);
   },
 });
 
-export const getCurrentUserPreviewUsage = authQuery({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Authentication required");
-    }
+export const getTeamPreviewUsage = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
-    const usedUniquePullRequests = await countUniquePullRequestsForUser(
+    const usedUniquePullRequests = await countUniquePullRequestsForTeam(
       ctx,
-      identity.subject,
+      teamId,
       PREVIEW_PAYWALL_FREE_PR_LIMIT,
     );
 
     return {
+      teamId,
       usedUniquePullRequests,
       freeLimit: PREVIEW_PAYWALL_FREE_PR_LIMIT,
     };
@@ -742,7 +742,8 @@ export const createManual = authMutation({
     if (!identity) {
       throw new Error("Authentication required");
     }
-    const userId = config.createdByUserId;
+    // Use config.createdByUserId if available, otherwise fall back to authenticated user
+    const userId = config.createdByUserId ?? identity.subject;
 
     // Step 3: Create task for this preview run (following webhook pattern)
     const taskId = await ctx.runMutation(internal.tasks.createForPreview, {

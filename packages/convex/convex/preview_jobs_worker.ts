@@ -1197,9 +1197,21 @@ export async function runPreviewJob(
       prNumber: run.prNumber,
     });
 
+    // Get userId from config or run (config.createdByUserId is now optional)
+    const userId = config.createdByUserId ?? run.createdByUserId;
+    if (!userId) {
+      console.error("[preview-jobs] No userId available for preview task creation", {
+        previewRunId,
+        repoFullName: run.repoFullName,
+        prNumber: run.prNumber,
+        teamId: run.teamId,
+      });
+      throw new Error("No userId available for preview task creation");
+    }
+
     taskId = await ctx.runMutation(internal.tasks.createForPreview, {
       teamId: run.teamId,
-      userId: config.createdByUserId,
+      userId,
       previewRunId,
       repoFullName: run.repoFullName,
       prNumber: run.prNumber,
@@ -1213,7 +1225,7 @@ export async function runPreviewJob(
       {
         taskId,
         teamId: run.teamId,
-        userId: config.createdByUserId,
+        userId,
         prUrl: run.prUrl,
         environmentId: config.environmentId,
         newBranch: run.headRef,

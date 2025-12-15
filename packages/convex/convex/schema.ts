@@ -19,6 +19,8 @@ const convexSchema = defineSchema({
     serverMetadata: v.optional(v.any()),
     // Timestamp from Stack (created_at_millis)
     createdAtMillis: v.optional(v.number()),
+    // Subscription flags
+    hasPreviewSubscription: v.optional(v.boolean()), // Team has paid preview subscription
     // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),

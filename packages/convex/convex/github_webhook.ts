@@ -561,17 +561,17 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
 
               if (prNumber && prUrl && headSha) {
                 // ALWAYS check quota before creating any preview run
-                // This blocks ALL new screenshot captures when user is over quota
+                // This blocks ALL new screenshot captures when team is over quota
                 const quotaResult = await _ctx.runAction(
                   internal.preview_quota_actions.checkPreviewQuota,
-                  { userId: previewConfig.createdByUserId },
+                  { teamId: previewConfig.teamId },
                 );
 
                 if (!quotaResult.allowed) {
-                  console.log("[preview-jobs] User exceeded preview quota", {
+                  console.log("[preview-jobs] Team exceeded preview quota", {
                     repoFullName,
                     prNumber,
-                    userId: previewConfig.createdByUserId,
+                    teamId: previewConfig.teamId,
                     usedRuns: quotaResult.usedRuns,
                     limit: quotaResult.limit,
                   });
@@ -634,7 +634,6 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       {
                         previewConfigId: previewConfig._id,
                         teamId: previewConfig.teamId,
-                        createdByUserId: previewConfig.createdByUserId,
                         repoFullName,
                         repoInstallationId: installation,
                         prNumber,
@@ -661,10 +660,10 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                   break;
                 }
 
-                console.log("[preview-jobs] User has preview quota remaining", {
+                console.log("[preview-jobs] Team has preview quota remaining", {
                   repoFullName,
                   prNumber,
-                  userId: previewConfig.createdByUserId,
+                  teamId: previewConfig.teamId,
                   remainingRuns: quotaResult.remainingRuns,
                   isPaid: quotaResult.isPaid,
                 });
@@ -677,7 +676,6 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     {
                       previewConfigId: previewConfig._id,
                       teamId: previewConfig.teamId,
-                      createdByUserId: previewConfig.createdByUserId,
                       repoFullName,
                       repoInstallationId: installation,
                       prNumber,
@@ -720,11 +718,22 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                   } else {
                     // Create task and taskRun for screenshot collection
                     // The existing worker infrastructure will pick this up and process it
+                    // Note: createdByUserId may be undefined for older preview configs
+                    const userId = previewConfig.createdByUserId ?? conn?.connectedByUserId;
+                    if (!userId) {
+                      console.error("[preview-jobs] No userId available for preview task creation", {
+                        repoFullName,
+                        prNumber,
+                        previewConfigId: previewConfig._id,
+                      });
+                      throw new Error("No userId available for preview task creation");
+                    }
+
                     const taskId = await _ctx.runMutation(
                       internal.tasks.createForPreview,
                       {
                         teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                        userId,
                         previewRunId: runId,
                         repoFullName,
                         prNumber,
@@ -739,7 +748,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       {
                         taskId,
                         teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                        userId,
                         prUrl,
                         environmentId: previewConfig.environmentId,
                         newBranch: headRef,

@@ -822,17 +822,17 @@ export const crownWorkerComplete = httpAction(async (ctx, req) => {
       );
 
       if (previewConfig) {
-        // Check quota for the preview config owner before creating preview run
+        // Check quota for the team before creating preview run
         const quotaResult = await ctx.runAction(
           internal.preview_quota_actions.checkPreviewQuota,
-          { userId: previewConfig.createdByUserId }
+          { teamId: previewConfig.teamId }
         );
 
         if (!quotaResult.allowed) {
-          console.log("[convex.crown] User exceeded preview quota, skipping preview run", {
+          console.log("[convex.crown] Team exceeded preview quota, skipping preview run", {
             taskRunId,
             repoFullName,
-            userId: previewConfig.createdByUserId,
+            teamId: previewConfig.teamId,
             usedRuns: quotaResult.usedRuns,
             limit: quotaResult.limit,
           });

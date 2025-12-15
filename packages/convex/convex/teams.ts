@@ -134,3 +134,20 @@ export const getByTeamIdInternal = internalQuery({
     return { uuid: team.teamId, slug: team.slug ?? null } as const;
   },
 });
+
+// Internal helper to fetch a team by ID with subscription status (used by quota checks)
+export const getByIdInternal = internalQuery({
+  args: { teamId: v.string() },
+  handler: async (ctx, { teamId }) => {
+    const team = await ctx.db
+      .query("teams")
+      .withIndex("by_teamId", (q) => q.eq("teamId", teamId))
+      .first();
+    if (!team) return null;
+    return {
+      teamId: team.teamId,
+      slug: team.slug ?? null,
+      hasPreviewSubscription: team.hasPreviewSubscription ?? false,
+    };
+  },
+});
