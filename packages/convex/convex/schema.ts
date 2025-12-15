@@ -567,7 +567,7 @@ const convexSchema = defineSchema({
   }).index("by_team_user_repo", ["teamId", "userId", "projectFullName"]),
   previewConfigs: defineTable({
     teamId: v.string(),
-    createdByUserId: v.string(),
+    createdByUserId: v.optional(v.string()),
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
     repoInstallationId: v.number(),
