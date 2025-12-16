@@ -1,17 +1,9 @@
 #!/usr/bin/env bun
 
 import process from "node:process";
-import {
-  DEFAULT_MORPHCLOUD_BASE_URL,
-  createMorphCloudClient,
-  listInstancesInstanceGet,
-  type InstanceModel,
-  type InstanceStatus,
-} from "@cmux/morphcloud-openapi-client";
+import { Instance, InstanceStatus, MorphCloudClient } from "morphcloud";
 
 const MORPH_API_KEY = process.env.MORPH_API_KEY;
-const MORPH_API_BASE_URL =
-  process.env.MORPH_API_BASE_URL ?? DEFAULT_MORPHCLOUD_BASE_URL;
 
 if (!MORPH_API_KEY) {
   console.error(
@@ -20,12 +12,13 @@ if (!MORPH_API_KEY) {
   process.exit(1);
 }
 
-const ACTIVE_STATUSES: InstanceStatus[] = ["pending", "ready", "saving"];
+const ACTIVE_STATUSES: InstanceStatus[] = [
+  InstanceStatus.PENDING,
+  InstanceStatus.READY,
+  InstanceStatus.SAVING,
+];
 
-const morphClient = createMorphCloudClient({
-  baseUrl: MORPH_API_BASE_URL,
-  auth: MORPH_API_KEY,
-});
+const morphClient = new MorphCloudClient();
 
 function formatRelativeTime(secondsSinceEpoch: number): string {
   const diffSeconds = Math.max(
@@ -67,23 +60,18 @@ function formatMetadata(
   return entries.join(", ");
 }
 
-function isActiveInstance(
-  instance: InstanceModel
-): instance is InstanceModel & { status: InstanceStatus } {
-  return (
-    typeof instance.status === "string" &&
-    ACTIVE_STATUSES.includes(instance.status)
-  );
+function isActiveInstance(instance: Instance): boolean {
+  return ACTIVE_STATUSES.includes(instance.status);
 }
 
-function printInstance(instance: InstanceModel & { status: InstanceStatus }) {
+function printInstance(instance: Instance) {
   const created = new Date(instance.created * 1000).toISOString();
   const runtime = formatRelativeTime(instance.created);
   const metadata = formatMetadata(instance.metadata);
-  const { snapshot_id: snapshotId, image_id: imageId } = instance.refs;
-  const services = instance.networking.http_services ?? [];
-  const ttlSeconds = instance.ttl.ttl_seconds;
-  const ttlExpireAt = instance.ttl.ttl_expire_at;
+  const { snapshotId, imageId } = instance.refs;
+  const services = instance.networking.httpServices ?? [];
+  const ttlSeconds = instance.ttl.ttlSeconds;
+  const ttlExpireAt = instance.ttl.ttlExpireAt;
 
   console.log(
     `- ${instance.id} (${instance.status}) — created ${created} (${runtime})`
@@ -113,11 +101,8 @@ function printInstance(instance: InstanceModel & { status: InstanceStatus }) {
     for (const service of services) {
       const portInfo =
         typeof service.port === "number" ? `:${service.port}` : "";
-      const authMode = service.auth_mode ? ` (${service.auth_mode})` : "";
       console.log(
-        `    • ${service.name ?? "service"}${portInfo}${authMode} → ${
-          service.url
-        }`
+        `    • ${service.name ?? "service"}${portInfo} → ${service.url}`
       );
     }
   }
@@ -126,26 +111,9 @@ function printInstance(instance: InstanceModel & { status: InstanceStatus }) {
 }
 
 async function main() {
-  console.log(
-    `[Morph HTTP] Fetching instances from ${MORPH_API_BASE_URL.replace(
-      /\/+$/,
-      ""
-    )}`
-  );
+  console.log("[Morph HTTP] Fetching instances");
 
-  const response = await listInstancesInstanceGet({
-    client: morphClient,
-  });
-
-  if (!response.data) {
-    console.error(
-      "Failed to list instances:",
-      response.error ?? "Unknown error"
-    );
-    process.exit(1);
-  }
-
-  const instances = response.data.data ?? [];
+  const instances = await morphClient.instances.list();
   const activeInstances = instances.filter(isActiveInstance);
 
   if (activeInstances.length === 0) {
