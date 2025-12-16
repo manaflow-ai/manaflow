@@ -216,7 +216,11 @@ arch="$(dpkg --print-architecture)"
 
 if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
   # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
-  CMUX_CODE_RELEASE="${CMUX_CODE_RELEASE:-0.1.0}"
+  if [ -z "${CMUX_CODE_RELEASE:-}" ]; then
+    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+      | jq -r '.tag_name' \
+      | sed 's|^v||')
+  fi
   echo "CMUX_CODE_RELEASE=${CMUX_CODE_RELEASE}"
   if [ "$arch" = "amd64" ]; then
     ARCH="x64"
@@ -817,7 +821,11 @@ arch="$(dpkg --print-architecture)"
 
 if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
   # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
-  CMUX_CODE_RELEASE="${CMUX_CODE_RELEASE:-0.1.0}"
+  if [ -z "${CMUX_CODE_RELEASE:-}" ]; then
+    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+      | jq -r '.tag_name' \
+      | sed 's|^v||')
+  fi
   echo "CMUX_CODE_RELEASE=${CMUX_CODE_RELEASE}"
   if [ "$arch" = "amd64" ]; then
     ARCH="x64"
