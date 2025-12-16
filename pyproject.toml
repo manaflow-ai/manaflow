@@ -9,6 +9,10 @@ dependencies = [
     "morphcloud>=0.1.91",
     "requests>=2.32.4",
     "freestyle_client",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "paramiko>=3.4.0",
+    "rich>=13.7.0",
 ]
 
 [tool.uv.sources]

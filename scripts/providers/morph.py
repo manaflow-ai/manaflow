@@ -93,6 +93,15 @@ class MorphInstance(BaseInstance):
     def stop(self) -> None:
         self._instance.stop()
 
+    @override
+    def get_http_service_url(self, port: int) -> str:
+        # Morph URL pattern via proxy.cmux.sh
+        return f"https://port-{port}-{self.id}.proxy.cmux.sh"
+
+    @override
+    def get_dashboard_url(self) -> str:
+        return f"https://cloud.morph.so/web/instances/{self.id}?ssh=true"
+
 
 class MorphProvider(BaseProvider):
     """Morph sandbox provider."""

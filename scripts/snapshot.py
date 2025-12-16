@@ -43,7 +43,17 @@ from pathlib import Path
 import dotenv
 import httpx
 import paramiko
-from morphcloud.api import ApiError, Instance, MorphCloudClient, Snapshot
+from morphcloud.api import ApiError
+
+from providers import (
+    BaseInstance,
+    BaseProvider,
+    BaseSnapshot,
+    MorphInstance,
+    MorphProvider,
+    FreestyleProvider,
+    ProviderType,
+)
 
 from snapshot import (
     TaskRegistry,
@@ -137,12 +147,13 @@ class SnapshotPresetPlan:
     vcpus: int
     memory_mib: int
     disk_size_mib: int
+    provider_type: ProviderType
 
 
 @dataclass(slots=True)
 class SnapshotRunResult:
     preset: SnapshotPresetPlan
-    snapshot: Snapshot
+    snapshot: BaseSnapshot
     captured_at: str
     vscode_url: str
     vnc_url: str
@@ -152,7 +163,7 @@ class SnapshotRunResult:
         self,
         *,
         preset: SnapshotPresetPlan,
-        snapshot: Snapshot,
+        snapshot: BaseSnapshot,
         captured_at: str,
         vscode_url: str,
         vnc_url: str,
@@ -382,31 +393,51 @@ def _preset_id_from_resources(
 
 
 def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, ...]:
-    standard_plan = SnapshotPresetPlan(
-        preset_id=_preset_id_from_resources(
-            args.standard_vcpus, args.standard_memory, args.standard_disk_size
-        ),
-        label="Standard workspace",
+    plans: list[SnapshotPresetPlan] = []
+
+    # Morph standard preset
+    morph_standard = SnapshotPresetPlan(
+        preset_id=f"morph_{_preset_id_from_resources(args.standard_vcpus, args.standard_memory, args.standard_disk_size)}",
+        label="Morph Standard workspace",
         cpu_display=_format_cpu_display(args.standard_vcpus),
         memory_display=_format_memory_display(args.standard_memory),
         disk_display=_format_disk_display(args.standard_disk_size),
         vcpus=args.standard_vcpus,
         memory_mib=args.standard_memory,
         disk_size_mib=args.standard_disk_size,
+        provider_type=ProviderType.MORPH,
     )
-    boosted_plan = SnapshotPresetPlan(
-        preset_id=_preset_id_from_resources(
-            args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
-        ),
-        label="Performance workspace",
+    plans.append(morph_standard)
+
+    # Morph boosted preset
+    morph_boosted = SnapshotPresetPlan(
+        preset_id=f"morph_{_preset_id_from_resources(args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size)}",
+        label="Morph Performance workspace",
         cpu_display=_format_cpu_display(args.boosted_vcpus),
         memory_display=_format_memory_display(args.boosted_memory),
         disk_display=_format_disk_display(args.boosted_disk_size),
         vcpus=args.boosted_vcpus,
         memory_mib=args.boosted_memory,
         disk_size_mib=args.boosted_disk_size,
+        provider_type=ProviderType.MORPH,
     )
-    return (standard_plan, boosted_plan)
+    plans.append(morph_boosted)
+
+    # Freestyle preset (single config - Freestyle doesn't support resource customization yet)
+    freestyle_plan = SnapshotPresetPlan(
+        preset_id="freestyle_default",
+        label="Freestyle workspace",
+        cpu_display="default",
+        memory_display="default",
+        disk_display=_format_disk_display(args.freestyle_disk_size),
+        vcpus=0,  # Freestyle doesn't support vcpu config
+        memory_mib=0,  # Freestyle doesn't support memory config
+        disk_size_mib=args.freestyle_disk_size,
+        provider_type=ProviderType.FREESTYLE,
+    )
+    plans.append(freestyle_plan)
+
+    return tuple(plans)
 
 
 def _build_resource_profile(
@@ -540,7 +571,8 @@ def create_repo_archive(repo_root: Path) -> Path:
 
 
 async def _expose_standard_ports(
-    instance: Instance,
+    instance: BaseInstance,
+    provider_type: ProviderType,
     console: Console,
 ) -> dict[int, str]:
     ports = [
@@ -554,25 +586,35 @@ async def _expose_standard_ports(
     ]
     console.info("Exposing standard HTTP services...")
 
-    async def _expose(port: int) -> tuple[int, str]:
-        url = await instance.aexpose_http_service(name=f"port-{port}", port=port)
-        return port, url
-
-    exposed = await asyncio.gather(*(_expose(port) for port in ports))
     mapping: dict[int, str] = {}
-    for port, url in exposed:
-        console.info(f"Exposed port {port} → {url}")
-        mapping[port] = url
+
+    if provider_type == ProviderType.MORPH:
+        # Morph requires explicit port exposure via API
+        async def _expose(port: int) -> tuple[int, str]:
+            url = await instance.aexpose_http_service(name=f"port-{port}", port=port)
+            return port, url
+
+        exposed = await asyncio.gather(*(_expose(port) for port in ports))
+        for port, url in exposed:
+            console.info(f"Exposed port {port} → {url}")
+            mapping[port] = url
+    else:
+        # Freestyle uses proxy-based routing, no API call needed
+        for port in ports:
+            url = instance.get_http_service_url(port)
+            console.info(f"Exposed port {port} → {url}")
+            mapping[port] = url
+
     return mapping
 
 
-async def _await_instance_ready(instance: Instance, *, console: Console) -> None:
+async def _await_instance_ready(instance: BaseInstance, *, console: Console) -> None:
     console.info(f"Waiting for instance {instance.id} to become ready...")
     await instance.await_until_ready()
     console.info(f"Instance {instance.id} is ready")
 
 
-def _stop_instance(instance: Instance, console: Console) -> None:
+def _stop_instance(instance: BaseInstance, console: Console) -> None:
     try:
         console.info(f"Stopping instance {instance.id}...")
         instance.stop()
@@ -743,6 +785,12 @@ registry = TaskRegistry()
     description="Build and setup exec binary",
 )
 async def build_exec_binary(ctx: TaskContext) -> None:
+    # Skip exec service setup for Freestyle - proxy.cmux.sh doesn't route to Freestyle VMs
+    # The fallback in ctx.run() will use direct aexec calls instead
+    if ctx.provider_type == ProviderType.FREESTYLE:
+        ctx.console.info("Skipping exec service for Freestyle (using direct API calls)")
+        return
+
     repo_root = ctx.repo_root
     console = ctx.console
     ctx.console.info("Building exec binary...")
@@ -947,6 +995,70 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-base-packages", cmd)
+
+
+@registry.task(
+    name="configure-sshd",
+    deps=("install-base-packages",),
+    description="Configure OpenSSH server on port 22 (used by Morph SSH gateway)",
+)
+async def task_configure_sshd(ctx: TaskContext) -> None:
+    cmd = textwrap.dedent(
+        """
+        set -eux
+
+        # openssh-server is installed by install-base-packages
+        # Generate host keys if they don't exist
+        ssh-keygen -A
+
+        # Configure sshd on port 22 (Morph handles SSH access via per-instance tokens)
+        cat > /etc/ssh/sshd_config.d/cmux.conf << 'EOF'
+Port 22
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+AuthorizedKeysFile .ssh/authorized_keys
+EOF
+
+        # Create /root/.ssh directory with correct permissions
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        touch /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+
+        # Ensure sshd is enabled and will start on boot
+        systemctl enable ssh
+        systemctl restart ssh
+
+        # Verify sshd is running on port 22
+        sleep 2
+        # Use ss if available, fallback to netstat, or check systemctl status
+        if command -v ss >/dev/null 2>&1; then
+            if ! ss -tlnp | grep -q ':22 '; then
+                echo "ERROR: sshd not listening on port 22" >&2
+                systemctl status ssh --no-pager || true
+                journalctl -u ssh --no-pager -n 50 || true
+                exit 1
+            fi
+        elif command -v netstat >/dev/null 2>&1; then
+            if ! netstat -tlnp | grep -q ':22 '; then
+                echo "ERROR: sshd not listening on port 22" >&2
+                systemctl status ssh --no-pager || true
+                exit 1
+            fi
+        else
+            # Fallback: just check if sshd process is running
+            if ! pgrep -x sshd >/dev/null 2>&1; then
+                echo "ERROR: sshd process not running" >&2
+                systemctl status ssh --no-pager || true
+                exit 1
+            fi
+        fi
+
+        echo "sshd configured and running on port 22"
+        """
+    )
+    await ctx.run("configure-sshd", cmd)
 
 
 @registry.task(
@@ -2168,6 +2280,31 @@ async def task_check_ssh_service(ctx: TaskContext) -> None:
           journalctl -u ssh --no-pager -n 50 || true
           exit 1
         fi
+
+        # Verify sshd is listening on port 22
+        # Use ss if available, fallback to netstat, or check process
+        if command -v ss >/dev/null 2>&1; then
+          if ! ss -tlnp | grep -q ':22 '; then
+            echo "ERROR: sshd not listening on port 22" >&2
+            ss -tlnp | grep ssh || true
+            cat /etc/ssh/sshd_config.d/cmux.conf || true
+            exit 1
+          fi
+        elif command -v netstat >/dev/null 2>&1; then
+          if ! netstat -tlnp | grep -q ':22 '; then
+            echo "ERROR: sshd not listening on port 22" >&2
+            cat /etc/ssh/sshd_config.d/cmux.conf || true
+            exit 1
+          fi
+        else
+          # Fallback: just check if sshd process is running
+          if ! pgrep -x sshd >/dev/null 2>&1; then
+            echo "ERROR: sshd process not running" >&2
+            cat /etc/ssh/sshd_config.d/cmux.conf || true
+            exit 1
+          fi
+        fi
+        echo "sshd is listening on port 22"
         """
     )
     await ctx.run("check-ssh-service", cmd)
@@ -2350,7 +2487,8 @@ async def task_check_devtools(ctx: TaskContext) -> None:
         echo "ERROR: DevTools endpoint not reachable after 90s" >&2
         systemctl status cmux-devtools.service --no-pager || true
         systemctl status cmux-cdp-proxy.service --no-pager || true
-        ss -ltnp | grep 3938 || true
+        (command -v ss >/dev/null 2>&1 && ss -ltnp | grep 3938) || \
+          (command -v netstat >/dev/null 2>&1 && netstat -ltnp | grep 3938) || true
         tail -n 100 /var/log/cmux/chrome.log || true
         tail -n 40 /var/log/cmux/tigervnc.log || true
         exit 1
@@ -2435,10 +2573,10 @@ async def verify_devtools_via_exposed_url(
 
 
 async def snapshot_instance(
-    instance: Instance,
+    instance: BaseInstance,
     *,
     console: Console,
-) -> Snapshot:
+) -> BaseSnapshot:
     console.info(f"Snapshotting instance {instance.id}...")
     snapshot = await instance.asnapshot()
     console.info(f"Created snapshot {snapshot.id}")
@@ -2537,9 +2675,10 @@ async def provision_and_snapshot_for_preset(
     *,
     preset: SnapshotPresetPlan,
     console: Console,
-    client: MorphCloudClient,
+    provider: BaseProvider,
+    base_snapshot_id: str,
     repo_root: Path,
-    started_instances: list[Instance],
+    started_instances: list[BaseInstance],
     require_verify: bool,
     show_dependency_graph: bool,
 ) -> SnapshotRunResult:
@@ -2548,21 +2687,44 @@ async def provision_and_snapshot_for_preset(
     )
     timings = TimingsCollector()
 
-    instance = await client.instances.aboot(
-        args.snapshot_id,
-        vcpus=preset.vcpus,
-        memory=preset.memory_mib,
-        disk_size=preset.disk_size_mib,
-        ttl_seconds=args.ttl_seconds,
-        ttl_action=args.ttl_action,
-    )
-    await instance.aset_wake_on(wake_on_http=True)
+    # Boot instance using the provider abstraction
+    if preset.provider_type == ProviderType.MORPH:
+        # Morph provider supports ttl_action
+        morph_provider = t.cast(MorphProvider, provider)
+        instance = await morph_provider.boot_instance(
+            base_snapshot_id,
+            vcpus=preset.vcpus,
+            memory_mib=preset.memory_mib,
+            disk_size_mib=preset.disk_size_mib,
+            ttl_seconds=args.ttl_seconds,
+            ttl_action=args.ttl_action,
+        )
+        # Morph-specific: set wake on HTTP
+        morph_instance = t.cast(MorphInstance, instance)
+        await morph_instance.raw.aset_wake_on(wake_on_http=True)
+    elif preset.provider_type == ProviderType.FREESTYLE:
+        # Freestyle creates fresh VMs (no base snapshot needed)
+        freestyle_provider = t.cast(FreestyleProvider, provider)
+        # Expose external port 8081 → internal proxy port 39379
+        # (Freestyle only supports external ports 443 and 8081)
+        instance = await freestyle_provider.create_fresh_instance(
+            ttl_seconds=args.ttl_seconds,
+            disk_size_mib=preset.disk_size_mib,
+            ports=[{"port": 8081, "targetPort": 39379}],
+        )
+    else:
+        instance = await provider.boot_instance(
+            base_snapshot_id,
+            vcpus=preset.vcpus if preset.vcpus > 0 else None,
+            memory_mib=preset.memory_mib if preset.memory_mib > 0 else None,
+            disk_size_mib=preset.disk_size_mib,
+            ttl_seconds=args.ttl_seconds,
+        )
+
     started_instances.append(instance)
     await _await_instance_ready(instance, console=console)
-    console.always(
-        f"[{preset.preset_id}] Dashboard: https://cloud.morph.so/web/instances/{instance.id}?ssh=true"
-    )
-    port_map = await _expose_standard_ports(instance, console)
+    console.always(f"[{preset.preset_id}] Dashboard: {instance.get_dashboard_url()}")
+    port_map = await _expose_standard_ports(instance, preset.provider_type, console)
     exec_service_url = port_map.get(EXEC_HTTP_PORT)
     if exec_service_url is None:
         raise RuntimeError("Failed to expose exec service port on primary instance")
@@ -2576,6 +2738,7 @@ async def provision_and_snapshot_for_preset(
         remote_repo_tar="/tmp/cmux-repo.tar",
         console=console,
         timings=timings,
+        provider_type=preset.provider_type,
         resource_profile=resource_profile,
         exec_service_url=exec_service_url,
     )
@@ -2646,8 +2809,20 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     set_ide_provider(args.ide_provider)
 
     console = Console()
-    client = MorphCloudClient()
-    started_instances: list[Instance] = []
+
+    # Create providers
+    providers: dict[ProviderType, BaseProvider] = {}
+    base_snapshot_ids: dict[ProviderType, str] = {}
+
+    # Always create Morph provider
+    providers[ProviderType.MORPH] = MorphProvider()
+    base_snapshot_ids[ProviderType.MORPH] = args.morph_snapshot_id
+
+    # Always create Freestyle provider (it doesn't need a base snapshot)
+    providers[ProviderType.FREESTYLE] = FreestyleProvider()
+    base_snapshot_ids[ProviderType.FREESTYLE] = ""  # Not used for Freestyle
+
+    started_instances: list[BaseInstance] = []
     manifest = _load_manifest(console)
     results: list[SnapshotRunResult] = []
 
@@ -2679,12 +2854,21 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             raise RuntimeError(
                 f"bun run bump-ide-deps failed with exit code {bump_result.returncode}"
             )
-    preset_plans = _build_preset_plans(args)
+    all_preset_plans = _build_preset_plans(args)
+
+    # Filter presets to only include those with available providers
+    preset_plans = tuple(
+        plan for plan in all_preset_plans
+        if plan.provider_type in providers
+    )
+
+    if not preset_plans:
+        console.always("No presets to provision (no providers available)")
+        return
 
     console.always(
         "Starting snapshot runs for presets "
         f"{', '.join(plan.preset_id for plan in preset_plans)} "
-        f"from base snapshot {args.snapshot_id} "
         f"(IDE provider: {args.ide_provider})"
     )
 
@@ -2697,7 +2881,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
                 args,
                 preset=preset_plan,
                 console=console,
-                client=client,
+                provider=providers[preset_plan.provider_type],
+                base_snapshot_id=base_snapshot_ids[preset_plan.provider_type],
                 repo_root=repo_root,
                 started_instances=started_instances,
                 require_verify=args.require_verify,
@@ -2713,20 +2898,26 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         key=lambda item: preset_order.get(item.preset.preset_id, 0),
     )
 
+    # Set TTL on instances (Morph-specific for now)
     if not args.require_verify:
-        for result in ordered_results:
-            try:
-                inst = client.instances.get(instance_id=result.instance_id)
-                inst.set_ttl(ttl_seconds=600, ttl_action="pause")
-                console.always(
-                    f"[{result.preset.preset_id}] Instance {result.instance_id} "
-                    "will pause in ~10 minutes (TTL set)."
-                )
-            except Exception as exc:
-                console.always(
-                    f"[{result.preset.preset_id}] Failed to set TTL on instance "
-                    f"{result.instance_id}: {exc}"
-                )
+        morph_provider = providers.get(ProviderType.MORPH)
+        if morph_provider is not None:
+            morph_client = t.cast(MorphProvider, morph_provider).client
+            for result in ordered_results:
+                if result.preset.provider_type != ProviderType.MORPH:
+                    continue
+                try:
+                    inst = morph_client.instances.get(instance_id=result.instance_id)
+                    inst.set_ttl(ttl_seconds=600, ttl_action="pause")
+                    console.always(
+                        f"[{result.preset.preset_id}] Instance {result.instance_id} "
+                        "will pause in ~10 minutes (TTL set)."
+                    )
+                except Exception as exc:
+                    console.always(
+                        f"[{result.preset.preset_id}] Failed to set TTL on instance "
+                        f"{result.instance_id}: {exc}"
+                    )
 
     for result in ordered_results:
         manifest = _update_manifest_with_snapshot(
@@ -2737,7 +2928,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     _render_verification_table(ordered_results, console)
 
     console.always(
-        f"\nUpdated morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}"
+        f"\nUpdated snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}"
     )
     for result in ordered_results:
         console.always(
@@ -2747,12 +2938,15 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Provision Morph instance with parallel setup"
+        description="Provision sandbox instances across multiple providers"
     )
+    # Morph base snapshot
     parser.add_argument(
         "--snapshot-id",
+        "--morph-snapshot-id",
+        dest="morph_snapshot_id",
         default="snapshot_3fjuvxbs",
-        help="Base snapshot id to boot from",
+        help="Base Morph snapshot id to boot from",
     )
     parser.add_argument(
         "--repo-root",
@@ -2801,6 +2995,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=49_152,
         help="Disk size (MiB) for the boosted preset",
+    )
+    parser.add_argument(
+        "--freestyle-disk-size",
+        type=int,
+        default=16_000,
+        help="Disk size (MiB) for the Freestyle preset",
     )
     parser.add_argument(
         "--ttl-seconds",

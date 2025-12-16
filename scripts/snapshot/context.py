@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from providers.base import BaseInstance, ExecResponse
+from providers.base import BaseInstance, ExecResponse, ProviderType
 
 from ._types import Command, Console, TimingsCollector
 
@@ -110,6 +110,7 @@ class TaskContext:
     exec_service_url: str
     console: Console
     timings: TimingsCollector
+    provider_type: ProviderType
     resource_profile: ResourceProfile | None = None
     cgroup_path: str | None = None
     exec_client: HttpExecClient | None = field(default=None, init=False)

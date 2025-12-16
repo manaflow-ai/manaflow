@@ -17,6 +17,7 @@ if str(_freestyle_client_pkg) not in sys.path:
     sys.path.insert(0, str(_freestyle_client_pkg))
 
 from freestyle_client import ApiClient, Configuration, VMApi
+from freestyle_client.exceptions import ApiException
 from freestyle_client.models.create_snapshot_request import CreateSnapshotRequest
 from freestyle_client.models.create_vm_request import CreateVmRequest
 from freestyle_client.models.exec_await_request import ExecAwaitRequest
@@ -102,16 +103,39 @@ class FreestyleInstance(BaseInstance):
         request = ExecAwaitRequest(command=command_str)
         if timeout_ms is not None:
             request.timeout_ms = timeout_ms
-        result = await asyncio.to_thread(
-            self._vm_api.exec_await,
-            self._vm_id,
-            request,
-        )
-        return ExecResponse(
-            stdout=result.stdout or "",
-            stderr=result.stderr or "",
-            exit_code=result.status_code,
-        )
+
+        # Retry on transient API errors (500, 502, 503, 504)
+        max_retries = 3
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                result = await asyncio.to_thread(
+                    self._vm_api.exec_await,
+                    self._vm_id,
+                    request,
+                )
+                return ExecResponse(
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                    exit_code=result.status_code,
+                )
+            except ApiException as exc:
+                last_exc = exc
+                # Retry on server errors (5xx)
+                if exc.status is not None and 500 <= exc.status < 600:
+                    if attempt < max_retries - 1:
+                        delay = 2 ** (attempt + 1)  # 2, 4 seconds
+                        await asyncio.sleep(delay)
+                        continue
+                raise
+            except Exception as exc:
+                last_exc = exc
+                raise
+
+        # Should not reach here, but just in case
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("aexec failed after retries")
 
     @override
     async def aupload(
@@ -200,6 +224,16 @@ unlink('{b64_path}');
     def stop(self) -> None:
         self._vm_api.stop_vm(self._vm_id)
 
+    @override
+    def get_http_service_url(self, port: int) -> str:
+        # Freestyle URL pattern via proxy.cmux.sh
+        return f"https://{self._vm_id}-{port}.proxy.cmux.sh"
+
+    @override
+    def get_dashboard_url(self) -> str:
+        # Freestyle doesn't have a public dashboard yet
+        return f"https://freestyle.sh/vm/{self._vm_id}"
+
 
 class FreestyleProvider(BaseProvider):
     """Freestyle sandbox provider."""
@@ -285,6 +319,7 @@ class FreestyleProvider(BaseProvider):
         *,
         ttl_seconds: int | None = None,
         ports: list[dict[str, int]] | None = None,
+        disk_size_mib: int | None = None,
     ) -> FreestyleInstance:
         """Create a fresh VM without forking from a snapshot.
 
@@ -295,6 +330,7 @@ class FreestyleProvider(BaseProvider):
             ttl_seconds: Optional idle timeout in seconds.
             ports: Optional list of port mappings, e.g. [{"port": 443, "targetPort": 39379}].
                    Only external ports 443 and 8081 are supported.
+            disk_size_mib: Disk size in MiB. Defaults to Freestyle's default (~2GB) if not provided.
         """
         vm_api = self._get_vm_api()
 
@@ -305,6 +341,8 @@ class FreestyleProvider(BaseProvider):
             template_data["idleTimeoutSeconds"] = ttl_seconds
         if ports is not None:
             template_data["ports"] = ports
+        if disk_size_mib is not None:
+            template_data["rootfsSizeMb"] = disk_size_mib
 
         template = VmTemplate.model_validate(template_data)
         request = CreateVmRequest(template=template)

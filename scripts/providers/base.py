@@ -122,6 +122,30 @@ class BaseInstance(ABC):
         """Stop the instance synchronously."""
         ...
 
+    @abstractmethod
+    def get_http_service_url(self, port: int) -> str:
+        """Get the URL for accessing an HTTP service on the given port.
+
+        Unlike aexpose_http_service, this does not make any API calls -
+        it just constructs the URL based on the provider's URL pattern.
+
+        Args:
+            port: Internal port number.
+
+        Returns:
+            The public URL for accessing the port.
+        """
+        ...
+
+    @abstractmethod
+    def get_dashboard_url(self) -> str:
+        """Get the provider's dashboard URL for this instance.
+
+        Returns:
+            URL to the provider's web dashboard for this instance.
+        """
+        ...
+
 
 class BaseProvider(ABC):
     """Abstract base class for sandbox VM providers."""
