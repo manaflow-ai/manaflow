@@ -27,6 +27,7 @@ interface HeatmapReviewConfig {
   callbackToken: string;
   githubAccessToken?: string | null;
   modelConfig?: ModelConfig;
+  tooltipLanguage?: string;
 }
 
 // Placeholder sandbox ID for heatmap strategy (no Morph VM used)
@@ -193,6 +194,7 @@ export async function runHeatmapReview(
           filePath: file.filePath,
           codexReviewOutput: fileResult,
           sandboxInstanceId: HEATMAP_SANDBOX_ID,
+          tooltipLanguage: config.tooltipLanguage,
         });
 
         console.info(

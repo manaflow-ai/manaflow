@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "cmux",
@@ -475,7 +474,11 @@
       },
       "devDependencies": {
         "@types/node": "^24.9.1",
+        "@types/react": "^19",
+        "@types/react-dom": "^19",
         "@xterm/xterm": "^5.5.0",
+        "react": "^19.2.2",
+        "react-dom": "^19.2.2",
         "socket.io": "^4.8.1",
         "typescript": "^5.9.3",
         "vitest": "^3.2.4",

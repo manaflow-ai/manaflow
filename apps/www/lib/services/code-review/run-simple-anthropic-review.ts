@@ -17,7 +17,11 @@ import {
   getInstallationForRepo,
 } from "@/lib/utils/github-app-token";
 import { checkRepoVisibility } from "@/lib/github/check-repo-visibility";
-import { getDefaultHeatmapModelConfig } from "./model-config";
+import {
+  getDefaultHeatmapModelConfig,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  type TooltipLanguageValue,
+} from "./model-config";
 
 const SIMPLE_REVIEW_INSTRUCTIONS = `Dannotate every modified/deleted/added line of this diff with a "fake" comment at the end of each line.
 
@@ -125,6 +129,7 @@ export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
   modelConfig?: ModelConfig;
+  tooltipLanguage?: TooltipLanguageValue;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -293,6 +298,7 @@ export async function runSimpleAnthropicReviewStream(
     prIdentifier,
     githubToken: providedGithubToken = null,
     modelConfig,
+    tooltipLanguage = DEFAULT_TOOLTIP_LANGUAGE,
     onChunk,
     signal,
   } = options;
@@ -386,7 +392,7 @@ export async function runSimpleAnthropicReviewStream(
           signal.addEventListener("abort", handleAbort);
         }
 
-        const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText);
+        const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText, tooltipLanguage);
 
         try {
           const modelInstance =
@@ -590,12 +596,52 @@ function createSemaphore(limit: number) {
   };
 }
 
+const LANGUAGE_NAME_MAP: Record<string, string> = {
+  en: "English",
+  "zh-Hans": "Simplified Chinese",
+  "zh-Hant": "Traditional Chinese",
+  ja: "Japanese",
+  ko: "Korean",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  pt: "Portuguese",
+  ru: "Russian",
+  hi: "Hindi",
+  bn: "Bengali",
+  te: "Telugu",
+  mr: "Marathi",
+  ta: "Tamil",
+  gu: "Gujarati",
+  kn: "Kannada",
+  ml: "Malayalam",
+  pa: "Punjabi",
+  ar: "Arabic",
+  vi: "Vietnamese",
+  th: "Thai",
+  id: "Indonesian",
+};
+
 function buildFilePrompt(
   prLabel: string,
   filePath: string,
-  diffText: string
+  diffText: string,
+  tooltipLanguage: TooltipLanguageValue
 ): string {
   const strippedDiff = stripLeadingTrailingCodeFences(diffText);
+  const languageName = LANGUAGE_NAME_MAP[tooltipLanguage] ?? "English";
+  const languageInstruction =
+    tooltipLanguage !== DEFAULT_TOOLTIP_LANGUAGE
+      ? `\n\nIMPORTANT: Write ALL comments (the "<comment>" part) in ${languageName}. The mostImportantWord should remain as it appears in the code (do not translate code identifiers).`
+      : "";
+
+  console.info("[simple-review][prompt] Building prompt", {
+    filePath,
+    tooltipLanguage,
+    languageName,
+    hasLanguageInstruction: languageInstruction.length > 0,
+  });
+
   return `You are reviewing a GitHub diff for ${prLabel}
 File path: ${filePath}
 
@@ -604,7 +650,7 @@ ${SIMPLE_REVIEW_GUIDANCE}
 Diff:
 ${strippedDiff}
 
-${SIMPLE_REVIEW_INSTRUCTIONS}`;
+${SIMPLE_REVIEW_INSTRUCTIONS}${languageInstruction}`;
 }
 
 function buildTextPreview(text: string, maxLength = 400): string {

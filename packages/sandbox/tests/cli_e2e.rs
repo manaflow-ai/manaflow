@@ -344,7 +344,7 @@ async fn cli_uploads_cwd_respecting_gitignore() {
     std::fs::write(dir_path.join(".gitignore"), "ignored.txt\n").unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    // Run cmux new in that dir
+    // Run cmux new --local in that dir
     // We need to run with --detach or similar if possible, or just wait for it to finish
     // but `cmux new` attaches to SSH.
     // The CLI attaches via WebSocket. In our MockService, `attach` does nothing (returns Ok).
@@ -370,7 +370,7 @@ async fn cli_uploads_cwd_respecting_gitignore() {
         .env("CMUX_SANDBOX_URL", &base_url)
         .env("HOME", dir_path)
         .current_dir(dir_path)
-        .arg("new")
+        .args(["new", "--local"])
         .assert()
         .success();
 
@@ -447,7 +447,7 @@ async fn cli_uploads_large_file() {
         .env("CMUX_SANDBOX_URL", &base_url)
         .env("HOME", dir_path)
         .current_dir(dir_path)
-        .arg("new")
+        .args(["new", "--local"])
         .assert()
         .success();
 

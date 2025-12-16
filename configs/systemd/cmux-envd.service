@@ -1,0 +1,17 @@
+[Unit]
+Description=Cmux Environment Variable Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+RuntimeDirectory=cmux-envd
+RuntimeDirectoryMode=0755
+ExecStart=/usr/local/bin/envd
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

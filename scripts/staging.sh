@@ -114,14 +114,19 @@ compose_app_name() {
   printf '%s-%s\n' "$base" "$truncated"
 }
 
+# Check for env file - optional if env vars are already set (e.g., via direnv)
 ENV_FILE=""
+ENV_FILE_FLAG=""
 if [[ -f "$ROOT_DIR/.env" ]]; then
   ENV_FILE="$ROOT_DIR/.env"
+  ENV_FILE_FLAG="--env-file $ENV_FILE"
 elif [[ -f "$ROOT_DIR/.env.production" ]]; then
   ENV_FILE="$ROOT_DIR/.env.production"
-else
-  echo "ERROR: Expected either $ROOT_DIR/.env or $ROOT_DIR/.env.production to exist so staging uses env vars." >&2
-  exit 1
+  ENV_FILE_FLAG="--env-file $ENV_FILE"
+elif [[ -z "${NEXT_PUBLIC_CONVEX_URL:-}" ]]; then
+  # No env file and no env vars set - this will likely fail
+  echo "WARNING: No .env file found and NEXT_PUBLIC_CONVEX_URL not set." >&2
+  echo "Either create .env/.env.production or use direnv to set env vars." >&2
 fi
 
 CURRENT_GIT_REF="$(current_git_ref)"
@@ -134,9 +139,17 @@ fi
 
 stop_staging_app_instances "$APP_NAME" "$APP_BUNDLE_ID"
 
-if [[ -n "$CURRENT_GIT_REF" ]]; then
-  echo "==> Building $APP_NAME (branch: $CURRENT_GIT_REF) with env file: $ENV_FILE"
+if [[ -n "$ENV_FILE" ]]; then
+  if [[ -n "$CURRENT_GIT_REF" ]]; then
+    echo "==> Building $APP_NAME (branch: $CURRENT_GIT_REF) with env file: $ENV_FILE"
+  else
+    echo "==> Building $APP_NAME with env file: $ENV_FILE"
+  fi
 else
-  echo "==> Building $APP_NAME with env file: $ENV_FILE"
+  if [[ -n "$CURRENT_GIT_REF" ]]; then
+    echo "==> Building $APP_NAME (branch: $CURRENT_GIT_REF) using environment variables"
+  else
+    echo "==> Building $APP_NAME using environment variables"
+  fi
 fi
-(cd "$CLIENT_DIR" && CMUX_APP_NAME="$APP_NAME" bun run --env-file "$ENV_FILE" build:mac:workaround)
+(cd "$CLIENT_DIR" && CMUX_APP_NAME="$APP_NAME" bun run $ENV_FILE_FLAG build:mac:workaround)

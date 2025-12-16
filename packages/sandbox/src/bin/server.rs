@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::{TcpSocket, UnixListener};
 use tokio::time::{sleep, Duration};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -156,10 +156,41 @@ async fn run_server(options: Options) {
     let retry_delay = Duration::from_secs(5);
 
     loop {
-        match TcpListener::bind(addr).await {
+        // Create a TcpSocket with TCP_NODELAY enabled for low-latency connections
+        let socket = match if addr.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        } {
+            Ok(s) => s,
+            Err(error) => {
+                tracing::error!(?error, "failed to create socket");
+                sleep(retry_delay).await;
+                continue;
+            }
+        };
+
+        // Enable TCP_NODELAY to disable Nagle's algorithm for low-latency
+        if let Err(error) = socket.set_nodelay(true) {
+            tracing::error!(?error, "failed to set TCP_NODELAY");
+        }
+
+        // Enable SO_REUSEADDR for quick restarts
+        if let Err(error) = socket.set_reuseaddr(true) {
+            tracing::error!(?error, "failed to set SO_REUSEADDR");
+        }
+
+        if let Err(error) = socket.bind(addr) {
+            tracing::error!(?error, %addr, "failed to bind socket");
+            sleep(retry_delay).await;
+            continue;
+        }
+
+        match socket.listen(1024) {
             Ok(listener) => {
                 tracing::info!("cmux-sandboxd listening on http://{}", addr);
                 tracing::info!("HTTP/1.1 and HTTP/2 are enabled");
+                tracing::info!("TCP_NODELAY enabled for low-latency connections");
 
                 match axum::serve(listener, app.clone())
                     .with_graceful_shutdown(shutdown_signal())
@@ -175,7 +206,7 @@ async fn run_server(options: Options) {
                 }
             }
             Err(error) => {
-                tracing::error!(?error, %addr, "failed to bind listener");
+                tracing::error!(?error, %addr, "failed to listen on socket");
             }
         }
 

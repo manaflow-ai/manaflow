@@ -423,6 +423,19 @@ export type SetupInstanceBody = {
     snapshotId?: string | ('snapshot_bzpn87aw' | 'snapshot_yf1j2634' | 'snapshot_pcmfvjra');
 };
 
+export type InstanceInfo = {
+    id: string;
+    status: string;
+    createdAt?: string;
+    metadata?: {
+        app?: string;
+        userId?: string;
+        teamId?: string;
+    };
+};
+
+export type ListInstancesResponse = Array<InstanceInfo>;
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -556,6 +569,51 @@ export type UpdateSandboxEnvBody = {
     envVarsContent: string;
 };
 
+export type SandboxSshResponse = {
+    morphInstanceId: string;
+    /**
+     * Full SSH command to connect to this sandbox
+     */
+    sshCommand: string;
+    /**
+     * SSH access token for this sandbox
+     */
+    accessToken: string;
+    user: string;
+    /**
+     * Current instance status
+     */
+    status: 'running' | 'paused';
+};
+
+export type SandboxResumeResponse = {
+    resumed: true;
+};
+
+export type Team = {
+    /**
+     * Team ID
+     */
+    id: string;
+    /**
+     * Display name
+     */
+    displayName: string;
+    /**
+     * URL slug
+     */
+    slug: string | null;
+};
+
+export type ListTeamsResponse = {
+    teams: Array<Team>;
+};
+
+export type CreateTeamErrorResponse = {
+    code: number;
+    message: string;
+};
+
 export type CreateTeamResponse = {
     /**
      * Stack team ID
@@ -573,11 +631,6 @@ export type CreateTeamResponse = {
      * Number of invite emails sent
      */
     invitesSent: number;
-};
-
-export type CreateTeamErrorResponse = {
-    code: number;
-    message: string;
 };
 
 export type CreateTeamRequest = {
@@ -1938,6 +1991,35 @@ export type PostApiMorphSetupInstanceResponses = {
 
 export type PostApiMorphSetupInstanceResponse = PostApiMorphSetupInstanceResponses[keyof PostApiMorphSetupInstanceResponses];
 
+export type GetApiMorphInstancesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        teamId?: string;
+    };
+    url: '/api/morph/instances';
+};
+
+export type GetApiMorphInstancesErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Failed to list instances
+     */
+    500: unknown;
+};
+
+export type GetApiMorphInstancesResponses = {
+    /**
+     * List of Morph instances
+     */
+    200: ListInstancesResponse;
+};
+
+export type GetApiMorphInstancesResponse = GetApiMorphInstancesResponses[keyof GetApiMorphInstancesResponses];
+
 export type GetApiIframePreflightData = {
     body?: never;
     path?: never;
@@ -2481,6 +2563,109 @@ export type PostApiSandboxesByIdPublishDevcontainerResponses = {
 };
 
 export type PostApiSandboxesByIdPublishDevcontainerResponse = PostApiSandboxesByIdPublishDevcontainerResponses[keyof PostApiSandboxesByIdPublishDevcontainerResponses];
+
+export type GetApiSandboxesByIdSshData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: {
+        teamSlugOrId?: string;
+    };
+    url: '/api/sandboxes/{id}/ssh';
+};
+
+export type GetApiSandboxesByIdSshErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden - not a team member
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to get SSH info
+     */
+    500: unknown;
+};
+
+export type GetApiSandboxesByIdSshResponses = {
+    /**
+     * SSH connection details
+     */
+    200: SandboxSshResponse;
+};
+
+export type GetApiSandboxesByIdSshResponse = GetApiSandboxesByIdSshResponses[keyof GetApiSandboxesByIdSshResponses];
+
+export type PostApiSandboxesByIdResumeData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: {
+        teamSlugOrId?: string;
+    };
+    url: '/api/sandboxes/{id}/resume';
+};
+
+export type PostApiSandboxesByIdResumeErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden - not a team member
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume sandbox
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdResumeResponses = {
+    /**
+     * Sandbox resumed successfully
+     */
+    200: SandboxResumeResponse;
+};
+
+export type PostApiSandboxesByIdResumeResponse = PostApiSandboxesByIdResumeResponses[keyof PostApiSandboxesByIdResumeResponses];
+
+export type GetApiTeamsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/teams';
+};
+
+export type GetApiTeamsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: CreateTeamErrorResponse;
+};
+
+export type GetApiTeamsError = GetApiTeamsErrors[keyof GetApiTeamsErrors];
+
+export type GetApiTeamsResponses = {
+    /**
+     * List of teams
+     */
+    200: ListTeamsResponse;
+};
+
+export type GetApiTeamsResponse = GetApiTeamsResponses[keyof GetApiTeamsResponses];
 
 export type PostApiTeamsData = {
     body: CreateTeamRequest;

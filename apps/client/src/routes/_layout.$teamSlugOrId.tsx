@@ -75,14 +75,14 @@ function LayoutComponent() {
     <ExpandTasksProvider>
       <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
+      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
         <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-        {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
-        <Suspense fallback={<div>Loading...</div>}>
-          <Outlet />
-        </Suspense>
-        {/* </div> */}
+        <div className="min-w-full md:min-w-0 grow snap-start snap-always">
+          <Suspense fallback={<div>Loading...</div>}>
+            <Outlet />
+          </Suspense>
+        </div>
       </div>
 
       <button
