@@ -1,3 +1,5 @@
+"use node";
+
 import type { Instance } from "morphcloud";
 import { getMorphClient } from "../_shared/morph";
 import { SignJWT } from "jose";

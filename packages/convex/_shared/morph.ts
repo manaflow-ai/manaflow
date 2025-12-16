@@ -1,3 +1,5 @@
+"use node";
+
 import { MorphCloudClient } from "morphcloud";
 import { env } from "./convex-env";
 

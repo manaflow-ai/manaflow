@@ -1,3 +1,5 @@
+"use node";
+
 import { getMorphClient } from "../_shared/morph";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
