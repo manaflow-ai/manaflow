@@ -14,7 +14,7 @@ ARG NVM_VERSION=0.39.7
 ARG NODE_VERSION=24.9.0
 ARG GO_VERSION=1.25.2
 ARG GITHUB_TOKEN
-ARG IDE_PROVIDER=coder
+ARG IDE_PROVIDER=cmux-code
 
 FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-builder
 
@@ -988,10 +988,10 @@ if [ -z "${extensions}" ]; then
   echo "No extensions found in /tmp/ide-deps.json" >&2
   exit 1
 fi
-while IFS='|' read -r publisher name version; do
+echo "${extensions}" | while IFS='|' read -r publisher name version; do
   [ -z "${publisher}" ] && continue
   download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
-done <<< "${extensions}"
+done
 wait
 set -- "${download_dir}"/*.vsix
 for vsix in "$@"; do
