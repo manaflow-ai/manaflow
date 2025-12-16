@@ -191,18 +191,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome
+# Install Google Chrome (cleanup always runs via trap)
 RUN arch="$(uname -m)"; \
   case "$arch" in \
     x86_64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" ;; \
     aarch64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb" ;; \
     *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac; \
+  cleanup() { rm -f /tmp/chrome.deb; rm -rf /var/lib/apt/lists/*; }; \
+  trap cleanup EXIT; \
   curl -fsSL -o /tmp/chrome.deb "$chrome_url" && \
   apt-get update && \
-  apt-get install -y --no-install-recommends /tmp/chrome.deb || true && \
-  rm -f /tmp/chrome.deb && \
-  rm -rf /var/lib/apt/lists/*
+  (apt-get install -y --no-install-recommends /tmp/chrome.deb || true)
 
 # Configure sshd for sandbox access
 RUN mkdir -p /run/sshd && \
