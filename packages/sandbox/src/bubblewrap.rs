@@ -1372,10 +1372,12 @@ impl SandboxService for BubblewrapService {
 
         // Calculate display configuration for isolated X11/VNC desktop
         // Display numbers start at 10 to avoid conflicts with system displays (:0, :1, etc.)
+        // All sandboxes use fixed ports internally (39380 for noVNC, 39381 for CDP)
+        // Accessed via subdomain routing: {index}-39380.host -> sandbox's internal 39380
         let display_number = (10 + index) as u16;
         let vnc_port = 5900 + display_number;
-        let novnc_port = 6080 + index as u16;
-        let cdp_port = 9222 + index as u16;
+        let novnc_port = 39380_u16; // Fixed port, accessed via subdomain routing
+        let cdp_port = 39381_u16; // Fixed port, accessed via subdomain routing
 
         // Phase: start X11 stack (Xvfb + openbox + x11vnc + websockify) inside the sandbox
         // Only set display field if X11 stack starts successfully

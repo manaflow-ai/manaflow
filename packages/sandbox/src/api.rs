@@ -8,8 +8,10 @@ use crate::service::{AppState, GhResponseRegistry, HostEventSender, SandboxServi
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::http::header::HOST;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -107,6 +109,8 @@ pub fn build_router(
             get(list_notifications).post(send_notification),
         )
         .merge(swagger_routes)
+        // Fallback for subdomain routing: {index}-{port}.host -> sandbox's internal port
+        .fallback(subdomain_proxy)
         .with_state(state)
 }
 
@@ -250,6 +254,73 @@ async fn proxy_sandbox(
             tracing::error!("proxy failed: {e}");
         }
     })
+}
+
+/// Subdomain routing: {index}-{port}.host -> proxy to sandbox[index]'s internal port
+/// Example: 0-39380.localhost:46835 -> sandbox 0's internal port 39380 (noVNC)
+async fn subdomain_proxy(
+    state: State<AppState>,
+    headers: HeaderMap,
+    req: axum::http::Request<Body>,
+) -> Response {
+    // Get host from headers
+    let host = headers
+        .get(HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    // Parse subdomain pattern: {index}-{port}.rest
+    // e.g., "0-39380.localhost" or "1-39381.localhost:46835"
+    let subdomain = host.split('.').next().unwrap_or("");
+    let parts: Vec<&str> = subdomain.split('-').collect();
+
+    if parts.len() != 2 {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
+    let Ok(index) = parts[0].parse::<usize>() else {
+        return (StatusCode::BAD_REQUEST, "Invalid sandbox index").into_response();
+    };
+    let Ok(port) = parts[1].parse::<u16>() else {
+        return (StatusCode::BAD_REQUEST, "Invalid port").into_response();
+    };
+
+    // Find sandbox by index
+    let sandboxes = match state.service.list().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to list sandboxes: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to list sandboxes").into_response();
+        }
+    };
+
+    let sandbox = sandboxes.iter().find(|s| s.index == index);
+    let Some(sandbox) = sandbox else {
+        return (StatusCode::NOT_FOUND, format!("Sandbox with index {} not found", index)).into_response();
+    };
+
+    let sandbox_ip = &sandbox.network.sandbox_ip;
+
+    // Proxy the request to the sandbox's internal port
+    // For now, just redirect - full HTTP proxy would need hyper client
+    // Preserve query string for noVNC and other services that use URL parameters
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let target_url = format!("http://{}:{}{}", sandbox_ip, port, path_and_query);
+
+    tracing::info!(
+        sandbox_index = index,
+        port = port,
+        sandbox_ip = %sandbox_ip,
+        target_url = %target_url,
+        "subdomain routing"
+    );
+
+    // Return redirect for now (full proxy implementation would use hyper)
+    axum::response::Redirect::temporary(&target_url).into_response()
 }
 
 /// Multiplexed WebSocket endpoint - handles multiple PTY sessions over a single connection.
