@@ -3,6 +3,13 @@ import type {
   EnvironmentResult,
 } from "../common/environment-result";
 
+export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "CLAUDE_API_KEY",
+];
+
 export async function getClaudeEnvironment(
   ctx: EnvironmentContext,
 ): Promise<EnvironmentResult> {
@@ -158,6 +165,12 @@ exit 0`;
 
   // Create settings.json with hooks configuration
   const settingsConfig: Record<string, unknown> = {
+    // Use the Anthropic API key from cmux settings.json instead of env vars
+    // This ensures Claude Code always uses the key from cmux, bypassing any
+    // ANTHROPIC_API_KEY environment variables in the repo
+    ...(ctx.apiKeys?.ANTHROPIC_API_KEY
+      ? { anthropicApiKey: ctx.apiKeys.ANTHROPIC_API_KEY }
+      : {}),
     // Configure helper to avoid env-var based prompting
     apiKeyHelper: claudeApiKeyHelperPath,
     hooks: {
@@ -205,5 +218,10 @@ echo ${ctx.taskRunJwt}`;
     "echo '[CMUX] Settings directory in ~/.claude:' && ls -la /root/.claude/",
   );
 
-  return { files, env, startupCommands };
+  return {
+    files,
+    env,
+    startupCommands,
+    unsetEnv: [...CLAUDE_KEY_ENV_VARS_TO_UNSET],
+  };
 }

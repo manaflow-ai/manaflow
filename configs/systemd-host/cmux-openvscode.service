@@ -1,0 +1,22 @@
+[Unit]
+Description=Cmux OpenVSCode Server (Host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/cmux/cmux.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=CMUX_SERVICE=openvscode
+User=cmux
+Group=cmux
+WorkingDirectory=/opt/cmux
+ExecStartPre=/usr/bin/install -d -o cmux -g cmux /var/log/cmux
+ExecStartPre=/usr/bin/install -d -o cmux -g cmux /opt/cmux/workspace
+ExecStart=/opt/cmux/bin/run-openvscode
+Restart=on-failure
+RestartSec=2
+LogsDirectory=cmux
+
+[Install]
+WantedBy=cmux.target

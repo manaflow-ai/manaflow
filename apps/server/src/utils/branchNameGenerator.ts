@@ -128,6 +128,34 @@ export async function generateUniqueBranchNamesFromTitle(
   return data.branchNames;
 }
 
+// Generate PR title and branch names in a single API call
+export async function generatePRInfoAndBranchNames(
+  taskDescription: string,
+  count: number,
+  teamSlugOrId: string
+): Promise<{ prTitle: string; branchNames: string[] }> {
+  const data = await requestBranchGeneration({
+    teamSlugOrId,
+    taskDescription,
+    count,
+  });
+
+  if (!data.branchNames || data.branchNames.length === 0) {
+    throw new Error("Failed to generate branch names");
+  }
+
+  if (data.branchNames.length < count) {
+    serverLogger.warn(
+      `[BranchNameGenerator] Expected ${count} names, received ${data.branchNames.length}`
+    );
+  }
+
+  return {
+    prTitle: data.prTitle || fallbackPrTitle(taskDescription),
+    branchNames: data.branchNames,
+  };
+}
+
 export async function getPRTitleFromTaskDescription(
   taskDescription: string,
   teamSlugOrId: string

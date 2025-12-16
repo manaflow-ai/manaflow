@@ -1,0 +1,45 @@
+name: cmux-env (Rust)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/cmux-env/**
+      - .github/workflows/cmux-env.yml
+  pull_request:
+    paths:
+      - crates/cmux-env/**
+      - .github/workflows/cmux-env.yml
+  workflow_dispatch:
+
+jobs:
+  rust-checks:
+    name: Rust checks
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/cmux-env
+
+      - name: Format
+        run: cargo fmt --all -- --check
+        working-directory: crates/cmux-env
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: crates/cmux-env
+
+      - name: Tests
+        run: cargo test --all-features --locked
+        working-directory: crates/cmux-env

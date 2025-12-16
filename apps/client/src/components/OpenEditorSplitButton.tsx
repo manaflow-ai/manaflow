@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { editorIcons } from "@/components/ui/dropdown-types";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { Menu } from "@base-ui-components/react/menu";
@@ -205,6 +206,11 @@ export function OpenEditorSplitButton({
     openEditor(selected.id);
   }, [openEditor, selected]);
 
+  // In web mode, opening local editors is not available
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    return null;
+  }
+
   return (
     <div className="flex items-stretch">
       <button
@@ -230,7 +236,7 @@ export function OpenEditorSplitButton({
           <ChevronDown className="w-3.5 h-3.5" />
         </Menu.Trigger>
         <Menu.Portal>
-          <Menu.Positioner sideOffset={5} className="outline-none z-[var(--z-popover)]">
+          <Menu.Positioner sideOffset={5} className="outline-none z-[var(--z-global-blocking)]">
             <Menu.Popup
               className={clsx(
                 "origin-[var(--transform-origin)] rounded-md bg-white dark:bg-black py-1",

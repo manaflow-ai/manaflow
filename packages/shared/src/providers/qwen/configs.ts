@@ -12,9 +12,8 @@ import {
 
 export const QWEN_OPENROUTER_CODER_FREE_CONFIG: AgentConfig = {
   name: "qwen/qwen3-coder:free",
-  command: "pnpm",
+  command: "bunx",
   args: [
-    "dlx",
     "@qwen-code/qwen-code",
     "--telemetry",
     "--telemetry-target=local",
@@ -42,9 +41,8 @@ export const QWEN_OPENROUTER_CODER_FREE_CONFIG: AgentConfig = {
 
 export const QWEN_MODEL_STUDIO_CODER_PLUS_CONFIG: AgentConfig = {
   name: "qwen/qwen3-coder-plus",
-  command: "pnpm",
+  command: "bunx",
   args: [
-    "dlx",
     "@qwen-code/qwen-code",
     "--telemetry",
     "--telemetry-target=local",

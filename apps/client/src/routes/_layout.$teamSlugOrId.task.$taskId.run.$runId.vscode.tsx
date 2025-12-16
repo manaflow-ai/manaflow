@@ -1,15 +1,29 @@
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import clsx from "clsx";
-import { useCallback } from "react";
+import { useQuery } from "convex/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import z from "zod";
+import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { getTaskRunPersistKey } from "@/lib/persistent-webview-keys";
+import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
-import { preloadTaskRunIframes } from "../lib/preloadTaskRunIframes";
+import {
+  preloadTaskRunIframes,
+  TASK_RUN_IFRAME_ALLOW,
+  TASK_RUN_IFRAME_SANDBOX,
+} from "../lib/preloadTaskRunIframes";
+import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { ResumeWorkspaceOverlay } from "@/components/resume-workspace-overlay";
+import { useElectronWindowFocus } from "@/hooks/useElectronWindowFocus";
+import { useWebviewActions } from "@/hooks/useWebviewActions";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -30,42 +44,70 @@ export const Route = createFileRoute(
     },
   },
   loader: async (opts) => {
-    const result = await opts.context.queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.runId,
-      })
-    );
-    if (result) {
-      const workspaceUrl = result.vscode?.workspaceUrl;
-      void preloadTaskRunIframes([
-        {
-          url: workspaceUrl ? toProxyWorkspaceUrl(workspaceUrl) : "",
-          taskRunId: opts.params.runId,
-        },
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.get,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.runId },
+    });
+
+    void (async () => {
+      const [result, localServeWeb] = await Promise.all([
+        opts.context.queryClient.ensureQueryData(
+          convexQuery(api.taskRuns.get, {
+            teamSlugOrId: opts.params.teamSlugOrId,
+            id: opts.params.runId,
+          })
+        ),
+        opts.context.queryClient.ensureQueryData(
+          localVSCodeServeWebQueryOptions()
+        ),
       ]);
-    }
+      if (result) {
+        const workspaceUrl = result.vscode?.workspaceUrl;
+        await preloadTaskRunIframes([
+          {
+            url: workspaceUrl
+              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+              : "",
+            taskRunId: opts.params.runId,
+          },
+        ]);
+      }
+    })();
   },
 });
 
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
-  const taskRun = useSuspenseQuery(
-    convexQuery(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    })
-  );
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const taskRun = useQuery(api.taskRuns.get, {
+    teamSlugOrId,
+    id: taskRunId,
+  });
 
-  const workspaceUrl = taskRun?.data?.vscode?.workspaceUrl
-    ? toProxyWorkspaceUrl(taskRun.data.vscode.workspaceUrl)
+  const workspaceUrl = taskRun?.vscode?.workspaceUrl
+    ? toProxyWorkspaceUrl(
+        taskRun.vscode.workspaceUrl,
+        localServeWeb.data?.baseUrl
+      )
     : null;
+  const disablePreflight = taskRun?.vscode?.workspaceUrl
+    ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
+    : false;
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
+  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
+  const webviewActions = useWebviewActions({ persistKey });
+
+  const [iframeStatus, setIframeStatus] =
+    useState<PersistentIframeStatus>("loading");
+  useEffect(() => {
+    setIframeStatus("loading");
+  }, [workspaceUrl]);
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
-  }, [taskRunId]);
+    void webviewActions.focus();
+  }, [taskRunId, webviewActions]);
 
   const onError = useCallback(
     (error: Error) => {
@@ -77,55 +119,83 @@ function VSCodeComponent() {
     [taskRunId]
   );
 
+  const loadingFallback = useMemo(
+    () =>
+      isLocalWorkspace ? null : (
+        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+      ),
+    [isLocalWorkspace]
+  );
+  const errorFallback = useMemo(
+    () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
+    []
+  );
+
+  const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
+
+  const focusWebviewIfReady = useCallback(() => {
+    if (!workspaceUrl) return;
+    if (iframeStatus !== "loaded") return;
+    void webviewActions.focus();
+  }, [iframeStatus, webviewActions, workspaceUrl]);
+
+  useEffect(() => {
+    focusWebviewIfReady();
+  }, [focusWebviewIfReady]);
+
+  const handleElectronWindowFocus = useCallback(() => {
+    void (async () => {
+      const alreadyFocused = await webviewActions.isFocused();
+      if (alreadyFocused) {
+        return;
+      }
+      focusWebviewIfReady();
+    })();
+  }, [focusWebviewIfReady, webviewActions]);
+
+  useElectronWindowFocus(handleElectronWindowFocus);
+
   return (
-    <div className="pl-1 flex flex-col grow bg-neutral-50 dark:bg-black">
+    <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
       <div className="flex flex-col grow min-h-0 border-l border-neutral-200 dark:border-neutral-800">
-        <div className="flex flex-row grow min-h-0 relative">
+        <div
+          className="flex flex-row grow min-h-0 relative"
+          aria-busy={isEditorBusy}
+        >
           {workspaceUrl ? (
             <PersistentWebView
               persistKey={persistKey}
               src={workspaceUrl}
-              className="grow flex relative"
+              className="grow flex"
               iframeClassName="select-none"
-              sandbox="allow-downloads allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-storage-access-by-user-activation allow-top-navigation allow-top-navigation-by-user-activation"
-              allow="accelerometer; camera; encrypted-media; fullscreen; geolocation; gyroscope; magnetometer; microphone; midi; payment; usb; xr-spatial-tracking"
+              sandbox={TASK_RUN_IFRAME_SANDBOX}
+              allow={TASK_RUN_IFRAME_ALLOW}
               retainOnUnmount
               suspended={!hasWorkspace}
+              preflight={!disablePreflight}
               onLoad={onLoad}
               onError={onError}
+              fallback={loadingFallback}
+              fallbackClassName="bg-neutral-50 dark:bg-black"
+              errorFallback={errorFallback}
+              errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+              onStatusChange={setIframeStatus}
+              loadTimeoutMs={60_000}
             />
           ) : (
             <div className="grow" />
           )}
-          <div
-            className={clsx(
-              "absolute inset-0 flex items-center justify-center transition pointer-events-none",
-              {
-                "opacity-100": !hasWorkspace,
-                "opacity-0": hasWorkspace,
-              }
-            )}
-          >
-            <div className="flex flex-col items-center gap-3">
-              <div className="flex gap-1">
-                <div
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: "0ms" }}
-                />
-                <div
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: "150ms" }}
-                />
-                <div
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: "300ms" }}
-                />
-              </div>
-              <span className="text-sm text-neutral-500">
-                Starting VS Code...
-              </span>
+          {!hasWorkspace && !isLocalWorkspace ? (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
-          </div>
+          ) : null}
+          {taskRun ? (
+            <ResumeWorkspaceOverlay
+              taskRun={taskRun}
+              teamSlugOrId={teamSlugOrId}
+            />
+          ) : null}
         </div>
       </div>
     </div>

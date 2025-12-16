@@ -1,0 +1,21 @@
+[Unit]
+Description=Cmux Worker Service (Host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/cmux/cmux.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+User=cmux
+Group=cmux
+WorkingDirectory=/opt/cmux
+ExecStartPre=/usr/bin/install -d -o cmux -g cmux /var/log/cmux
+ExecStart=/opt/cmux/bin/run-worker
+Restart=on-failure
+RestartSec=2
+LogsDirectory=cmux
+
+[Install]
+WantedBy=cmux.target

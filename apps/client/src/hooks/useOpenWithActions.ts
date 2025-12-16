@@ -3,6 +3,8 @@ import type { Doc } from "@cmux/convex/dataModel";
 import { editorIcons, type EditorType } from "@/components/ui/dropdown-types";
 import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
 type NetworkingInfo = Doc<"taskRuns">["networking"];
 
@@ -31,6 +33,8 @@ export function useOpenWithActions({
   networking,
 }: UseOpenWithActionsArgs) {
   const { socket, availableEditors } = useSocket();
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
 
   useEffect(() => {
     if (!socket) return;
@@ -50,7 +54,11 @@ export function useOpenWithActions({
     (editor: EditorType): Promise<void> => {
       return new Promise((resolve, reject) => {
         if (editor === "vscode-remote" && vscodeUrl) {
-          const vscodeUrlWithWorkspace = `${vscodeUrl}?folder=/root/workspace`;
+          const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+            vscodeUrl,
+            localServeWebOrigin,
+          );
+          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
           window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
           resolve();
         } else if (
@@ -96,7 +104,7 @@ export function useOpenWithActions({
         }
       });
     },
-    [socket, worktreePath, vscodeUrl]
+    [socket, worktreePath, vscodeUrl, localServeWebOrigin]
   );
 
   const handleCopyBranch = useCallback(() => {

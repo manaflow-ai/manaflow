@@ -1,6 +1,7 @@
 import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { api } from "@cmux/convex/api";
+import { MORPH_SNAPSHOT_PRESETS } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { HTTPException } from "hono/http-exception";
 
@@ -54,6 +55,17 @@ export const resolveTeamAndSnapshot = async ({
   }
 
   if (snapshotId) {
+    const isKnownDefaultSnapshot = MORPH_SNAPSHOT_PRESETS.some((preset) =>
+      preset.versions.some((v) => v.snapshotId === snapshotId)
+    );
+
+    if (isKnownDefaultSnapshot) {
+      return {
+        team,
+        resolvedSnapshotId: snapshotId,
+      };
+    }
+
     const environments = await convex.query(api.environments.list, {
       teamSlugOrId,
     });

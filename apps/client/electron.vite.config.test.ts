@@ -152,7 +152,7 @@ describe("electron.vite.config", () => {
       index: resolve("electron/preload/index.ts"),
     });
     expect(resolved.renderer?.build?.rollupOptions?.input).toMatchObject({
-      index: resolve("index.html"),
+      index: resolve("index-electron.html"),
     });
 
     expect(resolved.renderer?.resolve?.alias).toMatchObject({

@@ -158,7 +158,7 @@ githubPrsCodeRouter.openapi(
     type PrFile = {
       filename: string;
       status: string;
-      sha?: string;
+      sha?: string | null;
       additions?: number;
       deletions?: number;
       changes?: number;
@@ -192,7 +192,7 @@ githubPrsCodeRouter.openapi(
       const entry: z.infer<typeof FileEntry> = {
         filename: f.filename,
         status: f.status,
-        sha: f.sha,
+        sha: f.sha ?? undefined,
         additions: f.additions,
         deletions: f.deletions,
         changes: f.changes,

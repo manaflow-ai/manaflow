@@ -1,3 +1,4 @@
+# .github/workflows/release-updates.yml
 name: Build & Publish Electron Updates (GitHub Releases)
 
 on:
@@ -91,111 +92,129 @@ jobs:
           echo "Resolved release tag: $resolved_tag"
           printf 'tag=%s\n' "$resolved_tag" >> "$GITHUB_OUTPUT"
 
-  mac-x64:
-    name: macOS x64
-    needs: prepare-release
-    environment: electron
-    runs-on: ${{ (vars.USE_LARGE_RUNNERS == 'true' && 'macos-13-large') || 'macos-13' }}
-    defaults:
-      run:
-        working-directory: ./
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.2.21
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          profile: minimal
-          targets: x86_64-apple-darwin
-      - name: Install dependencies (bun)
-        run: bun install --frozen-lockfile
-      - name: Install app deps in apps/client (bun)
-        working-directory: apps/client
-        run: bun install --frozen-lockfile
-      - name: Ensure local production node_modules (apps/client)
-        working-directory: apps/client
-        run: |
-          set -euo pipefail
-          echo "Ensuring local node_modules in $(pwd)..."
-          # First try a local bun install to materialize node_modules
-          bun install --frozen-lockfile || true
-          if [ ! -d node_modules ]; then
-            echo "Local node_modules missing; copying from workspace root..."
-            # Copy the hoisted workspace root node_modules into the app package
-            # -L to dereference any symlinks so the packaged app has real files
-            rsync -aL --delete ../../node_modules/ node_modules/ || true
-          fi
-          if [ ! -d node_modules ]; then
-            echo "ERROR: apps/client/node_modules still missing after attempts." >&2
-            exit 1
-          fi
-      - name: Write .env for build
-        shell: bash
-        run: |
-          cat > .env <<EOF
-          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-          EOF
-      - name: Build native Rust addon
-        working-directory: apps/server/native/core
-        shell: bash
-        run: bunx --bun @napi-rs/cli build --platform --release
-      - name: Build, sign, and notarize (x64) via publish script
-        env:
-          MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
-          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: bash scripts/publish-build-mac-x64.sh --skip-install
-      - name: Publish notarized macOS x64 artifacts to GitHub Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-          REPO: ${{ github.repository }}
-        working-directory: apps/client
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          artifacts=(
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/latest-*.yml
-            dist-electron/*.blockmap
-          )
-          if [[ ${#artifacts[@]} -eq 0 ]]; then
-            echo "No notarized macOS x64 artifacts found in dist-electron" >&2
-            exit 1
-          fi
-          release_tag="${RELEASE_TAG:-}"
-          if [[ -z "$release_tag" ]]; then
-            echo "Release tag not provided" >&2
-            exit 1
-          fi
-          repo="${REPO}"
-          for artifact in "${artifacts[@]}"; do
-            echo "Uploading $artifact to $repo@$release_tag"
-            gh release upload "$release_tag" "$artifact" --repo "$repo" --clobber
-          done
+  # mac-x64:
+  #   name: macOS x64
+  #   needs: prepare-release
+  #   environment: electron
+  #   runs-on: ${{ (vars.USE_LARGE_RUNNERS == 'true' && 'macos-13-large') || 'macos-13' }}
+  #   defaults:
+  #     run:
+  #       working-directory: ./
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: ${{ env.NODE_VERSION }}
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v2
+  #       with:
+  #         bun-version: 1.2.21
+  #     - name: Install Rust toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         profile: minimal
+  #         targets: x86_64-apple-darwin
+  #     - name: Install dependencies (bun)
+  #       run: bun install --frozen-lockfile
+  #     - name: Install app deps in apps/client (bun)
+  #       working-directory: apps/client
+  #       run: bun install --frozen-lockfile
+  #     - name: Ensure local production node_modules (apps/client)
+  #       working-directory: apps/client
+  #       run: |
+  #         set -euo pipefail
+  #         echo "Ensuring local node_modules in $(pwd)..."
+  #         bun install --frozen-lockfile --production || true
+  #         if [ ! -d node_modules ]; then
+  #           echo "Local node_modules missing; copying production deps from workspace root..."
+  #           mkdir -p node_modules
+  #           rsync -aL --delete \
+  #             --exclude='electron' \
+  #             --exclude='electron-builder' \
+  #             --exclude='electron-vite' \
+  #             --exclude='@electron' \
+  #             --exclude='@electron-toolkit' \
+  #             ../../node_modules/ node_modules/ || true
+  #         fi
+  #         if [ ! -d node_modules ]; then
+  #           echo "ERROR: apps/client/node_modules still missing after attempts." >&2
+  #           exit 1
+  #         fi
+  #     - name: Write .env for build
+  #       shell: bash
+  #       run: |
+  #         cat > .env <<EOF
+  #         NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+  #         NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+  #         NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+  #         NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+  #         NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+  #         EOF
+  #     - name: Build native Rust addon
+  #       working-directory: apps/server/native/core
+  #       shell: bash
+  #       run: bunx --bun @napi-rs/cli build --platform --release
+  #     - name: Build, sign, and notarize (x64) via publish script
+  #       env:
+  #         MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
+  #         MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+  #         APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+  #         APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+  #         APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+  #       run: bash scripts/publish-build-mac-x64.sh --skip-install
+  #     - name: Publish notarized macOS x64 artifacts to GitHub Releases
+  #       env:
+  #         GH_TOKEN: ${{ github.token }}
+  #         RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+  #         REPO: ${{ github.repository }}
+  #       working-directory: apps/client
+  #       shell: bash
+  #       run: |
+  #         set -euo pipefail
+  #         shopt -s nullglob
+  #         artifacts=(
+  #           dist-electron/*.dmg
+  #           dist-electron/*.zip
+  #           dist-electron/latest-*.yml
+  #           dist-electron/*.blockmap
+  #         )
+  #         if [[ ${#artifacts[@]} -eq 0 ]]; then
+  #           echo "No notarized macOS x64 artifacts found in dist-electron" >&2
+  #           exit 1
+  #         fi
+  #         release_tag="${RELEASE_TAG:-}"
+  #         if [[ -z "$release_tag" ]]; then
+  #           echo "Release tag not provided" >&2
+  #           exit 1
+  #         fi
+  #         repo="${REPO}"
+  #         for artifact in "${artifacts[@]}"; do
+  #           basename="${artifact##*/}"
+  #           extension="${basename##*.}"
+  #           name="${basename%.*}"
+
+  #           if [[ "$extension" == "dmg" ]]; then
+  #             base="$name"
+  #             if [[ "$base" == *"-x64" ]]; then
+  #               base="${base%-x64}"
+  #             fi
+  #             renamed="${base}-x64.dmg"
+  #             echo "Uploading $artifact as $renamed to $repo@$release_tag"
+  #             gh release upload "$release_tag" "$artifact#$renamed" --repo "$repo" --clobber
+  #           else
+  #             echo "Uploading $artifact to $repo@$release_tag without renaming"
+  #             gh release upload "$release_tag" "$artifact" --repo "$repo" --clobber
+  #           fi
+  #         done
 
   mac-arm64:
     name: macOS arm64
     needs: prepare-release
     environment: electron
-    runs-on: ${{ (vars.USE_LARGE_RUNNERS == 'true' && 'macos-14-xlarge') || 'macos-14' }}
+    runs-on: self-hosted
     defaults:
       run:
         working-directory: ./
@@ -206,10 +225,36 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Configure Cargo home
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          cargo_home="$temp_dir/cargo-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          cargo_target_dir="$temp_dir/cargo-target-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$cargo_home/bin"
+          mkdir -p "$cargo_target_dir"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$cargo_target_dir" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "PATH=$cargo_home/bin:$PATH" >> "$GITHUB_ENV"
+      - name: Configure Bun install dir
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          bun_install="$temp_dir/bun-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$bun_install"
+          echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.21
+          no-cache: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -221,23 +266,6 @@ jobs:
       - name: Install app deps in apps/client (bun)
         working-directory: apps/client
         run: bun install --frozen-lockfile
-      - name: Ensure local production node_modules (apps/client)
-        working-directory: apps/client
-        run: |
-          set -euo pipefail
-          echo "Ensuring local node_modules in $(pwd)..."
-          # First try a local bun install to materialize node_modules
-          bun install --frozen-lockfile || true
-          if [ ! -d node_modules ]; then
-            echo "Local node_modules missing; copying from workspace root..."
-            # Copy the hoisted workspace root node_modules into the app package
-            # -L to dereference any symlinks so the packaged app has real files
-            rsync -aL --delete ../../node_modules/ node_modules/ || true
-          fi
-          if [ ! -d node_modules ]; then
-            echo "ERROR: apps/client/node_modules still missing after attempts." >&2
-            exit 1
-          fi
       - name: Write .env for build
         shell: bash
         run: |
@@ -289,6 +317,231 @@ jobs:
           for artifact in "${artifacts[@]}"; do
             echo "Uploading $artifact to $repo@$release_tag"
             gh release upload "$release_tag" "$artifact" --repo "$repo" --clobber
+          done
+
+  mac-universal:
+    name: macOS universal
+    needs: prepare-release
+    environment: electron
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Configure Cargo home
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          cargo_home="$temp_dir/cargo-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          cargo_target_dir="$temp_dir/cargo-target-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$cargo_home/bin"
+          mkdir -p "$cargo_target_dir"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$cargo_target_dir" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "PATH=$cargo_home/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Configure Bun install dir
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          bun_install="$temp_dir/bun-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$bun_install"
+          echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+          no-cache: true
+
+      # x86_64 toolchain for node-gyp and friends
+      - name: Ensure Rosetta (for x64 toolchain)
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Install Rust toolchain and mac targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          profile: minimal
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Install dependencies (bun)
+        run: bun install --frozen-lockfile
+
+      - name: Generate icons (apps/client)
+        working-directory: apps/client
+        run: bun run ./scripts/generate-icons.mjs
+
+      - name: Prepare macOS entitlements
+        run: bash scripts/publish-prepare-macos-entitlements.sh
+
+      - name: Write .env for build
+        shell: bash
+        run: |
+          cat > .env <<EOF
+          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+          EOF
+
+      - name: Remove stale macOS native binaries
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f cmux_native_core.darwin-*.node
+
+      # Prebuild the Rust N-API addon for both slices so electron-builder can pick them up.
+      - name: Build native Rust addon (arm64 + x64)
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin || true
+          bunx --bun @napi-rs/cli build --platform --release --target x86_64-apple-darwin
+          bunx --bun @napi-rs/cli build --platform --release --target aarch64-apple-darwin
+
+      - name: Verify macOS native addon slices
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f cmux_native_core.darwin-arm64.node ]]; then
+            echo "arm64 native binary missing" >&2
+            exit 1
+          fi
+          if compgen -G 'cmux_native_core.darwin-x64.node' >/dev/null; then
+            ls -l cmux_native_core.darwin-x64.node
+          elif compgen -G 'cmux_native_core.darwin-x86_64.node' >/dev/null; then
+            mv cmux_native_core.darwin-x86_64.node cmux_native_core.darwin-x64.node
+            ls -l cmux_native_core.darwin-x64.node
+          else
+            echo "x64 native binary missing" >&2
+            exit 1
+          fi
+
+      - name: Prepare signing credentials
+        env:
+          MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir_cert="$(mktemp -d)"
+          cert_path="$tmpdir_cert/mac_signing_cert.p12"
+          node -e "process.stdout.write(Buffer.from(process.env.MAC_CERT_BASE64,'base64'))" > "$cert_path"
+          echo "CSC_LINK=$cert_path" >> "$GITHUB_ENV"
+          echo "CSC_KEY_PASSWORD=${MAC_CERT_PASSWORD}" >> "$GITHUB_ENV"
+          if [[ -n "${APPLE_API_KEY:-}" && ! -f "${APPLE_API_KEY}" ]]; then
+            tmpdir_key="$(mktemp -d)"
+            key_path="$tmpdir_key/AuthKey_${APPLE_API_KEY_ID:-api}.p8"
+            KEY_PATH="$key_path" node -e "const fs=require('fs');let raw=process.env.APPLE_API_KEY||'';if(!raw){process.stderr.write('APPLE_API_KEY is empty\n');process.exit(1)};const unesc=s=>s.includes('\\n')&&!s.includes('\n')?s.replace(/\\\\n/g,'\n'):s;const tryB64=s=>{try{const b=s.replace(/\\s+/g,'');const d=Buffer.from(b,'base64').toString('utf8');if(d.includes('-----BEGIN'))return d;}catch{};return null;};let lit=unesc(raw).replace(/\\r\\n?/g,'\n');let out=lit.includes('-----BEGIN')?lit:(tryB64(raw)||lit);if(!out.endsWith('\n'))out+='\n';fs.writeFileSync(process.env.KEY_PATH,out);try{fs.chmodSync(process.env.KEY_PATH,0o600);}catch{};"
+            echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build universal DMG/ZIP with electron-builder
+        working-directory: apps/client
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENTITLEMENTS="$PWD/build/entitlements.mac.plist"
+          if [[ ! -f "$ENTITLEMENTS" ]]; then
+            echo "Entitlements file missing at $ENTITLEMENTS" >&2; exit 1
+          fi
+          bunx electron-vite build -c electron.vite.config.ts
+          bunx electron-builder \
+            --config electron-builder.json \
+            --mac dmg zip \
+            --universal \
+            --publish never \
+            --config.mac.forceCodeSigning=true \
+            --config.mac.entitlements="$ENTITLEMENTS" \
+            --config.mac.entitlementsInherit="$ENTITLEMENTS" \
+            --config.mac.notarize=false
+
+      - name: Notarize universal DMG
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        working-directory: apps/client/dist-electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          DMG="$(ls -1 *.dmg | head -n1 || true)"
+          if [[ -z "$DMG" ]]; then
+            echo "No DMG found in $(pwd)" >&2
+            exit 1
+          fi
+          echo "Submitting $DMG for notarization..."
+          set +e
+          OUT=$(xcrun notarytool submit "$DMG" --wait --output-format json --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT" | sed -e 's/^/notarytool: /'
+          echo "$OUT" | grep -qi '"status" *: *"Accepted"\|status: Accepted\|Accepted' || { echo "Notarization failed"; exit 1; }
+
+      - name: Staple and prepare update manifest
+        working-directory: apps/client/dist-electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$(find . -maxdepth 2 -type d -name '*.app' | head -n1 || true)"
+          DMG="$(ls -1 *.dmg 2>/dev/null | head -n1 || true)"
+          if [[ -n "$APP" ]]; then xcrun stapler staple "$APP" || true; fi
+          if [[ -n "$DMG" ]]; then xcrun stapler staple "$DMG" || true; fi
+          if [[ -f "latest-mac.yml" ]]; then
+            rm -f latest-universal-mac.yml
+            mv latest-mac.yml latest-universal-mac.yml
+          fi
+
+      - name: Publish notarized macOS universal artifacts to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+        working-directory: apps/client/dist-electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=( *.dmg *.zip *.blockmap latest-*.yml )
+          if [[ ${#artifacts[@]} -eq 0 ]]; then
+            echo "No universal artifacts found to upload" >&2
+            exit 1
+          fi
+          for artifact in "${artifacts[@]}"; do
+            if [[ "$artifact" == *.dmg ]]; then
+              base="${artifact%.dmg}"
+              renamed="${base}-universal.dmg"
+              echo "Uploading $artifact as $renamed"
+              gh release upload "$RELEASE_TAG" "$artifact#$renamed" --repo "$REPO" --clobber
+            else
+              echo "Uploading $artifact"
+              gh release upload "$RELEASE_TAG" "$artifact" --repo "$REPO" --clobber
+            fi
           done
 
   windows-x64:

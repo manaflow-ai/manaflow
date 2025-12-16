@@ -109,10 +109,16 @@ export const DashboardInput = memo(
         return `${target.tagName.toLowerCase()}${id}${className}${title}`;
       };
 
+      const isCommandPaletteOpen = () =>
+        document.body?.dataset?.cmuxCommandPaletteOpen === "true";
+
       const scheduleRefocus = () => {
         clearPendingRefocus();
         pendingRefocusTimeoutRef.current = window.setTimeout(() => {
           pendingRefocusTimeoutRef.current = null;
+          if (isCommandPaletteOpen()) {
+            return;
+          }
           internalApiRef.current?.focus?.();
         }, 0);
       };
@@ -125,6 +131,10 @@ export const DashboardInput = memo(
           return false;
         }
 
+        if (isCommandPaletteOpen()) {
+          return false;
+        }
+
         const targetElement =
           event.target instanceof Element ? event.target : null;
         if (!targetElement?.closest(lexicalRootSelector)) {
@@ -134,6 +144,17 @@ export const DashboardInput = memo(
         if (
           candidateActiveElement &&
           targetElement.contains(candidateActiveElement)
+        ) {
+          return false;
+        }
+
+        // Don't restore focus if user is interacting with form elements
+        if (
+          candidateActiveElement &&
+          (candidateActiveElement instanceof HTMLInputElement ||
+            candidateActiveElement instanceof HTMLTextAreaElement ||
+            candidateActiveElement instanceof HTMLSelectElement ||
+            candidateActiveElement.getAttribute("contenteditable") === "true")
         ) {
           return false;
         }
@@ -195,7 +216,7 @@ export const DashboardInput = memo(
           }
         }
 
-        if (shouldRefocusImmediately) {
+        if (shouldRefocusImmediately && !isCommandPaletteOpen()) {
           scheduleRefocus();
         }
 
@@ -222,7 +243,7 @@ export const DashboardInput = memo(
             );
           }
 
-          if (shouldRefocusAfterMicrotask) {
+          if (shouldRefocusAfterMicrotask && !isCommandPaletteOpen()) {
             scheduleRefocus();
           }
         });

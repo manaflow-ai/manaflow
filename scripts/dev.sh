@@ -1,4 +1,27 @@
 #!/bin/bash
+#
+# dev.sh - Start the cmux development environment
+#
+# Usage: ./scripts/dev.sh [options]
+#
+# Options:
+#   --force-docker-build    Force rebuild the Docker image (overrides --skip-docker)
+#   --skip-docker[=BOOL]    Skip Docker image build (default: true)
+#   --skip-convex[=BOOL]    Skip Convex backend (default: true)
+#   --show-compose-logs     Show Docker Compose logs in console
+#   --electron              Start Electron app
+#   --convex-agent          Run convex dev in agent mode
+#
+# Environment variables:
+#   SKIP_DOCKER_BUILD       Set to "false" to build Docker image (default: true)
+#   SKIP_CONVEX             Set to "false" to run Convex (default: true)
+#
+# Examples:
+#   ./scripts/dev.sh                          # Start without Docker build
+#   ./scripts/dev.sh --force-docker-build     # Force Docker image rebuild
+#   ./scripts/dev.sh --skip-docker=false      # Build Docker image
+#   ./scripts/dev.sh --skip-convex=false      # Run with Convex enabled
+#
 
 set -e
 
@@ -37,6 +60,8 @@ SHOW_COMPOSE_LOGS=false
 # Default to skipping Convex unless explicitly disabled via env/flag
 SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
+SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-true}"
+CONVEX_AGENT_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -80,12 +105,45 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --skip-docker)
+            # Support `--skip-docker true|false` and bare `--skip-docker` (defaults to true)
+            if [[ -n "${2:-}" && "${2}" != --* ]]; then
+                case "$2" in
+                    true|false)
+                        SKIP_DOCKER_BUILD="$2"
+                        shift 2
+                        ;;
+                    *)
+                        echo "Invalid value for --skip-docker: $2. Use true or false." >&2
+                        exit 1
+                        ;;
+                esac
+            else
+                SKIP_DOCKER_BUILD=true
+                shift
+            fi
+            ;;
+        --skip-docker=*)
+            val="${1#*=}"
+            if [[ "$val" = "true" || "$val" = "false" ]]; then
+                SKIP_DOCKER_BUILD="$val"
+            else
+                echo "Invalid value for --skip-docker: $val. Use true or false." >&2
+                exit 1
+            fi
+            shift
+            ;;
+        --convex-agent)
+            CONVEX_AGENT_MODE=true
+            shift
+            ;;
         *)
             # Unknown flag; ignore and shift
             shift
             ;;
     esac
 done
+export SKIP_DOCKER_BUILD
 
 # Only clean ports when not in devcontainer (devcontainer handles this)
 if [ "$IS_DEVCONTAINER" = "false" ]; then
@@ -97,15 +155,39 @@ if [ "$IS_DEVCONTAINER" = "false" ]; then
 fi
 
 # Build Docker image (different logic for devcontainer vs host)
+# Allow overriding the build platform for cross-architecture builds
+DOCKER_BUILD_ARGS=(-t cmux-worker:0.0.1)
+if [ -n "${CMUX_DOCKER_PLATFORM:-}" ]; then
+    DOCKER_BUILD_ARGS+=(--platform "${CMUX_DOCKER_PLATFORM}")
+fi
+
+# Allow passing a GitHub token to avoid API rate limiting during docker builds.
+# Prefer an existing GITHUB_TOKEN environment variable, otherwise fall back to `gh auth token`.
+EFFECTIVE_GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+if [ -z "${EFFECTIVE_GITHUB_TOKEN}" ] && command -v gh >/dev/null 2>&1; then
+    GH_AUTH_TOKEN="$(gh auth token 2>/dev/null || true)"
+    # Guard against carriage returns when running on Windows hosts.
+    GH_AUTH_TOKEN="${GH_AUTH_TOKEN//$'\r'/}"
+    if [ -n "${GH_AUTH_TOKEN}" ]; then
+        EFFECTIVE_GITHUB_TOKEN="${GH_AUTH_TOKEN}"
+    fi
+fi
+
+if [ -n "${EFFECTIVE_GITHUB_TOKEN}" ]; then
+    export GITHUB_TOKEN="${EFFECTIVE_GITHUB_TOKEN}"
+    export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
+    DOCKER_BUILD_ARGS+=(--build-arg GITHUB_TOKEN --secret id=github_token,env=GITHUB_TOKEN)
+fi
+
 if [ "$IS_DEVCONTAINER" = "true" ]; then
     # In devcontainer, always build since we have access to docker socket
     echo "Building Docker image..."
-    docker build -t cmux-worker:0.0.1 "$APP_DIR" || exit 1
+    docker build "${DOCKER_BUILD_ARGS[@]}" "$APP_DIR" || exit 1
 else
     # On host, build by default unless explicitly skipped
     if [ "$SKIP_DOCKER_BUILD" != "true" ] || [ "$FORCE_DOCKER_BUILD" = "true" ]; then
         echo "Building Docker image..."
-        docker build -t cmux-worker:0.0.1 . || exit 1
+        docker build "${DOCKER_BUILD_ARGS[@]}" . || exit 1
     else
         echo "Skipping Docker build (SKIP_DOCKER_BUILD=true)"
     fi
@@ -209,6 +291,36 @@ check_process() {
     fi
 }
 
+wait_for_log_message() {
+    local log_file="$1"
+    local marker="$2"
+    local pid="$3"
+    local name="$4"
+    local timeout="${5:-120}"
+    local waited=0
+
+    echo -e "${BLUE}Waiting for ${name} to finish initial setup...${NC}"
+    while true; do
+        if [ -f "$log_file" ] && grep -Fq "$marker" "$log_file" 2>/dev/null; then
+            echo -e "${GREEN}${name} initial setup completed${NC}"
+            break
+        fi
+
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo -e "${RED}${name} exited before signaling readiness${NC}"
+            exit 1
+        fi
+
+        if [ $waited -ge $timeout ]; then
+            echo -e "${RED}Timed out waiting for ${name}${NC}"
+            exit 1
+        fi
+
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 # Start Convex backend (different for devcontainer vs host)
 if [ "$SKIP_CONVEX" = "true" ]; then
     echo -e "${YELLOW}Skipping Convex (SKIP_CONVEX=true)${NC}"
@@ -233,7 +345,12 @@ fi
 
 # We need to start convex dev even if we're skipping convex
 # Start convex dev (works the same in both environments)
-(cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; bunx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
+if [ "$CONVEX_AGENT_MODE" = "true" ]; then
+    echo -e "${GREEN}Starting convex dev in agent mode...${NC}"
+    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; CONVEX_AGENT_MODE=anonymous npx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
+else
+    (cd "$APP_DIR/packages/convex" && exec bash -c 'trap "kill -9 0" EXIT; source ~/.nvm/nvm.sh 2>/dev/null || true; bunx convex dev 2>&1 | tee "$LOG_DIR/convex-dev.log" | prefix_output "CONVEX-DEV" "$BLUE"') &
+fi
 CONVEX_DEV_PID=$!
 check_process $CONVEX_DEV_PID "Convex Dev"
 CONVEX_PID=$CONVEX_DEV_PID
@@ -256,11 +373,36 @@ echo -e "${GREEN}Starting www app on port 9779...${NC}"
 WWW_PID=$!
 check_process $WWW_PID "WWW App"
 
+# Warm up www server in background (non-blocking)
+(bash -c '
+  for i in {1..30}; do
+    if curl -s -f http://localhost:9779/api/health > /dev/null 2>&1; then
+      echo -e "'"${GREEN}"'WWW server ready and warmed up'"${NC}"'"
+      break
+    fi
+    sleep 0.5
+  done
+') &
+
+# Warm up frontend in background (non-blocking)
+(bash -c '
+  for i in {1..30}; do
+    if curl -s -f http://localhost:5173 > /dev/null 2>&1; then
+      echo -e "'"${GREEN}"'Frontend ready and warmed up'"${NC}"'"
+      break
+    fi
+    sleep 0.5
+  done
+') &
+
 # Start the openapi client generator
 echo -e "${GREEN}Starting openapi client generator...${NC}"
 (cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
 OPENAPI_CLIENT_PID=$!
 check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
+OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
+OPENAPI_READY_MARKER="[watch-openapi] initial client generation complete"
+wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
 
 # Start Electron if requested
 if [ "$RUN_ELECTRON" = "true" ]; then

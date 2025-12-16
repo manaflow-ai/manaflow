@@ -2,14 +2,30 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
+import { getGeminiTelemetryPath } from "./telemetry";
+
+type GeminiModelSettings = {
+  skipNextSpeakerCheck?: boolean;
+  [key: string]: unknown;
+};
+
+type GeminiTelemetrySettings = {
+  outfile?: string;
+  target?: string;
+  otlpEndpoint?: string;
+  logPrompts?: boolean;
+  [key: string]: unknown;
+};
 
 type GeminiSettings = {
   selectedAuthType?: string;
+  model?: GeminiModelSettings;
+  telemetry?: GeminiTelemetrySettings;
   [key: string]: unknown;
 };
 
 export async function getGeminiEnvironment(
-  _ctx: EnvironmentContext
+  ctx: EnvironmentContext
 ): Promise<EnvironmentResult> {
   // These must be lazy since configs are imported into the browser
   const { readFile, stat } = await import("node:fs/promises");
@@ -20,6 +36,7 @@ export async function getGeminiEnvironment(
   const files: EnvironmentResult["files"] = [];
   const env: Record<string, string> = {};
   const startupCommands: string[] = [];
+  const telemetryOutfile = getGeminiTelemetryPath(ctx.taskRunId);
 
   // Ensure .gemini directory exists
   startupCommands.push("mkdir -p ~/.gemini");
@@ -92,6 +109,29 @@ export async function getGeminiEnvironment(
 
     // Force the desired auth type
     settings.selectedAuthType = "gemini-api-key";
+
+    // Ensure telemetry is routed to our per-task logfile.
+    const telemetrySettings =
+      settings.telemetry && typeof settings.telemetry === "object"
+        ? (settings.telemetry as GeminiTelemetrySettings)
+        : {};
+    settings.telemetry = {
+      ...telemetrySettings,
+      outfile: telemetryOutfile,
+      target: "local",
+      otlpEndpoint: "",
+      logPrompts: true,
+    };
+
+    // Force skipNextSpeakerCheck=false so completion events are emitted.
+    const modelSettings =
+      settings.model && typeof settings.model === "object"
+        ? (settings.model as GeminiModelSettings)
+        : {};
+    settings.model = {
+      ...modelSettings,
+      skipNextSpeakerCheck: false,
+    };
 
     const mergedContent = JSON.stringify(settings, null, 2) + "\n";
     files.push({

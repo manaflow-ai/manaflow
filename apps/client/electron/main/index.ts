@@ -14,13 +14,12 @@ import {
   net,
   session,
   shell,
-  webFrameMain,
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
 } from "electron";
 import { startEmbeddedServer } from "./embedded-server";
 import { registerWebContentsViewHandlers } from "./web-contents-view";
-// Auto-updater
+import { registerGlobalContextMenu } from "./context-menu";
 import electronUpdater, {
   type UpdateCheckResult,
   type UpdateInfo,
@@ -32,7 +31,6 @@ import {
   jwtVerify,
   type JWTPayload,
 } from "jose";
-import { promises as fs } from "node:fs";
 import { collectAllLogs } from "./log-management/collect-logs";
 import { ensureLogDirectory } from "./log-management/log-paths";
 import {
@@ -44,6 +42,16 @@ const { autoUpdater } = electronUpdater;
 import util from "node:util";
 import { initCmdK, keyDebug } from "./cmdk";
 import { env } from "./electron-main-env";
+import {
+  getProxyCredentialsForWebContents,
+  startPreviewProxy,
+} from "./task-run-preview-proxy";
+import { normalizeBrowserUrl } from "@cmux/shared";
+import {
+  ELECTRON_WINDOW_FOCUS_EVENT,
+  type ElectronRendererEventMap,
+} from "../../src/types/electron-events";
+import { CertificateManager } from "./preview-proxy-certs";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -77,11 +85,20 @@ const LOG_ROTATION: LogRotationOptions = {
   maxBackups: 3,
 };
 
+
 let rendererLoaded = false;
 let pendingProtocolUrl: string | null = null;
 let mainWindow: BrowserWindow | null = null;
 let previewReloadMenuItem: MenuItem | null = null;
+let previewBackMenuItem: MenuItem | null = null;
+let previewForwardMenuItem: MenuItem | null = null;
+let previewFocusAddressMenuItem: MenuItem | null = null;
 let previewReloadMenuVisible = false;
+let historyBackMenuItem: MenuItem | null = null;
+let historyForwardMenuItem: MenuItem | null = null;
+const previewWebContentsIds = new Set<number>();
+const altGrActivePreviewContents = new Set<number>();
+let embeddedServerCleanup: (() => Promise<void>) | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -116,6 +133,57 @@ function writeRendererLogLine(
     `[${getTimestamp()}] [RENDERER] [${level.toUpperCase()}] ${line}\n`,
     LOG_ROTATION
   );
+}
+
+function getActiveBrowserWindow(): BrowserWindow | null {
+  const target =
+    BrowserWindow.getFocusedWindow() ??
+    mainWindow ??
+    BrowserWindow.getAllWindows()[0] ??
+    null;
+  if (!target || target.isDestroyed()) {
+    return null;
+  }
+  return target;
+}
+
+function updateHistoryMenuState(target?: BrowserWindow | null): void {
+  if (!historyBackMenuItem && !historyForwardMenuItem) return;
+  const focusableTarget =
+    target && !target.isDestroyed() && target.isFocused() ? target : null;
+  const window = focusableTarget ?? getActiveBrowserWindow();
+  const contents = window && !window.isDestroyed() ? window.webContents : null;
+  const navigationHistory = contents?.navigationHistory;
+  const canGoBack = Boolean(navigationHistory?.canGoBack());
+  const canGoForward = Boolean(navigationHistory?.canGoForward());
+  if (historyBackMenuItem) {
+    historyBackMenuItem.enabled = canGoBack;
+  }
+  if (historyForwardMenuItem) {
+    historyForwardMenuItem.enabled = canGoForward;
+  }
+}
+
+function navigateHistory(direction: "back" | "forward"): void {
+  const target = getActiveBrowserWindow();
+  if (!target) return;
+  const contents = target.webContents;
+  const navigationHistory = contents.navigationHistory;
+  if (direction === "back") {
+    if (navigationHistory.canGoBack()) {
+      contents.goBack();
+    }
+  } else if (direction === "forward" && navigationHistory.canGoForward()) {
+    contents.goForward();
+  }
+  updateHistoryMenuState(target);
+}
+
+function getPreviewNavigationAccelerator(key: string): string {
+  if (process.platform === "darwin") {
+    return `Command+Control+${key}`;
+  }
+  return `Control+Alt+${key}`;
 }
 
 function setupConsoleFileMirrors(): void {
@@ -160,6 +228,46 @@ function setupConsoleFileMirrors(): void {
   };
 }
 
+function setupPreviewProxyCertificateTrust(): void {
+  // Also whitelist the SPKI for caching purposes (Chromium disables cache on cert errors)
+  // Note: This switch must be appended before the app is ready, but we are calling this function
+  // inside app.whenReady(). However, for the *next* launch or if we move it, it would be better.
+  // Actually, let's just do it here and hope it works for new requests, or move it out.
+  // Documentation says "This switch must be set before the app is ready".
+  // So we should call a separate function for it.
+  
+  app.on(
+    "certificate-error",
+    (event, _webContents, url, error, certificate, callback) => {
+      // Trust the self-signed certificate for the preview proxy
+      if (
+        error === "net::ERR_CERT_AUTHORITY_INVALID" &&
+        certificate.issuerName === "Cmux Preview Proxy CA"
+      ) {
+        event.preventDefault();
+        callback(true);
+        mainLog("Trusted preview proxy certificate", { url });
+      } else {
+        callback(false);
+      }
+    }
+  );
+}
+
+function setupSpkiWhitelist() {
+  try {
+    const certManager = new CertificateManager();
+    const fingerprint = certManager.getCaSpkiFingerprint();
+    app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", fingerprint);
+    console.log("[MAIN] Added SPKI whitelist for proxy CA:", fingerprint);
+  } catch (error) {
+    console.error("[MAIN] Failed to setup SPKI whitelist", error);
+  }
+}
+
+// Call immediately to ensure it's set before ready
+setupSpkiWhitelist();
+
 function resolveResourcePath(rel: string) {
   // Prod: packaged resources directory; Dev: look under client/assets
   if (app.isPackaged) return path.join(process.resourcesPath, rel);
@@ -174,8 +282,8 @@ function emitToRenderer(level: LogLevel, message: string) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("main-log", { level, message });
     }
-  } catch {
-    // ignore mirror failures
+  } catch (error) {
+    console.error("Failed to emit to renderer", error);
   }
 }
 
@@ -215,12 +323,8 @@ function sendShortcutToFocusedWindow(
   payload?: unknown
 ): boolean {
   try {
-    const target =
-      BrowserWindow.getFocusedWindow() ??
-      mainWindow ??
-      BrowserWindow.getAllWindows()[0] ??
-      null;
-    if (!target || target.isDestroyed()) {
+    const target = getActiveBrowserWindow();
+    if (!target) {
       return false;
     }
     target.webContents.send(`cmux:event:shortcut:${eventName}`, payload);
@@ -233,9 +337,15 @@ function sendShortcutToFocusedWindow(
 
 function setPreviewReloadMenuVisibility(visible: boolean): void {
   previewReloadMenuVisible = visible;
-  if (previewReloadMenuItem) {
-    previewReloadMenuItem.visible = visible;
-  }
+  const applyVisibility = (item: MenuItem | null) => {
+    if (item) {
+      item.visible = visible;
+    }
+  };
+  applyVisibility(previewReloadMenuItem);
+  applyVisibility(previewBackMenuItem);
+  applyVisibility(previewForwardMenuItem);
+  applyVisibility(previewFocusAddressMenuItem);
 }
 
 ipcMain.on("cmux:get-current-webcontents-id", (event) => {
@@ -290,7 +400,28 @@ function isUpdateNewerThanCurrent(
     return info.version !== app.getVersion();
   }
 
-  return semver.gt(updateVersion, currentVersion);
+  const updateParsed = semver.parse(updateVersion);
+  const currentParsed = semver.parse(currentVersion);
+
+  if (!updateParsed || !currentParsed) {
+    return semver.gt(updateVersion, currentVersion);
+  }
+
+  const isNewer = semver.gt(updateParsed, currentParsed);
+  if (!isNewer) return false;
+
+  const currentHasPrerelease = currentParsed.prerelease.length > 0;
+  const updateHasPrerelease = updateParsed.prerelease.length > 0;
+  const sameCoreVersion =
+    updateParsed.major === currentParsed.major &&
+    updateParsed.minor === currentParsed.minor &&
+    updateParsed.patch === currentParsed.patch;
+
+  if (currentHasPrerelease && !updateHasPrerelease && sameCoreVersion) {
+    return false;
+  }
+
+  return true;
 }
 
 function logUpdateCheckResult(
@@ -393,35 +524,6 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
-// Write critical errors to a file to aid debugging packaged crashes
-async function writeFatalLog(...args: unknown[]) {
-  try {
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const base = app.getPath("userData");
-    const file = path.join(base, `fatal-${ts}.log`);
-    const msg = formatArgs(args);
-    await fs.writeFile(file, msg + "\n", { encoding: "utf8" });
-  } catch {
-    // ignore
-  }
-}
-
-process.on("uncaughtException", (err) => {
-  try {
-    console.error("[MAIN] uncaughtException", err);
-  } catch {
-    // ignore
-  }
-  void writeFatalLog("uncaughtException", err);
-});
-process.on("unhandledRejection", (reason) => {
-  try {
-    console.error("[MAIN] unhandledRejection", reason);
-  } catch {
-    // ignore
-  }
-  void writeFatalLog("unhandledRejection", reason);
-});
 
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
@@ -448,8 +550,7 @@ function setupAutoUpdates(): void {
     autoUpdater.allowPrerelease = false;
 
     if (process.platform === "darwin") {
-      const suffix = process.arch === "arm64" ? "arm64" : "x64";
-      const channel = `latest-${suffix}`;
+      const channel = "latest-universal";
       if (autoUpdater.channel !== channel) {
         autoUpdater.channel = channel;
         mainLog("Configured autoUpdater channel", {
@@ -482,7 +583,7 @@ function setupAutoUpdates(): void {
       `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`
     )
   );
-  autoUpdater.on("update-downloaded", (_event, info?: UpdateInfo) => {
+  autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     const version =
       info &&
       typeof info === "object" &&
@@ -490,6 +591,17 @@ function setupAutoUpdates(): void {
       typeof info.version === "string"
         ? info.version
         : null;
+
+    if (!isUpdateNewerThanCurrent(info)) {
+      mainLog(
+        "Ignoring downloaded update that is not newer than current build",
+        {
+          version,
+          currentVersion: app.getVersion(),
+        }
+      );
+      return;
+    }
 
     mainLog("Update downloaded; notifying renderer", { version });
     queueAutoUpdateToast({ version });
@@ -540,8 +652,6 @@ function createWindow(): void {
       nodeIntegration: false,
       webviewTag: true,
       partition: PARTITION,
-      allowRunningInsecureContent: true, // TODO: remove this
-      webSecurity: false,
     },
   };
 
@@ -611,31 +721,13 @@ function createWindow(): void {
     }
   );
 
-  mainWindow.webContents.on(
-    "did-frame-finish-load",
-    (_event, isMainFrame, frameProcessId, frameRoutingId) => {
-      let frameUrl: string | null = null;
-      try {
-        frameUrl =
-          webFrameMain.fromId(frameProcessId, frameRoutingId)?.url ?? null;
-      } catch (error) {
-        frameUrl = `lookup-failed:${String(error)}`;
-      }
-      mainLog("did-frame-finish-load", {
-        isMainFrame,
-        frameProcessId,
-        frameRoutingId,
-        frameUrl,
-      });
-    }
-  );
-
   mainWindow.webContents.on("did-navigate", (_e, url) => {
     mainLog("did-navigate", { url });
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    const targetUrl = normalizeBrowserUrl(details.url);
+    shell.openExternal(targetUrl);
     return { action: "deny" };
   });
 
@@ -647,17 +739,68 @@ function createWindow(): void {
     // In production, serve the renderer over HTTPS on a private host which we
     // intercept and back with local files (supports cookies).
     mainLog("Loading renderer (prod)", { host: APP_HOST });
-    mainWindow.loadURL(`https://${APP_HOST}/index.html`);
+    mainWindow.loadURL(`https://${APP_HOST}/index-electron.html`);
   }
 }
+
+app.on("browser-window-created", (_event, window) => {
+  const updateForWindow = () => updateHistoryMenuState(window);
+  window.webContents.on("did-navigate", updateForWindow);
+  window.webContents.on("did-navigate-in-page", updateForWindow);
+  window.on("focus", updateForWindow);
+  window.on("closed", () => updateHistoryMenuState());
+  updateHistoryMenuState(window);
+});
+
+app.on("browser-window-focus", (_event, window) => {
+  updateHistoryMenuState(window);
+  try {
+    const payload: ElectronRendererEventMap[typeof ELECTRON_WINDOW_FOCUS_EVENT] =
+      { windowId: window.id };
+    window.webContents.send(
+      `cmux:event:${ELECTRON_WINDOW_FOCUS_EVENT}`,
+      payload
+    );
+  } catch (error) {
+    mainWarn("Failed to emit window focus event to renderer", error);
+  }
+});
+
+app.on("login", (event, webContents, _request, authInfo, callback) => {
+  if (!authInfo.isProxy) {
+    return;
+  }
+  const creds = getProxyCredentialsForWebContents(webContents.id);
+  if (!creds) {
+    return;
+  }
+  event.preventDefault();
+  callback(creds.username, creds.password);
+});
 
 app.on("open-url", (_event, url) => {
   handleOrQueueProtocolUrl(url);
 });
 
 app.whenReady().then(async () => {
+  setupPreviewProxyCertificateTrust();
   ensureLogFiles();
   setupConsoleFileMirrors();
+  const disposeContextMenu = registerGlobalContextMenu();
+  app.once("will-quit", () => {
+    try {
+      disposeContextMenu();
+    } catch (error) {
+      console.error("Failed to dispose context menu", error);
+    }
+
+    if (embeddedServerCleanup) {
+      embeddedServerCleanup().catch((error) => {
+        console.error("Failed to clean up embedded server", error);
+      });
+      embeddedServerCleanup = null;
+    }
+  });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
   initCmdK({
@@ -668,54 +811,79 @@ app.whenReady().then(async () => {
     },
   });
 
+  await startPreviewProxy({
+    log: mainLog,
+    warn: mainWarn,
+    error: mainError,
+  });
+
   // Register before-input-event handlers for preview browser shortcuts
   // These fire before web content sees them, so they work even in WebContentsViews
   app.on("web-contents-created", (_event, contents) => {
     contents.on("before-input-event", (e, input) => {
+      if (!previewWebContentsIds.has(contents.id)) return;
+
+      const isMac = process.platform === "darwin";
+      if (!isMac) {
+        const isAltGrKey =
+          input.code === "AltRight" || input.key === "AltGraph";
+        if (isAltGrKey) {
+          if (input.type === "keyDown") {
+            altGrActivePreviewContents.add(contents.id);
+          } else if (input.type === "keyUp") {
+            altGrActivePreviewContents.delete(contents.id);
+          }
+        }
+      }
+
       if (input.type !== "keyDown") return;
 
       // Only handle preview shortcuts when preview is visible
       if (!previewReloadMenuVisible) return;
 
-      const isMac = process.platform === "darwin";
-      const modKey = isMac ? input.meta : input.control;
-      if (!modKey || input.alt || input.shift) return;
-
       const key = input.key.toLowerCase();
+      const primaryModifierActive = isMac
+        ? input.meta && !input.control && !input.alt && !input.shift
+        : input.control && !input.meta && !input.alt && !input.shift;
+      const isAltGrActive =
+        !isMac && altGrActivePreviewContents.has(contents.id);
+      const previewNavModifierActive = isMac
+        ? input.meta && input.control && !input.alt && !input.shift
+        : input.control &&
+          input.alt &&
+          !input.meta &&
+          !input.shift &&
+          !isAltGrActive;
 
-      // cmd+l: focus address bar
-      if (key === "l") {
+      // cmd+l / ctrl+l: focus address bar
+      if (primaryModifierActive && key === "l") {
         e.preventDefault();
         sendShortcutToFocusedWindow("preview-focus-address");
         return;
       }
 
-      // cmd+[: go back
-      if (input.key === "[") {
+      // cmd+ctrl+[: go back (mac) / ctrl+alt+[ (others)
+      if (previewNavModifierActive && input.key === "[") {
         e.preventDefault();
         sendShortcutToFocusedWindow("preview-back");
         return;
       }
 
-      // cmd+]: go forward
-      if (input.key === "]") {
+      // cmd+ctrl+]: go forward (mac) / ctrl+alt+] (others)
+      if (previewNavModifierActive && input.key === "]") {
         e.preventDefault();
         sendShortcutToFocusedWindow("preview-forward");
         return;
       }
 
-      // cmd+r: reload
-      if (key === "r") {
+      // cmd+r / ctrl+r: reload
+      if (primaryModifierActive && key === "r") {
         e.preventDefault();
         sendShortcutToFocusedWindow("preview-reload");
         return;
       }
     });
   });
-  const rendererBaseUrl = is.dev && process.env["ELECTRON_RENDERER_URL"]
-    ? process.env["ELECTRON_RENDERER_URL"]
-    : `https://${APP_HOST}`;
-
   registerWebContentsViewHandlers({
     logger: {
       log: mainLog,
@@ -723,7 +891,14 @@ app.whenReady().then(async () => {
       error: mainError,
     },
     maxSuspendedEntries: resolveMaxSuspendedWebContents(),
-    rendererBaseUrl,
+    onPreviewWebContentsChange: ({ webContentsId, present }) => {
+      if (present) {
+        previewWebContentsIds.add(webContentsId);
+      } else {
+        previewWebContentsIds.delete(webContentsId);
+        altGrActivePreviewContents.delete(webContentsId);
+      }
+    },
   });
 
   // Ensure macOS menu and About panel use "cmux" instead of package.json name
@@ -731,15 +906,16 @@ app.whenReady().then(async () => {
     try {
       app.setName("cmux");
       app.setAboutPanelOptions({ applicationName: "cmux" });
-    } catch {
-      // ignore if not supported
+    } catch (error) {
+      console.error("Failed to set app name and about panel options", error);
     }
   }
 
   // Start the embedded IPC server (registers cmux:register and cmux:rpc)
   try {
     mainLog("Starting embedded IPC server...");
-    await startEmbeddedServer();
+    const embeddedServer = await startEmbeddedServer();
+    embeddedServerCleanup = embeddedServer.cleanup;
     mainLog("Embedded IPC server started successfully");
   } catch (error) {
     mainError("Failed to start embedded IPC server:", error);
@@ -783,11 +959,16 @@ app.whenReady().then(async () => {
   // });
 
   const ses = session.fromPartition(PARTITION);
-  // Intercept HTTPS for our private host and serve local files; pass-through others.
-  ses.protocol.handle("https", async (req) => {
-    const u = new URL(req.url);
-    if (u.hostname !== APP_HOST) return net.fetch(req);
-    const pathname = u.pathname === "/" ? "/index.html" : u.pathname;
+
+  const handleCmuxProtocol = async (request: Request): Promise<Response> => {
+    const electronReq = request as unknown as Electron.ProtocolRequest;
+    const url = new URL(electronReq.url);
+
+    if (url.hostname !== APP_HOST) {
+      return net.fetch(request);
+    }
+
+    const pathname = url.pathname === "/" ? "/index-electron.html" : url.pathname;
     const fsPath = path.normalize(
       path.join(baseDir, decodeURIComponent(pathname))
     );
@@ -796,13 +977,18 @@ app.whenReady().then(async () => {
       mainWarn("Blocked path outside baseDir", { fsPath, baseDir });
       return new Response("Not found", { status: 404 });
     }
+
     const response = await net.fetch(pathToFileURL(fsPath).toString());
-    response.headers.set(
-      "Content-Security-Policy",
-      "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; worker-src * blob:; child-src * blob:; frame-src *"
-    );
+    const contentSecurityPolicy =
+      "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; " +
+      "connect-src * sentry-ipc:; " +
+      "worker-src * blob:; child-src * blob:; frame-src *";
+    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
     return response;
-  });
+  };
+
+  ses.protocol.handle("https", handleCmuxProtocol);
+  ses.protocol.handle("http", handleCmuxProtocol);
 
   // Create the initial window.
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -815,11 +1001,6 @@ app.whenReady().then(async () => {
     } else {
       template.push({ label: "File", submenu: [{ role: "quit" }] });
     }
-    const resolveTargetWindow = () =>
-      BrowserWindow.getFocusedWindow() ??
-      mainWindow ??
-      BrowserWindow.getAllWindows()[0] ??
-      null;
     const viewMenu: MenuItemConstructorOptions = {
       label: "View",
       submenu: [
@@ -831,7 +1012,9 @@ app.whenReady().then(async () => {
           click: () => {
             const dispatched = sendShortcutToFocusedWindow("preview-reload");
             if (!dispatched) {
-              mainWarn("Reload Preview shortcut triggered with no active renderer");
+              mainWarn(
+                "Reload Preview shortcut triggered with no active renderer"
+              );
             }
           },
         },
@@ -839,7 +1022,7 @@ app.whenReady().then(async () => {
           id: "cmux-preview-back",
           visible: previewReloadMenuVisible,
           label: "Back",
-          accelerator: "CommandOrControl+[",
+          accelerator: getPreviewNavigationAccelerator("["),
           click: () => {
             sendShortcutToFocusedWindow("preview-back");
           },
@@ -848,7 +1031,7 @@ app.whenReady().then(async () => {
           id: "cmux-preview-forward",
           visible: previewReloadMenuVisible,
           label: "Forward",
-          accelerator: "CommandOrControl+]",
+          accelerator: getPreviewNavigationAccelerator("]"),
           click: () => {
             sendShortcutToFocusedWindow("preview-forward");
           },
@@ -865,7 +1048,7 @@ app.whenReady().then(async () => {
         {
           label: "Reload Application",
           click: () => {
-            const target = resolveTargetWindow();
+            const target = getActiveBrowserWindow();
             target?.webContents.reload();
           },
         },
@@ -878,8 +1061,32 @@ app.whenReady().then(async () => {
         { role: "toggleDevTools" },
       ],
     };
+    const historyMenu: MenuItemConstructorOptions = {
+      label: "History",
+      submenu: [
+        {
+          id: "cmux-history-back",
+          label: "Back",
+          accelerator: "CommandOrControl+[",
+          enabled: false,
+          click: () => {
+            navigateHistory("back");
+          },
+        },
+        {
+          id: "cmux-history-forward",
+          label: "Forward",
+          accelerator: "CommandOrControl+]",
+          enabled: false,
+          click: () => {
+            navigateHistory("forward");
+          },
+        },
+      ],
+    };
     template.push(
       { role: "editMenu" },
+      historyMenu,
       {
         label: "Commands",
         submenu: [
@@ -888,7 +1095,7 @@ app.whenReady().then(async () => {
             accelerator: "CommandOrControl+K",
             click: () => {
               try {
-                const target = resolveTargetWindow();
+                const target = getActiveBrowserWindow();
                 keyDebug("menu-accelerator-cmdk", {
                   to: target?.webContents.id,
                 });
@@ -948,7 +1155,16 @@ app.whenReady().then(async () => {
     });
     const menu = Menu.buildFromTemplate(template);
     previewReloadMenuItem = menu.getMenuItemById("cmux-preview-reload") ?? null;
+    previewBackMenuItem = menu.getMenuItemById("cmux-preview-back") ?? null;
+    previewForwardMenuItem =
+      menu.getMenuItemById("cmux-preview-forward") ?? null;
+    previewFocusAddressMenuItem =
+      menu.getMenuItemById("cmux-preview-focus-address") ?? null;
+    historyBackMenuItem = menu.getMenuItemById("cmux-history-back") ?? null;
+    historyForwardMenuItem =
+      menu.getMenuItemById("cmux-history-forward") ?? null;
     setPreviewReloadMenuVisibility(previewReloadMenuVisible);
+    updateHistoryMenuState();
     Menu.setApplicationMenu(menu);
   } catch (e) {
     mainWarn("Failed to set application menu", e);
@@ -990,7 +1206,8 @@ async function verifyJwtAndGetPayload(
     const JWKS = jwksForIssuer(iss);
     const { payload } = await jwtVerify(token, JWKS, { issuer: iss });
     return payload;
-  } catch {
+  } catch (error) {
+    console.error("Failed to verify JWT and get payload", error);
     return null;
   }
 }

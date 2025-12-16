@@ -1,0 +1,20 @@
+[Unit]
+Description=Cmux Chrome DevTools proxy
+After=cmux-devtools.service
+Requires=cmux-devtools.service
+
+[Service]
+Type=simple
+Environment=CMUX_CDP_PROXY_PORT=39381
+Environment=CMUX_CDP_TARGET_HOST=127.0.0.1
+Environment=CMUX_CDP_TARGET_PORT=39382
+Environment=CMUX_CDP_TARGET_HOST_HEADER=localhost:39382
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/local/lib/cmux/cmux-cdp-proxy
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/cdp-proxy.log
+StandardError=append:/var/log/cmux/cdp-proxy.log
+
+[Install]
+WantedBy=cmux.target

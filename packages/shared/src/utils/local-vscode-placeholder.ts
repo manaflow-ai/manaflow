@@ -1,0 +1,2 @@
+export const LOCAL_VSCODE_PLACEHOLDER_HOST = "cmux-vscode.local";
+export const LOCAL_VSCODE_PLACEHOLDER_ORIGIN = `http://${LOCAL_VSCODE_PLACEHOLDER_HOST}`;

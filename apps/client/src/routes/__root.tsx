@@ -122,19 +122,18 @@ function RootComponent() {
   const location = useRouterState({
     select: (state) => state.location,
   });
+  const locationKey = `${location.pathname}${location.search}${location.hash}`;
 
   useAutoUpdateNotifications();
 
   useEffect(() => {
     if (import.meta.env.DEV) {
       console.log("[navigation] location-changed", {
-        pathname: location.pathname,
-        search: location.search,
-        hash: location.hash,
+        location: locationKey,
         timestamp: new Date().toISOString(),
       });
     }
-  }, [location]);
+  }, [locationKey]);
 
   return (
     <>

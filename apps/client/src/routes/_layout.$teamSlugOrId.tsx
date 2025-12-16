@@ -8,7 +8,6 @@ import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
 import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { Suspense, useEffect, useMemo } from "react";
@@ -27,7 +26,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
     }
     const { teamSlugOrId } = params;
     const teamMemberships = await convexQueryClient.convexClient.query(
-      api.teams.listTeamMemberships,
+      api.teams.listTeamMemberships
     );
     const teamMembership = teamMemberships.find((membership) => {
       const team = membership.team;
@@ -42,16 +41,18 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
     }
   },
   loader: async ({ params }) => {
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.tasks.get, { teamSlugOrId: params.teamSlugOrId }),
-    );
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.github_prs.listPullRequests, {
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.get,
+      args: { teamSlugOrId: params.teamSlugOrId },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.github_prs.listPullRequests,
+      args: {
         teamSlugOrId: params.teamSlugOrId,
         state: "open",
         limit: SIDEBAR_PRS_DEFAULT_LIMIT,
-      }),
-    );
+      },
+    });
   },
 });
 
@@ -71,20 +72,18 @@ function LayoutComponent() {
   const displayTasks = tasks === undefined ? undefined : recentTasks;
 
   return (
-    <>
+    <ExpandTasksProvider>
       <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <ExpandTasksProvider>
-        <div className="flex flex-row grow min-h-0 bg-white dark:bg-black">
-          <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
+      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
+        <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-          {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
-          <Suspense fallback={<div>Loading...</div>}>
-            <Outlet />
-          </Suspense>
-          {/* </div> */}
-        </div>
-      </ExpandTasksProvider>
+        {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
+        <Suspense fallback={<div>Loading...</div>}>
+          <Outlet />
+        </Suspense>
+        {/* </div> */}
+      </div>
 
       <button
         onClick={() => {
@@ -114,7 +113,7 @@ function LayoutComponent() {
       >
         Add Debug Note
       </button>
-    </>
+    </ExpandTasksProvider>
   );
 }
 

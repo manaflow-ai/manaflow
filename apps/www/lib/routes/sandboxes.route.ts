@@ -5,8 +5,9 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import type { Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
+import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
@@ -19,11 +20,106 @@ import {
 import type { HydrateRepoConfig } from "./sandboxes/hydration";
 import { hydrateWorkspace } from "./sandboxes/hydration";
 import { resolveTeamAndSnapshot } from "./sandboxes/snapshot";
-import { runMaintenanceScript, startDevScript } from "./sandboxes/startDevAndMaintenanceScript";
+import {
+  allocateScriptIdentifiers,
+  runMaintenanceAndDevScripts,
+} from "./sandboxes/startDevAndMaintenanceScript";
 import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
+import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
+
+/**
+ * Extract a safe, descriptive error message from sandbox start errors.
+ * Avoids leaking sensitive information like API keys, tokens, or internal paths.
+ */
+function getSandboxStartErrorMessage(error: unknown): string {
+  const baseMessage = "Failed to start sandbox";
+
+  if (!(error instanceof Error)) {
+    return baseMessage;
+  }
+
+  const message = error.message.toLowerCase();
+
+  // Check for common error patterns and provide helpful context
+  // Network/connectivity issues
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return `${baseMessage}: request timed out while provisioning instance`;
+  }
+  if (message.includes("econnrefused") || message.includes("connection refused")) {
+    return `${baseMessage}: could not connect to sandbox provider`;
+  }
+  if (message.includes("enotfound") || message.includes("getaddrinfo")) {
+    return `${baseMessage}: could not resolve sandbox provider address`;
+  }
+  if (message.includes("network") || message.includes("socket")) {
+    return `${baseMessage}: network error while provisioning instance`;
+  }
+
+  // Quota/resource issues (common with cloud providers)
+  if (message.includes("quota") || message.includes("limit") || message.includes("exceeded")) {
+    return `${baseMessage}: resource quota exceeded`;
+  }
+  if (message.includes("capacity") || message.includes("unavailable")) {
+    return `${baseMessage}: sandbox provider capacity unavailable`;
+  }
+
+  // Snapshot issues
+  if (message.includes("snapshot") && (message.includes("not found") || message.includes("invalid"))) {
+    return `${baseMessage}: snapshot not found or invalid`;
+  }
+
+  // Authentication/authorization (without revealing details)
+  if (message.includes("unauthorized") || message.includes("401")) {
+    return `${baseMessage}: authentication failed with sandbox provider`;
+  }
+  if (message.includes("forbidden") || message.includes("403")) {
+    return `${baseMessage}: access denied by sandbox provider`;
+  }
+
+  // Rate limiting
+  if (message.includes("rate limit") || message.includes("429") || message.includes("too many")) {
+    return `${baseMessage}: rate limited by sandbox provider`;
+  }
+
+  // Instance startup issues
+  if (message.includes("instance") && message.includes("start")) {
+    return `${baseMessage}: instance failed to start`;
+  }
+
+  // If error message is reasonably safe (no obvious secrets patterns), include part of it
+  const sensitivePatterns = [
+    /api[_-]?key/i,
+    /token/i,
+    /secret/i,
+    /password/i,
+    /credential/i,
+    /bearer/i,
+    /authorization/i,
+    /sk[_-][a-z0-9]/i,
+    /pk[_-][a-z0-9]/i,
+  ];
+
+  const hasSensitiveContent = sensitivePatterns.some((pattern) =>
+    pattern.test(error.message)
+  );
+
+  if (!hasSensitiveContent && error.message.length < 200) {
+    // Sanitize the message: remove potential file paths and URLs
+    const sanitized = error.message
+      .replace(/\/[^\s]+/g, "[path]") // Replace file paths
+      .replace(/https?:\/\/[^\s]+/g, "[url]") // Replace URLs
+      .trim();
+
+    if (sanitized.length > 0 && sanitized !== "[path]" && sanitized !== "[url]") {
+      return `${baseMessage}: ${sanitized}`;
+    }
+  }
+
+  return baseMessage;
+}
 
 export const sandboxesRouter = new OpenAPIHono();
 
@@ -39,6 +135,7 @@ const StartSandboxBody = z
     metadata: z.record(z.string(), z.string()).optional(),
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
+    isCloudWorkspace: z.boolean().optional(),
     // Optional hydration parameters to clone a repo into the sandbox on start
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
@@ -53,6 +150,7 @@ const StartSandboxResponse = z
     vscodeUrl: z.string(),
     workerUrl: z.string(),
     provider: z.enum(["morph"]).default("morph"),
+    vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
 
@@ -144,10 +242,6 @@ sandboxesRouter.openapi(
     try {
       const convex = getConvex({ accessToken });
 
-      const taskRunConvexId = body.taskRunId
-        ? typedZid("taskRuns").parse(body.taskRunId)
-        : null;
-
       const {
         team,
         resolvedSnapshotId,
@@ -166,8 +260,47 @@ sandboxesRouter.openapi(
         ? loadEnvironmentEnvVars(environmentDataVaultKey)
         : Promise.resolve<string | null>(null);
 
-      const maintenanceScript = environmentMaintenanceScript ?? null;
+      // Parse repo URL once if provided
+      const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
+
+      // Load workspace config if we're in cloud mode with a repository (not an environment)
+      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
+      if (parsedRepoUrl && !body.environmentId) {
+        try {
+          const config = await convex.query(api.workspaceConfigs.get, {
+            teamSlugOrId: body.teamSlugOrId,
+            projectFullName: parsedRepoUrl.fullName,
+          });
+          if (config) {
+            const envVarsContent = config.dataVaultKey
+              ? await loadEnvironmentEnvVars(config.dataVaultKey)
+              : null;
+            workspaceConfig = {
+              maintenanceScript: config.maintenanceScript ?? undefined,
+              envVarsContent: envVarsContent ?? undefined,
+            };
+            console.log(`[sandboxes.start] Loaded workspace config for ${parsedRepoUrl.fullName}`, {
+              hasMaintenanceScript: Boolean(workspaceConfig.maintenanceScript),
+              hasEnvVars: Boolean(workspaceConfig.envVarsContent),
+            });
+          }
+        } catch (error) {
+          console.error(`[sandboxes.start] Failed to load workspace config for ${parsedRepoUrl.fullName}`, error);
+        }
+      }
+
+      const maintenanceScript = environmentMaintenanceScript ?? workspaceConfig?.maintenanceScript ?? null;
       const devScript = environmentDevScript ?? null;
+
+      const isCloudWorkspace =
+        body.isCloudWorkspace !== undefined
+          ? body.isCloudWorkspace
+          : !body.taskRunId;
+
+      const scriptIdentifiers =
+        maintenanceScript || devScript
+          ? allocateScriptIdentifiers()
+          : null;
 
       const gitIdentityPromise = githubAccessTokenPromise.then(
         ({ githubAccessToken }) => {
@@ -191,6 +324,9 @@ sandboxesRouter.openapi(
           ...(body.metadata || {}),
         },
       });
+      void (async () => {
+        await instance.setWakeOn(true, true);
+      })();
 
       const exposed = instance.networking.httpServices;
       const vscodeService = exposed.find((s) => s.port === 39378);
@@ -200,11 +336,41 @@ sandboxesRouter.openapi(
         return c.text("VSCode or worker service not found", 500);
       }
 
+      // OPTIMIZATION: Immediately persist VSCode URLs to Convex (status="starting")
+      // This allows frontend to show VSCode iframe while hydration continues
+      let vscodePersisted = false;
+      if (body.taskRunId) {
+        try {
+          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+            vscode: {
+              provider: "morph",
+              containerName: instance.id,
+              status: "starting",
+              url: vscodeService.url,
+              workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+            },
+          });
+          vscodePersisted = true;
+          console.log(
+            `[sandboxes.start] Persisted initial VSCode info for ${body.taskRunId}`,
+          );
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Failed to persist initial VSCode info (non-fatal):",
+            error,
+          );
+        }
+      }
+
       // Get environment variables from the environment if configured
       const environmentEnvVarsContent = await environmentEnvVarsPromise;
 
       // Prepare environment variables including task JWT if present
-      let envVarsToApply = environmentEnvVarsContent || "";
+      // Workspace env vars take precedence if no environment is configured
+      let envVarsToApply = environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
 
       // Add CMUX task-related env vars if present
       if (body.taskRunId) {
@@ -224,6 +390,7 @@ sandboxesRouter.openapi(
               `[sandboxes.start] Applied environment variables via envctl`,
               {
                 hasEnvironmentVars: Boolean(environmentEnvVarsContent),
+                hasWorkspaceVars: Boolean(workspaceConfig?.envVarsContent),
                 hasTaskRunId: Boolean(body.taskRunId),
                 hasTaskRunJwt: Boolean(body.taskRunJwt),
               },
@@ -268,23 +435,17 @@ sandboxesRouter.openapi(
       let repoConfig: HydrateRepoConfig | undefined;
       if (body.repoUrl) {
         console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
-        const match = body.repoUrl.match(
-          /github\.com\/?([^\s/]+)\/([^\s/.]+)(?:\.git)?/i,
-        );
-        if (!match) {
+        if (!parsedRepoUrl) {
           return c.text("Unsupported repo URL; expected GitHub URL", 400);
         }
-        const owner = match[1]!;
-        const name = match[2]!;
-        const repoFull = `${owner}/${name}`;
-        console.log(`[sandboxes.start] Parsed owner/repo: ${repoFull}`);
+        console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
         repoConfig = {
-          owner,
-          name,
-          repoFull,
-          cloneUrl: `https://github.com/${owner}/${name}.git`,
-          maskedCloneUrl: `https://github.com/${owner}/${name}.git`,
+          owner: parsedRepoUrl.owner,
+          name: parsedRepoUrl.repo,
+          repoFull: parsedRepoUrl.fullName,
+          cloneUrl: parsedRepoUrl.gitUrl,
+          maskedCloneUrl: parsedRepoUrl.gitUrl,
           depth: Math.max(1, Math.floor(body.depth ?? 1)),
           baseBranch: body.branch || "main",
           newBranch: body.newBranch ?? "",
@@ -302,35 +463,33 @@ sandboxesRouter.openapi(
         return c.text("Failed to hydrate sandbox", 500);
       }
 
+      // Update status to "running" after hydration completes
+      if (body.taskRunId && vscodePersisted) {
+        void convex
+          .mutation(api.taskRuns.updateVSCodeStatus, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+            status: "running",
+          })
+          .catch((error) => {
+            console.error(
+              "[sandboxes.start] Failed to update VSCode status to running:",
+              error,
+            );
+          });
+      }
+
       if (maintenanceScript || devScript) {
         (async () => {
-          const maintenanceScriptResult = maintenanceScript
-            ? await runMaintenanceScript({
-              instance,
-              script: maintenanceScript,
-            })
-            : undefined;
-          const devScriptResult = devScript
-            ? await startDevScript({ instance, script: devScript })
-            : undefined;
-          if (
-            taskRunConvexId &&
-            (maintenanceScriptResult?.error || devScriptResult?.error)
-          ) {
-            try {
-              await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                teamSlugOrId: body.teamSlugOrId,
-                id: taskRunConvexId,
-                maintenanceError: maintenanceScriptResult?.error || undefined,
-                devError: devScriptResult?.error || undefined,
-              });
-            } catch (mutationError) {
-              console.error(
-                "[sandboxes.start] Failed to record environment error to taskRun",
-                mutationError,
-              );
-            }
-          }
+          await runMaintenanceAndDevScripts({
+            instance,
+            maintenanceScript: maintenanceScript || undefined,
+            devScript: devScript || undefined,
+            identifiers: scriptIdentifiers ?? undefined,
+            convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+            taskRunJwt: body.taskRunJwt || undefined,
+            isCloudWorkspace,
+          });
         })().catch((error) => {
           console.error(
             "[sandboxes.start] Background script execution failed:",
@@ -346,6 +505,7 @@ sandboxesRouter.openapi(
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
         provider: "morph",
+        vscodePersisted,
       });
     } catch (error) {
       if (error instanceof HTTPException) {
@@ -356,7 +516,9 @@ sandboxesRouter.openapi(
         return c.text(message, error.status);
       }
       console.error("Failed to start sandbox:", error);
-      return c.text("Failed to start sandbox", 500);
+      // Provide a more descriptive error message without leaking sensitive details
+      const errorMessage = getSandboxStartErrorMessage(error);
+      return c.text(errorMessage, 500);
     }
   },
 );
@@ -474,6 +636,8 @@ sandboxesRouter.openapi(
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
+      // Kill all dev servers and user processes before pausing to avoid port conflicts on resume
+      await instance.exec(VM_CLEANUP_COMMANDS);
       await instance.pause();
       return c.body(null, 204);
     } catch (error) {

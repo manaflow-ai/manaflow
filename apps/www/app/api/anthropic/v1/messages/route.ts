@@ -1,18 +1,10 @@
-import {
-  verifyTaskRunToken,
-  type TaskRunTokenPayload,
-} from "@cmux/shared";
+import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
 import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
 
-const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_API_URL =
+  "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
 const TEMPORARY_DISABLE_AUTH = true;
-
-const allowedModels = new Set([
-  "claude-3-5-haiku-20241022",
-  "claude-sonnet-4-20250514",
-  "claude-opus-4-1-20250805",
-]);
 
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
 
@@ -56,13 +48,6 @@ export async function POST(request: NextRequest) {
       xApiKeyHeader !== hardCodedApiKey &&
       authorizationHeader !== hardCodedApiKey;
     const body = await request.json();
-    const model = body.model;
-    if (!useOriginalApiKey && !allowedModels.has(model)) {
-      return NextResponse.json(
-        { error: "Model not allowed. Try /login instead." },
-        { status: 400 }
-      );
-    }
 
     // Build headers
     const headers: Record<string, string> =

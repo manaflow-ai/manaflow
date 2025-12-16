@@ -66,27 +66,31 @@ export function FileDiffHeader({
     <button
       onClick={onToggle}
       className={cn(
-        "w-full px-3 py-1.5 flex items-center gap-2 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors text-left group pt-1 bg-white dark:bg-neutral-900 border-y border-neutral-200 dark:border-neutral-800 sticky z-[var(--z-sticky-low)]",
-        className,
+        "w-full pl-3 pr-2.5 py-1.5 flex items-center hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors text-left group pt-1 bg-white dark:bg-neutral-900 border-y border-neutral-200 dark:border-neutral-800 sticky top-0 z-[var(--z-sticky-low)]",
+        className
       )}
     >
-      <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
-        {isExpanded ? (
-          <ChevronDown className="w-3.5 h-3.5" />
-        ) : (
-          <ChevronRight className="w-3.5 h-3.5" />
-        )}
+      <div className="flex items-center" style={{ width: "20px" }}>
+        <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
+          {isExpanded ? (
+            <ChevronDown className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+        </div>
       </div>
-      <div className={cn("flex-shrink-0", getStatusColor(status))}>
-        {getStatusIcon(status)}
+      <div className="flex items-center" style={{ width: "20px" }}>
+        <div className={cn("flex-shrink-0", getStatusColor(status))}>
+          {getStatusIcon(status)}
+        </div>
       </div>
-      <div className="flex-1 min-w-0 flex items-start justify-between gap-3">
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
         <div className="min-w-0 flex flex-col">
-          <span className="font-mono text-xs text-neutral-700 dark:text-neutral-300 truncate select-none">
+          <span className="font-sans font-medium text-[13px] text-neutral-700 dark:text-neutral-300 truncate select-none">
             {filePath}
           </span>
           {status === "renamed" && oldPath ? (
-            <span className="font-mono text-[10px] text-neutral-500 dark:text-neutral-400 truncate select-none">
+            <span className="font-sans text-[11px] font-medium text-neutral-500 dark:text-neutral-400 truncate select-none">
               Renamed from {oldPath}
             </span>
           ) : null}

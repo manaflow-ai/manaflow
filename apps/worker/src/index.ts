@@ -3,6 +3,7 @@ import {
   WorkerConfigureGitSchema,
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
+  WorkerStartScreenshotCollectionSchema,
   type ClientToServerEvents,
   type InterServerEvents,
   type ServerToClientEvents,
@@ -10,6 +11,7 @@ import {
   type SocketData,
   type WorkerHeartbeat,
   type WorkerRegister,
+  type WorkerStartScreenshotCollection,
   type WorkerTaskRunContext,
   type WorkerToServerEventNames,
   type WorkerToServerEvents,
@@ -40,8 +42,144 @@ import { detectTerminalIdle } from "./detectTerminalIdle";
 import { runWorkerExec } from "./execRunner";
 import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
 import { log } from "./logger";
+import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
+import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
+import { convexRequest } from "./crown/convex";
+import type { WorkerTaskRunResponse } from "@cmux/shared/convex-safe";
+import { verifyTaskRunToken } from "@cmux/shared/convex-safe";
 
 const execAsync = promisify(exec);
+
+type PreviewJobContext = {
+  taskId: Id<"tasks">;
+  taskRunId: Id<"taskRuns">;
+  convexUrl: string;
+};
+
+const resolveConvexUrl = (provided?: string): string | undefined => {
+  if (provided) return provided.replace(/\/$/, "");
+  const fromEnv =	process.env.CONVEX_SITE_URL || process.env.CONVEX_URL || process.env.CONVEX_CLOUD_URL;
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  return undefined;
+};
+
+async function resolvePreviewJobContext({
+  token,
+  convexUrlOverride,
+  logPrefix,
+}: {
+  token: string;
+  convexUrlOverride?: string;
+  logPrefix: string;
+}): Promise<PreviewJobContext> {
+  const convexUrl =
+    resolveConvexUrl(convexUrlOverride) ?? process.env.NEXT_PUBLIC_CONVEX_URL;
+
+  log("INFO", `${logPrefix} Resolving task metadata`, {
+    workerId: WORKER_ID,
+    convexUrl,
+    hasConvexUrl: Boolean(convexUrl),
+  });
+
+  if (!convexUrl) {
+    throw new Error("Convex URL is not configured for screenshot workflow");
+  }
+
+  const info = await convexRequest<WorkerTaskRunResponse>(
+    "/api/crown/check",
+    token,
+    {
+      checkType: "info",
+    },
+    convexUrl,
+  );
+
+  log("INFO", `${logPrefix} Crown check response received`, {
+    workerId: WORKER_ID,
+    hasInfo: Boolean(info),
+    ok: info?.ok ?? null,
+    hasTaskRun: Boolean(info?.taskRun),
+    taskRunId: info?.taskRun?.id,
+    taskId: info?.taskRun?.taskId,
+    isPreviewJob: info?.taskRun?.isPreviewJob,
+  });
+
+  if (!info?.ok || !info.taskRun) {
+    throw new Error("Unable to load task run metadata for screenshot workflow");
+  }
+
+  if (!info.taskRun.isPreviewJob) {
+    throw new Error("Task run is not marked as a preview job");
+  }
+
+  return {
+    taskId: info.taskRun.taskId as Id<"tasks">,
+    taskRunId: info.taskRun.id as Id<"taskRuns">,
+    convexUrl,
+  };
+}
+
+async function runPreviewJobScreenshots({
+  token,
+  anthropicApiKey,
+  context,
+  logPrefix,
+  installCommand,
+  devCommand,
+}: {
+  token: string;
+  anthropicApiKey?: string;
+  context: PreviewJobContext;
+  logPrefix: string;
+  installCommand?: string;
+  devCommand?: string;
+}) {
+  const { taskId, taskRunId, convexUrl } = context;
+
+  log("INFO", `${logPrefix} Verified preview job metadata`, {
+    taskRunId,
+    taskId,
+  });
+
+  await runTaskScreenshots({
+    taskId,
+    taskRunId,
+    token,
+    convexUrl,
+    anthropicApiKey,
+    taskRunJwt: token,
+    installCommand,
+    devCommand,
+  });
+
+  log("INFO", `${logPrefix} Screenshots completed, calling /api/preview/complete`, {
+    taskRunId,
+  });
+
+  const completeUrl = `${convexUrl}/api/preview/complete`;
+  const response = await fetch(completeUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-cmux-token": token,
+    },
+    body: JSON.stringify({
+      taskRunId,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to complete preview job (status ${response.status}): ${errorText}`
+    );
+  }
+
+  const result = await response.json();
+  log("INFO", `${logPrefix} Preview job completed successfully`, {
+    result,
+  });
+}
 
 const Terminal = xtermHeadless.Terminal;
 
@@ -81,9 +219,24 @@ const upload = multer({
   storage: multer.memoryStorage(),
 });
 
+const ALLOWED_UPLOAD_ROOT = "/root/prompt";
+
 // File upload endpoint
 app.post("/upload-image", upload.single("image"), async (req, res) => {
   try {
+    const token = req.header("x-cmux-token");
+    const secret = process.env.CMUX_TASK_RUN_JWT_SECRET;
+    if (!token || !secret) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    try {
+      await verifyTaskRunToken(token, secret);
+    } catch (error) {
+      log("ERROR", "Invalid task run token for upload-image", error);
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
@@ -93,33 +246,95 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "No path specified" });
     }
 
-    log("INFO", `Received image upload request for path: ${imagePath}`, {
+    const resolvedPath = path.resolve(String(imagePath));
+    const normalizedRoot = path.resolve(ALLOWED_UPLOAD_ROOT);
+    if (!resolvedPath.startsWith(`${normalizedRoot}/`) && resolvedPath !== normalizedRoot) {
+      return res.status(400).json({ error: "Invalid path" });
+    }
+
+    log("INFO", `Received image upload request for path: ${resolvedPath}`, {
       size: req.file.size,
       mimetype: req.file.mimetype,
       originalname: req.file.originalname,
     });
 
     // Ensure directory exists
-    const dir = path.dirname(imagePath);
+    const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
 
     // Write the file
-    await fs.writeFile(imagePath, req.file.buffer);
+    await fs.writeFile(resolvedPath, req.file.buffer);
 
-    log("INFO", `Successfully wrote image file: ${imagePath}`);
+    log("INFO", `Successfully wrote image file: ${resolvedPath}`);
 
     // Verify file was created
-    const stats = await fs.stat(imagePath);
+    const stats = await fs.stat(resolvedPath);
 
     res.json({
       success: true,
-      path: imagePath,
+      path: resolvedPath,
       size: stats.size,
     });
   } catch (error) {
     log("ERROR", "Failed to upload image", error);
     res.status(500).json({
       error: error instanceof Error ? error.message : "Upload failed",
+    });
+  }
+});
+
+// HTTP endpoint for running task screenshots (replaces Socket.IO)
+app.use(express.json());
+app.post("/api/run-task-screenshots", async (req, res) => {
+  try {
+    const data = req.body;
+
+    const logPrefix = "[/api/run-task-screenshots]";
+
+    log("INFO", `${logPrefix} Received request`, {
+      workerId: WORKER_ID,
+      hasToken: Boolean(data?.token),
+      hasAnthropicKey: Boolean(data?.anthropicApiKey),
+    });
+
+    if (!data?.token) {
+      return res.status(400).json({
+        error: "Missing required field: token",
+      });
+    }
+
+    const context = await resolvePreviewJobContext({
+      token: data.token,
+      convexUrlOverride: data.convexUrl,
+      logPrefix,
+    });
+
+    // Respond immediately to acknowledge receipt
+    res.json({
+      success: true,
+    });
+
+    // Run screenshot collection in background
+    (async () => {
+      try {
+        await runPreviewJobScreenshots({
+          token: data.token,
+          anthropicApiKey: data.anthropicApiKey,
+          context,
+          logPrefix,
+          installCommand: data.installCommand,
+          devCommand: data.devCommand,
+        });
+      } catch (error) {
+        log("ERROR", `${logPrefix} Failed`, error);
+      }
+    })().catch((error) => {
+      log("ERROR", `${logPrefix} Background task failed`, error);
+    });
+  } catch (error) {
+    log("ERROR", "[/api/run-task-screenshots] Request handling failed", error);
+    res.status(400).json({
+      error: error instanceof Error ? error.message : "Internal server error",
     });
   }
 });
@@ -166,7 +381,7 @@ const hasTaskId = (value: unknown): value is { taskId?: Id<"tasks"> } =>
   typeof value === "object" && value !== null && "taskId" in value;
 
 const hasTaskRunId = (
-  value: unknown,
+  value: unknown
 ): value is { taskRunId?: Id<"taskRuns"> } =>
   typeof value === "object" && value !== null && "taskRunId" in value;
 
@@ -228,7 +443,7 @@ function sendPendingEvents() {
         event: pendingEvent.event,
         data: payload,
         age,
-      },
+      }
     );
     socket.emit(pendingEvent.event, ...pendingEvent.args);
   }
@@ -262,7 +477,7 @@ function getWorkerStats(): WorkerHeartbeat {
 
 // Send registration info when main server connects
 function registerWithMainServer(
-  socket: Socket<ServerToWorkerEvents, WorkerToServerEvents>,
+  socket: Socket<ServerToWorkerEvents, WorkerToServerEvents>
 ) {
   const registration: WorkerRegister = {
     workerId: WORKER_ID,
@@ -284,7 +499,7 @@ function registerWithMainServer(
   log(
     "INFO",
     `Worker ${WORKER_ID} sent registration to main server`,
-    registration,
+    registration
   );
 }
 
@@ -297,7 +512,7 @@ managementIO.on("connection", (socket) => {
       from: socket.handshake.headers.referer || "unknown",
       socketId: socket.id,
     },
-    WORKER_ID,
+    WORKER_ID
   );
   mainServerSocket = socket;
 
@@ -320,9 +535,9 @@ managementIO.on("connection", (socket) => {
           }
           return value;
         },
-        2,
+        2
       ),
-      WORKER_ID,
+      WORKER_ID
     );
     try {
       const validated = WorkerCreateTerminalSchema.parse(data);
@@ -334,20 +549,20 @@ managementIO.on("connection", (socket) => {
           "INFO",
           `Writing ${validated.authFiles.length} auth files...`,
           undefined,
-          WORKER_ID,
+          WORKER_ID
         );
         for (const file of validated.authFiles) {
           try {
             // Expand $HOME in destination path
             const destPath = file.destinationPath.replace(
               "$HOME",
-              process.env.HOME || "/root",
+              process.env.HOME || "/root"
             );
             log(
               "INFO",
               `Writing auth file to: ${destPath}`,
               undefined,
-              WORKER_ID,
+              WORKER_ID
             );
 
             // Ensure directory exists
@@ -357,7 +572,7 @@ managementIO.on("connection", (socket) => {
             // Write the file
             await fs.writeFile(
               destPath,
-              Buffer.from(file.contentBase64, "base64"),
+              Buffer.from(file.contentBase64, "base64")
             );
 
             // Set permissions if specified
@@ -369,14 +584,14 @@ managementIO.on("connection", (socket) => {
               "INFO",
               `Successfully wrote auth file: ${destPath}`,
               undefined,
-              WORKER_ID,
+              WORKER_ID
             );
           } catch (error) {
             log(
               "ERROR",
               `Failed to write auth file ${file.destinationPath}:`,
               error,
-              WORKER_ID,
+              WORKER_ID
             );
           }
         }
@@ -396,7 +611,7 @@ managementIO.on("connection", (socket) => {
           args: validated.args,
           taskRunId: validated.taskRunId,
         },
-        WORKER_ID,
+        WORKER_ID
       );
 
       await createTerminal(validated.terminalId, {
@@ -406,6 +621,7 @@ managementIO.on("connection", (socket) => {
         env: validated.env,
         command: validated.command,
         args: validated.args,
+        taskId: validated.taskId,
         taskRunId: validated.taskRunId,
         agentModel: validated.agentModel,
         startupCommands: validated.startupCommands,
@@ -428,7 +644,7 @@ managementIO.on("connection", (socket) => {
         "ERROR",
         "Error creating terminal from main server",
         error,
-        WORKER_ID,
+        WORKER_ID
       );
       callback({
         error: error instanceof Error ? error : new Error(error as string),
@@ -455,9 +671,105 @@ managementIO.on("connection", (socket) => {
     } catch (error) {
       callback({
         ready: false,
-        message: `Error checking Docker: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
+        message: `Error checking Docker: ${error instanceof Error ? error.message : "Unknown error"
+          }`,
+      });
+    }
+  });
+
+  socket.on(
+    "worker:start-screenshot-collection",
+    async (rawData: WorkerStartScreenshotCollection | undefined) => {
+      log(
+        "INFO",
+        `Worker ${WORKER_ID} received request to start screenshot collection`,
+        undefined,
+        WORKER_ID
+      );
+      let config: WorkerStartScreenshotCollection | null = null;
+      if (rawData) {
+        try {
+          config = WorkerStartScreenshotCollectionSchema.parse(rawData);
+        } catch (validationError) {
+          log(
+            "ERROR",
+            "Invalid screenshot collection payload",
+            {
+              error:
+                validationError instanceof Error
+                  ? validationError.message
+                  : String(validationError),
+            },
+            WORKER_ID
+          );
+        }
+      }
+      try {
+        const result = await startScreenshotCollection({
+          anthropicApiKey: config?.anthropicApiKey,
+          outputPath: config?.outputPath,
+        });
+        log(
+          "INFO",
+          "Screenshot collection completed",
+          {
+            result,
+          },
+          WORKER_ID,
+        );
+      } catch (error) {
+        log(
+          "ERROR",
+          "Failed to start screenshot collection",
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+          WORKER_ID
+        );
+      }
+    }
+  );
+
+  socket.on("worker:run-task-screenshots", async (data, callback) => {
+    const logPrefix = "[worker:run-task-screenshots]";
+
+    log("INFO", `${logPrefix} Received request`, {
+      workerId: WORKER_ID,
+      hasToken: Boolean(data?.token),
+      hasAnthropicKey: Boolean(data?.anthropicApiKey),
+    });
+
+    try {
+      if (!data?.token) {
+        throw new Error("Missing required field: token");
+      }
+
+      const context = await resolvePreviewJobContext({
+        token: data.token,
+        convexUrlOverride: data.convexUrl,
+        logPrefix,
+      });
+
+      callback({
+        error: null,
+        data: { success: true },
+      });
+
+      try {
+        await runPreviewJobScreenshots({
+          token: data.token,
+          anthropicApiKey: data.anthropicApiKey,
+          context,
+          logPrefix,
+        });
+      } catch (error) {
+        log("ERROR", `${logPrefix} Failed`, error);
+      }
+    } catch (error) {
+      log("ERROR", `${logPrefix} Validation failed`, error);
+      callback({
+        error: error instanceof Error ? error : new Error(String(error)),
+        data: null,
       });
     }
   });
@@ -466,6 +778,22 @@ managementIO.on("connection", (socket) => {
     try {
       const validated = WorkerConfigureGitSchema.parse(data);
       console.log(`Worker ${WORKER_ID} configuring git...`);
+
+      const credentialStorePath = "/root/.git-credentials";
+      const normalizeCredentialHelper = (helper: string): string | null => {
+        const trimmed = helper.trim();
+        if (trimmed.includes("/opt/homebrew/bin/gh")) {
+          return "!gh auth git-credential";
+        }
+        if (
+          trimmed.includes("osxkeychain") ||
+          trimmed.includes("wincred") ||
+          trimmed.includes("manager-core")
+        ) {
+          return null;
+        }
+        return trimmed.length > 0 ? trimmed : null;
+      };
 
       // Create a custom git config file that includes the mounted one
       const customGitConfigPath = "/root/.gitconfig.custom";
@@ -476,7 +804,7 @@ managementIO.on("connection", (socket) => {
       // Start by parsing the mounted config if it exists
       try {
         const { stdout: mountedConfig } = await execAsync(
-          "cat /root/.gitconfig 2>/dev/null || true",
+          "cat /root/.gitconfig 2>/dev/null || true"
         );
         if (mountedConfig) {
           let currentSection = "global";
@@ -513,19 +841,46 @@ managementIO.on("connection", (socket) => {
         // No mounted config
       }
 
-      // Add the store credential helper
-      if (!configSections.has("credential")) {
-        configSections.set("credential", new Map());
+      for (const [section, settings] of configSections) {
+        if (!section.startsWith("credential")) {
+          continue;
+        }
+        const helperValue = settings.get("helper");
+        if (!helperValue) {
+          continue;
+        }
+        const normalized = normalizeCredentialHelper(helperValue);
+        if (normalized) {
+          settings.set("helper", normalized);
+        } else {
+          settings.delete("helper");
+          if (settings.size === 0) {
+            configSections.delete(section);
+          }
+        }
       }
-      configSections.get("credential")?.set("helper", "store");
 
       // Create .git-credentials file if GitHub token is provided
       if (validated.githubToken) {
-        const credentialsPath = "/root/.git-credentials";
+        if (!configSections.has("credential")) {
+          configSections.set("credential", new Map());
+        }
+        configSections
+          .get("credential")
+          ?.set("helper", `store --file ${credentialStorePath}`);
+
         const credentialsContent = `https://oauth:${validated.githubToken}@github.com\n`;
-        await fs.writeFile(credentialsPath, credentialsContent);
-        await fs.chmod(credentialsPath, 0o600);
+        await fs.writeFile(credentialStorePath, credentialsContent);
+        await fs.chmod(credentialStorePath, 0o600);
         console.log("GitHub credentials stored in .git-credentials");
+      } else {
+        const credentialSection = configSections.get("credential");
+        if (credentialSection?.get("helper")) {
+          credentialSection.delete("helper");
+        }
+        if (credentialSection && credentialSection.size === 0) {
+          configSections.delete("credential");
+        }
       }
 
       // Add additional git settings if provided
@@ -563,10 +918,10 @@ managementIO.on("connection", (socket) => {
 
       // Also set it for all terminals
       await execAsync(
-        `echo 'export GIT_CONFIG_GLOBAL=${customGitConfigPath}' >> /etc/profile`,
+        `echo 'export GIT_CONFIG_GLOBAL=${customGitConfigPath}' >> /etc/profile`
       );
       await execAsync(
-        `echo 'export GIT_CONFIG_GLOBAL=${customGitConfigPath}' >> /root/.bashrc`,
+        `echo 'export GIT_CONFIG_GLOBAL=${customGitConfigPath}' >> /root/.bashrc`
       );
 
       // Set up SSH keys if provided
@@ -584,7 +939,7 @@ managementIO.on("connection", (socket) => {
           // SSH dir is read-only, use alternative location
           sshDirWritable = false;
           console.log(
-            ".ssh directory is mounted read-only, using alternative SSH config",
+            ".ssh directory is mounted read-only, using alternative SSH config"
           );
         }
 
@@ -597,7 +952,7 @@ managementIO.on("connection", (socket) => {
             const privateKeyPath = path.join(altSshDir, "id_rsa");
             await fs.writeFile(
               privateKeyPath,
-              Buffer.from(validated.sshKeys.privateKey, "base64"),
+              Buffer.from(validated.sshKeys.privateKey, "base64")
             );
             await fs.chmod(privateKeyPath, 0o600);
           }
@@ -606,7 +961,7 @@ managementIO.on("connection", (socket) => {
             const publicKeyPath = path.join(altSshDir, "id_rsa.pub");
             await fs.writeFile(
               publicKeyPath,
-              Buffer.from(validated.sshKeys.publicKey, "base64"),
+              Buffer.from(validated.sshKeys.publicKey, "base64")
             );
             await fs.chmod(publicKeyPath, 0o644);
           }
@@ -615,7 +970,7 @@ managementIO.on("connection", (socket) => {
             const knownHostsPath = path.join(altSshDir, "known_hosts");
             await fs.writeFile(
               knownHostsPath,
-              Buffer.from(validated.sshKeys.knownHosts, "base64"),
+              Buffer.from(validated.sshKeys.knownHosts, "base64")
             );
             await fs.chmod(knownHostsPath, 0o644);
           }
@@ -633,10 +988,10 @@ managementIO.on("connection", (socket) => {
 
           // Also export it for all terminals
           await execAsync(
-            `echo 'export GIT_SSH_COMMAND="ssh -F /root/.ssh-config"' >> /etc/profile`,
+            `echo 'export GIT_SSH_COMMAND="ssh -F /root/.ssh-config"' >> /etc/profile`
           );
           await execAsync(
-            `echo 'export GIT_SSH_COMMAND="ssh -F /root/.ssh-config"' >> /root/.bashrc`,
+            `echo 'export GIT_SSH_COMMAND="ssh -F /root/.ssh-config"' >> /root/.bashrc`
           );
         } else {
           // SSH dir is writable, use it normally
@@ -644,7 +999,7 @@ managementIO.on("connection", (socket) => {
             const privateKeyPath = path.join(sshDir, "id_rsa");
             await fs.writeFile(
               privateKeyPath,
-              Buffer.from(validated.sshKeys.privateKey, "base64"),
+              Buffer.from(validated.sshKeys.privateKey, "base64")
             );
             await fs.chmod(privateKeyPath, 0o600);
           }
@@ -653,7 +1008,7 @@ managementIO.on("connection", (socket) => {
             const publicKeyPath = path.join(sshDir, "id_rsa.pub");
             await fs.writeFile(
               publicKeyPath,
-              Buffer.from(validated.sshKeys.publicKey, "base64"),
+              Buffer.from(validated.sshKeys.publicKey, "base64")
             );
             await fs.chmod(publicKeyPath, 0o644);
           }
@@ -662,7 +1017,7 @@ managementIO.on("connection", (socket) => {
             const knownHostsPath = path.join(sshDir, "known_hosts");
             await fs.writeFile(
               knownHostsPath,
-              Buffer.from(validated.sshKeys.knownHosts, "base64"),
+              Buffer.from(validated.sshKeys.knownHosts, "base64")
             );
             await fs.chmod(knownHostsPath, 0o644);
           }
@@ -777,7 +1132,7 @@ managementIO.on("connection", (socket) => {
 
     log(
       "INFO",
-      `[Worker] Started file watcher for task ${taskRunId} at ${worktreePath}`,
+      `[Worker] Started file watcher for task ${taskRunId} at ${worktreePath}`
     );
   });
 
@@ -810,7 +1165,7 @@ managementIO.on("connection", (socket) => {
             age: Date.now() - e.timestamp,
           })),
           disconnectReason: reason,
-        },
+        }
       );
     }
   });
@@ -822,7 +1177,7 @@ vscodeIO.on("connection", (socket) => {
     `VSCode connected to worker ${WORKER_ID}:`,
     socket.id,
     "from",
-    socket.handshake.headers.referer || "unknown",
+    socket.handshake.headers.referer || "unknown"
   );
 
   socket.on("disconnect", () => {
@@ -840,11 +1195,12 @@ async function createTerminal(
     env?: Record<string, string>;
     command?: string;
     args?: string[];
+    taskId?: Id<"tasks">;
     taskRunId?: Id<"taskRuns">;
     agentModel?: string;
     startupCommands?: string[];
     taskRunContext: WorkerTaskRunContext;
-  },
+  }
 ): Promise<void> {
   const {
     cols = SERVER_TERMINAL_CONFIG.cols,
@@ -924,19 +1280,28 @@ async function createTerminal(
     });
   }
 
-  const ptyEnv = {
-    ...process.env,
+  const inheritedEnvEntries = Object.entries(process.env).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string"
+  );
+  const inheritedEnv: Record<string, string> =
+    Object.fromEntries(inheritedEnvEntries);
+
+  if (!Object.prototype.hasOwnProperty.call(env, "NODE_ENV")) {
+    delete inheritedEnv.NODE_ENV;
+  }
+
+  const ptyEnv: Record<string, string> = {
+    ...inheritedEnv,
     ...env, // Override with provided env vars
     WORKER_ID,
     TERM: "xterm-256color",
     PS1: "\\u@\\h:\\w\\$ ", // Basic prompt
-    SHELL: "/bin/bash",
+    SHELL: "/bin/zsh",
     USER: process.env.USER || "root",
     HOME: process.env.HOME || "/root",
-    PATH: `/root/.bun/bin:${
-      process.env.PATH ||
+    PATH: `/root/.bun/bin:${process.env.PATH ||
       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    }`,
+      }`,
     // Pass through git config if set
     ...(process.env.GIT_CONFIG_GLOBAL
       ? { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
@@ -945,45 +1310,71 @@ async function createTerminal(
       ? { GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND }
       : {}),
   };
+  if (!Object.prototype.hasOwnProperty.call(env, "NODE_ENV")) {
+    // Ensure tmux sessions do not inherit NODE_ENV unless explicitly provided
+    delete ptyEnv.NODE_ENV;
+  }
 
   // Run optional startup commands prior to spawning the agent process
+  // Commands execute SEQUENTIALLY in BACKGROUND to preserve dependencies without blocking spawn
   if (startupCommands && startupCommands.length > 0) {
     log(
       "INFO",
-      `Running ${startupCommands.length} startup command(s) before spawn`,
-      { startupCommands },
+      `Launching ${startupCommands.length} startup command(s) in background (sequential)`,
+      { startupCommands }
     );
-    for (const cmd of startupCommands) {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const p = spawn("bash", ["-lc", cmd], {
-            cwd,
-            env: ptyEnv,
-            stdio: ["ignore", "pipe", "pipe"],
+
+    // Execute commands sequentially in background (don't await)
+    (async () => {
+      for (let i = 0; i < startupCommands.length; i++) {
+        const cmd = startupCommands[i]!;
+        try {
+          log("INFO", `[Startup ${i + 1}/${startupCommands.length}] Running: ${cmd}`);
+
+          await new Promise<void>((resolve, reject) => {
+            const p = spawn("bash", ["-lc", cmd], {
+              cwd,
+              env: ptyEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            let stderr = "";
+            p.stderr.on("data", (d) => {
+              stderr += d.toString();
+            });
+            p.on("exit", (code) => {
+              if (code === 0) {
+                log("INFO", `[Startup ${i + 1}/${startupCommands.length}] ✓ Completed: ${cmd}`);
+                resolve();
+              } else {
+                log(
+                  "ERROR",
+                  `[Startup ${i + 1}/${startupCommands.length}] ✗ Failed (${code}): ${cmd}`,
+                  new Error(stderr)
+                );
+                reject(new Error(`Command failed with exit code ${code}`));
+              }
+            });
+            p.on("error", (e) => {
+              log("ERROR", `[Startup ${i + 1}/${startupCommands.length}] ✗ Error: ${cmd}`, e);
+              reject(e);
+            });
           });
-          let stderr = "";
-          p.stderr.on("data", (d) => {
-            stderr += d.toString();
-          });
-          p.on("exit", (code) => {
-            if (code === 0) resolve();
-            else
-              reject(
-                new Error(
-                  `Startup command failed (${code}): ${cmd}\n${stderr}`,
-                ),
-              );
-          });
-          p.on("error", (e) => reject(e));
-        });
-      } catch (e) {
-        log(
-          "ERROR",
-          `Startup command failed: ${cmd}`,
-          e instanceof Error ? e : new Error(String(e)),
-        );
+        } catch (e) {
+          log(
+            "ERROR",
+            `[Startup ${i + 1}/${startupCommands.length}] Failed, stopping remaining commands`,
+            e instanceof Error ? e : new Error(String(e))
+          );
+          // Stop executing remaining commands on error
+          break;
+        }
       }
-    }
+      log("INFO", "All startup commands completed");
+    })().catch((e) => {
+      log("ERROR", "Unexpected error in background startup commands", e);
+    });
+
+    log("INFO", "Startup commands running in background, continuing with spawn...");
   }
 
   log("INFO", "Spawning process", {
@@ -1062,7 +1453,7 @@ async function createTerminal(
           taskRunId: options.taskRunId,
           agentModel: options.agentModel,
           hasDetector: !!agentConfig.completionDetector,
-        },
+        }
       );
 
       agentConfig
@@ -1070,7 +1461,7 @@ async function createTerminal(
         .then(async () => {
           log(
             "INFO",
-            `Completion detector resolved for task ${options.taskRunId}`,
+            `Completion detector resolved for task ${options.taskRunId}`
           );
 
           log(
@@ -1080,7 +1471,7 @@ async function createTerminal(
               taskRunId: options.taskRunId,
               agentModel: options.agentModel,
               elapsedMs: Date.now() - processStartTime,
-            },
+            }
           );
 
           if (!taskRunToken) {
@@ -1121,20 +1512,20 @@ async function createTerminal(
                 agentModel: options.agentModel,
                 error: error instanceof Error ? error.message : String(error),
                 stack: error instanceof Error ? error.stack : undefined,
-              },
+              }
             );
           }
         })
         .catch((e) => {
           log(
             "ERROR",
-            `Completion detector error for ${options.agentModel}: ${String(e)}`,
+            `Completion detector error for ${options.agentModel}: ${String(e)}`
           );
         });
     } catch (e) {
       log(
         "ERROR",
-        `Failed to start completion detector for ${options.agentModel}: ${String(e)}`,
+        `Failed to start completion detector for ${options.agentModel}: ${String(e)}`
       );
     }
   }
@@ -1246,7 +1637,7 @@ if (ENABLE_HEARTBEAT) {
     } else {
       console.log(
         `Worker ${WORKER_ID} heartbeat (main server not connected):`,
-        stats,
+        stats
       );
     }
   }, 30000);
@@ -1258,7 +1649,7 @@ httpServer.listen(WORKER_PORT, () => {
     "INFO",
     `Worker ${WORKER_ID} starting on port ${WORKER_PORT}`,
     undefined,
-    WORKER_ID,
+    WORKER_ID
   );
   log(
     "INFO",
@@ -1267,21 +1658,31 @@ httpServer.listen(WORKER_PORT, () => {
       vscode: "/vscode",
       management: "/management",
     },
-    WORKER_ID,
+    WORKER_ID
   );
   log(
     "INFO",
     "Worker ready, waiting for terminal creation commands via socket.io",
     undefined,
-    WORKER_ID,
+    WORKER_ID
   );
 });
 
 // Start AMP proxy via shared provider module
+const parsedAmpProxyPort = Number.parseInt(
+  process.env.AMP_PROXY_PORT ?? "",
+  10
+);
+const ampProxyPort = Number.isNaN(parsedAmpProxyPort)
+  ? undefined
+  : parsedAmpProxyPort;
+
 startAmpProxy({
   ampUrl: process.env.AMP_URL,
+  ampUpstreamUrl: process.env.AMP_UPSTREAM_URL,
+  port: ampProxyPort,
   workerId: WORKER_ID,
-  emitToMainServer: emitToMainServer,
+  emitToMainServer,
 });
 
 // Periodic maintenance for pending events
@@ -1313,7 +1714,7 @@ setInterval(() => {
           age,
           taskRunId:
             payload && hasTaskRunId(payload) ? payload.taskRunId : undefined,
-        },
+        }
       );
       return false;
     }
@@ -1325,7 +1726,7 @@ setInterval(() => {
     pendingEvents.push(...validEvents);
     log(
       "INFO",
-      `Cleaned up ${originalCount - validEvents.length} old pending events`,
+      `Cleaned up ${originalCount - validEvents.length} old pending events`
     );
   }
 
@@ -1344,7 +1745,7 @@ setInterval(() => {
               payload && hasTaskRunId(payload) ? payload.taskRunId : undefined,
           };
         }),
-      },
+      }
     );
   }
 }, 30000); // Run every 30 seconds

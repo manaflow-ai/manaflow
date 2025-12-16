@@ -7,7 +7,7 @@ export type RunEnvironmentSummary = Pick<
 
 export interface TaskRunWithChildren extends Doc<"taskRuns"> {
   children: TaskRunWithChildren[];
-  environment?: RunEnvironmentSummary | null;
+  environment: RunEnvironmentSummary | null;
 }
 
 export interface AnnotatedTaskRun extends TaskRunWithChildren {

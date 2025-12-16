@@ -52,3 +52,4 @@ try {
 }
 
 console.timeEnd("watch-openapi");
+console.log("[watch-openapi] initial client generation complete");

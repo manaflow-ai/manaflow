@@ -23,9 +23,11 @@ import { Route as LayoutTeamPickerRouteImport } from './routes/_layout.team-pick
 import { Route as LayoutProfileRouteImport } from './routes/_layout.profile'
 import { Route as LayoutDebugRouteImport } from './routes/_layout.debug'
 import { Route as LayoutTeamSlugOrIdRouteImport } from './routes/_layout.$teamSlugOrId'
+import { Route as TeamSlugOrIdFeedRouteImport } from './routes/$teamSlugOrId.feed'
 import { Route as LayoutTeamSlugOrIdWorkspacesRouteImport } from './routes/_layout.$teamSlugOrId.workspaces'
 import { Route as LayoutTeamSlugOrIdSettingsRouteImport } from './routes/_layout.$teamSlugOrId.settings'
 import { Route as LayoutTeamSlugOrIdPrsRouteImport } from './routes/_layout.$teamSlugOrId.prs'
+import { Route as LayoutTeamSlugOrIdPreviewsRouteImport } from './routes/_layout.$teamSlugOrId.previews'
 import { Route as LayoutTeamSlugOrIdLogsRouteImport } from './routes/_layout.$teamSlugOrId.logs'
 import { Route as LayoutTeamSlugOrIdEnvironmentsRouteImport } from './routes/_layout.$teamSlugOrId.environments'
 import { Route as LayoutTeamSlugOrIdDiffRouteImport } from './routes/_layout.$teamSlugOrId.diff'
@@ -41,9 +43,11 @@ import { Route as LayoutTeamSlugOrIdPrsOwnerRepoNumberRouteImport } from './rout
 import { Route as LayoutTeamSlugOrIdPrsOnlyOwnerRepoNumberRouteImport } from './routes/_layout.$teamSlugOrId.prs-only.$owner.$repo.$number'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.index'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.vscode'
+import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.terminals'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.pr'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.diff'
-import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.preview.$port'
+import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.browser'
+import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.preview.$previewId'
 
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
@@ -114,6 +118,11 @@ const LayoutTeamSlugOrIdRoute = LayoutTeamSlugOrIdRouteImport.update({
   path: '/$teamSlugOrId',
   getParentRoute: () => LayoutRoute,
 } as any)
+const TeamSlugOrIdFeedRoute = TeamSlugOrIdFeedRouteImport.update({
+  id: '/$teamSlugOrId/feed',
+  path: '/$teamSlugOrId/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LayoutTeamSlugOrIdWorkspacesRoute =
   LayoutTeamSlugOrIdWorkspacesRouteImport.update({
     id: '/workspaces',
@@ -131,6 +140,12 @@ const LayoutTeamSlugOrIdPrsRoute = LayoutTeamSlugOrIdPrsRouteImport.update({
   path: '/prs',
   getParentRoute: () => LayoutTeamSlugOrIdRoute,
 } as any)
+const LayoutTeamSlugOrIdPreviewsRoute =
+  LayoutTeamSlugOrIdPreviewsRouteImport.update({
+    id: '/previews',
+    path: '/previews',
+    getParentRoute: () => LayoutTeamSlugOrIdRoute,
+  } as any)
 const LayoutTeamSlugOrIdLogsRoute = LayoutTeamSlugOrIdLogsRouteImport.update({
   id: '/logs',
   path: '/logs',
@@ -219,6 +234,12 @@ const LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute =
     path: '/run/$runId/vscode',
     getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
   } as any)
+const LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute =
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRouteImport.update({
+    id: '/run/$runId/terminals',
+    path: '/run/$runId/terminals',
+    getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
+  } as any)
 const LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute =
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRouteImport.update({
     id: '/run/$runId/pr',
@@ -231,10 +252,16 @@ const LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute =
     path: '/run/$runId/diff',
     getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
   } as any)
-const LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute =
-  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRouteImport.update({
-    id: '/run/$runId/preview/$port',
-    path: '/run/$runId/preview/$port',
+const LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute =
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRouteImport.update({
+    id: '/run/$runId/browser',
+    path: '/run/$runId/browser',
+    getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
+  } as any)
+const LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute =
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRouteImport.update({
+    id: '/run/$runId/preview/$previewId',
+    path: '/run/$runId/preview/$previewId',
     getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
   } as any)
 
@@ -247,6 +274,7 @@ export interface FileRoutesByFullPath {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
   '/profile': typeof LayoutProfileRoute
@@ -257,6 +285,7 @@ export interface FileRoutesByFullPath {
   '/$teamSlugOrId/diff': typeof LayoutTeamSlugOrIdDiffRoute
   '/$teamSlugOrId/environments': typeof LayoutTeamSlugOrIdEnvironmentsRouteWithChildren
   '/$teamSlugOrId/logs': typeof LayoutTeamSlugOrIdLogsRoute
+  '/$teamSlugOrId/previews': typeof LayoutTeamSlugOrIdPreviewsRoute
   '/$teamSlugOrId/prs': typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   '/$teamSlugOrId/settings': typeof LayoutTeamSlugOrIdSettingsRoute
   '/$teamSlugOrId/workspaces': typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -268,11 +297,13 @@ export interface FileRoutesByFullPath {
   '/$teamSlugOrId/task/$taskId/': typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
   '/$teamSlugOrId/prs-only/$owner/$repo/$number': typeof LayoutTeamSlugOrIdPrsOnlyOwnerRepoNumberRoute
   '/$teamSlugOrId/prs/$owner/$repo/$number': typeof LayoutTeamSlugOrIdPrsOwnerRepoNumberRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/browser': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/diff': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/pr': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/terminals': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/vscode': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   '/$teamSlugOrId/task/$taskId/run/$runId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -283,6 +314,7 @@ export interface FileRoutesByTo {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
   '/profile': typeof LayoutProfileRoute
@@ -292,6 +324,7 @@ export interface FileRoutesByTo {
   '/$teamSlugOrId/dashboard': typeof LayoutTeamSlugOrIdDashboardRoute
   '/$teamSlugOrId/diff': typeof LayoutTeamSlugOrIdDiffRoute
   '/$teamSlugOrId/logs': typeof LayoutTeamSlugOrIdLogsRoute
+  '/$teamSlugOrId/previews': typeof LayoutTeamSlugOrIdPreviewsRoute
   '/$teamSlugOrId/prs': typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   '/$teamSlugOrId/settings': typeof LayoutTeamSlugOrIdSettingsRoute
   '/$teamSlugOrId/workspaces': typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -302,11 +335,13 @@ export interface FileRoutesByTo {
   '/$teamSlugOrId/task/$taskId': typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
   '/$teamSlugOrId/prs-only/$owner/$repo/$number': typeof LayoutTeamSlugOrIdPrsOnlyOwnerRepoNumberRoute
   '/$teamSlugOrId/prs/$owner/$repo/$number': typeof LayoutTeamSlugOrIdPrsOwnerRepoNumberRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/browser': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/diff': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/pr': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/terminals': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/vscode': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   '/$teamSlugOrId/task/$taskId/run/$runId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -319,6 +354,7 @@ export interface FileRoutesById {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/_layout/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/_layout/debug': typeof LayoutDebugRoute
   '/_layout/profile': typeof LayoutProfileRoute
@@ -329,6 +365,7 @@ export interface FileRoutesById {
   '/_layout/$teamSlugOrId/diff': typeof LayoutTeamSlugOrIdDiffRoute
   '/_layout/$teamSlugOrId/environments': typeof LayoutTeamSlugOrIdEnvironmentsRouteWithChildren
   '/_layout/$teamSlugOrId/logs': typeof LayoutTeamSlugOrIdLogsRoute
+  '/_layout/$teamSlugOrId/previews': typeof LayoutTeamSlugOrIdPreviewsRoute
   '/_layout/$teamSlugOrId/prs': typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   '/_layout/$teamSlugOrId/settings': typeof LayoutTeamSlugOrIdSettingsRoute
   '/_layout/$teamSlugOrId/workspaces': typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -340,11 +377,13 @@ export interface FileRoutesById {
   '/_layout/$teamSlugOrId/task/$taskId/': typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
   '/_layout/$teamSlugOrId/prs-only/$owner/$repo/$number': typeof LayoutTeamSlugOrIdPrsOnlyOwnerRepoNumberRoute
   '/_layout/$teamSlugOrId/prs/$owner/$repo/$number': typeof LayoutTeamSlugOrIdPrsOwnerRepoNumberRoute
+  '/_layout/$teamSlugOrId/task/$taskId/run/$runId/browser': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/diff': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/pr': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute
+  '/_layout/$teamSlugOrId/task/$taskId/run/$runId/terminals': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/vscode': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -357,6 +396,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/$teamSlugOrId'
     | '/debug'
     | '/profile'
@@ -367,6 +407,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/diff'
     | '/$teamSlugOrId/environments'
     | '/$teamSlugOrId/logs'
+    | '/$teamSlugOrId/previews'
     | '/$teamSlugOrId/prs'
     | '/$teamSlugOrId/settings'
     | '/$teamSlugOrId/workspaces'
@@ -378,11 +419,13 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/task/$taskId/'
     | '/$teamSlugOrId/prs-only/$owner/$repo/$number'
     | '/$teamSlugOrId/prs/$owner/$repo/$number'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/browser'
     | '/$teamSlugOrId/task/$taskId/run/$runId/diff'
     | '/$teamSlugOrId/task/$taskId/run/$runId/pr'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/terminals'
     | '/$teamSlugOrId/task/$taskId/run/$runId/vscode'
     | '/$teamSlugOrId/task/$taskId/run/$runId'
-    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -393,6 +436,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/$teamSlugOrId'
     | '/debug'
     | '/profile'
@@ -402,6 +446,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/dashboard'
     | '/$teamSlugOrId/diff'
     | '/$teamSlugOrId/logs'
+    | '/$teamSlugOrId/previews'
     | '/$teamSlugOrId/prs'
     | '/$teamSlugOrId/settings'
     | '/$teamSlugOrId/workspaces'
@@ -412,11 +457,13 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/task/$taskId'
     | '/$teamSlugOrId/prs-only/$owner/$repo/$number'
     | '/$teamSlugOrId/prs/$owner/$repo/$number'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/browser'
     | '/$teamSlugOrId/task/$taskId/run/$runId/diff'
     | '/$teamSlugOrId/task/$taskId/run/$runId/pr'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/terminals'
     | '/$teamSlugOrId/task/$taskId/run/$runId/vscode'
     | '/$teamSlugOrId/task/$taskId/run/$runId'
-    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
   id:
     | '__root__'
     | '/'
@@ -428,6 +475,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/_layout/$teamSlugOrId'
     | '/_layout/debug'
     | '/_layout/profile'
@@ -438,6 +486,7 @@ export interface FileRouteTypes {
     | '/_layout/$teamSlugOrId/diff'
     | '/_layout/$teamSlugOrId/environments'
     | '/_layout/$teamSlugOrId/logs'
+    | '/_layout/$teamSlugOrId/previews'
     | '/_layout/$teamSlugOrId/prs'
     | '/_layout/$teamSlugOrId/settings'
     | '/_layout/$teamSlugOrId/workspaces'
@@ -449,11 +498,13 @@ export interface FileRouteTypes {
     | '/_layout/$teamSlugOrId/task/$taskId/'
     | '/_layout/$teamSlugOrId/prs-only/$owner/$repo/$number'
     | '/_layout/$teamSlugOrId/prs/$owner/$repo/$number'
+    | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/browser'
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/diff'
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/pr'
+    | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/terminals'
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/vscode'
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/'
-    | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
+    | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -466,6 +517,7 @@ export interface RootRouteChildren {
   ElectronWebContentsRoute: typeof ElectronWebContentsRoute
   MonacoSingleBufferRoute: typeof MonacoSingleBufferRoute
   SignInRoute: typeof SignInRoute
+  TeamSlugOrIdFeedRoute: typeof TeamSlugOrIdFeedRoute
   HandlerSplatRoute: typeof HandlerSplatRoute
 }
 
@@ -569,6 +621,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTeamSlugOrIdRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/$teamSlugOrId/feed': {
+      id: '/$teamSlugOrId/feed'
+      path: '/$teamSlugOrId/feed'
+      fullPath: '/$teamSlugOrId/feed'
+      preLoaderRoute: typeof TeamSlugOrIdFeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_layout/$teamSlugOrId/workspaces': {
       id: '/_layout/$teamSlugOrId/workspaces'
       path: '/workspaces'
@@ -588,6 +647,13 @@ declare module '@tanstack/react-router' {
       path: '/prs'
       fullPath: '/$teamSlugOrId/prs'
       preLoaderRoute: typeof LayoutTeamSlugOrIdPrsRouteImport
+      parentRoute: typeof LayoutTeamSlugOrIdRoute
+    }
+    '/_layout/$teamSlugOrId/previews': {
+      id: '/_layout/$teamSlugOrId/previews'
+      path: '/previews'
+      fullPath: '/$teamSlugOrId/previews'
+      preLoaderRoute: typeof LayoutTeamSlugOrIdPreviewsRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdRoute
     }
     '/_layout/$teamSlugOrId/logs': {
@@ -695,6 +761,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
     }
+    '/_layout/$teamSlugOrId/task/$taskId/run/$runId/terminals': {
+      id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/terminals'
+      path: '/run/$runId/terminals'
+      fullPath: '/$teamSlugOrId/task/$taskId/run/$runId/terminals'
+      preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRouteImport
+      parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
+    }
     '/_layout/$teamSlugOrId/task/$taskId/run/$runId/pr': {
       id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/pr'
       path: '/run/$runId/pr'
@@ -709,11 +782,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
     }
-    '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': {
-      id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
-      path: '/run/$runId/preview/$port'
-      fullPath: '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
-      preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRouteImport
+    '/_layout/$teamSlugOrId/task/$taskId/run/$runId/browser': {
+      id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/browser'
+      path: '/run/$runId/browser'
+      fullPath: '/$teamSlugOrId/task/$taskId/run/$runId/browser'
+      preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRouteImport
+      parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
+    }
+    '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': {
+      id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
+      path: '/run/$runId/preview/$previewId'
+      fullPath: '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
+      preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
     }
   }
@@ -759,27 +839,33 @@ const LayoutTeamSlugOrIdPrsRouteWithChildren =
 
 interface LayoutTeamSlugOrIdTaskTaskIdRouteChildren {
   LayoutTeamSlugOrIdTaskTaskIdIndexRoute: typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 
 const LayoutTeamSlugOrIdTaskTaskIdRouteChildren: LayoutTeamSlugOrIdTaskTaskIdRouteChildren =
   {
     LayoutTeamSlugOrIdTaskTaskIdIndexRoute:
       LayoutTeamSlugOrIdTaskTaskIdIndexRoute,
+    LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute:
+      LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute,
     LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute:
       LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRoute,
     LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute:
       LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRoute,
+    LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute:
+      LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute,
     LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute:
       LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute,
     LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute:
       LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute,
-    LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute:
-      LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute,
+    LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute:
+      LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute,
   }
 
 const LayoutTeamSlugOrIdTaskTaskIdRouteWithChildren =
@@ -793,6 +879,7 @@ interface LayoutTeamSlugOrIdRouteChildren {
   LayoutTeamSlugOrIdDiffRoute: typeof LayoutTeamSlugOrIdDiffRoute
   LayoutTeamSlugOrIdEnvironmentsRoute: typeof LayoutTeamSlugOrIdEnvironmentsRouteWithChildren
   LayoutTeamSlugOrIdLogsRoute: typeof LayoutTeamSlugOrIdLogsRoute
+  LayoutTeamSlugOrIdPreviewsRoute: typeof LayoutTeamSlugOrIdPreviewsRoute
   LayoutTeamSlugOrIdPrsRoute: typeof LayoutTeamSlugOrIdPrsRouteWithChildren
   LayoutTeamSlugOrIdSettingsRoute: typeof LayoutTeamSlugOrIdSettingsRoute
   LayoutTeamSlugOrIdWorkspacesRoute: typeof LayoutTeamSlugOrIdWorkspacesRoute
@@ -808,6 +895,7 @@ const LayoutTeamSlugOrIdRouteChildren: LayoutTeamSlugOrIdRouteChildren = {
   LayoutTeamSlugOrIdEnvironmentsRoute:
     LayoutTeamSlugOrIdEnvironmentsRouteWithChildren,
   LayoutTeamSlugOrIdLogsRoute: LayoutTeamSlugOrIdLogsRoute,
+  LayoutTeamSlugOrIdPreviewsRoute: LayoutTeamSlugOrIdPreviewsRoute,
   LayoutTeamSlugOrIdPrsRoute: LayoutTeamSlugOrIdPrsRouteWithChildren,
   LayoutTeamSlugOrIdSettingsRoute: LayoutTeamSlugOrIdSettingsRoute,
   LayoutTeamSlugOrIdWorkspacesRoute: LayoutTeamSlugOrIdWorkspacesRoute,
@@ -847,6 +935,7 @@ const rootRouteChildren: RootRouteChildren = {
   ElectronWebContentsRoute: ElectronWebContentsRoute,
   MonacoSingleBufferRoute: MonacoSingleBufferRoute,
   SignInRoute: SignInRoute,
+  TeamSlugOrIdFeedRoute: TeamSlugOrIdFeedRoute,
   HandlerSplatRoute: HandlerSplatRoute,
 }
 export const routeTree = rootRouteImport

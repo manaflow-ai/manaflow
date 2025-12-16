@@ -1,0 +1,29 @@
+:root {
+  /* Z-Index Tokens (centralized, descriptive) */
+  --z-base: 0; /* default content */
+  --z-low: 10; /* subtle indicators, pills */
+  --z-dropdown: 20; /* small dropdowns/menus attached to buttons */
+  --z-sticky-low: 40; /* sticky bars below modals */
+  --z-sticky: 50; /* sticky headers, lightweight modals */
+  --z-modal: var(--z-sticky); /* generic modal surfaces sharing 50 */
+
+  --z-iframe: 9000; /* persistent iframes; just below overlays */
+  --z-maximized: 9501; /* maximized persistent iframes; above overlays */
+  --z-maximized-iframe: 9502; /* maximized iframe; above maximized persistent iframes */
+  --z-overlay-behind: 9499; /* behind primary overlays */
+  --z-overlay: 9500; /* general overlays; sits below context menus/tooltips */
+  --z-persistent-iframe-container: 9999; /* container for persistent iframes */
+  --z-context-menu: 10000; /* context menus */
+  --z-popover: 10001; /* anchored popovers/sheets */
+  --z-popover-hover: 10010; /* hover states within popovers */
+  --z-tooltip: 10020; /* tooltips above popovers */
+
+  --z-floating-high-overlay: 999998; /* overlays for transient floating UIs */
+  --z-floating-high: 999999; /* transient floating UIs */
+  --z-global-blocking: 99999999; /* full-app blocking overlays (auth/boot) */
+  /* Keep resize handle above overlays but below popovers/menus */
+  --z-sidebar-resize-handle: 9998; /* resize handle */
+
+  /* Highest in app: CommandBar must win over everything */
+  --z-commandbar: 100000000;
+}

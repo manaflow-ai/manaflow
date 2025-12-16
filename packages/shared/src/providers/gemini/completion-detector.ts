@@ -1,9 +1,174 @@
 import type { FSWatcher } from "node:fs";
+import { getGeminiTelemetryPath } from "./telemetry";
+
+type CompletionSignal =
+  | "next_speaker_ready"
+  | "agent_goal"
+  | "complete_task"
+  | "conversation_finished";
+
+type AttributeMap = Record<string, unknown>;
+
+function extractAttributes(event: unknown): AttributeMap | null {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const record = event as Record<string, unknown>;
+  const direct = record.attributes;
+  if (direct && typeof direct === "object") {
+    return direct as AttributeMap;
+  }
+  const resource = record.resource;
+  if (
+    resource &&
+    typeof resource === "object" &&
+    "attributes" in resource &&
+    resource.attributes &&
+    typeof resource.attributes === "object"
+  ) {
+    return resource.attributes as AttributeMap;
+  }
+  const body = record.body;
+  if (
+    body &&
+    typeof body === "object" &&
+    "attributes" in body &&
+    body.attributes &&
+    typeof body.attributes === "object"
+  ) {
+    return body.attributes as AttributeMap;
+  }
+  return null;
+}
+
+function chooseAttr(
+  attrs: AttributeMap,
+  keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = attrs[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function classifyTelemetryEvent(event: unknown): CompletionSignal | null {
+  const attrs = extractAttributes(event);
+  if (!attrs) return null;
+
+  const eventName = chooseAttr(attrs, ["event.name", "event_name"]);
+  if (!eventName) return null;
+
+  if (eventName === "gemini_cli.next_speaker_check") {
+    const result = chooseAttr(attrs, ["result"]);
+    if (result === "user") {
+      return "next_speaker_ready";
+    }
+    return null;
+  }
+
+  if (eventName === "gemini_cli.tool_call") {
+    const fnName = chooseAttr(attrs, [
+      "function_name",
+      "functionName",
+      "function",
+    ]);
+    if (fnName === "complete_task") {
+      return "complete_task";
+    }
+    return null;
+  }
+
+  if (eventName === "gemini_cli.agent.finish") {
+    const terminateReason = chooseAttr(attrs, [
+      "terminate_reason",
+      "terminateReason",
+    ]);
+    if (terminateReason === "GOAL") {
+      return "agent_goal";
+    }
+    return null;
+  }
+
+  if (eventName === "gemini_cli.conversation_finished") {
+    return "conversation_finished";
+  }
+
+  return null;
+}
+
+function createJsonStreamParser(onObject: (obj: unknown) => void) {
+  let collecting = false;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let buf = "";
+
+  return (chunk: string) => {
+    for (let i = 0; i < chunk.length; i++) {
+      const ch = chunk[i];
+
+      if (inString) {
+        buf += ch;
+        if (escape) {
+          escape = false;
+        } else if (ch === "\\") {
+          escape = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        if (collecting) buf += ch;
+        continue;
+      }
+
+      if (ch === "{") {
+        if (!collecting) {
+          collecting = true;
+          depth = 1;
+          buf = "{";
+        } else {
+          depth++;
+          buf += ch;
+        }
+        continue;
+      }
+
+      if (ch === "}") {
+        if (collecting) {
+          depth--;
+          buf += ch;
+          if (depth === 0) {
+            try {
+              const obj = JSON.parse(buf);
+              onObject(obj);
+            } catch {
+              // Ignore parse errors and try to resume on the next object
+            }
+            collecting = false;
+            buf = "";
+          }
+        }
+        continue;
+      }
+
+      if (collecting) {
+        buf += ch;
+      }
+    }
+  };
+}
 
 export function startGeminiCompletionDetector(
   taskRunId: string
 ): Promise<void> {
-  const telemetryPath = `/tmp/gemini-telemetry-${taskRunId}.log`;
+  const telemetryPath = getGeminiTelemetryPath(taskRunId);
   let fileWatcher: FSWatcher | null = null;
   let dirWatcher: FSWatcher | null = null;
 
@@ -19,73 +184,29 @@ export function startGeminiCompletionDetector(
       const dir = path.dirname(telemetryPath);
       const file = path.basename(telemetryPath);
 
-      // Lightweight JSON object stream parser for concatenated objects
-      let buf = "";
-      let depth = 0;
-      let inString = false;
-      let escape = false;
-      const feed = (chunk: string, onObject: (obj: unknown) => void) => {
-        for (let i = 0; i < chunk.length; i++) {
-          const ch = chunk[i];
-          if (inString) {
-            buf += ch;
-            if (escape) {
-              escape = false;
-            } else if (ch === "\\") {
-              escape = true;
-            } else if (ch === '"') {
-              inString = false;
-            }
-            continue;
-          }
-          if (ch === '"') {
-            inString = true;
-            if (depth > 0) buf += ch;
-            continue;
-          }
-          if (ch === "{") {
-            depth++;
-            buf += ch;
-            continue;
-          }
-          if (ch === "}") {
-            depth--;
-            buf += ch;
-            if (depth === 0) {
-              try {
-                const obj = JSON.parse(buf);
-                onObject(obj);
-              } catch {
-                // ignore
-              }
-              buf = "";
-            }
-            continue;
-          }
-          if (depth > 0) buf += ch;
+      const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        try {
+          fileWatcher?.close();
+        } catch {
+          // ignore
         }
+        try {
+          dirWatcher?.close();
+        } catch {
+          // ignore
+        }
+        resolve();
       };
 
-      const isCompletionEvent = (event: unknown): boolean => {
-        if (!event || typeof event !== "object") return false;
-        const anyEvent = event as Record<string, unknown>;
-        const attrs =
-          (anyEvent.attributes as Record<string, unknown>) ||
-          (anyEvent.resource &&
-            (anyEvent.resource as Record<string, unknown>).attributes) ||
-          (anyEvent.body &&
-            (anyEvent.body as Record<string, unknown>).attributes);
-        if (!attrs || typeof attrs !== "object") return false;
-        const eventName =
-          (attrs as Record<string, unknown>)["event.name"] ||
-          (attrs as Record<string, unknown>)["event_name"];
-        const result = (attrs as Record<string, unknown>).result as
-          | string
-          | undefined;
-        return (
-          eventName === "gemini_cli.next_speaker_check" && result === "user"
-        );
-      };
+      const parser = createJsonStreamParser((obj) => {
+        if (stopped) return;
+        const signal = classifyTelemetryEvent(obj);
+        if (signal) {
+          stop();
+        }
+      });
 
       const readNew = async (initial = false) => {
         try {
@@ -95,51 +216,33 @@ export function startGeminiCompletionDetector(
             lastSize = st.size;
             return;
           }
-          const end = st.size - 1;
           await new Promise<void>((r) => {
             const rs = createReadStream(telemetryPath, {
               start,
-              end,
+              end: st.size - 1,
               encoding: "utf-8",
             });
             rs.on("data", (chunk: string | Buffer) => {
               const text =
                 typeof chunk === "string" ? chunk : chunk.toString("utf-8");
-              feed(text, (obj) => {
-                try {
-                  if (!stopped && isCompletionEvent(obj)) {
-                    stopped = true;
-                    try {
-                      fileWatcher?.close();
-                    } catch {
-                      // ignore
-                    }
-                    try {
-                      dirWatcher?.close();
-                    } catch {
-                      // ignore
-                    }
-                    resolve();
-                  }
-                } catch {
-                  // ignore
-                }
-              });
+              parser(text);
             });
             rs.on("end", () => r());
             rs.on("error", () => r());
           });
           lastSize = st.size;
         } catch {
-          // until file exists
+          // File may not exist yet; wait for watcher
         }
       };
 
       const attachFileWatcher = async () => {
+        if (stopped) return;
         try {
           const st = await fsp.stat(telemetryPath);
           lastSize = st.size;
           await readNew(true);
+          if (stopped) return;
           fileWatcher = watch(
             telemetryPath,
             { persistent: false, encoding: "utf8" },
@@ -150,7 +253,7 @@ export function startGeminiCompletionDetector(
             }
           );
         } catch {
-          // not created yet
+          // File not present; wait for directory watcher
         }
       };
 
@@ -158,14 +261,14 @@ export function startGeminiCompletionDetector(
         dir,
         { persistent: false, encoding: "utf8" },
         (_eventType: string, filename: string | null) => {
-          const name = filename;
-          if (!stopped && name === file) {
+          if (stopped) return;
+          if (filename && filename.toString() === file) {
             void attachFileWatcher();
           }
         }
       );
 
-      void attachFileWatcher();
+      await attachFileWatcher();
     })();
   });
 }

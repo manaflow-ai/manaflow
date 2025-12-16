@@ -3,6 +3,7 @@ import {
   ANTHROPIC_API_KEY,
   OPENAI_API_KEY,
   OPENROUTER_API_KEY,
+  XAI_API_KEY,
 } from "../../apiKeys";
 import { checkOpencodeRequirements } from "./check-requirements";
 import { startOpenCodeCompletionDetector } from "./completion-detector";
@@ -10,6 +11,7 @@ import { startOpenCodeCompletionDetector } from "./completion-detector";
 import {
   getOpencodeEnvironment,
   getOpencodeEnvironmentSkipAuth,
+  getOpencodeEnvironmentWithXai,
 } from "./environment";
 
 export const OPENCODE_GROK_CODE_CONFIG: AgentConfig = {
@@ -217,5 +219,37 @@ export const OPENCODE_OPUS_4_1_20250805_CONFIG: AgentConfig = {
   environment: getOpencodeEnvironment,
   checkRequirements: checkOpencodeRequirements,
   apiKeys: [ANTHROPIC_API_KEY],
+  completionDetector: startOpenCodeCompletionDetector,
+};
+
+export const OPENCODE_GROK_4_1_FAST_CONFIG: AgentConfig = {
+  name: "opencode/grok-4-1-fast",
+  command: "bunx",
+  args: [
+    "opencode-ai@latest",
+    "--prompt",
+    "$PROMPT",
+    "--model",
+    "xai/grok-4-1-fast",
+  ],
+  environment: getOpencodeEnvironmentWithXai,
+  checkRequirements: checkOpencodeRequirements,
+  apiKeys: [XAI_API_KEY],
+  completionDetector: startOpenCodeCompletionDetector,
+};
+
+export const OPENCODE_GROK_4_1_FAST_NON_REASONING_CONFIG: AgentConfig = {
+  name: "opencode/grok-4-1-fast-non-reasoning",
+  command: "bunx",
+  args: [
+    "opencode-ai@latest",
+    "--prompt",
+    "$PROMPT",
+    "--model",
+    "xai/grok-4-1-fast-non-reasoning",
+  ],
+  environment: getOpencodeEnvironmentWithXai,
+  checkRequirements: checkOpencodeRequirements,
+  apiKeys: [XAI_API_KEY],
   completionDetector: startOpenCodeCompletionDetector,
 };

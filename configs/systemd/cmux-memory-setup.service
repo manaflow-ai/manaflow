@@ -1,0 +1,15 @@
+[Unit]
+Description=Cmux memory safeguards (zram, swapfile, systemd limits)
+DefaultDependencies=no
+After=local-fs.target systemd-modules-load.service
+Before=swap.target
+ConditionPathExists=/usr/local/sbin/cmux-configure-memory
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cmux-configure-memory
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=swap.target

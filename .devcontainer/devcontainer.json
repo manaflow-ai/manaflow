@@ -28,30 +28,22 @@
       }
     }
   },
-  "forwardPorts": [5173, 9777, 9778, 6791],
+  "forwardPorts": [5173, 9776, 9779],
   "portsAttributes": {
     "9776": {
-      "label": "Backend Server",
+      "label": "apps/server",
       "onAutoForward": "notify"
     },
-    "9777": {
-      "label": "Convex Dev Server",
+    "9779": {
+      "label": "apps/www",
       "onAutoForward": "notify"
-    },
-    "9778": {
-      "label": "Convex Site Origin",
-      "onAutoForward": "notify"
-    },
-    "6791": {
-      "label": "Convex Dashboard",
-      "onAutoForward": "openBrowser"
     },
     "5173": {
-      "label": "Frontend (Vite)",
-      "onAutoForward": "openBrowser"
+      "label": "apps/client",
+      "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "CI=1 pnpm install --frozen-lockfile --prefer-offline",
+  "postCreateCommand": "CI=1 bun install --frozen-lockfile",
   "postStartCommand": "bash /root/workspace/scripts/dev.sh",
   "remoteUser": "root",
   "features": {

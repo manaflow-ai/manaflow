@@ -1,0 +1,18 @@
+[Unit]
+Description=Cmux Proxy Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/app/app.env
+LogsDirectory=cmux
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/bin/bash -lc 'exec /usr/local/bin/cmux-proxy --listen 0.0.0.0:39379'
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/cmux-proxy.log
+StandardError=append:/var/log/cmux/cmux-proxy.log
+
+[Install]
+WantedBy=cmux.target

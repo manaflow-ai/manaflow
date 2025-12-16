@@ -8,8 +8,8 @@ export interface StackUserLike {
   getAuthJson: () => Promise<{ accessToken: string | null }>;
 }
 
-// Refresh every 30 minutes by default
-export const defaultAuthJsonRefreshInterval = 30 * 60 * 1000;
+// Refresh every 9 minutes to beat the ~10 minute Stack access token expiry window
+export const defaultAuthJsonRefreshInterval = 9 * 60 * 1000;
 
 export function authJsonQueryOptions() {
   return queryOptions<AuthJson>({

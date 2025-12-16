@@ -2,6 +2,10 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
+import {
+  DEFAULT_AMP_PROXY_PORT,
+  DEFAULT_AMP_PROXY_URL,
+} from "./constants";
 
 export async function getAmpEnvironment(
   ctx: EnvironmentContext
@@ -66,7 +70,8 @@ export async function getAmpEnvironment(
   }
 
   // The local proxy that Amp CLI should talk to
-  env.AMP_URL = "http://localhost:39379";
+  env.AMP_PROXY_PORT = String(DEFAULT_AMP_PROXY_PORT);
+  env.AMP_URL = DEFAULT_AMP_PROXY_URL;
   // Upstream URL that the proxy should target (avoid loop with AMP_URL)
   env.AMP_UPSTREAM_URL = "https://ampcode.com";
 

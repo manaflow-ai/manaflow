@@ -1,7 +1,8 @@
 "use node";
 
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateObject, type LanguageModel } from "ai";
 import { ConvexError, v } from "convex/values";
 import {
   CrownEvaluationResponseSchema,
@@ -9,11 +10,13 @@ import {
   type CrownEvaluationCandidate,
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
-} from "../../../shared/src/convex-safe";
+} from "@cmux/shared/convex-safe";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
 
-const MODEL_NAME = "claude-3-5-sonnet-20241022";
+const OPENAI_CROWN_MODEL = "gpt-5-mini";
+const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -24,12 +27,38 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
+function resolveCrownModel(): {
+  provider: "openai" | "anthropic";
+  model: LanguageModel;
+} {
+  const openaiKey = env.OPENAI_API_KEY;
+  if (openaiKey) {
+    const openai = createOpenAI({
+      apiKey: openaiKey,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
+  }
+
+  const anthropicKey = env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    const anthropic = createAnthropic({ apiKey: anthropicKey });
+    return {
+      provider: "anthropic",
+      model: anthropic(ANTHROPIC_CROWN_MODEL),
+    };
+  }
+
+  throw new ConvexError(
+    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)"
+  );
+}
+
 export async function performCrownEvaluation(
-  apiKey: string,
   prompt: string,
-  candidates: CrownEvaluationCandidate[],
+  candidates: CrownEvaluationCandidate[]
 ): Promise<CrownEvaluationResponse> {
-  const anthropic = createAnthropic({ apiKey });
+  const { model, provider } = resolveCrownModel();
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -52,7 +81,7 @@ export async function performCrownEvaluation(
     candidates: normalizedCandidates,
   };
 
-  const anthropicPrompt = `You are evaluating code implementations from different AI models.
+  const evaluationPrompt = `You are evaluating code implementations from different AI models.
 
 Here are the candidates to evaluate:
 ${JSON.stringify(evaluationData, null, 2)}
@@ -76,12 +105,12 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 
   try {
     const { object } = await generateObject({
-      model: anthropic(MODEL_NAME),
+      model,
       schema: CrownEvaluationResponseSchema,
       system:
         "You select the best implementation from structured diff inputs and explain briefly why.",
-      prompt: anthropicPrompt,
-      temperature: 0,
+      prompt: evaluationPrompt,
+      ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 
@@ -93,13 +122,12 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 }
 
 export async function performCrownSummarization(
-  apiKey: string,
   prompt: string,
-  gitDiff: string,
+  gitDiff: string
 ): Promise<CrownSummarizationResponse> {
-  const anthropic = createAnthropic({ apiKey });
+  const { model, provider } = resolveCrownModel();
 
-  const anthropicPrompt = `You are an expert reviewer summarizing a pull request.
+  const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
 GOAL
 - Explain succinctly what changed and why.
@@ -128,12 +156,12 @@ OUTPUT FORMAT (Markdown)
 
   try {
     const { object } = await generateObject({
-      model: anthropic(MODEL_NAME),
+      model,
       schema: CrownSummarizationResponseSchema,
       system:
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
-      prompt: anthropicPrompt,
-      temperature: 0,
+      prompt: summarizationPrompt,
+      ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 
@@ -151,11 +179,7 @@ export const evaluate = action({
     teamSlugOrId: v.string(),
   },
   handler: async (_ctx, args) => {
-    // Get the API key for this team
-    const apiKey = env.ANTHROPIC_API_KEY;
-
-    // Perform the evaluation
-    return performCrownEvaluation(apiKey, args.prompt, args.candidates);
+    return performCrownEvaluation(args.prompt, args.candidates);
   },
 });
 
@@ -166,10 +190,6 @@ export const summarize = action({
     teamSlugOrId: v.string(),
   },
   handler: async (_ctx, args) => {
-    // Get the API key for this team
-    const apiKey = env.ANTHROPIC_API_KEY;
-
-    // Perform the summarization
-    return performCrownSummarization(apiKey, args.prompt, args.gitDiff);
+    return performCrownSummarization(args.prompt, args.gitDiff);
   },
 });

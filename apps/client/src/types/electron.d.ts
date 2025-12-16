@@ -42,6 +42,7 @@ interface CmuxRectangle {
 interface CmuxWebContentsViewAPI {
   create: (options: {
     url: string;
+    requestUrl?: string;
     bounds?: CmuxRectangle;
     backgroundColor?: string;
     borderRadius?: number;
@@ -80,6 +81,9 @@ interface CmuxWebContentsViewAPI {
     options?: { mode?: ElectronDevToolsMode }
   ) => Promise<{ ok: boolean }>;
   closeDevTools: (id: number) => Promise<{ ok: boolean }>;
+  isFocused: (
+    id: number
+  ) => Promise<{ ok: boolean; focused: boolean }>;
 }
 
 interface CmuxAPI {

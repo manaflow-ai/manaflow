@@ -8,7 +8,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "deploy:prod": "convex deploy --env-file ../../.env.production"
+    "deploy:prod": "convex deploy --env-file ../../.env.production",
+    "setup": "bun run scripts/setup.ts",
+    "setup0": "CONVEX_DEPLOYMENT= CONVEX_AGENT_MODE=anonymous bunx convex dev --configure new --dev-deployment local --project cmux_local --once --run seed"
   },
   "exports": {
     ".": {
@@ -27,22 +29,26 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.18",
     "@ai-sdk/gateway": "^1.0.28",
+    "@ai-sdk/openai": "^2.0.19",
     "@ai-sdk/provider-utils": "^3.0.9",
+    "@cmux/morphcloud-openapi-client": "workspace:*",
+    "@cmux/shared": "workspace:*",
     "@convex-dev/migrations": "^0.2.9",
-    "@stackframe/js": "^2.8.41",
-    "@stackframe/stack": "^2.8.41",
+    "@stackframe/js": "^2.8.48",
+    "@stackframe/stack": "^2.8.48",
     "@t3-oss/env-core": "^0.13.8",
     "ai": "^5.0.51",
-    "convex": "1.27.1",
+    "convex": "1.29.3",
     "convex-helpers": "^0.1.104",
     "jose": "^6.0.7",
+    "octokit": "^5.0.5",
     "socket.io-client": "^4.8.1",
     "svix": "^1.75.0",
     "zod": "^4.1.5"
   },
   "devDependencies": {
     "@octokit/webhooks-types": "^7.6.1",
-    "typescript": "^5.8.3",
+    "typescript": "^5.9.3",
     "vitest": "3.2.4"
   }
 }

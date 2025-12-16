@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+
+log() {
+  printf '[cmux-dockerd] %s\n' "$*"
+}
+
+if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^docker\\.service'; then
+  log "starting systemd docker.service"
+  systemctl start docker.service
+  systemctl start docker.socket >/dev/null 2>&1 || true
+
+  for attempt in $(seq 1 30); do
+    if systemctl is-active --quiet docker.service; then
+      log "docker.service is active"
+      exec sleep infinity
+    fi
+    if [ "$attempt" -eq 30 ]; then
+      log "docker.service failed to reach active state" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+fi
+
+dockerd_path="$(command -v dockerd || true)"
+if [ -z "$dockerd_path" ]; then
+  log "unable to locate dockerd binary" >&2
+  exit 1
+fi
+
+log "launching dockerd directly from ${dockerd_path}"
+exec "$dockerd_path"

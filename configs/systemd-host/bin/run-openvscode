@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMUX_HOME="${CMUX_HOME:-/opt/cmux}"
+CMUX_OPENVSCODE_PORT="${CMUX_OPENVSCODE_PORT:-39378}"
+VSCODE_THEME="${VSCODE_THEME:-}"
+
+export HOME="${CMUX_HOME}"
+export CMUX_HOME
+export VSCODE_THEME
+
+mkdir -p "${CMUX_HOME}/workspace" /var/log/cmux
+
+if [ -x "${CMUX_HOME}/bin/configure-openvscode" ]; then
+  "${CMUX_HOME}/bin/configure-openvscode"
+fi
+
+exec "${CMUX_HOME}/openvscode-server/bin/openvscode-server" \
+  --host 0.0.0.0 \
+  --port "${CMUX_OPENVSCODE_PORT}" \
+  --without-connection-token \
+  --disable-workspace-trust \
+  --disable-telemetry \
+  --disable-updates \
+  --profile default-profile \
+  --verbose \
+  "${CMUX_HOME}/workspace"

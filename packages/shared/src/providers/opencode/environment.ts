@@ -4,8 +4,8 @@ import type {
 } from "../common/environment-result";
 
 async function buildOpencodeEnvironment(
-  _ctx: EnvironmentContext,
-  opts: { skipAuth: boolean }
+  ctx: EnvironmentContext,
+  opts: { skipAuth: boolean; xaiApiKey?: boolean }
 ): Promise<EnvironmentResult> {
   // These must be lazy since configs are imported into the browser
   const { readFile } = await import("node:fs/promises");
@@ -98,6 +98,11 @@ export const NotificationPlugin = async ({ project: _project, client: _client, $
     mode: "644",
   });
 
+  // Pass XAI_API_KEY if requested and available
+  if (opts.xaiApiKey && ctx.apiKeys?.XAI_API_KEY) {
+    env.XAI_API_KEY = ctx.apiKeys.XAI_API_KEY;
+  }
+
   return { files, env, startupCommands };
 }
 
@@ -111,4 +116,10 @@ export async function getOpencodeEnvironmentSkipAuth(
   ctx: EnvironmentContext
 ): Promise<EnvironmentResult> {
   return buildOpencodeEnvironment(ctx, { skipAuth: true });
+}
+
+export async function getOpencodeEnvironmentWithXai(
+  ctx: EnvironmentContext
+): Promise<EnvironmentResult> {
+  return buildOpencodeEnvironment(ctx, { skipAuth: false, xaiApiKey: true });
 }

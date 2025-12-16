@@ -1,0 +1,478 @@
+#!/usr/bin/env bash
+# Configure zram, swapfile, sysctl, and systemd resource protections for cmux.
+# This script is idempotent and safe to run multiple times.
+
+set -euo pipefail
+
+log() {
+  printf '[cmux-memory] %s\n' "$*"
+}
+
+capture_output() {
+  # Capture stdout/stderr of the passed command.
+  local output
+  if output="$("$@" 2>&1)"; then
+    printf '%s\n' "$output"
+  else
+    printf '%s\n' "$output"
+  fi
+}
+
+write_file_if_changed() {
+  # Args: path mode content
+  local path="$1"
+  local mode="$2"
+  local content="$3"
+  local tmp
+  tmp="$(mktemp)"
+  printf '%s' "$content" >"$tmp"
+  if [ ! -f "$path" ] || ! cmp -s "$tmp" "$path"; then
+    install -Dm"$mode" "$tmp" "$path"
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+numfmt_bytes() {
+  local value="$1"
+  if command -v numfmt >/dev/null 2>&1; then
+    numfmt --to=iec --suffix=B "$value"
+  else
+    printf '%sB' "$value"
+  fi
+}
+
+normalize_whitespace() {
+  local text="$1"
+  text="$(printf '%s' "$text" | tr '\n' ' ')"
+  text="$(printf '%s' "$text" | sed -e 's/[[:space:]]\+/ /g' -e 's/^ //; s/ $//')"
+  printf '%s' "$text"
+}
+
+add_unique() {
+  # Append to a bash array if not already present.
+  local value="$1"
+  local -n arr_ref="$2"
+  for existing in "${arr_ref[@]:-}"; do
+    if [ "$existing" = "$value" ]; then
+      return 0
+    fi
+  done
+  arr_ref+=("$value")
+}
+
+container_type=""
+if command -v systemd-detect-virt >/dev/null 2>&1; then
+  container_type="$(systemd-detect-virt --container 2>/dev/null || true)"
+  if [ "$container_type" = "none" ]; then
+    container_type=""
+  fi
+fi
+if [ -z "$container_type" ]; then
+  if [ -f /run/.containerenv ]; then
+    container_type="podman"
+  elif [ -f /.dockerenv ]; then
+    container_type="docker"
+  fi
+fi
+in_container=0
+if [ -n "$container_type" ]; then
+  in_container=1
+fi
+memory_container="$in_container"
+
+force_swap="${CMUX_FORCE_SWAP:-0}"
+container_label="${container_type:-container}"
+if [ "$in_container" -eq 1 ] && [ "$force_swap" = "1" ]; then
+  log "CMUX_FORCE_SWAP enabled; overriding container memory guard (detected ${container_label})."
+  summary+=("Overrode container memory guard to provision swap/zram inside ${container_label}.")
+  memory_container=0
+fi
+
+before_free="$(capture_output free -h || true)"
+before_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
+before_zram="$(capture_output zramctl || true)"
+
+declare -a candidate_units=(ssh.service sshd.service cmux-ide.service cmux-openvscode.service code-server.service openvscode-server.service)
+declare -a report_units=()
+
+for unit in "${candidate_units[@]}"; do
+  if systemctl cat "$unit" >/dev/null 2>&1; then
+    add_unique "$unit" report_units
+  fi
+done
+
+declare -A before_systemd=()
+for unit in "${report_units[@]}"; do
+  before_systemd["$unit"]="$(systemctl show -p MemoryLow,CPUWeight,IOWeight "$unit" 2>&1 || true)"
+done
+
+summary=()
+
+# Detect distro family and available zram backend.
+distro_id=""
+distro_like=""
+if [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  distro_id="${ID:-}"
+  distro_like="${ID_LIKE:-}"
+fi
+
+lower_like=" ${distro_like,,} "
+zram_priority=120
+zram_unit=""
+zram_config_path=""
+
+if systemctl list-unit-files zramswap.service >/dev/null 2>&1; then
+  zram_unit="zramswap.service"
+  zram_config_path="/etc/default/zramswap"
+elif systemctl list-unit-files zram-config.service >/dev/null 2>&1; then
+  zram_unit="zram-config.service"
+  zram_config_path="/etc/default/zram-config"
+elif [ -f /etc/default/zramswap ]; then
+  zram_unit="zramswap.service"
+  zram_config_path="/etc/default/zramswap"
+elif [ -f /etc/default/zram-config ]; then
+  zram_unit="zram-config.service"
+  zram_config_path="/etc/default/zram-config"
+fi
+
+use_zram_tools=0
+if [ -n "$zram_unit" ]; then
+  use_zram_tools=1
+elif [ "${distro_id,,}" = "debian" ] || [ "${distro_id,,}" = "ubuntu" ] || [[ "$lower_like" == *" debian "* ]] || [[ "$lower_like" == *" ubuntu "* ]]; then
+  zram_unit="zramswap.service"
+  zram_config_path="/etc/default/zramswap"
+  use_zram_tools=1
+fi
+
+zram_changed=0
+if [ "$memory_container" -eq 1 ]; then
+  log "Container environment (${container_type:-unknown}) detected; skipping zram configuration."
+  summary+=("Skipped zram configuration inside container environment.")
+else
+  if [ "$use_zram_tools" -eq 1 ]; then
+    config_path="${zram_config_path:-/etc/default/zramswap}"
+    case "$(basename "$config_path")" in
+      zram-config)
+        config_content=$'# Managed by cmux-configure-memory\nZRAM_NUM_DEVICES=1\nALGO=zstd\nPERCENT=50\nPRIORITY=120\n'
+        ;;
+      *)
+        config_content=$'# Managed by cmux-configure-memory\nALGO=zstd\nPERCENT=50\nPRIORITY=120\n'
+        ;;
+    esac
+    if write_file_if_changed "$config_path" "0644" "$config_content"; then
+      zram_changed=1
+      log "Updated ${config_path}"
+    else
+      log "zram-tools config already up to date"
+    fi
+    if systemctl list-unit-files "${zram_unit}" >/dev/null 2>&1; then
+      systemctl enable "${zram_unit}" >/dev/null 2>&1 || true
+      if [ "$zram_changed" -eq 1 ]; then
+        systemctl restart "${zram_unit}" || true
+      else
+        systemctl try-restart "${zram_unit}" || true
+      fi
+    else
+      log "${zram_unit:-zram-tools service} missing; skipping enable/restart"
+    fi
+    summary+=("Configured zram-tools (${zram_unit:-unknown}) to allocate 50% RAM with zstd (priority ${zram_priority}).")
+  else
+    config_content=$'# Managed by cmux-configure-memory\n[zram0]\ncompression-algorithm = zstd\nzram-size = ram / 2\nswap-priority = 120\n'
+    if write_file_if_changed "/etc/systemd/zram-generator.conf" "0644" "$config_content"; then
+      zram_changed=1
+      log "Updated /etc/systemd/zram-generator.conf"
+    else
+      log "zram-generator config already up to date"
+    fi
+    if [ "$zram_changed" -eq 1 ]; then
+      systemctl daemon-reload || true
+    fi
+    if systemctl list-unit-files systemd-zram-setup@zram0.service >/dev/null 2>&1; then
+      systemctl enable systemd-zram-setup@zram0.service >/dev/null 2>&1 || true
+      if [ "$zram_changed" -eq 1 ]; then
+        systemctl restart systemd-zram-setup@zram0.service || true
+      else
+        systemctl try-restart systemd-zram-setup@zram0.service || true
+      fi
+    else
+      log "systemd-zram-setup@zram0.service missing; skipping enable/restart"
+    fi
+    summary+=("Configured zram-generator to allocate 50% RAM with zstd (priority ${zram_priority}).")
+  fi
+fi
+
+# Ensure zram device is using the requested compression algorithm; restart once if needed.
+if [ "$memory_container" -eq 0 ] && command -v zramctl >/dev/null 2>&1; then
+  current_algo="$(zramctl | awk 'NR==2 {print tolower($2)}')"
+  target_algo="zstd"
+  available_algos=""
+  if [ -r /sys/block/zram0/comp_algorithm ]; then
+    available_algos="$(tr -d '[]' </sys/block/zram0/comp_algorithm)"
+  fi
+  if [ -n "$available_algos" ] && ! printf '%s\n' "$available_algos" | tr ' ' '\n' | awk '{if (tolower($0)=="zstd") found=1} END{exit !found}'; then
+    log "zstd compression not supported by current kernel (available: ${available_algos})."
+    summary+=("Kernel lacks zstd zram support; continuing with algorithm ${current_algo:-unknown}.")
+    target_algo=""
+  fi
+  if [ -n "$target_algo" ] && [ -n "$current_algo" ] && [ "$current_algo" != "$target_algo" ]; then
+    if [ "$use_zram_tools" -eq 1 ] && [ -n "$zram_unit" ] && systemctl list-unit-files "${zram_unit}" >/dev/null 2>&1; then
+      log "Current zram algorithm is ${current_algo}; restarting ${zram_unit} to apply ${target_algo}."
+      systemctl restart "${zram_unit}" || true
+    elif systemctl list-unit-files systemd-zram-setup@zram0.service >/dev/null 2>&1; then
+      log "Current zram algorithm is ${current_algo}; restarting systemd-zram-setup@zram0.service to apply ${target_algo}."
+      systemctl restart systemd-zram-setup@zram0.service || true
+    fi
+  fi
+fi
+
+# Swapfile configuration
+swapfile_path="/var/swap/cmux-swapfile"
+swapfile_size_gib=0
+swapfile_override_applied=0
+swapfile_size_override="${CMUX_SWAPFILE_SIZE_GIB:-}"
+if [ -n "$swapfile_size_override" ]; then
+  case "$swapfile_size_override" in
+    *[!0-9]*)
+      log "Ignoring invalid CMUX_SWAPFILE_SIZE_GIB='${swapfile_size_override}' (expected positive integer GiB)."
+      ;;
+    *)
+      if [ "$swapfile_size_override" -le 0 ]; then
+        log "Ignoring non-positive CMUX_SWAPFILE_SIZE_GIB='${swapfile_size_override}'."
+      else
+        swapfile_size_gib="$swapfile_size_override"
+        swapfile_override_applied=1
+        log "Using swapfile size override: ${swapfile_size_gib}GiB."
+      fi
+      ;;
+  esac
+fi
+
+# Size swap at roughly half of RAM while avoiding oversized files on small disks.
+if [ "$swapfile_override_applied" -eq 0 ]; then
+  mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+  if [ "$mem_total_kib" -gt 0 ]; then
+    mem_total_gib=$(( (mem_total_kib + 1024 * 1024 - 1) / (1024 * 1024) ))
+    swapfile_size_gib=$((mem_total_gib / 2))
+  fi
+  if [ "$swapfile_size_gib" -lt 4 ]; then
+    swapfile_size_gib=4
+  fi
+  if [ "$swapfile_size_gib" -gt 6 ]; then
+    swapfile_size_gib=6
+  fi
+  if [ "$swapfile_size_gib" -eq 0 ]; then
+    swapfile_size_gib=4
+  fi
+fi
+swapfile_bytes=$((swapfile_size_gib * 1024 * 1024 * 1024))
+swapfile_dir="$(dirname "$swapfile_path")"
+
+if [ "$memory_container" -eq 1 ]; then
+  log "Container environment (${container_type:-unknown}) detected; skipping swapfile provisioning."
+  summary+=("Skipped swapfile provisioning inside container environment.")
+else
+  mkdir -p "$swapfile_dir"
+
+  swap_active_before=0
+  if grep -q "^${swapfile_path}[[:space:]]" /proc/swaps 2>/dev/null; then
+    swap_active_before=1
+  fi
+
+  ensure_swapfile=1
+  if [ -f "$swapfile_path" ]; then
+    current_size="$(stat -c '%s' "$swapfile_path" 2>/dev/null || echo 0)"
+    if [ "$current_size" -ne "$swapfile_bytes" ]; then
+      if [ "$swap_active_before" -eq 1 ]; then
+        swapoff "$swapfile_path" || true
+      fi
+      log "Recreating swapfile due to size mismatch (current $(numfmt_bytes "$current_size"), expected $(numfmt_bytes "$swapfile_bytes"))."
+    else
+      ensure_swapfile=0
+    fi
+  fi
+
+  swap_created=0
+  swap_reinitialized=0
+  if [ "$ensure_swapfile" -eq 1 ]; then
+    avail_blocks="$(stat -f --format='%a' "$swapfile_dir" 2>/dev/null || echo 0)"
+    block_size="$(stat -f --format='%S' "$swapfile_dir" 2>/dev/null || echo 1)"
+    avail_bytes=$((avail_blocks * block_size))
+    required_bytes=$((swapfile_bytes + 512 * 1024 * 1024)) # include 512MiB safety margin
+    if [ "$avail_bytes" -lt "$required_bytes" ]; then
+      log "Insufficient disk space for ${swapfile_size_gib}GiB swapfile at ${swapfile_path} (available $(numfmt_bytes "$avail_bytes")). Skipping creation."
+      ensure_swapfile=0
+      summary+=("Skipped ${swapfile_size_gib}GiB swapfile creation due to insufficient free space.")
+    else
+      if ! fallocate -l "${swapfile_size_gib}G" "$swapfile_path" 2>/dev/null; then
+        dd if=/dev/zero of="$swapfile_path" bs=1M count=$((swapfile_size_gib * 1024)) status=none
+      fi
+      swap_created=1
+      swap_reinitialized=1
+    fi
+  fi
+
+  swap_activation_error=""
+  swap_active_after=0
+  if [ -f "$swapfile_path" ]; then
+    chmod 600 "$swapfile_path"
+    if [ "$swap_reinitialized" -eq 1 ] || [ "$swap_active_before" -eq 0 ]; then
+      if ! mkswap -f "$swapfile_path" >/dev/null 2>&1; then
+        log "mkswap failed for ${swapfile_path}; removing incomplete file."
+        rm -f "$swapfile_path"
+      fi
+    fi
+    if [ -f "$swapfile_path" ]; then
+      if ! grep -q "^${swapfile_path}[[:space:]]" /etc/fstab 2>/dev/null; then
+        printf '%s\n' "${swapfile_path} none swap defaults,nofail,pri=10 0 0" >> /etc/fstab
+        log "Added ${swapfile_path} to /etc/fstab with priority 10."
+      fi
+      tmp_err="$(mktemp)"
+      if grep -q "^${swapfile_path}[[:space:]]" /proc/swaps 2>/dev/null; then
+        current_prio="$(awk -v path="${swapfile_path}" '$1 == path {print $5}' /proc/swaps 2>/dev/null | head -n1)"
+        if [ "${current_prio:-10}" -ne 10 ]; then
+          log "Resetting priority for ${swapfile_path} from ${current_prio:-unknown} to 10."
+          if ! swapoff "$swapfile_path" 2>"$tmp_err"; then
+            swap_activation_error="$(normalize_whitespace "$(cat "$tmp_err")")"
+          elif ! swapon -p 10 "$swapfile_path" 2>"$tmp_err"; then
+            swap_activation_error="$(normalize_whitespace "$(cat "$tmp_err")")"
+          fi
+        else
+          swap_active_after=1
+        fi
+      else
+        if ! swapon -p 10 "$swapfile_path" 2>"$tmp_err"; then
+          swap_activation_error="$(normalize_whitespace "$(cat "$tmp_err")")"
+        fi
+      fi
+      rm -f "$tmp_err"
+      if grep -q "^${swapfile_path}[[:space:]]" /proc/swaps 2>/dev/null; then
+        current_prio="$(awk -v path="${swapfile_path}" '$1 == path {print $5}' /proc/swaps 2>/dev/null | head -n1)"
+        if [ "${current_prio:-10}" -eq 10 ]; then
+          swap_active_after=1
+        else
+          swap_activation_error="swap priority ${current_prio:-unknown} (expected 10)"
+        fi
+      fi
+    fi
+  elif [ "$ensure_swapfile" -eq 1 ] && [ "$swap_reinitialized" -eq 0 ]; then
+    log "Swapfile creation skipped; no file at ${swapfile_path}."
+  fi
+
+  if [ ! -f "$swapfile_path" ] && [ "$ensure_swapfile" -eq 0 ] && [ "$swap_active_before" -eq 0 ]; then
+    log "Swapfile not present and not created."
+  fi
+
+  if [ ! -f "$swapfile_path" ] && [ "$swap_active_before" -eq 1 ]; then
+    log "Swapfile previously active but now missing; attempting cleanup."
+    swapoff "$swapfile_path" || true
+  fi
+
+  if [ -f "$swapfile_path" ]; then
+    if [ "$swap_active_after" -eq 1 ]; then
+      summary+=("Ensured ${swapfile_size_gib}GiB swapfile at ${swapfile_path} with priority 10.")
+    else
+      if [ -n "$swap_activation_error" ]; then
+        summary+=("Prepared ${swapfile_size_gib}GiB swapfile at ${swapfile_path}; activation pending (${swap_activation_error}).")
+      else
+        summary+=("Prepared ${swapfile_size_gib}GiB swapfile at ${swapfile_path}; activation pending.")
+      fi
+    fi
+  fi
+fi
+
+# Swappiness
+sysctl_conf=$'# Managed by cmux-configure-memory\nvm.swappiness = 70\n'
+if write_file_if_changed "/etc/sysctl.d/99-cmux-memory.conf" "0644" "$sysctl_conf"; then
+  log "Updated /etc/sysctl.d/99-cmux-memory.conf"
+else
+  log "vm.swappiness already set to 70"
+fi
+sysctl -q -p /etc/sysctl.d/99-cmux-memory.conf >/dev/null 2>&1 || true
+summary+=("Set vm.swappiness to 70.")
+
+# Systemd drop-ins
+declare -A memory_low_map=(
+  [ssh.service]="256M"
+  [sshd.service]="256M"
+  [cmux-ide.service]="2G"
+  [cmux-openvscode.service]="2G"
+  [code-server.service]="2G"
+  [openvscode-server.service]="2G"
+)
+
+managed_units=()
+dropin_content_template=$'[Service]\nMemoryLow=%s\nCPUWeight=200\nIOWeight=200\n'
+
+for unit in "${!memory_low_map[@]}"; do
+  if ! systemctl cat "$unit" >/dev/null 2>&1; then
+    log "Unit ${unit} not present; skipping drop-in."
+    continue
+  fi
+  add_unique "$unit" report_units
+  add_unique "$unit" managed_units
+  dropin_dir="/etc/systemd/system/${unit}.d"
+  mkdir -p "$dropin_dir"
+  printf -v dropin_content "$dropin_content_template" "${memory_low_map[$unit]}"
+  if write_file_if_changed "${dropin_dir}/90-cmux-memory.conf" "0644" "$dropin_content"; then
+    log "Updated drop-in for ${unit}"
+  else
+    log "Drop-in for ${unit} already up to date"
+  fi
+done
+
+if [ "${#managed_units[@]}" -gt 0 ]; then
+  systemctl daemon-reload || true
+  for unit in "${managed_units[@]}"; do
+    systemctl try-restart "$unit" || true
+  done
+  summary+=("Applied MemoryLow and CPU/IO weights to ${#managed_units[@]} systemd units.")
+else
+  log "No systemd units required drop-ins."
+fi
+
+after_free="$(capture_output free -h || true)"
+after_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
+after_zram="$(capture_output zramctl || true)"
+
+declare -A after_systemd=()
+for unit in "${report_units[@]}"; do
+  after_systemd["$unit"]="$(systemctl show -p MemoryLow,CPUWeight,IOWeight "$unit" 2>&1 || true)"
+done
+
+log "=== free -h (before) ==="
+printf '%s\n' "$before_free"
+log "=== free -h (after) ==="
+printf '%s\n' "$after_free"
+
+log "=== swapon --show (before) ==="
+printf '%s\n' "$before_swapon"
+log "=== swapon --show (after) ==="
+printf '%s\n' "$after_swapon"
+
+log "=== zramctl (before) ==="
+printf '%s\n' "$before_zram"
+log "=== zramctl (after) ==="
+printf '%s\n' "$after_zram"
+
+for unit in "${report_units[@]}"; do
+  log "=== systemctl show ${unit} (before) ==="
+  printf '%s\n' "${before_systemd[$unit]}"
+  log "=== systemctl show ${unit} (after) ==="
+  printf '%s\n' "${after_systemd[$unit]}"
+done
+
+if [ "${#summary[@]}" -gt 0 ]; then
+  log "Summary of changes:"
+  for entry in "${summary[@]}"; do
+    log " - ${entry}"
+  done
+else
+  log "Summary: No changes required; configuration already in place."
+fi
+
+exit 0

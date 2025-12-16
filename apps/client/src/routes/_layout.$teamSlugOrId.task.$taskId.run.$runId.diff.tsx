@@ -1,6 +1,7 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useTheme } from "@/components/theme/use-theme";
 import { Button } from "@/components/ui/button";
@@ -16,12 +17,13 @@ import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { TaskAcknowledged, TaskStarted, TaskError, CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Command } from "lucide-react";
 import {
@@ -34,9 +36,12 @@ import {
   type FormEvent,
 } from "react";
 import { toast } from "sonner";
+import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import z from "zod";
 import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import LexicalEditor from "@/components/lexical/LexicalEditor";
+import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -84,10 +89,22 @@ const RestartTaskForm = memo(function RestartTaskForm({
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const createTask = useMutation(api.tasks.create);
+  const navigate = useNavigate();
   const editorApiRef = useRef<EditorApi | null>(null);
   const [followUpText, setFollowUpText] = useState("");
   const [isRestartingTask, setIsRestartingTask] = useState(false);
   const [overridePrompt, setOverridePrompt] = useState(false);
+
+  const focusTask = useCallback(
+    (taskIdToFocus: Id<"tasks">) => {
+      void navigate({
+        to: "/$teamSlugOrId/task/$taskId",
+        params: { teamSlugOrId, taskId: taskIdToFocus },
+        search: { runId: undefined },
+      });
+    },
+    [navigate, teamSlugOrId],
+  );
 
   const handleRestartTask = useCallback(async () => {
     if (!task) {
@@ -161,13 +178,14 @@ const RestartTaskForm = memo(function RestartTaskForm({
           ? [...existingImages, ...newImages]
           : undefined;
 
-      const newTaskId = await createTask({
+      const { taskId: newTaskId, taskRunIds } = await createTask({
         teamSlugOrId,
         text: combinedPrompt,
         projectFullName: task.projectFullName ?? undefined,
         baseBranch: task.baseBranch ?? undefined,
         images: imagesPayload,
         environmentId: task.environmentId ?? undefined,
+        selectedAgents: [...restartAgents],
       });
 
       addTaskToExpand(newTaskId);
@@ -177,6 +195,22 @@ const RestartTaskForm = memo(function RestartTaskForm({
         ? `https://github.com/${projectFullNameForSocket}.git`
         : undefined;
 
+      const handleRestartAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
+        if ("error" in response) {
+          toast.error(`Task restart error: ${response.error}`);
+          return;
+        }
+
+        attachTaskLifecycleListeners(socket, response.taskId, {
+          onFailed: (payload) => {
+            toast.error(`Follow-up task failed to start: ${payload.error}`);
+          },
+        });
+
+        editorApiRef.current?.clear();
+        setFollowUpText("");
+      };
+
       socket.emit(
         "start-task",
         {
@@ -185,22 +219,21 @@ const RestartTaskForm = memo(function RestartTaskForm({
           taskDescription: combinedPrompt,
           projectFullName: projectFullNameForSocket,
           taskId: newTaskId,
+          taskRunIds,
           selectedAgents: [...restartAgents],
           isCloudMode: restartIsCloudMode,
           ...(task.environmentId ? { environmentId: task.environmentId } : {}),
           theme,
         },
-        (response) => {
-          if ("error" in response) {
-            toast.error(`Task restart error: ${response.error}`);
-            return;
-          }
-          editorApiRef.current?.clear();
-          setFollowUpText("");
-        },
+        handleRestartAck,
       );
 
-      toast.success("Started follow-up task");
+      toast.success("Started follow-up task", {
+        action: {
+          label: "Focus task",
+          onClick: () => focusTask(newTaskId),
+        },
+      });
     } catch (error) {
       console.error("Failed to restart task", error);
       toast.error("Failed to start follow-up task");
@@ -218,6 +251,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
     task,
     teamSlugOrId,
     theme,
+    focusTask,
   ]);
 
   const handleFormSubmit = useCallback(
@@ -257,10 +291,10 @@ const RestartTaskForm = memo(function RestartTaskForm({
   }, [isRestartingTask, overridePrompt, socket, task, trimmedFollowUp]);
 
   return (
-    <div className="sticky bottom-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2">
+    <div className="fixed bottom-0 left-0 right-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2 pointer-events-none">
       <form
         onSubmit={handleFormSubmit}
-        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950"
+        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950 pointer-events-auto"
       >
         <div className="px-3.5 pt-3.5">
           <LexicalEditor
@@ -280,7 +314,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
             branch={task?.baseBranch ?? undefined}
             environmentId={task?.environmentId ?? undefined}
             persistenceKey={persistenceKey}
-            maxHeight="42px"
+            maxHeight="300px"
             minHeight="30px"
             onEditorReady={(api) => {
               editorApiRef.current = api;
@@ -412,6 +446,55 @@ function collectAgentNamesFromRuns(
   return ordered;
 }
 
+function WorkflowRunsWrapper({
+  teamSlugOrId,
+  repoFullName,
+  prNumber,
+  headSha,
+  checksExpandedByRepo,
+  setChecksExpandedByRepo,
+}: {
+  teamSlugOrId: string;
+  repoFullName: string;
+  prNumber: number;
+  headSha?: string;
+  checksExpandedByRepo: Record<string, boolean | null>;
+  setChecksExpandedByRepo: React.Dispatch<React.SetStateAction<Record<string, boolean | null>>>;
+}) {
+  const workflowData = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName,
+    prNumber,
+    headSha,
+  });
+
+  // Auto-expand if there are failures (only on initial load)
+  const hasAnyFailure = useMemo(() => {
+    return workflowData.allRuns.some(
+      (run) =>
+        run.conclusion === "failure" ||
+        run.conclusion === "timed_out" ||
+        run.conclusion === "action_required"
+    );
+  }, [workflowData.allRuns]);
+
+  const isExpanded = checksExpandedByRepo[repoFullName] ?? hasAnyFailure;
+
+  return (
+    <WorkflowRunsSection
+      allRuns={workflowData.allRuns}
+      isLoading={workflowData.isLoading}
+      isExpanded={isExpanded}
+      onToggle={() => {
+        setChecksExpandedByRepo((prev) => ({
+          ...prev,
+          [repoFullName]: !isExpanded,
+        }));
+      }}
+    />
+  );
+}
+
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/diff",
 )({
@@ -427,6 +510,11 @@ export const Route = createFileRoute(
   },
   loader: (opts) => {
     const { runId } = opts.params;
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.getRunDiffContext,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, taskId: opts.params.taskId, runId },
+    });
 
     void opts.context.queryClient
       .ensureQueryData(
@@ -527,6 +615,7 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const { socket } = useSocket();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -538,6 +627,47 @@ function RunDiffPage() {
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
+
+  const runDiffContextQuery = useRQ({
+    ...convexQuery(api.taskRuns.getRunDiffContext, {
+      teamSlugOrId,
+      taskId,
+      runId,
+    }),
+    enabled: Boolean(teamSlugOrId && taskId && runId),
+  });
+
+  const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotSetsLoading =
+    runDiffContextQuery.isLoading && screenshotSets.length === 0;
+
+  // Get PR information from the selected run
+  const pullRequests = useMemo(() => {
+    return selectedRun?.pullRequests?.filter(
+      (pr) => pr.number !== undefined && pr.number !== null
+    ) as Array<{ repoFullName: string; number: number; url?: string }> | undefined;
+  }, [selectedRun]);
+
+  // Track expanded state for each PR's checks
+  const [checksExpandedByRepo, setChecksExpandedByRepo] = useState<Record<string, boolean | null>>({});
+
+  const expandAllChecks = useCallback(() => {
+    if (!pullRequests) return;
+    const newState: Record<string, boolean | null> = {};
+    for (const pr of pullRequests) {
+      newState[pr.repoFullName] = true;
+    }
+    setChecksExpandedByRepo(newState);
+  }, [pullRequests]);
+
+  const collapseAllChecks = useCallback(() => {
+    if (!pullRequests) return;
+    const newState: Record<string, boolean | null> = {};
+    for (const pr of pullRequests) {
+      newState[pr.repoFullName] = false;
+    }
+    setChecksExpandedByRepo(newState);
+  }, [pullRequests]);
   const restartProvider = selectedRun?.vscode?.provider;
   const restartRunEnvironmentId = selectedRun?.environmentId;
   const taskEnvironmentId = task?.environmentId;
@@ -619,6 +749,61 @@ function RunDiffPage() {
   const taskRunId = selectedRun?._id ?? runId;
   const restartTaskPersistenceKey = `restart-task-${taskId}-${runId}`;
 
+  const navigate = useNavigate();
+
+  const handleOpenLocalWorkspace = useCallback(() => {
+    if (!socket) {
+      toast.error("Socket not connected");
+      return;
+    }
+
+    if (!primaryRepo) {
+      toast.error("No repository information available");
+      return;
+    }
+
+    if (!selectedRun?.newBranch) {
+      toast.error("No branch information available");
+      return;
+    }
+
+    const loadingToast = toast.loading("Creating local workspace...");
+
+    socket.emit(
+      "create-local-workspace",
+      {
+        teamSlugOrId,
+        projectFullName: primaryRepo,
+        repoUrl: `https://github.com/${primaryRepo}.git`,
+        branch: selectedRun.newBranch,
+      },
+      (response: CreateLocalWorkspaceResponse) => {
+        if (response.success && response.workspacePath) {
+          toast.success("Workspace created successfully!", {
+            id: loadingToast,
+            description: `Opening workspace at ${response.workspacePath}`,
+          });
+
+          // Navigate to the vscode view for this task run
+          if (response.taskRunId) {
+            navigate({
+              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+              params: {
+                teamSlugOrId,
+                taskId,
+                runId: response.taskRunId,
+              },
+            });
+          }
+        } else {
+          toast.error(response.error || "Failed to create workspace", {
+            id: loadingToast,
+          });
+        }
+      }
+    );
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -634,6 +819,9 @@ function RunDiffPage() {
     Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
   const shouldPrefixDiffs = repoFullNames.length > 1;
 
+  // Only show the "Open local workspace" button for regular tasks (not local/cloud workspaces)
+  const isWorkspace = task?.isLocalWorkspace || task?.isCloudWorkspace;
+
   return (
     <FloatingPane>
       <div className="flex h-full min-h-0 flex-col relative isolate">
@@ -645,6 +833,9 @@ function RunDiffPage() {
             taskRunId={taskRunId}
             onExpandAll={diffControls?.expandAll}
             onCollapseAll={diffControls?.collapseAll}
+            onExpandAllChecks={expandAllChecks}
+            onCollapseAllChecks={collapseAllChecks}
+            onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
@@ -657,41 +848,70 @@ function RunDiffPage() {
               </div>
             </div>
           )}
-          <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-                    Loading diffs...
-                  </div>
-                </div>
-              }
-            >
-              {hasDiffSources ? (
-                <RunDiffSection
-                  repoFullName={primaryRepo as string}
-                  additionalRepoFullNames={additionalRepos}
-                  withRepoPrefix={shouldPrefixDiffs}
-                  ref1={baseRef}
-                  ref2={headRef}
-                  onControlsChange={setDiffControls}
-                  classNames={gitDiffViewerClassNames}
-                  metadataByRepo={metadataByRepo}
-                />
-              ) : (
-                <div className="p-6 text-sm text-neutral-600 dark:text-neutral-300">
-                  Missing repo or branches to show diff.
-                </div>
-              )}
-            </Suspense>
-            <RestartTaskForm
-              key={restartTaskPersistenceKey}
-              task={task}
-              teamSlugOrId={teamSlugOrId}
-              restartAgents={restartAgents}
-              restartIsCloudMode={restartIsCloudMode}
-              persistenceKey={restartTaskPersistenceKey}
-            />
+          <div className="bg-white dark:bg-neutral-900 flex-1 min-h-0 flex flex-col">
+            {pullRequests && pullRequests.length > 0 && (
+              <Suspense fallback={null}>
+                {pullRequests.map((pr) => (
+                  <WorkflowRunsWrapper
+                    key={pr.repoFullName}
+                    teamSlugOrId={teamSlugOrId}
+                    repoFullName={pr.repoFullName}
+                    prNumber={pr.number}
+                    headSha={undefined}
+                    checksExpandedByRepo={checksExpandedByRepo}
+                    setChecksExpandedByRepo={setChecksExpandedByRepo}
+                  />
+                ))}
+              </Suspense>
+            )}
+            {screenshotSetsLoading ? (
+              <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
+                Loading screenshots...
+              </div>
+            ) : (
+              <RunScreenshotGallery
+                screenshotSets={screenshotSets}
+                highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+              />
+            )}
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0">
+                <Suspense
+                  fallback={
+                    <div className="flex h-full items-center justify-center">
+                      <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
+                        Loading diffs...
+                      </div>
+                    </div>
+                  }
+                >
+                  {hasDiffSources ? (
+                    <RunDiffSection
+                      repoFullName={primaryRepo as string}
+                      additionalRepoFullNames={additionalRepos}
+                      withRepoPrefix={shouldPrefixDiffs}
+                      ref1={baseRef}
+                      ref2={headRef}
+                      onControlsChange={setDiffControls}
+                      classNames={gitDiffViewerClassNames}
+                      metadataByRepo={metadataByRepo}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
+                      Missing repo or branches to show diff.
+                    </div>
+                  )}
+                </Suspense>
+              </div>
+              <RestartTaskForm
+                key={restartTaskPersistenceKey}
+                task={task}
+                teamSlugOrId={teamSlugOrId}
+                restartAgents={restartAgents}
+                restartIsCloudMode={restartIsCloudMode}
+                persistenceKey={restartTaskPersistenceKey}
+              />
+            </div>
           </div>
         </div>
       </div>

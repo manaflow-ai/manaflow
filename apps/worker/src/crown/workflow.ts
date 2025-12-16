@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import type { Id } from "@cmux/convex/dataModel";
+
 import { log } from "../logger";
 import { convexRequest } from "./convex";
 import {
@@ -23,6 +25,32 @@ import {
   type WorkerTaskRunResponse,
 } from "./types";
 import { WORKSPACE_ROOT } from "./utils";
+import { runTaskScreenshots } from "../screenshotCollector/runTaskScreenshots";
+import type { RunTaskScreenshotsOptions } from "../screenshotCollector/runTaskScreenshots";
+
+async function uploadScreenshotsWithLogging(
+  options: RunTaskScreenshotsOptions | null,
+  taskRunId: string
+): Promise<void> {
+  if (!options) {
+    log("WARN", "Skipping screenshot workflow due to missing task id", {
+      taskRunId,
+    });
+    return;
+  }
+
+  try {
+    await runTaskScreenshots(options);
+  } catch (screenshotError) {
+    log("ERROR", "Automated screenshot workflow encountered an error", {
+      taskRunId,
+      error:
+        screenshotError instanceof Error
+          ? screenshotError.message
+          : String(screenshotError),
+    });
+  }
+}
 
 type WorkerCompletionOptions = {
   taskRunId: string;
@@ -37,7 +65,7 @@ type WorkerCompletionOptions = {
 };
 
 export async function handleWorkerTaskCompletion(
-  options: WorkerCompletionOptions,
+  options: WorkerCompletionOptions
 ): Promise<void> {
   const {
     taskRunId,
@@ -87,7 +115,7 @@ export async function handleWorkerTaskCompletion(
       taskRunId,
       checkType: "info",
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   if (!info) {
@@ -98,8 +126,9 @@ export async function handleWorkerTaskCompletion(
         taskRunId,
         info,
         convexUrl: baseUrlOverride,
-      },
+      }
     );
+    return;
   } else if (!info.ok || !info.taskRun) {
     log("ERROR", "Task run info response invalid", {
       taskRunId,
@@ -109,6 +138,18 @@ export async function handleWorkerTaskCompletion(
     });
     return;
   }
+
+  const taskRunInfo = info.taskRun;
+
+  void uploadScreenshotsWithLogging(
+    {
+      taskId: info.taskRun.taskId as Id<"tasks">,
+      taskRunId: taskRunId as Id<"taskRuns">,
+      token: runContext.token,
+      convexUrl: runContext.convexUrl,
+    },
+    taskRunId
+  );
 
   const hasGitRepo = existsSync(join(detectedGitPath, ".git"));
 
@@ -125,8 +166,7 @@ export async function handleWorkerTaskCompletion(
       detectedGitPath,
     });
   } else {
-    const promptForCommit =
-      info?.task?.text ?? runContext.prompt ?? "cmux task";
+    const promptForCommit = info.task?.text ?? runContext.prompt ?? "cmux task";
 
     const commitMessage = buildCommitMessage({
       prompt: promptForCommit,
@@ -134,7 +174,7 @@ export async function handleWorkerTaskCompletion(
     });
 
     // Branch should already be created by startup commands
-    let branchForCommit = info?.taskRun?.newBranch;
+    let branchForCommit = taskRunInfo.newBranch;
     if (!branchForCommit) {
       // Fallback to current branch if newBranch not available
       branchForCommit = await getCurrentBranch();
@@ -146,15 +186,19 @@ export async function handleWorkerTaskCompletion(
       // Verify we're on the expected branch
       const currentBranch = await getCurrentBranch();
       if (currentBranch !== branchForCommit) {
-        log("WARN", "[AUTOCOMMIT] Current branch differs from expected branch", {
-          taskRunId,
-          expectedBranch: branchForCommit,
-          currentBranch,
-        });
+        log(
+          "WARN",
+          "[AUTOCOMMIT] Current branch differs from expected branch",
+          {
+            taskRunId,
+            expectedBranch: branchForCommit,
+            currentBranch,
+          }
+        );
         // Try to checkout to the expected branch
         const checkoutResult = await runGitCommand(
           `git checkout ${branchForCommit}`,
-          true,
+          true
         );
         if (checkoutResult && checkoutResult.exitCode === 0) {
           log("INFO", "[AUTOCOMMIT] Checked out to expected branch", {
@@ -162,12 +206,16 @@ export async function handleWorkerTaskCompletion(
             branch: branchForCommit,
           });
         } else {
-          log("WARN", "[AUTOCOMMIT] Failed to checkout to expected branch, will use current branch", {
-            taskRunId,
-            expectedBranch: branchForCommit,
-            currentBranch,
-            error: checkoutResult?.stderr,
-          });
+          log(
+            "WARN",
+            "[AUTOCOMMIT] Failed to checkout to expected branch, will use current branch",
+            {
+              taskRunId,
+              expectedBranch: branchForCommit,
+              currentBranch,
+              error: checkoutResult?.stderr,
+            }
+          );
           branchForCommit = currentBranch;
         }
       }
@@ -179,14 +227,14 @@ export async function handleWorkerTaskCompletion(
       projectFullName: info?.task?.projectFullName,
       hasInfo: Boolean(info),
       hasTask: Boolean(info?.task),
-      hasTaskRun: Boolean(info?.taskRun),
-      taskRunNewBranch: info?.taskRun?.newBranch,
+      hasTaskRun: Boolean(taskRunInfo),
+      taskRunNewBranch: taskRunInfo.newBranch,
     });
 
     if (!branchForCommit) {
       log("ERROR", "[AUTOCOMMIT] Unable to resolve branch name", {
         taskRunId,
-        taskRunNewBranch: info?.taskRun?.newBranch,
+        taskRunNewBranch: taskRunInfo.newBranch,
       });
     } else {
       const remoteUrl = info?.task?.projectFullName
@@ -231,7 +279,7 @@ export async function handleWorkerTaskCompletion(
       taskRunId,
       exitCode,
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   if (!completion?.ok) {
@@ -244,14 +292,14 @@ export async function handleWorkerTaskCompletion(
     taskId: runContext.taskId,
   });
 
-  const completedRunInfo = completion.taskRun ?? info?.taskRun;
+  const completedRunInfo = completion.taskRun ?? taskRunInfo;
   const realTaskId = completedRunInfo?.taskId;
 
   if (!realTaskId) {
     log("ERROR", "Missing real task ID from task run after worker completion", {
       taskRunId,
       hasCompletedRunInfo: Boolean(completedRunInfo),
-      hasInfoTaskRun: Boolean(info?.taskRun),
+      hasInfoTaskRun: Boolean(taskRunInfo),
     });
     return;
   }
@@ -299,7 +347,7 @@ async function startCrownEvaluation({
       taskId: currentTaskId,
       checkType: "all-complete",
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   if (!completionState?.ok) {
@@ -316,7 +364,7 @@ async function startCrownEvaluation({
     allComplete: completionState.allComplete,
     totalStatuses: completionState.statuses.length,
     completedCount: completionState.statuses.filter(
-      (status) => status.status === "completed",
+      (status) => status.status === "completed"
     ).length,
   });
 
@@ -332,7 +380,7 @@ async function startCrownEvaluation({
         taskRunId,
         taskId: currentTaskId,
         statuses: completionState?.statuses || [],
-      },
+      }
     );
     return;
   }
@@ -348,7 +396,7 @@ async function startCrownEvaluation({
     {
       taskId: currentTaskId,
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   if (!crownData?.ok) {
@@ -371,9 +419,9 @@ async function startCrownEvaluation({
         taskRunId,
         winnerRunId: crownData.existingEvaluation.winnerRunId,
         evaluatedAt: new Date(
-          crownData.existingEvaluation.evaluatedAt,
+          crownData.existingEvaluation.evaluatedAt
         ).toISOString(),
-      },
+      }
     );
     return;
   }
@@ -387,7 +435,7 @@ async function startCrownEvaluation({
   }
 
   const completedRuns = crownData.runs.filter(
-    (run) => run.status === "completed",
+    (run) => run.status === "completed"
   );
   const totalRuns = crownData.runs.length;
   const allRunsCompleted = totalRuns > 0 && completedRuns.length === totalRuns;
@@ -445,7 +493,7 @@ async function startCrownEvaluation({
 
     const branchesReady = await ensureBranchesAvailable(
       [{ id: candidate.runId, newBranch: candidate.newBranch }],
-      baseBranch,
+      baseBranch
     );
     if (!branchesReady) {
       log("WARN", "Branches not ready for single-run crown; continuing", {
@@ -470,7 +518,7 @@ async function startCrownEvaluation({
           gitDiff: candidate.gitDiff,
           teamSlugOrId: runContext.teamId,
         },
-        baseUrlOverride,
+        baseUrlOverride
       );
 
     const summary = summarizationResponse?.summary
@@ -497,7 +545,7 @@ async function startCrownEvaluation({
         candidateRunIds: [candidate.runId],
         summary,
       },
-      baseUrlOverride,
+      baseUrlOverride
     );
 
     log("INFO", "Crowned task with single-run winner", {
@@ -522,11 +570,11 @@ async function startCrownEvaluation({
         gitDiff,
         newBranch: run.newBranch,
       } satisfies CandidateData;
-    }),
+    })
   );
 
   const candidates = completedRunsWithDiff.filter(
-    (candidate): candidate is CandidateData => Boolean(candidate),
+    (candidate): candidate is CandidateData => Boolean(candidate)
   );
 
   if (candidates.length === 0) {
@@ -568,7 +616,7 @@ async function startCrownEvaluation({
       candidates,
       teamSlugOrId: runContext.teamId,
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   if (!evaluationResponse) {
@@ -605,7 +653,7 @@ async function startCrownEvaluation({
       gitDiff: winnerCandidate.gitDiff,
       teamSlugOrId: runContext.teamId,
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   log("INFO", "Crown summarization response", {
@@ -640,7 +688,7 @@ async function startCrownEvaluation({
           winner: candidates.indexOf(winnerCandidate),
           reason,
           fallback: true,
-        },
+        }
       ),
       candidateRunIds: candidates.map((candidate) => candidate.runId),
       summary,
@@ -648,7 +696,7 @@ async function startCrownEvaluation({
       pullRequestTitle: prMetadata?.title,
       pullRequestDescription: prMetadata?.description,
     },
-    baseUrlOverride,
+    baseUrlOverride
   );
 
   log("INFO", "Crowned task after evaluation", {

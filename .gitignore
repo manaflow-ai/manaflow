@@ -30,12 +30,32 @@ data/codemirror-merge/
 .env
 .env.production
 .env.codesign
+.env.cmux
 
 # Binary files
 cmux-cli
 .vercel
+scripts/vnc-proxy/vnc-proxy
 
 # Native Rust addon artifacts
 apps/server/native/**/target/
 apps/server/native/**/*.node
+apps/server/native/**/*.d.ts
+apps/server/native/**/index.js
 apps/server/native/**/Cargo.lock
+crates/**/target/
+
+# Python
+__pycache__
+
+tmp/
+
+cmux-proxy.tar.gz
+apps/www/scripts/pr-review/pr-review-inject.bundle.js
+
+# PR review evals
+apps/www/scripts/pr-review/evals/data/
+!apps/www/scripts/pr-review/evals/data/**/*.annotated.diff
+apps/www/scripts/pr-review/evals/results/
+
+.local_version

@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { Dirent } from "node:fs";
 import { ensureLogDirectory } from "./log-paths";
 
 export interface CollectedLogFile {
@@ -37,7 +38,7 @@ function buildCombinedText(files: CollectedLogFile[]): string {
 
 export async function collectAllLogs(): Promise<CollectedLogsBundle> {
   const dir = ensureLogDirectory();
-  let entries: Awaited<ReturnType<typeof readdir>> | undefined;
+  let entries: Dirent[] | undefined;
 
   try {
     entries = await readdir(dir, { withFileTypes: true });

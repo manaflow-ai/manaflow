@@ -1,7 +1,4 @@
-import Prism from "prismjs";
-if (typeof globalThis.Prism === "undefined") {
-  globalThis.Prism = Prism;
-}
+import "./prism-setup";
 
 import { editorStorage } from "@/lib/editorStorage";
 import { CodeNode } from "@lexical/code";
@@ -25,6 +22,8 @@ import type { Id } from "@cmux/convex/dataModel";
 import {
   $createParagraphNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   COMMAND_PRIORITY_HIGH,
   INSERT_LINE_BREAK_COMMAND,
   KEY_DOWN_COMMAND,
@@ -157,9 +156,54 @@ function KeyboardCommandPlugin({ onSubmit }: { onSubmit?: () => void }) {
       COMMAND_PRIORITY_HIGH
     );
 
+    const unregisterPlainPaste = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        const isModifierPressed = event.metaKey || event.ctrlKey;
+        const isShiftV =
+          (event.key === "v" || event.key === "V" || event.code === "KeyV") &&
+          event.shiftKey;
+
+        if (!isModifierPressed || !isShiftV) {
+          return false;
+        }
+
+        if (
+          typeof navigator === "undefined" ||
+          !navigator.clipboard?.readText
+        ) {
+          return false;
+        }
+
+        event.preventDefault();
+
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (!text) {
+              return;
+            }
+
+            editor.update(() => {
+              const selection = $getSelection();
+              if ($isRangeSelection(selection)) {
+                selection.insertRawText(text);
+              }
+            });
+          })
+          .catch((error) => {
+            console.error("Plain paste failed", error);
+          });
+
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH
+    );
+
     return () => {
       unregisterEnter();
       unregisterCtrlJ();
+      unregisterPlainPaste();
     };
   }, [editor, onSubmit]);
 

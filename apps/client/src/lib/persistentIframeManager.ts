@@ -1,3 +1,5 @@
+import { ensureIframeFocusGuard } from "./iframeFocusGuard";
+
 // Extend the Element interface to include moveBefore
 declare global {
   interface Element {
@@ -78,8 +80,8 @@ class PersistentIframeManager {
   private maxIframes = 10;
   private container: HTMLDivElement | null = null;
   private resizeObserver: ResizeObserver;
-  private activeIframeKey: string | null = null;
   private debugMode = false;
+  private syncTimeouts = new Map<string, number>();
 
   constructor() {
     // Create resize observer for syncing positions
@@ -101,6 +103,8 @@ class PersistentIframeManager {
   private initializeContainer() {
     if (typeof document === "undefined") return;
 
+    ensureIframeFocusGuard();
+
     const init = () => {
       this.container = document.createElement("div");
       this.container.id = "persistent-iframe-container";
@@ -111,7 +115,8 @@ class PersistentIframeManager {
         width: 0;
         height: 0;
         pointer-events: none;
-        z-index: var(--z-overlay);
+        z-index: var(--z-persistent-iframe-container);
+        isolation: isolate;
       `;
       document.body.appendChild(this.container);
     };
@@ -129,7 +134,7 @@ class PersistentIframeManager {
   getOrCreateIframe(
     key: string,
     url: string,
-    options?: { allow?: string; sandbox?: string },
+    options?: { allow?: string; sandbox?: string }
   ): HTMLIFrameElement {
     const existing = this.iframes.get(key);
 
@@ -165,8 +170,12 @@ class PersistentIframeManager {
       transform: translate(-100vw, -100vh);
       width: 100vw;
       height: 100vh;
+      backface-visibility: hidden;
+      z-index: var(--z-iframe);
+      isolation: isolate;
     `;
     wrapper.setAttribute("data-iframe-key", key);
+    wrapper.setAttribute("data-drag-disable-pointer", "");
 
     // Create iframe
     const iframe = document.createElement("iframe");
@@ -174,6 +183,8 @@ class PersistentIframeManager {
       width: 100%;
       height: 100%;
       border: 0;
+      background: white;
+      display: block;
     `;
 
     // Apply permissions if provided
@@ -218,25 +229,13 @@ class PersistentIframeManager {
   mountIframe(
     key: string,
     targetElement: HTMLElement,
-    options?: MountOptions,
+    options?: MountOptions
   ): () => void {
     if (this.debugMode) console.log(`[Mount] Starting mount for ${key}`);
 
     const entry = this.iframes.get(key);
     if (!entry) {
       throw new Error(`Iframe with key "${key}" not found`);
-    }
-
-    // Fix #1: Hide currently active iframe before showing new one
-    if (this.activeIframeKey && this.activeIframeKey !== key) {
-      const activeEntry = this.iframes.get(this.activeIframeKey);
-      if (activeEntry && activeEntry.isVisible) {
-        if (this.debugMode)
-          console.log(`[Mount] Hiding active iframe ${this.activeIframeKey}`);
-        activeEntry.wrapper.style.visibility = "hidden";
-        activeEntry.wrapper.style.pointerEvents = "none";
-        activeEntry.isVisible = false;
-      }
     }
 
     // Mark target element
@@ -261,7 +260,9 @@ class PersistentIframeManager {
       entry.wrapper.style.visibility = "visible";
       entry.wrapper.style.pointerEvents = "auto";
       entry.wrapper.style.overflow = "hidden";
+      entry.wrapper.style.backfaceVisibility = "hidden";
 
+      // Apply custom styles (including z-index if provided)
       if (options?.style) {
         for (const [styleKey, styleValue] of Object.entries(options.style)) {
           if (styleValue === undefined || styleValue === null) {
@@ -270,7 +271,7 @@ class PersistentIframeManager {
 
           const cssKey = styleKey.replace(
             /[A-Z]/g,
-            (match) => `-${match.toLowerCase()}`,
+            (match) => `-${match.toLowerCase()}`
           );
           const cssValue =
             typeof styleValue === "number" &&
@@ -281,11 +282,16 @@ class PersistentIframeManager {
         }
       }
 
+      // Set default z-index if not provided in options
+      if (!options?.style?.zIndex) {
+        entry.wrapper.style.zIndex = "var(--z-iframe)";
+        entry.wrapper.style.isolation = "isolate";
+      }
+
       // Ensure the iframe wrapper reflects any layout changes triggered by new styles
       this.syncIframePosition(key);
 
       entry.isVisible = true;
-      this.activeIframeKey = key;
       if (this.debugMode) console.log(`[Mount] Iframe ${key} is now visible`);
     });
 
@@ -316,10 +322,6 @@ class PersistentIframeManager {
       entry.wrapper.style.pointerEvents = "none";
       entry.isVisible = false;
 
-      if (this.activeIframeKey === key) {
-        this.activeIframeKey = null;
-      }
-
       this.resizeObserver.unobserve(targetElement);
       scrollableParents.forEach((parent) => {
         parent.removeEventListener("scroll", scrollHandler);
@@ -336,7 +338,7 @@ class PersistentIframeManager {
     if (!entry) return;
 
     const targetElement = document.querySelector(
-      `[data-iframe-target="${key}"]`,
+      `[data-iframe-target="${key}"]`
     );
     if (!targetElement || !(targetElement instanceof HTMLElement)) {
       this.moveIframeOffscreen(entry);
@@ -359,10 +361,21 @@ class PersistentIframeManager {
       return;
     }
 
-    // Update wrapper position using transform, keeping resize handles unobstructed
-    entry.wrapper.style.transform = `translate(${rect.left + borderLeft}px, ${rect.top + borderTop}px)`;
-    entry.wrapper.style.width = `${width}px`;
-    entry.wrapper.style.height = `${height}px`;
+    // Use requestAnimationFrame to batch position updates and prevent flashing
+    const existingTimeout = this.syncTimeouts.get(key);
+    if (existingTimeout !== undefined) {
+      cancelAnimationFrame(existingTimeout);
+    }
+
+    const rafId = requestAnimationFrame(() => {
+      this.syncTimeouts.delete(key);
+      // Update wrapper position using transform, keeping resize handles unobstructed
+      entry.wrapper.style.transform = `translate(${rect.left + borderLeft}px, ${rect.top + borderTop}px)`;
+      entry.wrapper.style.width = `${width}px`;
+      entry.wrapper.style.height = `${height}px`;
+    });
+
+    this.syncTimeouts.set(key, rafId);
   }
 
   /**
@@ -400,14 +413,17 @@ class PersistentIframeManager {
     const entry = this.iframes.get(key);
     if (!entry) return;
 
+    // Cancel any pending sync
+    const syncTimeout = this.syncTimeouts.get(key);
+    if (syncTimeout !== undefined) {
+      cancelAnimationFrame(syncTimeout);
+      this.syncTimeouts.delete(key);
+    }
+
     entry.wrapper.style.visibility = "hidden";
     entry.wrapper.style.pointerEvents = "none";
     this.moveIframeOffscreen(entry);
     entry.isVisible = false;
-
-    if (this.activeIframeKey === key) {
-      this.activeIframeKey = null;
-    }
   }
 
   /**
@@ -416,7 +432,7 @@ class PersistentIframeManager {
   preloadIframe(
     key: string,
     url: string,
-    options?: { allow?: string; sandbox?: string },
+    options?: { allow?: string; sandbox?: string }
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const iframe = this.getOrCreateIframe(key, url, options);
@@ -450,6 +466,13 @@ class PersistentIframeManager {
     const entry = this.iframes.get(key);
     if (!entry) return;
 
+    // Cancel any pending sync
+    const syncTimeout = this.syncTimeouts.get(key);
+    if (syncTimeout !== undefined) {
+      cancelAnimationFrame(syncTimeout);
+      this.syncTimeouts.delete(key);
+    }
+
     if (entry.wrapper.parentElement) {
       entry.wrapper.parentElement.removeChild(entry.wrapper);
     }
@@ -469,7 +492,7 @@ class PersistentIframeManager {
 
     const toRemove = sorted.slice(
       0,
-      Math.max(0, this.iframes.size - this.maxIframes),
+      Math.max(0, this.iframes.size - this.maxIframes)
     );
 
     for (const [key] of toRemove) {
@@ -486,12 +509,12 @@ class PersistentIframeManager {
       url: string;
       allow?: string;
       sandbox?: string;
-    }>,
+    }>
   ): Promise<void> {
     await Promise.all(
       entries.map(({ key, url, allow, sandbox }) =>
-        this.preloadIframe(key, url, { allow, sandbox }),
-      ),
+        this.preloadIframe(key, url, { allow, sandbox })
+      )
     );
   }
 
@@ -506,6 +529,12 @@ class PersistentIframeManager {
    * Clear all iframes
    */
   clear(): void {
+    // Cancel all pending syncs
+    for (const rafId of this.syncTimeouts.values()) {
+      cancelAnimationFrame(rafId);
+    }
+    this.syncTimeouts.clear();
+
     for (const key of this.iframes.keys()) {
       this.removeIframe(key);
     }
@@ -526,17 +555,63 @@ class PersistentIframeManager {
     const viewportWidth = Math.max(
       1,
       window.innerWidth || 0,
-      document.documentElement?.clientWidth ?? 0,
+      document.documentElement?.clientWidth ?? 0
     );
     const viewportHeight = Math.max(
       1,
       window.innerHeight || 0,
-      document.documentElement?.clientHeight ?? 0,
+      document.documentElement?.clientHeight ?? 0
     );
 
     entry.wrapper.style.width = `${viewportWidth}px`;
     entry.wrapper.style.height = `${viewportHeight}px`;
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
+  }
+
+  isIframeFocused(key: string): boolean {
+    if (typeof document === "undefined") {
+      return false;
+    }
+
+    const entry = this.iframes.get(key);
+    if (!entry || !entry.isVisible) return false;
+
+    return document.activeElement === entry.iframe;
+  }
+
+  focusIframe(key: string): boolean {
+    const entry = this.iframes.get(key);
+    if (!entry) return false;
+
+    const isHidden =
+      entry.wrapper.style.visibility === "hidden" ||
+      entry.wrapper.style.pointerEvents === "none";
+
+    if (isHidden) {
+      return false;
+    }
+
+    try {
+      entry.iframe.focus();
+      entry.iframe.contentWindow?.focus();
+      return true;
+    } catch (error) {
+      console.error(`Failed to focus iframe "${key}"`, error);
+      return false;
+    }
+  }
+
+  reloadIframe(key: string): boolean {
+    const entry = this.iframes.get(key);
+    if (!entry) return false;
+
+    try {
+      entry.iframe.src = entry.url;
+      return true;
+    } catch (error) {
+      console.error(`Failed to reload iframe "${key}"`, error);
+      return false;
+    }
   }
 }
 

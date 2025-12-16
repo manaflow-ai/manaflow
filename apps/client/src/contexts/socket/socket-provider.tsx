@@ -115,6 +115,39 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     };
   }, [url, authToken, teamSlugOrId]);
 
+  useEffect(() => {
+    if (!socket) return;
+    let disposed = false;
+
+    const refreshAuthentication = async () => {
+      try {
+        const user = await cachedGetUser(stackClientApp);
+        if (!user) return;
+        const authJson = await user.getAuthJson();
+        const authToken = authJson?.accessToken;
+        if (!authToken || !authJson || disposed) return;
+        socket.emit(
+          "authenticate",
+          { authToken, authJson: JSON.stringify(authJson) },
+          (response) => {
+            if (response && !response.ok) {
+              console.warn("[Socket] authenticate failed", response.error);
+            }
+          }
+        );
+      } catch (error) {
+        console.error("[Socket] Failed to refresh auth", error);
+      }
+    };
+
+    void refreshAuthentication();
+    const intervalId = window.setInterval(refreshAuthentication, 5 * 60 * 1000);
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, [socket]);
+
   const contextValue: SocketContextType = useMemo(
     () => ({
       socket,

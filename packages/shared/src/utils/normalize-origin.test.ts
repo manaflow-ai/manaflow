@@ -16,15 +16,29 @@ describe("normalizeOrigin", () => {
     );
   });
 
+  it("preserves LAN IPv4 http origins", () => {
+    expect(normalizeOrigin("http://192.168.1.10:9779")).toBe(
+      "http://192.168.1.10:9779"
+    );
+  });
+
   it("preserves numeric loopback hosts", () => {
     expect(normalizeOrigin("http://127.0.0.1:4000")).toBe(
       "http://127.0.0.1:4000"
     );
   });
 
+  it("adds https:// prefix when protocol is missing", () => {
+    expect(normalizeOrigin("cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeOrigin("example.vercel.app")).toBe(
+      "https://example.vercel.app"
+    );
+  });
+
   it("returns trimmed origin when parsing fails", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(normalizeOrigin(" not-a-url ")).toBe("not-a-url");
+    // Use invalid characters that can't form a valid URL even with https://
+    expect(normalizeOrigin(" :invalid: ")).toBe(":invalid:");
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

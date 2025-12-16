@@ -1,0 +1,21 @@
+[submodule "dev-docs/beads"]
+	path = dev-docs/beads
+	url = https://github.com/steveyegge/beads
+[submodule "dev-docs/opencode"]
+	path = dev-docs/opencode
+	url = https://github.com/sst/opencode.git
+[submodule "dev-docs/streamdown"]
+	path = dev-docs/streamdown
+	url = https://github.com/vercel/streamdown.git
+[submodule "dev-docs/vercel-workflow"]
+	path = dev-docs/vercel-workflow
+	url = https://github.com/vercel/workflow.git
+[submodule "dev-docs/tanstack-router"]
+	path = dev-docs/tanstack-router
+	url = https://github.com/tanstack/router
+[submodule "dev-docs/tanstack-query"]
+	path = dev-docs/tanstack-query
+	url = https://github.com/tanstack/query
+[submodule "dev-docs/convex-js"]
+	path = dev-docs/convex-js
+	url = https://github.com/get-convex/convex-js

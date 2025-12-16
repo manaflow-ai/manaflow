@@ -39,6 +39,8 @@ import { dockerFile as dockerfileLanguage } from "@codemirror/legacy-modes/mode/
 import { sass as legacySass } from "@codemirror/legacy-modes/mode/sass";
 import { toml as tomlLanguage } from "@codemirror/legacy-modes/mode/toml";
 
+import { getDiffColorPalette } from "@/lib/diff-colors";
+
 import {
   diffLineNumberMarkers,
   LINE_NUMBER_ADDITION_CLASS,
@@ -81,29 +83,11 @@ const darkHighlightStyle = HighlightStyle.define([
   },
 ]);
 
-const GITHUB_ADDITION_LINE_BG = "#dafbe1";
-const GITHUB_ADDITION_GUTTER_BG = "#b8f0c8";
-const GITHUB_ADDITION_TEXT_BG = "#b8f0c8";
-const GITHUB_DELETION_LINE_BG = "#ffebe9";
-const GITHUB_DELETION_GUTTER_BG = "#ffdcd7";
-const GITHUB_DELETION_TEXT_BG = "#ffdcd7";
-const GITHUB_DARK_ADDITION_LINE = "#2ea04326";
-const GITHUB_DARK_ADDITION_GUTTER = "#3fb9504d";
-const GITHUB_DARK_DELETION_LINE = "#f851491a";
-const GITHUB_DARK_DELETION_GUTTER = "#f851494d";
-const GITHUB_ADDITION_LINE_NUMBER_LIGHT = "#116329";
-const GITHUB_ADDITION_LINE_NUMBER_DARK = "#7ee787";
-const GITHUB_DELETION_LINE_NUMBER_LIGHT = "#a0111f";
-const GITHUB_DELETION_LINE_NUMBER_DARK = "#ff7b72";
-const GITHUB_COLLAPSED_LIGHT_BG = "#E9F4FF";
-const GITHUB_COLLAPSED_LIGHT_TEXT = "#4b5563";
-const GITHUB_COLLAPSED_DARK_BG = "#1f2733";
-const GITHUB_COLLAPSED_DARK_TEXT = "#e5e7eb";
-
 export function createMergeBaseExtensions(
   theme: string | undefined,
 ): Extension[] {
   const isDark = theme === "dark";
+  const palette = getDiffColorPalette(isDark ? "dark" : "light");
   const textColor = isDark ? "#e5e7eb" : "#1f2937";
   const gutterColor = isDark ? "#9ca3af" : "#6b7280";
 
@@ -150,14 +134,10 @@ export function createMergeBaseExtensions(
         fontSize: "11px",
       },
       [`.cm-lineNumbers .cm-gutterElement.${LINE_NUMBER_ADDITION_CLASS}`]: {
-        color: isDark
-          ? GITHUB_ADDITION_LINE_NUMBER_DARK
-          : GITHUB_ADDITION_LINE_NUMBER_LIGHT,
+        color: palette.addition.lineNumberForeground,
       },
       [`.cm-lineNumbers .cm-gutterElement.${LINE_NUMBER_DELETION_CLASS}`]: {
-        color: isDark
-          ? GITHUB_DELETION_LINE_NUMBER_DARK
-          : GITHUB_DELETION_LINE_NUMBER_LIGHT,
+        color: palette.deletion.lineNumberForeground,
       },
       ".cm-activeLine": {
         backgroundColor: isDark
@@ -184,36 +164,24 @@ export function createMergeBaseExtensions(
         borderRight: `1px solid ${isDark ? "#27272a" : "#e5e5e5"}`,
       },
       ".cm-change.cm-change-insert": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_ADDITION_LINE
-          : GITHUB_ADDITION_TEXT_BG,
+        backgroundColor: palette.addition.textBackground,
         textDecoration: "none",
       },
       ".cm-change.cm-change-delete": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_DELETION_LINE
-          : GITHUB_DELETION_TEXT_BG,
+        backgroundColor: palette.deletion.textBackground,
         textDecoration: "none",
       },
       ".cm-mergeView ins.cm-insertedLine": {
         textDecoration: "none",
-        backgroundColor: isDark
-          ? GITHUB_DARK_ADDITION_LINE
-          : GITHUB_ADDITION_TEXT_BG,
+        backgroundColor: palette.addition.textBackground,
       },
       ".cm-mergeView del.cm-deletedLine": {
         textDecoration: "none",
-        backgroundColor: isDark
-          ? GITHUB_DARK_DELETION_LINE
-          : GITHUB_DELETION_TEXT_BG,
+        backgroundColor: palette.deletion.textBackground,
       },
       ".cm-collapsedLines": {
-        backgroundColor: isDark
-          ? GITHUB_COLLAPSED_DARK_BG
-          : GITHUB_COLLAPSED_LIGHT_BG,
-        color: isDark
-          ? GITHUB_COLLAPSED_DARK_TEXT
-          : GITHUB_COLLAPSED_LIGHT_TEXT,
+        backgroundColor: palette.collapsed.background,
+        color: palette.collapsed.foreground,
         padding: "5px 5px 5px 10px",
         cursor: "pointer",
         backgroundImage: "none",
@@ -222,44 +190,28 @@ export function createMergeBaseExtensions(
         backgroundColor: isDark ? "rgba(148, 163, 184, 0.18)" : "#f6f8fa",
       },
       "&.cm-merge-b .cm-changedLine": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_ADDITION_LINE
-          : GITHUB_ADDITION_LINE_BG,
+        backgroundColor: palette.addition.lineBackground,
       },
       "&.cm-merge-a .cm-changedLine": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_DELETION_LINE
-          : GITHUB_DELETION_LINE_BG,
+        backgroundColor: palette.deletion.lineBackground,
       },
       "&.cm-merge-b .cm-inlineChangedLine": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_ADDITION_LINE
-          : GITHUB_ADDITION_LINE_BG,
+        backgroundColor: palette.addition.lineBackground,
       },
       "&.cm-merge-a .cm-inlineChangedLine": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_DELETION_LINE
-          : GITHUB_DELETION_LINE_BG,
+        backgroundColor: palette.deletion.lineBackground,
       },
       "& .cm-deletedChunk": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_DELETION_LINE
-          : GITHUB_DELETION_LINE_BG,
+        backgroundColor: palette.deletion.lineBackground,
       },
       "& .cm-insertedChunk": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_ADDITION_LINE
-          : GITHUB_ADDITION_LINE_BG,
+        backgroundColor: palette.addition.lineBackground,
       },
       "&.cm-merge-b .cm-gutterElement.cm-changedLineGutter": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_ADDITION_GUTTER
-          : GITHUB_ADDITION_GUTTER_BG,
+        backgroundColor: palette.addition.gutterBackground,
       },
       "&.cm-merge-a .cm-gutterElement.cm-changedLineGutter": {
-        backgroundColor: isDark
-          ? GITHUB_DARK_DELETION_GUTTER
-          : GITHUB_DELETION_GUTTER_BG,
+        backgroundColor: palette.deletion.gutterBackground,
       },
       "&.cm-merge-b .cm-changedText": {
         background: "none",

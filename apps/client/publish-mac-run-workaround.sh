@@ -2,6 +2,27 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Fail fast if unplugin resolves to a build without createVitePlugin (common when deps are pruned).
+if [[ "${SKIP_UNPLUGIN_PREFLIGHT:-}" != "1" ]]; then
+  node <<'NODE'
+(async () => {
+  try {
+    const mod = await import('unplugin');
+    if (typeof mod.createVitePlugin !== 'function') {
+      console.error('[publish-mac-workaround] Resolved "unplugin" does not export createVitePlugin.');
+      console.error('[publish-mac-workaround] Exports:', Object.keys(mod));
+      console.error('[publish-mac-workaround] This usually means an outdated or CJS-only build was selected.');
+      console.error('[publish-mac-workaround] Ensure unplugin@^2 is installed before running this script.');
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error('[publish-mac-workaround] Unable to import "unplugin":', error?.message ?? error);
+    process.exit(1);
+  }
+})();
+NODE
+fi
 PATCH_BIN() {
   local bin_path="$1"
   local search="$2"

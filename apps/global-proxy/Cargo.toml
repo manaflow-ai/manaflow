@@ -1,0 +1,28 @@
+[package]
+name = "global-proxy"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+bytes = "1.6"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+http = "0.2"
+hyper = { version = "0.14", features = ["full"] }
+hyper-rustls = { version = "0.24", default-features = false, features = ["http1", "tokio-runtime", "webpki-roots"] }
+rustls = { version = "0.21", default-features = false }
+lol_html = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+brotli = "5"
+zstd = { version = "0.13", default-features = false, features = ["experimental"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[dev-dependencies]
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
+tokio-tungstenite = { version = "0.18", default-features = false, features = ["rustls-tls-native-roots", "connect"] }

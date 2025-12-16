@@ -250,13 +250,19 @@ export function initCmdK(opts: {
           // Non-mac: require ctrl only; disallow meta
           return Boolean(input.control) && !input.meta;
         })();
-        if (!isCmdK) return;
+
+        const isSidebarToggle = (() => {
+          if (input.key.toLowerCase() !== "s") return false;
+          if (!input.shift) return false;
+          if (input.alt || input.meta) return false;
+          // Require control to align with renderer shortcut (Ctrl+Shift+S)
+          return Boolean(input.control);
+        })();
+
+        if (!isCmdK && !isSidebarToggle) return;
+
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
-        keyDebug("cmdk-detected", {
-          sourceId: contents.id,
-          type: contents.getType?.(),
-        });
 
         const getTargetWindow = (): BrowserWindow | null => {
           return (
@@ -266,6 +272,32 @@ export function initCmdK(opts: {
             null
           );
         };
+
+        if (isSidebarToggle) {
+          keyDebug("sidebar-toggle-detected", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+          });
+          const targetWin = getTargetWindow();
+          if (targetWin && !targetWin.isDestroyed()) {
+            try {
+              targetWin.webContents.send("cmux:event:shortcut:sidebar-toggle");
+              keyDebug("emit-sidebar-toggle", {
+                to: targetWin.webContents.id,
+                from: contents.id,
+              });
+            } catch (err) {
+              opts.logger.warn("Failed to emit sidebar toggle shortcut", err);
+              keyDebug("emit-sidebar-toggle-error", { err: String(err) });
+            }
+          }
+          return;
+        }
+
+        keyDebug("cmdk-detected", {
+          sourceId: contents.id,
+          type: contents.getType?.(),
+        });
 
         // If already open, just toggle; do not overwrite previous capture
         if (cmdkOpen) {

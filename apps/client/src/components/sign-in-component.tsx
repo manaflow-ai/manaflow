@@ -9,6 +9,7 @@ import { type CSSProperties } from "react";
 export function SignInComponent() {
   const user = useUser({ or: "return-null" });
   const showSignIn = !user;
+  const showEmbeddedSignIn = !isElectron || import.meta.env.DEV;
   return (
     <AnimatePresence mode="wait">
       {showSignIn ? (
@@ -48,7 +49,7 @@ export function SignInComponent() {
               <p className="text-xs text-neutral-500 dark:text-neutral-500 text-center">
                 After signing in, you'll be returned automatically.
               </p>
-              <SignIn />
+              {showEmbeddedSignIn ? <SignIn /> : null}
             </div>
           ) : (
             <SignIn />

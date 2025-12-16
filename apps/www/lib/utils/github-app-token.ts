@@ -18,6 +18,16 @@ interface GenerateInstallationTokenOptions {
   };
 }
 
+// Cache generated tokens to avoid rate limit exhaustion
+// Tokens expire after 1 hour but we refresh 5 minutes early to be safe
+const tokenCache = new Map<string, { token: string; expiry: number }>();
+
+function getTokenCacheKey(installationId: number, permissions: GenerateInstallationTokenOptions["permissions"]): string {
+  // Create a stable cache key based on installation ID and permissions
+  // We don't include repositories in the key because tokens can access all repos in the installation
+  return `${installationId}:${JSON.stringify(permissions)}`;
+}
+
 export async function generateGitHubInstallationToken({
   installationId,
   repositories,
@@ -26,6 +36,14 @@ export async function generateGitHubInstallationToken({
     metadata: "read",
   },
 }: GenerateInstallationTokenOptions): Promise<string> {
+  // Check cache first
+  const cacheKey = getTokenCacheKey(installationId, permissions);
+  const cached = tokenCache.get(cacheKey);
+  if (cached && cached.expiry > Date.now()) {
+    console.log(`[GitHub App] Using cached token for installation ${installationId}`);
+    return cached.token;
+  }
+
   console.log(`[GitHub App] Generating token for installation ${installationId}`);
   console.log(`[GitHub App] Requested repositories:`, repositories);
   console.log(`[GitHub App] Requested permissions:`, permissions);
@@ -56,7 +74,7 @@ export async function generateGitHubInstallationToken({
 
   try {
     console.log(`[GitHub App] Requesting token with body:`, JSON.stringify(requestBody, null, 2));
-    
+
     const { data } = await octokit.request(
       "POST /app/installations/{installation_id}/access_tokens",
       {
@@ -67,7 +85,14 @@ export async function generateGitHubInstallationToken({
 
     console.log(`[GitHub App] Successfully generated token with expiry: ${data.expires_at}`);
     console.log(`[GitHub App] Token has access to ${data.repositories?.length || "all"} repositories`);
-    
+
+    // Cache the token with expiry 5 minutes before actual expiry for safety
+    const expiryTime = data.expires_at ? new Date(data.expires_at).getTime() - 5 * 60 * 1000 : Date.now() + 55 * 60 * 1000;
+    tokenCache.set(cacheKey, {
+      token: data.token,
+      expiry: expiryTime,
+    });
+
     return data.token;
   } catch (error) {
     console.error(`[GitHub App] Failed to generate token:`, error);
@@ -80,14 +105,26 @@ export async function generateGitHubInstallationToken({
   }
 }
 
+// Cache installation lookups to avoid rate limit exhaustion
+// Cache entries expire after 5 minutes
+const installationCache = new Map<string, { value: number | null; expiry: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export async function getInstallationForRepo(
   repository: string
 ): Promise<number | null> {
-  // Extract owner from repository (format: owner/repo)
-  const [owner] = repository.split("/");
-  if (!owner) return null;
+  // Extract owner and repo from repository (format: owner/repo)
+  const [owner, repo] = repository.split("/");
+  if (!owner || !repo) return null;
 
-  console.log(`[GitHub App] Looking for installation for owner: ${owner}`);
+  // Check cache first
+  const cached = installationCache.get(repository);
+  if (cached && cached.expiry > Date.now()) {
+    console.log(`[GitHub App] Using cached installation for ${repository}:`, cached.value ?? "none");
+    return cached.value;
+  }
+
+  console.log(`[GitHub App] Looking for installation for repository: ${repository}`);
 
   const octokit = new Octokit({
     authStrategy: createAppAuth,
@@ -98,23 +135,36 @@ export async function getInstallationForRepo(
   });
 
   try {
-    // Get the installation for this specific owner/org
+    // Get the installation for this specific repository
     const { data } = await octokit.request(
-      "GET /users/{username}/installation",
-      { username: owner }
-    ).catch(() => {
-      console.log(`[GitHub App] ${owner} is not a user, trying as organization`);
-      // If not a user, try as an org
-      return octokit.request("GET /orgs/{org}/installation", { org: owner });
-    });
+      "GET /repos/{owner}/{repo}/installation",
+      { owner, repo }
+    );
 
-    console.log(`[GitHub App] Found installation ${data.id} for ${owner}`);
+    console.log(`[GitHub App] Found installation ${data.id} for ${repository}`);
     console.log(`[GitHub App] Installation permissions:`, data.permissions);
     console.log(`[GitHub App] Installation events:`, data.events);
-    
+
+    // Cache the result
+    installationCache.set(repository, {
+      value: data.id,
+      expiry: Date.now() + CACHE_TTL_MS,
+    });
+
     return data.id;
   } catch (error) {
-    console.error(`[GitHub App] No installation found for ${owner}:`, error);
+    // 404 is expected when the app is not installed - not an error
+    if (error && typeof error === 'object' && 'status' in error && error.status === 404) {
+      console.log(`[GitHub App] No installation found for ${repository} (app not installed or no access)`);
+
+      // Cache the null result to avoid repeated lookups
+      installationCache.set(repository, {
+        value: null,
+        expiry: Date.now() + CACHE_TTL_MS,
+      });
+    } else {
+      console.error(`[GitHub App] Unexpected error checking installation for ${repository}:`, error);
+    }
     return null;
   }
 }

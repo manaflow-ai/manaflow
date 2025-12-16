@@ -98,3 +98,5 @@ class ConvexClientCache {
 }
 
 export const convexClientCache = new ConvexClientCache();
+
+export { ConvexHttpClient };

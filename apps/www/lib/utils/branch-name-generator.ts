@@ -2,6 +2,10 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_OPENAI_BASE_URL,
+} from "@cmux/shared";
 import { z } from "zod";
 import { env } from "./www-env";
 
@@ -98,6 +102,7 @@ function getModelAndProvider(
   if (apiKeys.OPENAI_API_KEY) {
     const openai = createOpenAI({
       apiKey: apiKeys.OPENAI_API_KEY,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
     });
     return {
       model: openai("gpt-5-nano"),
@@ -118,6 +123,7 @@ function getModelAndProvider(
   if (apiKeys.ANTHROPIC_API_KEY) {
     const anthropic = createAnthropic({
       apiKey: apiKeys.ANTHROPIC_API_KEY,
+      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
     });
     return {
       model: anthropic("claude-3-5-haiku-20241022"),
@@ -168,7 +174,7 @@ export async function generatePRInfo(
         "You are a helpful assistant that generates git branch names and PR titles. Generate a VERY SHORT branch name (2-4 words maximum, lowercase, hyphenated) and a concise PR title (5-10 words) that summarize the task. The branch name should be extremely concise and focus on the core action (e.g., 'fix-auth', 'add-logging', 'update-deps', 'refactor-api').",
       prompt: `Task: ${taskDescription}`,
       maxRetries: 2,
-      temperature: 0.3,
+      ...(providerName === "OpenAI" ? {} : { temperature: 0.3 }),
     });
 
     const sanitizedBranch = sanitizeBranchComponent(object.branchName);

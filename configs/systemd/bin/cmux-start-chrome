@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Launch Chrome with a persistent profile for the cmux remote browser.
+set -euo pipefail
+
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+export PATH
+
+DISPLAY="${DISPLAY:-:1}"
+REMOTE_HOST="${CDP_TARGET_HOST:-127.0.0.1}"
+REMOTE_PORT="${CDP_TARGET_PORT:-39382}"
+USER_DATA_DIR="${CHROME_USER_DATA_DIR:-/root/.config/chrome}"
+START_URL="${CHROME_START_URL:-about:blank}"
+CHROME_BIN="${CHROME_BIN:-}"
+
+choose_chrome_binary() {
+  local candidate
+  if [[ -n "${CHROME_BIN}" && -x "${CHROME_BIN}" ]]; then
+    printf '%s\n' "${CHROME_BIN}"
+    return 0
+  fi
+
+  for candidate in \
+    /usr/bin/google-chrome-stable \
+    /usr/bin/google-chrome \
+    /usr/bin/chrome \
+    /usr/bin/chromium-browser \
+    /usr/bin/chromium; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  if command -v google-chrome-stable >/dev/null 2>&1; then
+    command -v google-chrome-stable
+    return 0
+  fi
+  if command -v google-chrome >/dev/null 2>&1; then
+    command -v google-chrome
+    return 0
+  fi
+  if command -v chrome >/dev/null 2>&1; then
+    command -v chrome
+    return 0
+  fi
+  if command -v chromium-browser >/dev/null 2>&1; then
+    command -v chromium-browser
+    return 0
+  fi
+  if command -v chromium >/dev/null 2>&1; then
+    command -v chromium
+    return 0
+  fi
+
+  return 1
+}
+
+CHROME_PATH="$(choose_chrome_binary)" || {
+  echo "Chrome binary not found" >&2
+  exit 1
+}
+
+export DISPLAY
+export HOME=/root
+export GOOGLE_API_KEY="cmux-local"
+export GOOGLE_DEFAULT_CLIENT_ID="cmux-local"
+export GOOGLE_DEFAULT_CLIENT_SECRET="cmux-local"
+
+mkdir -p "${USER_DATA_DIR}"
+
+CHROME_FLAGS=(
+  --no-sandbox
+  --disable-dev-shm-usage
+  --disable-gpu
+  --disable-software-rasterizer
+  --no-first-run
+  --no-default-browser-check
+  --disable-session-crashed-bubble
+  --disable-default-apps
+  --disable-sync
+  --disable-translate
+  --disable-infobars
+  --disable-features=ChromeWhatsNewUI,AutofillServerCommunication,AutomationControlled
+  --remote-debugging-address="${REMOTE_HOST}"
+  --remote-debugging-port="${REMOTE_PORT}"
+  --remote-allow-origins=*
+  --test-type
+  --start-maximized
+  --window-position=0,0
+  --window-size=1920,1080
+  --user-data-dir="${USER_DATA_DIR}"
+  --password-store=basic
+)
+
+exec "${CHROME_PATH}" "${CHROME_FLAGS[@]}" "${START_URL}"

@@ -1,0 +1,22 @@
+#!/bin/bash
+# Universal code CLI wrapper - dispatches to the active IDE provider
+set -euo pipefail
+
+# Source IDE environment if available
+if [ -f /etc/cmux/ide.env ]; then
+  source /etc/cmux/ide.env
+fi
+
+# Fallback detection if env not set
+if [ -z "${IDE_BINARY_PATH:-}" ]; then
+  if [ -x /app/code-server/bin/code-server ]; then
+    IDE_BINARY_PATH="/app/code-server/bin/code-server"
+  elif [ -x /app/openvscode-server/bin/openvscode-server ]; then
+    IDE_BINARY_PATH="/app/openvscode-server/bin/openvscode-server"
+  else
+    echo "No IDE binary found" >&2
+    exit 1
+  fi
+fi
+
+exec "$IDE_BINARY_PATH" "$@"

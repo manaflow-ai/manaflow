@@ -1,0 +1,54 @@
+name: cmux
+arch: __NFPM_ARCH__
+platform: linux
+version: __CMUX_VERSION__
+release: __CMUX_RELEASE__
+section: default
+priority: optional
+maintainer: cmux <eng@cmux.dev>
+description: |
+  cmux host runtime and services packaged for native installation.
+license: MIT
+homepage: https://github.com/lawrencecchen/cmux
+depends:
+  - systemd
+  - bash
+overrides:
+  rpm:
+    depends:
+      - systemd
+      - bash
+contents:
+  - src: /pkgroot/usr/local/bin
+    dst: /usr/local/bin
+    type: tree
+    file_info:
+      mode: 0755
+  - src: /pkgroot/usr/local/lib/cmux
+    dst: /usr/local/lib/cmux
+    type: tree
+    file_info:
+      mode: 0755
+  - src: /pkgroot/usr/local/lib/node_modules
+    dst: /usr/local/lib/node_modules
+    type: tree
+    file_info:
+      mode: 0755
+  - src: /pkgroot/opt/cmux
+    dst: /opt/cmux
+    type: tree
+    file_info:
+      mode: 0755
+  - src: /pkgroot/etc/cmux
+    dst: /etc/cmux
+    type: tree
+    file_info:
+      mode: 0644
+  - src: /pkgroot/lib/systemd/system
+    dst: /lib/systemd/system
+    type: tree
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: /tmp/package-scripts/postinstall.sh
+  postremove: /tmp/package-scripts/postremove.sh

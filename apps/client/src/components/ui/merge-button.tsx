@@ -1,6 +1,7 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, GitMerge, GitPullRequest } from "lucide-react";
+import { ChevronDown, GitMerge, GitPullRequest, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 export type MergeMethod = "squash" | "rebase" | "merge";
@@ -11,6 +12,8 @@ interface MergeButtonProps {
   className?: string;
   disabled?: boolean;
   prCount?: number;
+  isLoading?: boolean;
+  disabledReason?: string;
 }
 
 const mergeOptions = [
@@ -40,6 +43,8 @@ export function MergeButton({
   className,
   disabled = false,
   prCount = 1,
+  isLoading = false,
+  disabledReason,
 }: MergeButtonProps) {
   const [selectedMethod, setSelectedMethod] = useState<MergeMethod>("squash");
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -52,40 +57,68 @@ export function MergeButton({
     onMerge(selectedMethod);
   };
 
+  const disabledMessage =
+    typeof disabledReason === "string" ? disabledReason.trim() : "";
+  const shouldShowTooltip = disabled && disabledMessage.length > 0;
+
   if (!isOpen) {
-    return (
+    const button = (
       <button
         onClick={() => onMerge("squash")}
         disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         className={cn(
           "flex items-center gap-1.5 px-3 py-1 h-[26px] bg-[#1f883d] dark:bg-[#238636] text-white rounded hover:bg-[#1f883d]/90 dark:hover:bg-[#238636]/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium text-xs select-none whitespace-nowrap",
           className
         )}
       >
-        <GitPullRequest className="w-3.5 h-3.5" />
-        {prCount === 1 ? "Open PR" : "Open PRs"}
+        {isLoading ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <GitPullRequest className="w-3.5 h-3.5" />
+        )}
+        {isLoading ? "Opening..." : prCount === 1 ? "Open PR" : "Open PRs"}
       </button>
+    );
+
+    if (!shouldShowTooltip) {
+      return button;
+    }
+
+    return (
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="top" sideOffset={8} className="max-w-[260px] leading-relaxed">
+          {disabledMessage}
+        </TooltipContent>
+      </Tooltip>
     );
   }
 
-  return (
+  const mergeControls = (
     <div className="flex items-stretch">
       <button
         onClick={handleMerge}
         disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         className={cn(
           "flex items-center gap-1.5 px-3 py-1 h-[26px] bg-[#1f883d] dark:bg-[#238636] text-white rounded-l hover:bg-[#1f883d]/90 dark:hover:bg-[#238636]/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium text-xs border-r border-green-700 select-none whitespace-nowrap",
           className
         )}
       >
-        <GitMerge className="w-3.5 h-3.5" />
-        {selectedOption?.label}
+        {isLoading ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <GitMerge className="w-3.5 h-3.5" />
+        )}
+        {isLoading ? "Merging..." : selectedOption?.label}
       </button>
 
       <DropdownMenu.Root open={dropdownOpen} onOpenChange={setDropdownOpen}>
         <DropdownMenu.Trigger asChild>
           <button
             disabled={disabled}
+            title={disabled ? disabledReason : undefined}
             className="flex items-center px-2 py-1 h-[26px] bg-[#1f883d] dark:bg-[#238636] text-white rounded-r hover:bg-[#1f883d]/90 dark:hover:bg-[#238636]/90 disabled:opacity-50 disabled:cursor-not-allowed select-none"
           >
             <ChevronDown className="w-3.5 h-3.5" />
@@ -94,7 +127,7 @@ export function MergeButton({
 
         <DropdownMenu.Portal>
           <DropdownMenu.Content
-            className="min-w-[220px] bg-white dark:bg-neutral-900 rounded-md p-1 shadow-lg border border-neutral-200 dark:border-neutral-800 z-[var(--z-modal)]"
+            className="min-w-[220px] bg-white dark:bg-neutral-900 rounded-md p-1 shadow-lg border border-neutral-200 dark:border-neutral-800 z-[var(--z-popover)]"
             sideOffset={5}
           >
             {mergeOptions.map((option) => (
@@ -122,5 +155,18 @@ export function MergeButton({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
     </div>
+  );
+
+  if (!shouldShowTooltip) {
+    return mergeControls;
+  }
+
+  return (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>{mergeControls}</TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8} className="max-w-[260px] leading-relaxed">
+        {disabledMessage}
+      </TooltipContent>
+    </Tooltip>
   );
 }

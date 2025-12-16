@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
 
 export const get = authQuery({
@@ -26,6 +26,9 @@ export const get = authQuery({
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
 
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
     if (args.projectFullName) {
       q = q.filter((qq) =>
         qq.eq(qq.field("projectFullName"), args.projectFullName),
@@ -35,6 +38,61 @@ export const get = authQuery({
     // Note: order by createdAt desc, fallback to insertion order if not present
     const results = await q.collect();
     return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  },
+});
+
+export const getPreviewTasks = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+
+    // Get preview tasks using the dedicated index (team-wide, not user-specific)
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_preview", (idx) =>
+        idx.eq("teamId", teamId).eq("isPreview", true),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    // Sort: in-progress (not completed) first, then by createdAt desc
+    const sorted = tasks.sort((a, b) => {
+      // In-progress first
+      const aInProgress = !a.isCompleted;
+      const bInProgress = !b.isCompleted;
+      if (aInProgress && !bInProgress) return -1;
+      if (!aInProgress && bInProgress) return 1;
+      // Then by createdAt desc
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+
+    return sorted.slice(0, take);
+  },
+});
+
+export const getPinned = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Get pinned tasks (excluding archived and preview tasks)
+    const pinnedTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_pinned", (idx) =>
+        idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .filter((q) => q.neq(q.field("isPreview"), true))
+      .collect();
+
+    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   },
 });
 
@@ -59,6 +117,9 @@ export const getTasksWithTaskRuns = authQuery({
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
 
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
     if (args.projectFullName) {
       q = q.filter((qq) =>
         qq.eq(qq.field("projectFullName"), args.projectFullName),
@@ -76,6 +137,7 @@ export const getTasksWithTaskRuns = authQuery({
           .query("taskRuns")
           .withIndex("by_task", (query) => query.eq("taskId", task._id))
           .filter((query) => query.eq(query.field("isCrowned"), true))
+          .filter((query) => query.neq(query.field("isArchived"), true))
           .first();
 
         let selectedTaskRun = crownedRun ?? null;
@@ -84,6 +146,7 @@ export const getTasksWithTaskRuns = authQuery({
           const [latestRun] = await ctx.db
             .query("taskRuns")
             .withIndex("by_task", (query) => query.eq("taskId", task._id))
+            .filter((query) => query.neq(query.field("isArchived"), true))
             .order("desc")
             .take(1);
           selectedTaskRun = latestRun ?? null;
@@ -118,6 +181,9 @@ export const create = authMutation({
       ),
     ),
     environmentId: v.optional(v.id("environments")),
+    isCloudWorkspace: v.optional(v.boolean()),
+    // Optional: create task runs atomically with the task
+    selectedAgents: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -142,9 +208,31 @@ export const create = authMutation({
       userId,
       teamId,
       environmentId: args.environmentId,
+      isCloudWorkspace: args.isCloudWorkspace,
     });
 
-    return taskId;
+    // If selectedAgents provided, create task runs atomically
+    let taskRunIds: Id<"taskRuns">[] | undefined;
+    if (args.selectedAgents && args.selectedAgents.length > 0) {
+      taskRunIds = await Promise.all(
+        args.selectedAgents.map(async (agentName) => {
+          return ctx.db.insert("taskRuns", {
+            taskId,
+            prompt: args.text,
+            agentName,
+            status: "pending",
+            createdAt: now,
+            updatedAt: now,
+            userId,
+            teamId,
+            environmentId: args.environmentId,
+            isCloudWorkspace: args.isCloudWorkspace,
+          });
+        }),
+      );
+    }
+
+    return { taskId, taskRunIds };
   },
 });
 
@@ -207,6 +295,26 @@ export const update = authMutation({
   },
 });
 
+export const updateWorktreePath = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("tasks"),
+    worktreePath: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      worktreePath: args.worktreePath,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const getById = authQuery({
   args: { teamSlugOrId: v.string(), id: taskIdWithFake },
   handler: async (ctx, args) => {
@@ -215,10 +323,9 @@ export const getById = authQuery({
       return null;
     }
 
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const task = await ctx.db.get(args.id as Id<"tasks">);
-    if (!task || task.teamId !== teamId || task.userId !== userId) return null;
+    if (!task || task.teamId !== teamId) return null;
 
     if (task.images && task.images.length > 0) {
       const imagesWithUrls = await Promise.all(
@@ -243,13 +350,11 @@ export const getById = authQuery({
 export const getVersions = authQuery({
   args: { teamSlugOrId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     return await ctx.db
       .query("taskVersions")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
   },
 });
@@ -280,10 +385,44 @@ export const unarchive = authMutation({
   },
 });
 
+export const pin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, { pinned: true, updatedAt: Date.now() });
+  },
+});
+
+export const unpin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, { pinned: false, updatedAt: Date.now() });
+  },
+});
+
 export const updateCrownError = authMutation({
   args: {
     teamSlugOrId: v.string(),
     id: v.id("tasks"),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ),
     crownEvaluationError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -301,6 +440,41 @@ export const updateCrownError = authMutation({
   },
 });
 
+export const setCrownEvaluationStatusInternal = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    teamId: v.string(),
+    userId: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("in_progress"),
+      v.literal("succeeded"),
+      v.literal("error"),
+    ),
+    errorMessage: v.optional(v.string()),
+    clearError: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== args.teamId || task.userId !== args.userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+
+    const patch: Record<string, unknown> = {
+      crownEvaluationStatus: args.status,
+      updatedAt: Date.now(),
+    };
+
+    if (args.clearError) {
+      patch.crownEvaluationError = undefined;
+    } else if (Object.prototype.hasOwnProperty.call(args, "errorMessage")) {
+      patch.crownEvaluationError = args.errorMessage;
+    }
+
+    await ctx.db.patch(args.taskId, patch);
+  },
+});
+
 // Try to atomically begin a crown evaluation; returns true if we acquired the lock
 export const tryBeginCrownEvaluation = authMutation({
   args: {
@@ -314,11 +488,12 @@ export const tryBeginCrownEvaluation = authMutation({
     if (!task || task.teamId !== teamId || task.userId !== userId) {
       throw new Error("Task not found or unauthorized");
     }
-    if (task.crownEvaluationError === "in_progress") {
+    if (task.crownEvaluationStatus === "in_progress") {
       return false;
     }
     await ctx.db.patch(args.id, {
-      crownEvaluationError: "in_progress",
+      crownEvaluationStatus: "in_progress",
+      crownEvaluationError: undefined,
       updatedAt: Date.now(),
     });
     return true;
@@ -423,9 +598,7 @@ export const getTasksWithPendingCrownEvaluation = authQuery({
       .withIndex("by_team_user", (q) =>
         q.eq("teamId", teamId).eq("userId", userId),
       )
-      .filter((q) =>
-        q.eq(q.field("crownEvaluationError"), "pending_evaluation"),
-      )
+      .filter((q) => q.eq(q.field("crownEvaluationStatus"), "pending"))
       .collect();
 
     // Double-check that no evaluation exists for these tasks
@@ -472,6 +645,100 @@ export const updateMergeStatus = authMutation({
       mergeStatus: args.mergeStatus,
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const recordScreenshotResult = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    runId: v.id("taskRuns"),
+    status: v.union(
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    /** Required for completed status, optional for failed/skipped */
+    commitSha: v.optional(v.string()),
+    hasUiChanges: v.optional(v.boolean()),
+    screenshots: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          commitSha: v.string(),
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.taskId !== args.taskId) {
+      throw new Error("Task run not found for task");
+    }
+
+    const now = Date.now();
+    const screenshots = args.screenshots ?? [];
+
+    const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
+      taskId: args.taskId,
+      runId: args.runId,
+      status: args.status,
+      hasUiChanges: args.hasUiChanges ?? undefined,
+      commitSha: args.commitSha,
+      capturedAt: now,
+      error: args.error ?? undefined,
+      images: screenshots.map((screenshot) => ({
+        storageId: screenshot.storageId,
+        mimeType: screenshot.mimeType,
+        fileName: screenshot.fileName,
+        description: screenshot.description,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const patch: Record<string, unknown> = {
+      screenshotStatus: args.status,
+      screenshotRunId: args.runId,
+      screenshotRequestedAt: now,
+      updatedAt: now,
+      latestScreenshotSetId:
+        args.status === "completed" && screenshots.length > 0
+          ? screenshotSetId
+          : undefined,
+    };
+
+    if (args.status === "completed" && screenshots.length > 0) {
+      patch.screenshotStorageId = screenshots[0].storageId;
+      patch.screenshotMimeType = screenshots[0].mimeType;
+      patch.screenshotFileName = screenshots[0].fileName;
+      patch.screenshotCommitSha = screenshots[0].commitSha;
+      patch.screenshotCompletedAt = now;
+      patch.screenshotError = undefined;
+    } else {
+      patch.screenshotStorageId = undefined;
+      patch.screenshotMimeType = undefined;
+      patch.screenshotFileName = undefined;
+      patch.screenshotCommitSha = undefined;
+      patch.screenshotCompletedAt = undefined;
+      patch.screenshotError = args.error ?? undefined;
+    }
+
+    if (args.status === "failed" || args.status === "skipped") {
+      patch.screenshotError = args.error ?? patch.screenshotError;
+    }
+
+    await ctx.db.patch(args.taskId, patch);
+
+    return screenshotSetId;
   },
 });
 
@@ -557,11 +824,11 @@ export const checkAndEvaluateCrown = authMutation({
     // Check if crown evaluation is already pending or in progress
     const task = await ctx.db.get(args.taskId);
     if (
-      task?.crownEvaluationError === "pending_evaluation" ||
-      task?.crownEvaluationError === "in_progress"
+      task?.crownEvaluationStatus === "pending" ||
+      task?.crownEvaluationStatus === "in_progress"
     ) {
       console.log(
-        `[CheckCrown] Crown evaluation already ${task.crownEvaluationError} for task ${args.taskId}`,
+        `[CheckCrown] Crown evaluation already ${task.crownEvaluationStatus} for task ${args.taskId}`,
       );
       return "pending";
     }
@@ -598,6 +865,7 @@ export const checkAndEvaluateCrown = authMutation({
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       await ctx.db.patch(args.taskId, {
+        crownEvaluationStatus: "error",
         crownEvaluationError: errorMessage,
         updatedAt: Date.now(),
       });
@@ -619,5 +887,62 @@ export const getByIdInternal = internalQuery({
   args: { id: v.id("tasks") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const createForPreview = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    previewRunId: v.id("previewRuns"),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    headSha: v.string(),
+    baseBranch: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      text: `Preview screenshots for PR #${args.prNumber}`,
+      description: `Capture UI screenshots for ${args.prUrl}`,
+      projectFullName: args.repoFullName,
+      baseBranch: args.baseBranch,
+      worktreePath: undefined,
+      isCompleted: false,
+      isPreview: true,
+      createdAt: now,
+      updatedAt: now,
+      images: undefined,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: undefined,
+      isCloudWorkspace: undefined,
+    });
+    return taskId;
+  },
+});
+
+export const setCompletedInternal = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    isCompleted: v.boolean(),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskId, {
+      isCompleted: args.isCompleted,
+      updatedAt: Date.now(),
+      ...(args.crownEvaluationStatus && {
+        crownEvaluationStatus: args.crownEvaluationStatus,
+      }),
+    });
   },
 });

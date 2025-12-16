@@ -6,6 +6,7 @@ cd "$SCRIPT_DIR"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # remove existing build artifacts; keep build/ to preserve entitlements between steps
+rm -rf build
 rm -rf dist-electron
 rm -rf out
 # If you need to refresh icons, uncomment the next line to delete only icon outputs.
@@ -75,11 +76,13 @@ node ./scripts/generate-icons.mjs
 bash "$ROOT_DIR/scripts/prepare-macos-entitlements.sh" || true
 
 # Build electron bundles using Bun (avoids npm/npx ESM bin issues)
+# Increase Node heap to avoid OOM during Electron renderer build
+export NODE_OPTIONS="--max-old-space-size=8192 ${NODE_OPTIONS:-}"
 bunx electron-vite build -c electron.vite.config.ts
 
 # Create a temporary directory for packaging
 TEMP_DIR=$(mktemp -d)
-APP_NAME="cmux"
+APP_NAME="${CMUX_APP_NAME:-cmux}"
 APP_DIR="$TEMP_DIR/$APP_NAME.app"
 APP_VERSION=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (!pkg.version) { process.exit(1); } process.stdout.write(String(pkg.version));")
 if [ -z "$APP_VERSION" ]; then
@@ -135,13 +138,13 @@ if [ ! -d "node_modules" ]; then
   bun install --frozen-lockfile --production
 fi
 
-echo "Copying dependencies..."
-if [ -d "node_modules" ]; then
-  cp -r node_modules "$APP_ASAR_DIR/"
-else
-  echo "ERROR: node_modules still missing after install. Aborting." >&2
-  exit 1
-fi
+# echo "Copying dependencies..."
+# if [ -d "node_modules" ]; then
+#   cp -r node_modules "$APP_ASAR_DIR/"
+# else
+#   echo "ERROR: node_modules still missing after install. Aborting." >&2
+#   exit 1
+# fi
 
 # Update Info.plist
 echo "Updating app metadata..."
@@ -217,5 +220,19 @@ mv "$APP_DIR" "$OUTPUT_DIR/"
 # Clean up
 rm -rf "$TEMP_DIR"
 
-echo "Build complete! App is at $(pwd)/$OUTPUT_DIR/$APP_NAME.app"
-echo "You can run it with: open $(pwd)/$OUTPUT_DIR/$APP_NAME.app"
+APP_PATH="$(pwd)/$OUTPUT_DIR/$APP_NAME.app"
+echo "Build complete! App is at $APP_PATH"
+
+if [[ "$APP_NAME" == "cmux-staging" ]]; then
+  echo "Stopping any running cmux-staging instances before launching the new build..."
+  pkill -f "cmux-staging" >/dev/null 2>&1 || true
+fi
+
+if command -v open >/dev/null 2>&1; then
+  echo "Opening $APP_PATH"
+  if ! open "$APP_PATH"; then
+    echo "WARNING: Failed to open $APP_PATH" >&2
+  fi
+else
+  echo "Skipping automatic open: open command is unavailable."
+fi

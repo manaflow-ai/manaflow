@@ -1,165 +1,217 @@
-import { randomUUID } from "node:crypto";
-
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { MorphInstance } from "./git";
-import { maskSensitive, singleQuote } from "./shell";
+import { singleQuote } from "./shell";
 
 const WORKSPACE_ROOT = "/root/workspace";
 const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
-const LOG_DIR = "/var/log/cmux";
+const MAINTENANCE_WINDOW_NAME = "maintenance";
+const MAINTENANCE_SCRIPT_FILENAME = "maintenance.sh";
+const DEV_WINDOW_NAME = "dev";
+const DEV_SCRIPT_FILENAME = "dev.sh";
 
-const previewOutput = (
-  value: string | undefined,
-  maxLength = 2500,
-): string | null => {
-  if (!value) {
-    return null;
-  }
-  const sanitized = maskSensitive(value).trim();
-  if (sanitized.length === 0) {
-    return null;
-  }
-  if (sanitized.length <= maxLength) {
-    return sanitized;
-  }
-  return `${sanitized.slice(0, maxLength)}…`;
+export type ScriptIdentifiers = {
+  maintenance: {
+    windowName: string;
+    scriptPath: string;
+  };
+  dev: {
+    windowName: string;
+    scriptPath: string;
+  };
 };
 
-const buildScriptFileCommand = (path: string, contents: string): string => `
-mkdir -p ${CMUX_RUNTIME_DIR}
-cat <<'CMUX_SCRIPT_EOF' > ${path}
-${contents}
-CMUX_SCRIPT_EOF
-chmod +x ${path}
-`;
+export const allocateScriptIdentifiers = (): ScriptIdentifiers => {
+  return {
+    maintenance: {
+      windowName: MAINTENANCE_WINDOW_NAME,
+      scriptPath: `${CMUX_RUNTIME_DIR}/${MAINTENANCE_SCRIPT_FILENAME}`,
+    },
+    dev: {
+      windowName: DEV_WINDOW_NAME,
+      scriptPath: `${CMUX_RUNTIME_DIR}/${DEV_SCRIPT_FILENAME}`,
+    },
+  };
+};
 
-const ensurePidStoppedCommand = (pidFile: string): string => `
-if [ -f ${pidFile} ]; then
-  (
-    set -euo pipefail
-    trap 'status=$?; echo "Failed to stop process recorded in ${pidFile} (pid \${EXISTING_PID:-unknown}) (exit $status)" >&2' ERR
-    EXISTING_PID=$(cat ${pidFile} 2>/dev/null || true)
-    if [ -n "\${EXISTING_PID}" ] && kill -0 \${EXISTING_PID} 2>/dev/null; then
-      if kill \${EXISTING_PID} 2>/dev/null; then
-        sleep 0.2
-      elif kill -0 \${EXISTING_PID} 2>/dev/null; then
-        echo "Unable to terminate process \${EXISTING_PID}" >&2
-        exit 1
-      fi
+const getOrchestratorScript = (): string => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(
+    __dirname,
+    "devAndMaintenanceOrchestratorScript.ts",
+  );
+  return readFileSync(scriptPath, "utf-8");
+};
 
-      if kill -0 \${EXISTING_PID} 2>/dev/null; then
-        echo "Process \${EXISTING_PID} still running after SIGTERM" >&2
-        exit 1
-      fi
-    fi
-  )
-fi
-`;
-
-export async function runMaintenanceScript({
+export async function runMaintenanceAndDevScripts({
   instance,
-  script,
+  maintenanceScript,
+  devScript,
+  identifiers,
+  convexUrl,
+  taskRunJwt,
+  isCloudWorkspace,
 }: {
   instance: MorphInstance;
-  script: string;
-}): Promise<{ error: string | null }> {
-  const maintenanceScriptPath = `${CMUX_RUNTIME_DIR}/maintenance-script.sh`;
-  const command = `
-set -euo pipefail
-trap 'rm -f ${maintenanceScriptPath}' EXIT
-${buildScriptFileCommand(maintenanceScriptPath, script)}
-cd ${WORKSPACE_ROOT}
-bash -eu -o pipefail ${maintenanceScriptPath}
-`;
+  maintenanceScript?: string;
+  devScript?: string;
+  identifiers?: ScriptIdentifiers;
+  convexUrl?: string;
+  taskRunJwt?: string;
+  isCloudWorkspace?: boolean;
+}): Promise<void> {
+  const ids = identifiers ?? allocateScriptIdentifiers();
 
-  try {
-    const result = await instance.exec(`bash -lc ${singleQuote(command)}`);
+  const hasMaintenanceScript = Boolean(
+    maintenanceScript && maintenanceScript.trim().length > 0,
+  );
+  const hasDevScript = Boolean(devScript && devScript.trim().length > 0);
 
-    if (result.exit_code !== 0) {
-      const stderrPreview = previewOutput(result.stderr, 2000);
-      const stdoutPreview = previewOutput(result.stdout, 500);
-      const messageParts = [
-        `Maintenance script failed with exit code ${result.exit_code}`,
-        stderrPreview ? `stderr: ${stderrPreview}` : null,
-        stdoutPreview ? `stdout: ${stdoutPreview}` : null,
-      ].filter((part): part is string => part !== null);
-      return { error: messageParts.join(" | ") };
-    }
-
-    return { error: null };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return { error: `Maintenance script execution failed: ${errorMessage}` };
+  if (!hasMaintenanceScript && !hasDevScript) {
+    console.log("[runMaintenanceAndDevScripts] No maintenance or dev scripts provided; skipping start");
+    return;
   }
-}
 
-export async function startDevScript({
-  instance,
-  script,
-}: {
-  instance: MorphInstance;
-  script: string;
-}): Promise<{ error: string | null }> {
-  const devScriptRunId = randomUUID().replace(/-/g, "");
-  const devScriptDir = `${CMUX_RUNTIME_DIR}/${devScriptRunId}`;
-  const devScriptPath = `${devScriptDir}/dev-script.sh`;
-  const pidFile = `${LOG_DIR}/dev-script.pid`;
-  const logFile = `${LOG_DIR}/dev-script.log`;
+  // Generate unique run IDs for this execution
+  const runId = `${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+  const orchestratorScriptPath = `${CMUX_RUNTIME_DIR}/orchestrator_${runId}.ts`;
+  const maintenanceExitCodePath = `${CMUX_RUNTIME_DIR}/maintenance_${runId}.exit-code`;
+  const maintenanceErrorLogPath = `${CMUX_RUNTIME_DIR}/maintenance_${runId}.log`;
+  const devExitCodePath = `${CMUX_RUNTIME_DIR}/dev_${runId}.exit-code`;
+  const devErrorLogPath = `${CMUX_RUNTIME_DIR}/dev_${runId}.log`;
 
-  const command = `
-set -euo pipefail
-mkdir -p ${LOG_DIR}
-mkdir -p ${devScriptDir}
-${ensurePidStoppedCommand(pidFile)}
-${buildScriptFileCommand(devScriptPath, script)}
+  // Create maintenance script if provided
+  const maintenanceScriptContent = hasMaintenanceScript
+    ? `#!/bin/zsh
+set -eux
+
+# Source system profile for environment variables (RUSTUP_HOME, etc.)
+[[ -f /etc/profile ]] && source /etc/profile
+
 cd ${WORKSPACE_ROOT}
-nohup bash -eu -o pipefail ${devScriptPath} > ${logFile} 2>&1 &
-echo $! > ${pidFile}
-`;
 
-  try {
-    const result = await instance.exec(`bash -lc ${singleQuote(command)}`);
+echo "=== Maintenance Script Started at \\$(date) ==="
+${maintenanceScript}
+echo "=== Maintenance Script Completed at \\$(date) ==="
+`
+    : null;
 
-    if (result.exit_code !== 0) {
-      const stderrPreview = previewOutput(result.stderr, 2000);
-      const stdoutPreview = previewOutput(result.stdout, 500);
-      const messageParts = [
-        `Dev script failed to start with exit code ${result.exit_code}`,
-        stderrPreview ? `stderr: ${stderrPreview}` : null,
-        stdoutPreview ? `stdout: ${stdoutPreview}` : null,
-      ].filter((part): part is string => part !== null);
-      return { error: messageParts.join(" | ") };
-    }
+  // Create dev script if provided
+  const devScriptContent = hasDevScript
+    ? `#!/bin/zsh
+set -ux
 
-    // Check if the process started successfully and is still running
-    const checkCommand = `
-if [ -f ${pidFile} ]; then
-  PID=$(cat ${pidFile} 2>/dev/null || echo "")
-  if [ -n "\$PID" ]; then
-    sleep 0.5
-    if ! kill -0 \$PID 2>/dev/null; then
-      if [ -f ${logFile} ]; then
-        tail -n 50 ${logFile}
-      fi
-      exit 1
-    fi
-  fi
+# Source system profile for environment variables (RUSTUP_HOME, etc.)
+[[ -f /etc/profile ]] && source /etc/profile
+
+cd ${WORKSPACE_ROOT}
+
+echo "=== Dev Script Started at \\$(date) ==="
+${devScript}
+`
+    : null;
+
+  const orchestratorScript = getOrchestratorScript();
+
+  if (!convexUrl) {
+    throw new Error("Convex URL not supplied but is required");
+  }
+
+  if (!taskRunJwt) {
+    throw new Error("taskRunJwt not supplied but is required")
+  }
+
+  const orchestratorEnvVars: Record<string, string> = {
+    CMUX_ORCH_WORKSPACE_ROOT: WORKSPACE_ROOT,
+    CMUX_ORCH_RUNTIME_DIR: CMUX_RUNTIME_DIR,
+    CMUX_ORCH_MAINTENANCE_SCRIPT_PATH: ids.maintenance.scriptPath,
+    CMUX_ORCH_DEV_SCRIPT_PATH: ids.dev.scriptPath,
+    CMUX_ORCH_MAINTENANCE_WINDOW_NAME: ids.maintenance.windowName,
+    CMUX_ORCH_DEV_WINDOW_NAME: ids.dev.windowName,
+    CMUX_ORCH_MAINTENANCE_EXIT_CODE_PATH: maintenanceExitCodePath,
+    CMUX_ORCH_MAINTENANCE_ERROR_LOG_PATH: maintenanceErrorLogPath,
+    CMUX_ORCH_DEV_EXIT_CODE_PATH: devExitCodePath,
+    CMUX_ORCH_DEV_ERROR_LOG_PATH: devErrorLogPath,
+    CMUX_ORCH_HAS_MAINTENANCE_SCRIPT: hasMaintenanceScript ? "1" : "0",
+    CMUX_ORCH_HAS_DEV_SCRIPT: hasDevScript ? "1" : "0",
+    CMUX_ORCH_CONVEX_URL: convexUrl,
+    CMUX_ORCH_TASK_RUN_JWT: taskRunJwt,
+    CMUX_ORCH_IS_CLOUD_WORKSPACE: isCloudWorkspace ? "1" : "0",
+  };
+
+  const orchestratorEnvString = Object.entries(orchestratorEnvVars)
+    .map(([key, value]) => `export ${key}=${singleQuote(value)}`)
+    .join("\n");
+
+  // Create the command that sets up all scripts and starts the orchestrator in background
+  const setupAndRunCommand = `set -eu
+mkdir -p ${CMUX_RUNTIME_DIR}
+
+# Write maintenance script if provided
+${maintenanceScriptContent ? `cat > ${ids.maintenance.scriptPath} <<'MAINTENANCE_SCRIPT_EOF'
+${maintenanceScriptContent}
+MAINTENANCE_SCRIPT_EOF
+chmod +x ${ids.maintenance.scriptPath}
+rm -f ${maintenanceExitCodePath}` : ''}
+
+# Write dev script if provided
+${devScriptContent ? `cat > ${ids.dev.scriptPath} <<'DEV_SCRIPT_EOF'
+${devScriptContent}
+DEV_SCRIPT_EOF
+chmod +x ${ids.dev.scriptPath}` : ''}
+
+# Write orchestrator script
+cat > ${orchestratorScriptPath} <<'ORCHESTRATOR_EOF'
+${orchestratorScript}
+ORCHESTRATOR_EOF
+chmod +x ${orchestratorScriptPath}
+
+# Export orchestrator environment variables
+${orchestratorEnvString}
+
+# Start orchestrator as a background process (fire-and-forget)
+# Redirect output to log file
+nohup bun ${orchestratorScriptPath} > ${CMUX_RUNTIME_DIR}/orchestrator_${runId}.log 2>&1 &
+ORCHESTRATOR_PID=$!
+
+# Give it a moment to start
+sleep 1
+
+# Verify the process is still running
+if kill -0 $ORCHESTRATOR_PID 2>/dev/null; then
+  echo "[ORCHESTRATOR] Started successfully in background (PID: $ORCHESTRATOR_PID)"
+else
+  echo "[ORCHESTRATOR] ERROR: Process failed to start or exited immediately" >&2
+  exit 1
 fi
 `;
 
-    const checkResult = await instance.exec(
-      `bash -c ${singleQuote(checkCommand)}`,
+  try {
+    const result = await instance.exec(
+      `zsh -lc ${singleQuote(setupAndRunCommand)}`,
     );
 
-    if (checkResult.exit_code !== 0) {
-      const logPreview = previewOutput(checkResult.stdout, 2000);
-      return {
-        error: `Dev script failed immediately after start${logPreview ? ` | log: ${logPreview}` : ""}`,
-      };
+    const stdout = result.stdout?.trim() ?? "";
+    const stderr = result.stderr?.trim() ?? "";
+
+    if (result.exit_code !== 0) {
+      const message =
+        `Failed to start orchestrator: exit code ${result.exit_code}` +
+        (stderr ? ` | stderr: ${stderr}` : "");
+      throw new Error(message);
     }
 
-    return { error: null };
+    if (!stdout.includes("[ORCHESTRATOR] Started successfully in background (PID:")) {
+      throw new Error("Orchestrator did not confirm successful start");
+    }
+
+    console.log(`[runMaintenanceAndDevScripts] Orchestrator started successfully`);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return { error: `Dev script execution failed: ${errorMessage}` };
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[runMaintenanceAndDevScripts] Failed to start orchestrator: ${message}`);
+    throw new Error(message);
   }
 }

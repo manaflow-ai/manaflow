@@ -1,0 +1,21 @@
+[Unit]
+Description=Cmux Chrome DevTools browser
+After=cmux-openbox.service
+Requires=cmux-openbox.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:1
+Environment=CDP_TARGET_HOST=127.0.0.1
+Environment=CDP_TARGET_PORT=39382
+Environment=CHROME_USER_DATA_DIR=/root/.config/chrome
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/local/lib/cmux/cmux-start-chrome
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+StandardOutput=append:/var/log/cmux/chrome.log
+StandardError=append:/var/log/cmux/chrome.log
+
+[Install]
+WantedBy=cmux.target

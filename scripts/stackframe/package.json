@@ -8,9 +8,9 @@
     "convex-test": "bun run convex-test.ts"
   },
   "dependencies": {
-    "@stackframe/js": "^2.8.41"
+    "@stackframe/js": "^2.8.48"
   },
   "devDependencies": {
-    "@types/node": "^24.3.1"
+    "@types/node": "^24.9.1"
   }
 }

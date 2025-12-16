@@ -72,7 +72,6 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
 
       createdSocket.on("available-editors", (editors: unknown) => {
         if (disposed) return;
-        console.log("[ElectronSocket] Available editors:", editors);
         setAvailableEditors(editors as SocketContextType["availableEditors"]);
       });
 

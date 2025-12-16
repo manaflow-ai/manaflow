@@ -50,6 +50,10 @@
       "import": "./src/convex-ready.ts",
       "types": "./src/convex-ready.ts"
     },
+    "./convex-safe": {
+      "import": "./src/convex-safe.ts",
+      "types": "./src/convex-safe.ts"
+    },
     "./utils/typed-zid": {
       "import": "./src/utils/typed-zid.ts",
       "types": "./src/utils/typed-zid.ts"
@@ -57,6 +61,18 @@
     "./utils/reserved-cmux-ports": {
       "import": "./src/utils/reserved-cmux-ports.ts",
       "types": "./src/utils/reserved-cmux-ports.ts"
+    },
+    "./utils/generate-workspace-name": {
+      "import": "./src/utils/generate-workspace-name.ts",
+      "types": "./src/utils/generate-workspace-name.ts"
+    },
+    "./utils/derive-repo-base-name": {
+      "import": "./src/utils/derive-repo-base-name.ts",
+      "types": "./src/utils/derive-repo-base-name.ts"
+    },
+    "./utils/parse-github-repo-url": {
+      "import": "./src/utils/parse-github-repo-url.ts",
+      "types": "./src/utils/parse-github-repo-url.ts"
     },
     "./utils/validate-exposed-ports": {
       "import": "./src/utils/validate-exposed-ports.ts",
@@ -74,22 +90,47 @@
       "import": "./src/pull-request-state.ts",
       "types": "./src/pull-request-state.ts"
     },
+    "./codeReview/callback-schemas": {
+      "import": "./src/codeReview/callback-schemas.ts",
+      "types": "./src/codeReview/callback-schemas.ts"
+    },
     "./providers/common/check-docker": {
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
+    },
+    "./screenshots/sanitize-markdown": {
+      "import": "./src/screenshots/sanitize-markdown.ts",
+      "types": "./src/screenshots/sanitize-markdown.ts"
+    },
+    "./components/vnc-viewer": {
+      "import": "./src/components/vnc-viewer.tsx",
+      "types": "./src/components/vnc-viewer.tsx"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@novnc/novnc": "^1.7.0-beta"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "@novnc/novnc": {
+      "optional": true
     }
   },
   "dependencies": {
+    "clsx": "^2.0.0",
     "@cmux/convex": "workspace:*",
-    "convex": "^1.27.1",
+    "convex": "1.29.3",
     "jose": "^6.1.0",
     "zod": "^4.1.5",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@types/node": "^24.3.1",
+    "@types/node": "^24.9.1",
     "@xterm/xterm": "^5.5.0",
-    "typescript": "^5.8.3",
+    "typescript": "^5.9.3",
     "socket.io": "^4.8.1",
     "vitest": "^3.2.4"
   }

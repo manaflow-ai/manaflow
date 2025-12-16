@@ -2,12 +2,12 @@ import {
   BrowserWindow,
   WebContentsView,
   ipcMain,
-  type OnCompletedListener,
-  type OnDidGetResponseDetailsListener,
+  shell,
   type Rectangle,
   type Session,
   type WebContents,
 } from "electron";
+import { Buffer } from "node:buffer";
 import { STATUS_CODES } from "node:http";
 import type {
   ElectronDevToolsMode,
@@ -17,15 +17,26 @@ import type {
 } from "../../src/types/electron-webcontents";
 import type { WebContentsLayoutActualState } from "../../src/types/webcontents-debug";
 import { applyChromeCamouflage, type Logger } from "./chrome-camouflage";
+import { registerContextMenuForTarget } from "./context-menu";
+import {
+  configurePreviewProxyForView,
+  getPreviewPartitionForPersistKey,
+  isTaskRunPreviewPersistKey,
+} from "./task-run-preview-proxy";
+import { normalizeBrowserUrl } from "@cmux/shared";
 
 interface RegisterOptions {
   logger: Logger;
   maxSuspendedEntries?: number;
-  rendererBaseUrl: string;
+  onPreviewWebContentsChange?: (payload: {
+    webContentsId: number;
+    present: boolean;
+  }) => void;
 }
 
 interface CreateOptions {
   url: string;
+  requestUrl?: string;
   bounds?: Rectangle;
   backgroundColor?: string;
   borderRadius?: number;
@@ -65,6 +76,9 @@ interface Entry {
   ownerWebContentsDestroyed: boolean;
   eventChannel: string;
   eventCleanup: Array<() => void>;
+  previewProxyCleanup?: () => void;
+  previewPartition?: string | null;
+  isPreview: boolean;
 }
 
 const viewEntries = new Map<number, Entry>();
@@ -75,7 +89,9 @@ const suspendedQueue: number[] = [];
 const suspendedByKey = new Map<string, Entry>();
 let suspendedCount = 0;
 let maxSuspendedEntries = 25;
-let rendererBaseUrl = "";
+let previewWebContentsChangeHandler:
+  | ((payload: { webContentsId: number; present: boolean }) => void)
+  | null = null;
 
 const validDevToolsModes: ReadonlySet<ElectronDevToolsMode> = new Set([
   "bottom",
@@ -88,6 +104,303 @@ function eventChannelFor(id: number): string {
   return `cmux:webcontents:event:${id}`;
 }
 
+function notifyPreviewWebContentsPresence(
+  entry: Entry,
+  present: boolean
+): void {
+  if (!entry.isPreview || !previewWebContentsChangeHandler) {
+    return;
+  }
+  try {
+    previewWebContentsChangeHandler({
+      webContentsId: entry.view.webContents.id,
+      present,
+    });
+  } catch (error) {
+    console.warn("Failed to notify preview WebContents change", error);
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+interface ErrorDisplay {
+  title: string;
+  description: string;
+  badgeLabel: string;
+  details: Array<{ label: string; value: string }>;
+}
+
+interface NavigationMatch {
+  test: RegExp;
+  title: string;
+  description: string;
+}
+
+const NAVIGATION_ERROR_MAPPINGS: NavigationMatch[] = [
+  {
+    test: /ERR_NAME_NOT_RESOLVED/i,
+    title: "Domain not found",
+    description:
+      "The domain name couldn't be resolved. Verify the hostname or update your DNS settings.",
+  },
+  {
+    test: /ERR_CONNECTION_REFUSED/i,
+    title: "Connection refused",
+    description:
+      "The server refused the connection. Make sure the service is running and accepting connections.",
+  },
+  {
+    test: /ERR_CONNECTION_TIMED_OUT/i,
+    title: "Connection timed out",
+    description:
+      "The server took too long to respond. Check the server status or network connectivity.",
+  },
+  {
+    test: /ERR_INTERNET_DISCONNECTED/i,
+    title: "No internet connection",
+    description:
+      "We couldn't reach the internet. Check your network connection and try again.",
+  },
+  {
+    test: /ERR_SSL_PROTOCOL_ERROR|ERR_CERT/i,
+    title: "Secure connection failed",
+    description:
+      "The secure connection could not be established. Verify the TLS certificate or try HTTP.",
+  },
+  {
+    test: /ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_RESET/i,
+    title: "Host unreachable",
+    description:
+      "We couldn't reach the host. Confirm the service address and network routes.",
+  },
+];
+
+function describeNavigationError(
+  code: number,
+  description: string,
+  url: string
+): ErrorDisplay {
+  const match = NAVIGATION_ERROR_MAPPINGS.find(({ test }) =>
+    test.test(description)
+  );
+
+  const title = match?.title ?? "Failed to load page";
+  const desc =
+    match?.description ??
+    "Something went wrong while loading this page. Try refreshing or check the network logs.";
+
+  const badgeLabel = `Code ${code}`;
+
+  const details: Array<{ label: string; value: string }> = [
+    { label: "Error", value: description || `Code ${code}` },
+    { label: "URL", value: url },
+  ];
+
+  return {
+    title,
+    description: desc,
+    badgeLabel,
+    details,
+  };
+}
+
+function describeHttpError(
+  statusCode: number,
+  statusText: string | undefined,
+  url: string
+): ErrorDisplay {
+  let title = "Request failed";
+  let description =
+    "The server responded with an error. Try refreshing the page or checking the service logs.";
+
+  if (statusCode === 404) {
+    title = "Page not found";
+    description =
+      "We couldn't find that page. Double-check the URL or make sure the route is available.";
+  } else if (statusCode === 401 || statusCode === 403) {
+    title = "Access denied";
+    description =
+      "This page requires authentication or additional permissions. Sign in or update the request headers.";
+  } else if (statusCode >= 500) {
+    title = "Server error";
+    description =
+      "The server encountered an error while handling the request. Check the service logs or try again.";
+  } else if (statusCode >= 400) {
+    title = "Request blocked";
+    description =
+      "The server rejected the request. Review the request payload or try again.";
+  }
+
+  const statusDetail = statusText
+    ? `HTTP ${statusCode} · ${statusText}`
+    : `HTTP ${statusCode}`;
+
+  return {
+    title,
+    description,
+    badgeLabel: statusDetail,
+    details: [
+      { label: "Status", value: statusDetail },
+      { label: "URL", value: url },
+    ],
+  };
+}
+
+function buildErrorHtml(errorDisplay: ErrorDisplay): string {
+  const detailsHtml = errorDisplay.details
+    .map(
+      ({ label, value }) => `
+        <div>
+          <dt class="font-medium uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+            ${escapeHtml(label)}
+          </dt>
+          <dd class="mt-0.5 break-words text-neutral-600 dark:text-neutral-300">
+            ${escapeHtml(value)}
+          </dd>
+        </div>
+      `
+    )
+    .join("");
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(errorDisplay.title)}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: white;
+      color: #171717;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #0a0a0a;
+        color: #fafafa;
+      }
+    }
+    .container {
+      width: 100%;
+      max-width: 24rem;
+      padding: 1.5rem;
+      background: white;
+      border: 1px solid #e5e5e5;
+      border-radius: 0.5rem;
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+    }
+    @media (prefers-color-scheme: dark) {
+      .container {
+        background: #171717;
+        border-color: #262626;
+      }
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.125rem 0.625rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      border-radius: 9999px;
+      background: #e5e5e5;
+      color: #404040;
+    }
+    @media (prefers-color-scheme: dark) {
+      .badge {
+        background: #262626;
+        color: #d4d4d4;
+      }
+    }
+    h1 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      line-height: 1.75rem;
+      color: #171717;
+    }
+    @media (prefers-color-scheme: dark) {
+      h1 {
+        color: #fafafa;
+      }
+    }
+    .description {
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: #525252;
+    }
+    @media (prefers-color-scheme: dark) {
+      .description {
+        color: #d4d4d4;
+      }
+    }
+    dl {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: #737373;
+    }
+    @media (prefers-color-scheme: dark) {
+      dl {
+        color: #a3a3a3;
+      }
+    }
+    dl > div {
+      margin-top: 0.5rem;
+    }
+    dl > div:first-child {
+      margin-top: 0;
+    }
+    dt {
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.025em;
+      color: #a3a3a3;
+    }
+    @media (prefers-color-scheme: dark) {
+      dt {
+        color: #737373;
+      }
+    }
+    dd {
+      margin-top: 0.125rem;
+      word-break: break-all;
+      color: #525252;
+    }
+    @media (prefers-color-scheme: dark) {
+      dd {
+        color: #d4d4d4;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    ${errorDisplay.badgeLabel ? `<span class="badge">${escapeHtml(errorDisplay.badgeLabel)}</span>` : ""}
+    <h1>${escapeHtml(errorDisplay.title)}</h1>
+    <p class="description">${escapeHtml(errorDisplay.description)}</p>
+    ${errorDisplay.details.length > 0 ? `<dl>${detailsHtml}</dl>` : ""}
+  </div>
+</body>
+</html>`;
+}
+
 function buildErrorUrl(params: {
   type: "navigation" | "http";
   url: string;
@@ -96,30 +409,29 @@ function buildErrorUrl(params: {
   statusCode?: number;
   statusText?: string;
 }): string {
-  const url = new URL("/electron-error", rendererBaseUrl);
-  url.searchParams.set("type", params.type);
-  if (params.url) url.searchParams.set("url", params.url);
-  if (params.type === "navigation") {
-    if (params.code !== undefined)
-      url.searchParams.set("code", String(params.code));
-    if (params.description) url.searchParams.set("description", params.description);
-  } else if (params.type === "http") {
-    if (params.statusCode !== undefined)
-      url.searchParams.set("statusCode", String(params.statusCode));
-    if (params.statusText) url.searchParams.set("statusText", params.statusText);
-  }
-  return url.toString();
+  const errorDisplay: ErrorDisplay =
+    params.type === "http"
+      ? describeHttpError(
+          params.statusCode ?? 0,
+          params.statusText,
+          params.url ?? ""
+        )
+      : describeNavigationError(
+          params.code ?? 0,
+          params.description ?? "",
+          params.url ?? ""
+        );
+
+  const html = buildErrorHtml(errorDisplay);
+  const base64Html = Buffer.from(html, "utf-8").toString("base64");
+  return `data:text/html;base64,${base64Html}`;
 }
 
 function sendEventToOwner(
   entry: Entry,
   payload: ElectronWebContentsEvent,
-  logger: Logger,
+  logger: Logger
 ) {
-  logger.log("Forwarding WebContentsView event", {
-    id: entry.id,
-    payload,
-  });
   const sender = entry.ownerSender;
   if (!sender || sender.isDestroyed()) {
     return;
@@ -147,7 +459,8 @@ function buildState(entry: Entry): ElectronWebContentsState | null {
       isLoading: contents.isLoading(),
       isDevToolsOpened: contents.isDevToolsOpened(),
     };
-  } catch {
+  } catch (error) {
+    console.error("Failed to build state", error);
     return null;
   }
 }
@@ -194,7 +507,7 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     _event: Electron.Event,
     url: string,
     httpResponseCode: number,
-    httpStatusText: string,
+    httpStatusText: string
   ) => {
     // Check for HTTP errors (4xx, 5xx)
     if (httpResponseCode >= 400) {
@@ -257,7 +570,7 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     errorCode: number,
     errorDescription: string,
     validatedURL: string,
-    isMainFrame: boolean,
+    isMainFrame: boolean
   ) => {
     if (isMainFrame) {
       const errorUrl = buildErrorUrl({
@@ -281,33 +594,6 @@ function setupEventForwarders(entry: Entry, logger: Logger) {
     webContents.removeListener("did-fail-load", onDidFailLoad);
   });
 
-  const onDidGetResponseDetails: OnDidGetResponseDetailsListener = (
-    _event,
-    _status,
-    newURL,
-    _originalURL,
-    httpResponseCode,
-    _requestMethod,
-    _referrer,
-    _responseHeaders,
-    resourceType,
-  ) => {
-    logger.log("did-get-response-details", {
-      id: entry.id,
-      url: newURL,
-      httpResponseCode,
-      resourceType,
-    });
-    // Error handling is done in onDidNavigate
-  };
-  webContents.on("did-get-response-details", onDidGetResponseDetails);
-  cleanup.push(() => {
-    webContents.removeListener(
-      "did-get-response-details",
-      onDidGetResponseDetails,
-    );
-  });
-
   entry.eventCleanup = cleanup;
   sendState(entry, logger, "initialized");
 }
@@ -316,13 +602,10 @@ const registeredSessions = new WeakSet<Session>();
 
 function ensureWebRequestListener(targetSession: Session, _logger: Logger) {
   if (registeredSessions.has(targetSession)) return;
-  const listener: OnCompletedListener = () => {
+  const listener = () => {
     // Error handling is done in onDidNavigate
   };
-  targetSession.webRequest.onCompleted(
-    { urls: ["*://*/*"] },
-    listener as OnCompletedListener,
-  );
+  targetSession.webRequest.onCompleted({ urls: ["*://*/*"] }, listener);
   registeredSessions.add(targetSession);
 }
 
@@ -398,7 +681,7 @@ function evictExcessSuspended(logger: Logger) {
 function suspendEntriesForDestroyedOwner(
   windowId: number,
   webContentsId: number,
-  logger: Logger,
+  logger: Logger
 ) {
   logger.log("Renderer destroyed; evaluating owned WebContentsViews", {
     windowId,
@@ -419,7 +702,7 @@ function suspendEntriesForDestroyedOwner(
         {
           id: entry.id,
           webContentsId: entry.view.webContents.id,
-        },
+        }
       );
       destroyView(entry.id);
       suspendedAny = true;
@@ -466,13 +749,24 @@ function suspendEntriesForDestroyedOwner(
 function destroyView(id: number): boolean {
   const entry = viewEntries.get(id);
   if (!entry) return false;
+  notifyPreviewWebContentsPresence(entry, false);
   entriesByWebContentsId.delete(entry.view.webContents.id);
   try {
+    if (entry.previewProxyCleanup) {
+      try {
+        entry.previewProxyCleanup();
+      } catch (error) {
+        console.error("Failed to cleanup preview proxy", error);
+      } finally {
+        entry.previewProxyCleanup = undefined;
+      }
+    }
     removeFromSuspended(entry);
     for (const cleanup of entry.eventCleanup) {
       try {
         cleanup();
-      } catch {
+      } catch (error) {
+        console.error("Failed to cleanup event listener", error);
         // ignore cleanup failures
       }
     }
@@ -482,14 +776,15 @@ function destroyView(id: number): boolean {
     if (win && !win.isDestroyed()) {
       try {
         win.contentView.removeChildView(entry.view);
-      } catch {
+      } catch (error) {
+        console.error("Failed to remove view from window", error);
         // ignore removal failures
       }
     }
     try {
       destroyWebContents(entry.view.webContents);
-    } catch {
-      // ignore destroy failures
+    } catch (error) {
+      console.error("Failed to destroy webContents", error);
     }
   } finally {
     viewEntries.delete(id);
@@ -500,7 +795,7 @@ function destroyView(id: number): boolean {
 function destroyConflictingEntries(
   persistKey: string,
   windowId: number,
-  logger: Logger,
+  logger: Logger
 ): void {
   for (const entry of Array.from(viewEntries.values())) {
     if (entry.persistKey !== persistKey) {
@@ -521,14 +816,33 @@ function destroyConflictingEntries(
   }
 }
 
-function toBounds(bounds: Rectangle | undefined): Rectangle {
+function toBounds(bounds: Rectangle | undefined, zoomFactor = 1): Rectangle {
+  const zoom =
+    typeof zoomFactor === "number" &&
+    Number.isFinite(zoomFactor) &&
+    zoomFactor > 0
+      ? zoomFactor
+      : 1;
   if (!bounds) return { x: 0, y: 0, width: 0, height: 0 };
   return {
-    x: Math.round(bounds.x ?? 0),
-    y: Math.round(bounds.y ?? 0),
-    width: Math.max(0, Math.round(bounds.width ?? 0)),
-    height: Math.max(0, Math.round(bounds.height ?? 0)),
+    x: Math.round((bounds.x ?? 0) * zoom),
+    y: Math.round((bounds.y ?? 0) * zoom),
+    width: Math.max(0, Math.round((bounds.width ?? 0) * zoom)),
+    height: Math.max(0, Math.round((bounds.height ?? 0) * zoom)),
   };
+}
+
+function getSenderZoomFactor(sender: WebContents | null | undefined): number {
+  if (!sender) return 1;
+  try {
+    const zoom = sender.getZoomFactor();
+    if (typeof zoom === "number" && Number.isFinite(zoom) && zoom > 0) {
+      return zoom;
+    }
+  } catch (error) {
+    console.warn("Failed to read sender zoom factor", error);
+  }
+  return 1;
 }
 
 function evaluateVisibility(bounds: Rectangle, explicit?: boolean): boolean {
@@ -538,26 +852,26 @@ function evaluateVisibility(bounds: Rectangle, explicit?: boolean): boolean {
 
 function applyBackgroundColor(
   view: Electron.WebContentsView,
-  color: string | undefined,
+  color: string | undefined
 ) {
   if (!color) return;
   try {
     view.setBackgroundColor(color);
-  } catch {
-    // ignore invalid colors
+  } catch (error) {
+    console.error("Failed to apply background color", error);
   }
 }
 
 function applyBorderRadius(
   view: Electron.WebContentsView,
-  radius: number | undefined,
+  radius: number | undefined
 ) {
   if (typeof radius !== "number" || Number.isNaN(radius)) return;
   const safe = Math.max(0, Math.round(radius));
   try {
     view.setBorderRadius(safe);
-  } catch {
-    // ignore unsupported platforms
+  } catch (error) {
+    console.error("Failed to apply border radius", error);
   }
 }
 
@@ -576,10 +890,10 @@ function destroyWebContents(contents: WebContents) {
 export function registerWebContentsViewHandlers({
   logger,
   maxSuspendedEntries: providedMax,
-  rendererBaseUrl: providedBaseUrl,
+  onPreviewWebContentsChange,
 }: RegisterOptions): void {
   setMaxSuspendedEntries(providedMax);
-  rendererBaseUrl = providedBaseUrl;
+  previewWebContentsChangeHandler = onPreviewWebContentsChange ?? null;
 
   ipcMain.handle(
     "cmux:webcontents:create",
@@ -599,7 +913,8 @@ export function registerWebContentsViewHandlers({
             ? options.persistKey.trim()
             : undefined;
 
-        const bounds = toBounds(options.bounds);
+        const zoomFactor = getSenderZoomFactor(sender);
+        const bounds = toBounds(options.bounds, zoomFactor);
         const desiredVisibility = evaluateVisibility(bounds);
 
         if (persistKey) {
@@ -614,7 +929,7 @@ export function registerWebContentsViewHandlers({
             } catch (error) {
               logger.error(
                 "Failed to reattach suspended WebContentsView",
-                error,
+                error
               );
               destroyView(candidate.id);
               throw error;
@@ -631,7 +946,7 @@ export function registerWebContentsViewHandlers({
                 {
                   error,
                   id: candidate.id,
-                },
+                }
               );
             }
 
@@ -682,19 +997,45 @@ export function registerWebContentsViewHandlers({
           }
 
           if (candidate && sameWindow && !(sameSender || canAdopt)) {
-            logger.warn("Unable to reattach WebContentsView despite matching persistKey", {
-              persistKey,
-              candidateId: candidate.id,
-              candidateOwnerWebContentsId: candidate.ownerWebContentsId,
-              requestWebContentsId: sender.id,
-              ownerDestroyed: candidate.ownerWebContentsDestroyed,
-            });
+            logger.warn(
+              "Unable to reattach WebContentsView despite matching persistKey",
+              {
+                persistKey,
+                candidateId: candidate.id,
+                candidateOwnerWebContentsId: candidate.ownerWebContentsId,
+                requestWebContentsId: sender.id,
+                ownerDestroyed: candidate.ownerWebContentsDestroyed,
+              }
+            );
           }
 
           destroyConflictingEntries(persistKey, win.id, logger);
         }
 
-        const view = new WebContentsView();
+        const previewPartition = getPreviewPartitionForPersistKey(persistKey);
+        const view = previewPartition
+          ? new WebContentsView({
+              webPreferences: { partition: previewPartition },
+            })
+          : new WebContentsView();
+
+        view.webContents.setWindowOpenHandler((details) => {
+          const normalized = normalizeBrowserUrl(details.url ?? "");
+          if (!normalized) {
+            return { action: "deny" };
+          }
+          try {
+            void shell.openExternal(normalized);
+          } catch (error) {
+            logger.warn("Failed to open external URL from WebContentsView", {
+              url: normalized,
+              error,
+            });
+          }
+          return { action: "deny" };
+        });
+
+        const disposeContextMenu = registerContextMenuForTarget(view);
 
         applyChromeCamouflage(view, logger);
 
@@ -707,8 +1048,8 @@ export function registerWebContentsViewHandlers({
           logger.error("Failed to add WebContentsView to window", error);
           try {
             destroyWebContents(view.webContents);
-          } catch {
-            // ignore
+          } catch (error) {
+            console.error("Failed to destroy webContents", error);
           }
           throw error;
         }
@@ -719,19 +1060,41 @@ export function registerWebContentsViewHandlers({
         } catch (error) {
           logger.warn(
             "Failed to set initial bounds for WebContentsView",
-            error,
+            error
           );
         }
 
         const finalUrl = options.url ?? "about:blank";
+        const proxySourceUrl = options.requestUrl ?? finalUrl;
+        let previewProxyCleanup: (() => void) | undefined;
+        if (
+          isTaskRunPreviewPersistKey(persistKey) &&
+          typeof proxySourceUrl === "string" &&
+          proxySourceUrl.startsWith("http")
+        ) {
+          try {
+            previewProxyCleanup = await configurePreviewProxyForView({
+              webContents: view.webContents,
+              initialUrl: proxySourceUrl,
+              persistKey,
+              logger,
+            });
+          } catch (error) {
+            logger.warn("Failed to enable preview proxy", {
+              persistKey,
+              error,
+            });
+          }
+        }
         void view.webContents.loadURL(finalUrl).catch((error) =>
           logger.warn("WebContentsView initial load failed", {
             url: finalUrl,
             error,
-          }),
+          })
         );
 
         const id = nextViewId++;
+        const isPreview = isTaskRunPreviewPersistKey(persistKey);
         const entry: Entry = {
           id,
           view,
@@ -743,10 +1106,15 @@ export function registerWebContentsViewHandlers({
           ownerWebContentsDestroyed: false,
           eventChannel: eventChannelFor(id),
           eventCleanup: [],
+          previewProxyCleanup,
+          previewPartition,
+          isPreview,
         };
         viewEntries.set(id, entry);
         setupEventForwarders(entry, logger);
+        entry.eventCleanup.push(disposeContextMenu);
         sendState(entry, logger, "created");
+        notifyPreviewWebContentsPresence(entry, true);
 
         if (!windowCleanupRegistered.has(win.id)) {
           windowCleanupRegistered.add(win.id);
@@ -774,7 +1142,7 @@ export function registerWebContentsViewHandlers({
         logger.error("webcontents-view:create failed", error);
         throw error;
       }
-    },
+    }
   );
 
   ipcMain.handle(
@@ -790,7 +1158,8 @@ export function registerWebContentsViewHandlers({
       }
       entry.ownerSender = event.sender;
 
-      const bounds = toBounds(rawBounds);
+      const zoomFactor = getSenderZoomFactor(event.sender);
+      const bounds = toBounds(rawBounds, zoomFactor);
       try {
         entry.view.setBounds(bounds);
         entry.view.setVisible(evaluateVisibility(bounds, visible));
@@ -799,7 +1168,7 @@ export function registerWebContentsViewHandlers({
         entry.view.setVisible(false);
         return { ok: false, error: String(error) };
       }
-    },
+    }
   );
 
   ipcMain.handle(
@@ -826,7 +1195,7 @@ export function registerWebContentsViewHandlers({
         logger.warn("Failed to load URL", { id, url, error });
         return { ok: false, error: String(error) };
       }
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:go-back", (event, id: number) => {
@@ -925,15 +1294,15 @@ export function registerWebContentsViewHandlers({
       if (win && !win.isDestroyed()) {
         try {
           win.contentView.removeChildView(entry.view);
-        } catch {
-          // ignore
+        } catch (error) {
+          console.error("Failed to remove view from window", error);
         }
       }
 
       try {
         entry.view.setVisible(false);
-      } catch {
-        // ignore
+      } catch (error) {
+        console.error("Failed to set visible", error);
       }
 
       entry.ownerWebContentsDestroyed = false;
@@ -948,7 +1317,7 @@ export function registerWebContentsViewHandlers({
       evictExcessSuspended(logger);
 
       return { ok: true, suspended: true };
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:destroy", (event, id: number) => {
@@ -982,8 +1351,30 @@ export function registerWebContentsViewHandlers({
       applyBackgroundColor(entry.view, backgroundColor);
       applyBorderRadius(entry.view, borderRadius);
       return { ok: true };
-    },
+    }
   );
+
+  ipcMain.handle("cmux:webcontents:is-focused", (event, id: number) => {
+    if (typeof id !== "number") return { ok: false, focused: false };
+    const entry = viewEntries.get(id);
+    if (!entry) return { ok: false, focused: false };
+    if (event.sender.id !== entry.ownerWebContentsId) {
+      return { ok: false, focused: false };
+    }
+    entry.ownerSender = event.sender;
+    try {
+      const ownerWindow = BrowserWindow.fromId(entry.ownerWindowId);
+      const focused =
+        Boolean(ownerWindow?.isFocused()) && entry.view.webContents.isFocused();
+      return { ok: true, focused };
+    } catch (error) {
+      logger.warn("Failed to check WebContentsView focus", {
+        id,
+        error,
+      });
+      return { ok: false, focused: false };
+    }
+  });
 
   ipcMain.handle("cmux:webcontents:get-state", (event, id: number) => {
     if (typeof id !== "number") return { ok: false };
@@ -1022,12 +1413,14 @@ export function registerWebContentsViewHandlers({
       let visible: ElectronWebContentsSnapshot["visible"] = null;
       try {
         bounds = toBounds(entry.view.getBounds());
-      } catch {
+      } catch (error) {
+        console.error("Failed to get bounds, setting bounds = null", error);
         bounds = null;
       }
       try {
         visible = entry.view.getVisible();
-      } catch {
+      } catch (error) {
+        console.error("Failed to get visible, setting visible = null", error);
         visible = null;
       }
 
@@ -1079,7 +1472,7 @@ export function registerWebContentsViewHandlers({
         });
         return { ok: false, error: String(error) };
       }
-    },
+    }
   );
 
   ipcMain.handle("cmux:webcontents:close-devtools", (event, id: number) => {
@@ -1105,7 +1498,7 @@ export function registerWebContentsViewHandlers({
 }
 
 export function getWebContentsLayoutSnapshot(
-  id: number,
+  id: number
 ): WebContentsLayoutActualState | null {
   const entry = viewEntries.get(id);
   if (!entry) return null;
@@ -1128,7 +1521,8 @@ export function getWebContentsLayoutSnapshot(
       destroyed: entry.view.webContents.isDestroyed(),
       visible: evaluateVisibility(normalized),
     };
-  } catch {
+  } catch (error) {
+    console.error("Failed to get webContents layout snapshot", error);
     return null;
   }
 }

@@ -28,6 +28,9 @@ const instance = await client.instances.start({
     app: "cmux-dev",
   },
 });
+void (async () => {
+  await instance.setWakeOn(true, true);
+})();
 
 const vscodeUrl = instance.networking.httpServices.find(
   (service) => service.port === 39378

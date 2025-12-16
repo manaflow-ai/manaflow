@@ -29,9 +29,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",
-    "@types/node": "^24.3.1",
+    "@types/node": "^24.9.1",
     "eslint": "^9.34.0",
-    "typescript": "^5.8.3",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.41.0"
   },
   "dependencies": {

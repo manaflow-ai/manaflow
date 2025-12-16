@@ -1,5 +1,4 @@
 import { z } from "zod";
-
 import { log } from "../logger";
 import { execAsync, WORKSPACE_ROOT } from "./utils";
 import type {
@@ -48,7 +47,7 @@ ${bodySummary}
 }
 
 function mapGhState(
-  state: string | undefined,
+  state: string | undefined
 ): "none" | "draft" | "open" | "merged" | "closed" | "unknown" {
   if (!state) return "unknown";
   const normalized = state.toLowerCase();

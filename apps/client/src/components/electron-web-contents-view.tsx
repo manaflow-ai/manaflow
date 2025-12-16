@@ -7,11 +7,17 @@ import {
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
+import {
+  registerWebviewActions,
+  unregisterWebviewActions,
+  type WebviewActions,
+} from "@/lib/webview-actions";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 
 interface ElectronWebContentsViewProps {
   src: string;
+  requestUrl?: string;
   className?: string;
   style?: CSSProperties;
   backgroundColor?: string;
@@ -51,9 +57,11 @@ interface BoundsPayload {
 interface SyncState {
   bounds: BoundsPayload;
   visible: boolean;
+  devicePixelRatio: number;
 }
 
 const CONTINUOUS_IDLE_FRAME_LIMIT = 6;
+const PIXEL_RATIO_EPSILON = 1e-3;
 
 function roundToDevicePixels(value: number, scale: number): number {
   if (!Number.isFinite(scale) || scale <= 0) return Math.round(value);
@@ -141,6 +149,7 @@ const pendingCreates = new Map<string, Promise<void>>();
 
 export function ElectronWebContentsView({
   src,
+  requestUrl,
   className,
   style,
   backgroundColor,
@@ -154,6 +163,7 @@ export function ElectronWebContentsView({
 }: ElectronWebContentsViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewIdRef = useRef<number | null>(null);
+  const webContentsIdRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const continuousSyncRef = useRef<number | null>(null);
   const continuousActiveRef = useRef(false);
@@ -161,6 +171,7 @@ export function ElectronWebContentsView({
   const lastSyncRef = useRef<SyncState | null>(null);
   const syncBoundsRef = useRef<() => void>(() => {});
   const latestSrcRef = useRef(src);
+  const latestRequestUrlRef = useRef(requestUrl);
   const lastLoadedSrcRef = useRef<string | null>(null);
   const latestStyleRef = useRef<{
     backgroundColor?: string;
@@ -170,6 +181,7 @@ export function ElectronWebContentsView({
     borderRadius,
   });
   const hasStableAttachmentRef = useRef(false);
+  const registeredActionsRef = useRef<WebviewActions | null>(null);
   const isIntersectingRef = useRef(true);
   const scrollCleanupsRef = useRef<Array<() => void>>([]);
   const lastTransformStateRef = useRef(false);
@@ -178,6 +190,10 @@ export function ElectronWebContentsView({
   useEffect(() => {
     latestSrcRef.current = src;
   }, [src]);
+
+  useEffect(() => {
+    latestRequestUrlRef.current = requestUrl;
+  }, [requestUrl]);
 
   useEffect(() => {
     latestStyleRef.current = { backgroundColor, borderRadius };
@@ -247,9 +263,13 @@ export function ElectronWebContentsView({
 
     const visible = isVisible;
     const prev = lastSyncRef.current;
+    const pixelRatioUnchanged =
+      prev !== null &&
+      Math.abs(prev.devicePixelRatio - scale) < PIXEL_RATIO_EPSILON;
     const unchanged =
       prev !== null &&
       prev.visible === visible &&
+      pixelRatioUnchanged &&
       prev.bounds.x === bounds.x &&
       prev.bounds.y === bounds.y &&
       prev.bounds.width === bounds.width &&
@@ -275,7 +295,7 @@ export function ElectronWebContentsView({
       .catch((err) =>
         console.warn("Failed to sync WebContentsView bounds", err),
       );
-    lastSyncRef.current = { bounds, visible };
+    lastSyncRef.current = { bounds, visible, devicePixelRatio: scale };
   }, [suspended, startContinuousSync, stopContinuousSync]);
 
   syncBoundsRef.current = syncBounds;
@@ -296,6 +316,77 @@ export function ElectronWebContentsView({
   const persistKeyRef = useRef<string | undefined>(persistKey);
 
   persistKeyRef.current = persistKey;
+
+  const unregisterActions = useCallback(() => {
+    if (!persistKeyRef.current || !registeredActionsRef.current) {
+      return;
+    }
+    unregisterWebviewActions(persistKeyRef.current, registeredActionsRef.current);
+    registeredActionsRef.current = null;
+  }, []);
+
+  const registerActions = useCallback(
+    (webContentsId: number) => {
+      const key = persistKeyRef.current;
+      if (!key) return;
+      webContentsIdRef.current = webContentsId;
+      const actions: WebviewActions = {
+        focus: async () => {
+          if (typeof window === "undefined") return false;
+
+          const targetId = webContentsIdRef.current;
+          if (targetId === null) return false;
+
+          try {
+            const restore = window.cmux?.ui?.restoreLastFocusInWebContents;
+            if (restore) {
+              const result = await restore(targetId);
+              if (result?.ok) {
+                return true;
+              }
+            }
+
+            const focus = window.cmux?.ui?.focusWebContents;
+            if (focus) {
+              const result = await focus(targetId);
+              return result?.ok ?? false;
+            }
+          } catch (error) {
+            console.error("Failed to focus WebContentsView", error);
+            return false;
+          }
+
+          return false;
+        },
+        isFocused: async () => {
+          if (typeof window === "undefined") return false;
+
+          const viewId = viewIdRef.current;
+          if (viewId === null) return false;
+
+          try {
+            const checkFocus = window.cmux?.webContentsView?.isFocused;
+            if (!checkFocus) return false;
+            const result = await checkFocus(viewId);
+            return result?.ok === true && result.focused === true;
+          } catch (error) {
+            console.error("Failed to check WebContentsView focus", error);
+            return false;
+          }
+        },
+      };
+      registeredActionsRef.current = actions;
+      registerWebviewActions(key, actions);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      unregisterActions();
+      webContentsIdRef.current = null;
+    };
+  }, [unregisterActions]);
 
   const releaseNativeView = useCallback(
     (id: number, key: string | undefined) => {
@@ -356,6 +447,8 @@ export function ElectronWebContentsView({
   const releaseView = useCallback(() => {
     cancelScheduledSync();
     stopContinuousSync();
+    unregisterActions();
+    webContentsIdRef.current = null;
     const id = viewIdRef.current;
     if (id === null) return;
     viewIdRef.current = null;
@@ -367,6 +460,7 @@ export function ElectronWebContentsView({
     onNativeViewDestroyed?.();
   }, [
     cancelScheduledSync,
+    unregisterActions,
     onNativeViewDestroyed,
     releaseNativeView,
     stopContinuousSync,
@@ -422,6 +516,7 @@ export function ElectronWebContentsView({
           });
           const result = await bridge.create({
             url: latestSrcRef.current,
+            requestUrl: latestRequestUrlRef.current,
             bounds: initialBounds,
             backgroundColor: initialBackground,
             borderRadius: initialRadius,
@@ -442,6 +537,7 @@ export function ElectronWebContentsView({
             restored: result.restored,
           });
           viewIdRef.current = result.id;
+          registerActions(result.webContentsId);
           hasStableAttachmentRef.current = true;
           onNativeViewReady?.(result);
           const targetUrl = latestSrcRef.current;
@@ -498,6 +594,7 @@ export function ElectronWebContentsView({
     releaseNativeView,
     releaseView,
     scheduleBoundsSync,
+    registerActions,
     onNativeViewDestroyed,
     onNativeViewReady,
   ]);
@@ -707,6 +804,7 @@ export function ElectronWebContentsView({
       style={{ ...style, borderRadius }}
       data-role="electron-web-contents-view"
       data-suspended={suspended ? "true" : "false"}
+      data-drag-disable-pointer
     >
       {shouldShowFallback ? (
         <div className="flex h-full w-full items-center justify-center rounded-md border border-dashed border-neutral-300 bg-white/80 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-300">

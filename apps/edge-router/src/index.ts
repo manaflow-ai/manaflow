@@ -126,7 +126,10 @@ function rewriteJavaScript(
     // But still be careful about obvious local variables
     modified = modified.replace(/\blocation\b/g, (match, offset) => {
       const before = modified.substring(Math.max(0, offset - 20), offset);
-      const after = modified.substring(offset + match.length, Math.min(modified.length, offset + match.length + 10));
+      const after = modified.substring(
+        offset + match.length,
+        Math.min(modified.length, offset + match.length + 10)
+      );
 
       // Don't replace if it's a variable declaration
       if (/\b(const|let|var)\s+$/.test(before)) return match;
@@ -190,7 +193,10 @@ function stripCSPHeaders(source: Headers): Headers {
 // Add permissive CORS headers
 function addPermissiveCORS(headers: Headers): Headers {
   headers.set("access-control-allow-origin", "*");
-  headers.set("access-control-allow-methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD");
+  headers.set(
+    "access-control-allow-methods",
+    "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
+  );
   headers.set("access-control-allow-headers", "*");
   headers.set("access-control-expose-headers", "*");
   headers.set("access-control-allow-credentials", "true");
@@ -204,7 +210,7 @@ function addPermissiveCORS(headers: Headers): Headers {
 // interception at runtime.
 class ScriptRewriter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  element(element: any) {
+  element(_element: any) {
     // Currently no-op
   }
 }
@@ -747,7 +753,9 @@ export default {
           ) {
             const text = await response.text();
             const rewritten = rewriteJavaScript(text, true); // external files
-            let sanitizedHeaders = sanitizeRewrittenResponseHeaders(response.headers);
+            let sanitizedHeaders = sanitizeRewrittenResponseHeaders(
+              response.headers
+            );
             sanitizedHeaders = stripCSPHeaders(sanitizedHeaders);
             if (skipServiceWorker) {
               sanitizedHeaders = addPermissiveCORS(sanitizedHeaders);
@@ -769,6 +777,132 @@ export default {
             headers: responseHeaders,
           });
         }
+      }
+
+      if (sub.startsWith("cmux-")) {
+        const isAlreadyProxied =
+          request.headers.get("X-Cmux-Proxied") === "true";
+        if (isAlreadyProxied) {
+          return new Response("Loop detected in proxy", { status: 508 });
+        }
+
+        const remainder = sub.slice("cmux-".length);
+        const segments = remainder.split("-");
+        if (segments.length < 2) {
+          return new Response("Invalid cmux proxy subdomain", { status: 400 });
+        }
+
+        const portSegment = segments[segments.length - 1];
+        if (!/^\d+$/.test(portSegment)) {
+          return new Response("Invalid port in cmux proxy subdomain", {
+            status: 400,
+          });
+        }
+
+        const morphId = segments[0];
+        if (!morphId) {
+          return new Response("Missing morph id in cmux proxy subdomain", {
+            status: 400,
+          });
+        }
+
+        const scopeSegments = segments.slice(1, -1);
+        const hasExplicitScope = scopeSegments.length > 0;
+        const scopeRaw = hasExplicitScope ? scopeSegments.join("-") : "base";
+        const isBaseScope =
+          !hasExplicitScope ||
+          (scopeSegments.length === 1 &&
+            scopeSegments[0].toLowerCase() === "base");
+
+        const target = new URL(
+          url.pathname + url.search,
+          `https://port-39379-morphvm-${morphId}.http.cloud.morph.so`
+        );
+
+        const headers = new Headers(request.headers);
+        headers.set("X-Cmux-Proxied", "true");
+        headers.set("X-Cmux-Port-Internal", portSegment);
+        headers.delete("X-Cmux-Workspace-Internal");
+        if (!isBaseScope) {
+          headers.set("X-Cmux-Workspace-Internal", scopeRaw);
+        }
+
+        const outbound = new Request(target, {
+          method: request.method,
+          headers,
+          body: request.body,
+          redirect: "manual",
+        });
+
+        const upgradeHeader = request.headers.get("Upgrade");
+        if (upgradeHeader?.toLowerCase() === "websocket") {
+          return fetch(outbound);
+        }
+
+        let response = await fetch(outbound);
+
+        response = rewriteLoopbackRedirect(response, (redirectPort) => {
+          if (!redirectPort || !/^\d+$/.test(redirectPort)) {
+            return null;
+          }
+          const scopeLabel = isBaseScope ? "base" : scopeRaw;
+          return `cmux-${morphId}-${scopeLabel}-${redirectPort}.cmux.sh`;
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        const skipServiceWorker = false;
+
+        if (contentType.includes("text/html")) {
+          let responseHeaders = stripCSPHeaders(response.headers);
+          if (skipServiceWorker) {
+            responseHeaders = addPermissiveCORS(responseHeaders);
+          }
+          const rewriter = new HTMLRewriter()
+            .on("head", new HeadRewriter(skipServiceWorker))
+            .on("script", new ScriptRewriter());
+
+          if (skipServiceWorker) {
+            rewriter.on("meta", new MetaCSPRewriter());
+          }
+
+          return rewriter.transform(
+            new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: responseHeaders,
+            })
+          );
+        }
+
+        if (
+          contentType.includes("javascript") ||
+          url.pathname.endsWith(".js")
+        ) {
+          const text = await response.text();
+          const rewritten = rewriteJavaScript(text, true);
+          let sanitizedHeaders = sanitizeRewrittenResponseHeaders(
+            response.headers
+          );
+          sanitizedHeaders = stripCSPHeaders(sanitizedHeaders);
+          if (skipServiceWorker) {
+            sanitizedHeaders = addPermissiveCORS(sanitizedHeaders);
+          }
+          return new Response(rewritten, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: sanitizedHeaders,
+          });
+        }
+
+        let responseHeaders = stripCSPHeaders(response.headers);
+        if (skipServiceWorker) {
+          responseHeaders = addPermissiveCORS(responseHeaders);
+        }
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: responseHeaders,
+        });
       }
 
       // Original routing logic for non-Morph subdomains
@@ -862,7 +996,9 @@ export default {
       if (contentType.includes("javascript") || url.pathname.endsWith(".js")) {
         const text = await response.text();
         const rewritten = rewriteJavaScript(text, true); // external files
-        let sanitizedHeaders = sanitizeRewrittenResponseHeaders(response.headers);
+        let sanitizedHeaders = sanitizeRewrittenResponseHeaders(
+          response.headers
+        );
         sanitizedHeaders = stripCSPHeaders(sanitizedHeaders);
         if (skipServiceWorker) {
           sanitizedHeaders = addPermissiveCORS(sanitizedHeaders);

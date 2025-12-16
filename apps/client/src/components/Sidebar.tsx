@@ -1,8 +1,11 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
+import { api } from "@cmux/convex/api";
+import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
@@ -16,6 +19,7 @@ import {
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
+import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 
@@ -74,12 +78,65 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     return Math.min(Math.max(parsed, MIN_WIDTH), MAX_WIDTH);
   });
   const [isResizing, setIsResizing] = useState(false);
+  const [isHidden, setIsHidden] = useState(() => {
+    const stored = localStorage.getItem("sidebarHidden");
+    return stored === "true";
+  });
 
   const { expandTaskIds } = useExpandTasks();
+
+  // Fetch pinned items
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
   }, [width]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarHidden", String(isHidden));
+  }, [isHidden]);
+
+  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
+  useEffect(() => {
+    if (isElectron && window.cmux?.on) {
+      const off = window.cmux.on("shortcut:sidebar-toggle", () => {
+        setIsHidden((prev) => !prev);
+      });
+      return () => {
+        if (typeof off === "function") off();
+      };
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.ctrlKey &&
+        e.shiftKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        (e.code === "KeyS" || e.key.toLowerCase() === "s")
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsHidden((prev) => !prev);
+      }
+    };
+
+    // Use capture phase to intercept before browser default handlers
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, []);
+
+  // Listen for storage events from command bar (sidebar visibility sync)
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "sidebarHidden" && e.newValue !== null) {
+        setIsHidden(e.newValue === "true");
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const onMouseMove = useCallback((e: MouseEvent) => {
     // Batch width updates to once per animation frame to reduce layout thrash
@@ -105,24 +162,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    // Restore iframe pointer events
-    const iframes = Array.from(document.querySelectorAll("iframe"));
-    for (const el of iframes) {
-      if (el instanceof HTMLIFrameElement) {
-        const prev = el.dataset.prevPointerEvents;
-        if (prev !== undefined) {
-          if (prev === "__unset__") {
-            el.style.removeProperty("pointer-events");
-          } else {
-            el.style.pointerEvents = prev;
-          }
-          delete el.dataset.prevPointerEvents;
-        } else {
-          // Fallback to clearing
-          el.style.removeProperty("pointer-events");
-        }
-      }
-    }
+    restoreDragPointerEvents();
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", stopResizing);
   }, [onMouseMove]);
@@ -139,15 +179,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         const rect = containerRef.current.getBoundingClientRect();
         containerLeftRef.current = rect.left;
       }
-      // Disable pointer events on all iframes so dragging works over them
-      const iframes = Array.from(document.querySelectorAll("iframe"));
-      for (const el of iframes) {
-        if (el instanceof HTMLIFrameElement) {
-          const current = el.style.pointerEvents;
-          el.dataset.prevPointerEvents = current ? current : "__unset__";
-          el.style.pointerEvents = "none";
-        }
-      }
+      disableDragPointerEvents();
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", stopResizing);
     },
@@ -166,8 +198,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow"
+      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1"
       style={{
+        display: isHidden ? "none" : "flex",
         width: `${width}px`,
         minWidth: `${width}px`,
         maxWidth: `${width}px`,
@@ -249,20 +282,56 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
               {tasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
               ) : tasks && tasks.length > 0 ? (
-                tasks.map((task) => (
-                  <TaskTree
-                    key={task._id}
-                    task={task}
-                    defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                    teamSlugOrId={teamSlugOrId}
-                  />
-                ))
+                <>
+                  {/* Pinned items at the top */}
+                  {pinnedData && pinnedData.length > 0 && (
+                    <>
+                      {pinnedData.map((task) => (
+                        <TaskTree
+                          key={task._id}
+                          task={task}
+                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                          teamSlugOrId={teamSlugOrId}
+                        />
+                      ))}
+                      {/* Horizontal divider after pinned items */}
+                      <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
+                    </>
+                  )}
+                  {/* Regular (non-pinned) tasks */}
+                  {tasks
+                    .filter((task) => {
+                      // Only filter out directly pinned tasks
+                      return !task.pinned;
+                    })
+                    .map((task) => (
+                      <TaskTree
+                        key={task._id}
+                        task={task}
+                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                        teamSlugOrId={teamSlugOrId}
+                      />
+                    ))}
+                </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
                   No recent tasks
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="mt-2 flex flex-col gap-0.5">
+            <SidebarSectionLink
+              to="/$teamSlugOrId/previews"
+              params={{ teamSlugOrId }}
+              exact
+            >
+              Previews
+            </SidebarSectionLink>
+          </div>
+          <div className="ml-2 pt-px">
+            <SidebarPreviewList teamSlugOrId={teamSlugOrId} />
           </div>
         </div>
       </nav>
@@ -279,7 +348,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           {
             // Invisible, but with a comfortable hit area
             width: "14px",
-            transform: "translateX(13px)",
+            transform: "translateX(7px)",
             // marginRight: "-5px",
             background: "transparent",
             // background: "red",

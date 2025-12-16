@@ -16,20 +16,25 @@ import { isElectron } from "@/lib/electron";
 import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import { parseGithubRepoUrl } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useMutation } from "convex/react";
-import { GitBranch, Image, Mic, Server, X } from "lucide-react";
+import { useAction, useMutation } from "convex/react";
+import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
 
 interface DashboardInputControlsProps {
   projectOptions: SelectOption[];
   selectedProject: string[];
   onProjectChange: (projects: string[]) => void;
+  onProjectSearchPaste?: (value: string) => boolean | Promise<boolean>;
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (branches: string[]) => void;
+  onBranchSearchChange?: (search: string) => void;
+  isBranchSearchLoading?: boolean;
   selectedAgents: string[];
   onAgentChange: (agents: string[]) => void;
   isCloudMode: boolean;
@@ -53,9 +58,12 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   projectOptions,
   selectedProject,
   onProjectChange,
+  onProjectSearchPaste,
   branchOptions,
   selectedBranch,
   onBranchChange,
+  onBranchSearchChange,
+  isBranchSearchLoading = false,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -70,6 +78,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const router = useRouter();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
+  const addManualRepo = useAction(api.github_http.addManualRepo);
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -118,7 +127,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   Setup required
                 </p>
                 <p className="text-xs text-neutral-300">
-                  Add credentials for this agent in Settings.
+                  {env.NEXT_PUBLIC_WEB_MODE
+                    ? "Add your API key for this agent in Settings."
+                    : "Add credentials for this agent in Settings."}
                 </p>
                 {missingRequirements.length > 0 ? (
                   <ul className="list-disc pl-4 text-xs text-neutral-400">
@@ -221,6 +232,12 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const pillboxScrollRef = useRef<HTMLDivElement | null>(null);
   const [showPillboxFade, setShowPillboxFade] = useState(false);
 
+  // Custom repo URL state
+  const [showCustomRepoInput, setShowCustomRepoInput] = useState(false);
+  const [customRepoUrl, setCustomRepoUrl] = useState("");
+  const [customRepoError, setCustomRepoError] = useState<string | null>(null);
+  const [isAddingRepo, setIsAddingRepo] = useState(false);
+
   useEffect(() => {
     const node = pillboxScrollRef.current;
     if (!node) {
@@ -261,6 +278,18 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     };
   }, []);
 
+  // Listen for GitHub install completion message from popup
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "cmux/github-install-complete") {
+        router.options.context?.queryClient?.invalidateQueries();
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [router.options.context?.queryClient]);
+
   const handleImageClick = useCallback(() => {
     // Trigger the file select from ImagePlugin
     const lexicalWindow = window as Window & {
@@ -285,6 +314,56 @@ export const DashboardInputControls = memo(function DashboardInputControls({
 
   const handleFocusAgentOption = useCallback((agent: string) => {
     agentSelectRef.current?.open({ focusValue: agent });
+  }, []);
+
+  const handleCustomRepoSubmit = useCallback(async () => {
+    const trimmedUrl = customRepoUrl.trim();
+
+    // Validate URL format before sending to backend
+    if (!trimmedUrl) {
+      setCustomRepoError("Please enter a GitHub repository URL");
+      return;
+    }
+
+    const parsed = parseGithubRepoUrl(trimmedUrl);
+    if (!parsed) {
+      setCustomRepoError("Invalid GitHub repository URL. Use format: owner/repo or https://github.com/owner/repo");
+      return;
+    }
+
+    setIsAddingRepo(true);
+    setCustomRepoError(null);
+
+    try {
+      const result = await addManualRepo({
+        teamSlugOrId,
+        repoUrl: trimmedUrl,
+      });
+
+      if (result.success) {
+        // Set the repo as selected
+        onProjectChange([result.fullName]);
+
+        // Clear the custom input
+        setCustomRepoUrl("");
+        setCustomRepoError(null);
+        setShowCustomRepoInput(false);
+
+        toast.success(`Added ${result.fullName} to repositories`);
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to add repository";
+      setCustomRepoError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setIsAddingRepo(false);
+    }
+  }, [customRepoUrl, addManualRepo, teamSlugOrId, onProjectChange]);
+
+  const handleCustomRepoInputChange = useCallback((value: string) => {
+    setCustomRepoUrl(value);
+    setCustomRepoError(null);
   }, []);
 
   const agentSelectionFooter = selectedAgents.length ? (
@@ -393,11 +472,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     const win = window.open("about:blank", name, features);
     if (win) {
       try {
-        (win as Window & { opener: null | Window }).opener = null;
-      } catch {
-        /* noop */
-      }
-      try {
         win.location.href = url;
       } catch {
         window.open(url, "_blank");
@@ -432,6 +506,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
           options={projectOptions}
           value={selectedProject}
           onChange={onProjectChange}
+          onSearchPaste={onProjectSearchPaste}
           placeholder="Select project"
           singleSelect={true}
           className="rounded-2xl"
@@ -449,43 +524,125 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   connectionLogin: undefined,
                   repoSearch: undefined,
                   instanceId: undefined,
+                  snapshotId: undefined,
                 }}
                 className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900 cursor-default"
               >
                 <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                 <span className="select-none">Create environment</span>
               </Link>
-              {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
-                <button
-                  type="button"
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
-                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                      const { state } = await mintState({ teamSlugOrId });
-                      const sep = baseUrl.includes("?") ? "&" : "?";
-                      const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                        state,
-                      )}`;
-                      const win = openCenteredPopup(
-                        url,
-                        { name: "github-install" },
-                        () => {
-                          router.options.context?.queryClient?.invalidateQueries();
-                        },
-                      );
-                      win?.focus?.();
-                    } catch (err) {
-                      console.error("Failed to start GitHub install:", err);
-                      alert("Failed to start installation. Please try again.");
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+                    if (!slug) {
+                      alert("GitHub App not configured. Please contact support.");
+                      return;
                     }
-                  }}
-                  className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                  <span className="select-none">Add GitHub account</span>
-                </button>
+                    const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+                    // For web users, pass returnUrl to connect-complete page which handles popup close
+                    // Include popup=true query param to signal this is a web popup flow
+                    const returnUrl = !isElectron
+                      ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+                      : undefined;
+                    const { state } = await mintState({ teamSlugOrId, returnUrl });
+                    const sep = baseUrl.includes("?") ? "&" : "?";
+                    const url = `${baseUrl}${sep}state=${encodeURIComponent(
+                      state,
+                    )}`;
+                    const win = openCenteredPopup(
+                      url,
+                      { name: "github-install" },
+                      () => {
+                        router.options.context?.queryClient?.invalidateQueries();
+                      },
+                    );
+                    win?.focus?.();
+                  } catch (err) {
+                    console.error("Failed to start GitHub install:", err);
+                    alert("Failed to start installation. Please try again.");
+                  }
+                }}
+                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              >
+                <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                <span className="select-none">Add repos from GitHub</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowCustomRepoInput((prev) => !prev);
+                  setCustomRepoError(null);
+                }}
+                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              >
+                <Link2 className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                <span className="select-none">
+                  {showCustomRepoInput ? "Hide repo link menu" : "Import repos from link"}
+                </span>
+              </button>
+              {showCustomRepoInput ? (
+                <div className="px-2 pb-2 pt-1">
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={customRepoUrl}
+                      onChange={(e) => handleCustomRepoInputChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleCustomRepoSubmit();
+                        } else if (e.key === "Escape") {
+                          setShowCustomRepoInput(false);
+                          setCustomRepoUrl("");
+                          setCustomRepoError(null);
+                        }
+                      }}
+                      placeholder="github.com/owner/repo"
+                      className={clsx(
+                        "flex-1 px-2 h-7 text-[13px] rounded border",
+                        "bg-white dark:bg-neutral-800",
+                        "border-neutral-300 dark:border-neutral-600",
+                        "text-neutral-900 dark:text-neutral-100",
+                        "placeholder:text-neutral-400 dark:placeholder:text-neutral-500",
+                        "focus:outline-none focus:ring-1 focus:ring-blue-500",
+                        customRepoError ? "border-red-500 dark:border-red-500" : ""
+                      )}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCustomRepoSubmit}
+                      disabled={isAddingRepo}
+                      className={clsx(
+                        "px-2 h-7 flex items-center justify-center rounded",
+                        "bg-blue-500 hover:bg-blue-600",
+                        "text-white text-[12px] font-medium",
+                        "transition-colors",
+                        "disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                      title="Add repository"
+                    >
+                      {isAddingRepo ? (
+                        <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  {customRepoError ? (
+                    <p className="text-[11px] text-red-500 dark:text-red-400 mt-1 px-1">
+                      {customRepoError}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 px-1">
+                      Enter any GitHub repository link
+                    </p>
+                  )}
+                </div>
               ) : null}
             </div>
           }
@@ -499,6 +656,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   options={branchOptions}
                   value={selectedBranch}
                   onChange={onBranchChange}
+                  onSearchChange={onBranchSearchChange}
+                  searchLoading={isBranchSearchLoading}
+                  disableClientFilter
                   placeholder="Branch"
                   singleSelect={true}
                   className="rounded-2xl"
@@ -537,12 +697,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       </div>
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
-        {/* Cloud/Local Mode Toggle */}
-        <ModeToggleTooltip
-          isCloudMode={isCloudMode}
-          onToggle={onCloudModeToggle}
-          disabled={cloudToggleDisabled}
-        />
+        {/* Cloud/Local Mode Toggle - hidden in web mode (always cloud) */}
+        {!env.NEXT_PUBLIC_WEB_MODE && (
+          <ModeToggleTooltip
+            isCloudMode={isCloudMode}
+            onToggle={onCloudModeToggle}
+            disabled={cloudToggleDisabled}
+          />
+        )}
 
         <button
           className={clsx(

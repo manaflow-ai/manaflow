@@ -260,6 +260,19 @@ async function openMultiDiffEditor(
   }
 }
 
+async function waitForTmuxSessions(maxAttempts: number = 20, delayMs: number = 1000): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const hasSessions = await hasTmuxSessions();
+    if (hasSessions) {
+      log(`Tmux sessions found after ${attempt + 1} attempt(s)`);
+      return true;
+    }
+    log(`No tmux sessions yet (attempt ${attempt + 1}/${maxAttempts}), waiting ${delayMs}ms...`);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  return false;
+}
+
 async function setupDefaultTerminal() {
   log("Setting up default terminal");
 
@@ -269,10 +282,10 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // If no tmux sessions exist, skip any UI/terminal work entirely
-  const hasSessions = await hasTmuxSessions();
+  // Wait for tmux sessions to exist (they may be created by orchestrator for cloud workspaces)
+  const hasSessions = await waitForTmuxSessions(20, 1000);
   if (!hasSessions) {
-    log("No tmux sessions found; skipping terminal setup and attach");
+    log("No tmux sessions found after waiting; skipping terminal setup and attach");
     return;
   }
 

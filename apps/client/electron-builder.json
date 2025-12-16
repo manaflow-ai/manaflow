@@ -17,8 +17,20 @@
     "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
     "!**/node_modules/**/*.d.ts",
     "!**/node_modules/.bin",
-    "!**/*.map"
+    "!**/*.map",
+    "!**/node_modules/electron",
+    "!**/node_modules/electron-builder",
+    "!**/node_modules/electron-vite",
+    "!**/node_modules/@electron/**",
+    "!**/swiftshader/**",
+    "!**/libvk_swiftshader.dylib",
+    "!**/vk_swiftshader_icd.json"
   ],
+  "electronLanguages": [
+    "en",
+    "en-GB"
+  ],
+  "afterPack": "scripts/after-pack.cjs",
   "asar": true,
   "compression": "maximum",
   "npmRebuild": false,
@@ -55,10 +67,12 @@
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist",
     "gatekeeperAssess": false,
+    "mergeASARs": false,
     "target": [
       "dmg",
       "zip"
     ],
+    "x64ArchFiles": "Contents/Resources/native/**/*.node",
     "extendInfo": {
       "CFBundleIconFile": "icon"
     }

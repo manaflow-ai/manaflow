@@ -6,11 +6,12 @@ import React, {
   useState,
   type CSSProperties,
 } from "react";
+import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
 
 interface ResizableColumnsProps {
   left: React.ReactNode;
   right: React.ReactNode;
-  storageKey?: string;
+  storageKey?: string | null;
   defaultLeftWidth?: number; // px
   minLeft?: number; // px
   maxLeft?: number; // px
@@ -35,14 +36,18 @@ export function ResizableColumns({
   const rafIdRef = useRef<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
-    const stored = storageKey ? localStorage.getItem(storageKey) : null;
+    if (!storageKey) {
+      return defaultLeftWidth;
+    }
+    const stored = localStorage.getItem(storageKey);
     const parsed = stored ? Number.parseInt(stored, 10) : defaultLeftWidth;
     if (Number.isNaN(parsed)) return defaultLeftWidth;
     return Math.min(Math.max(parsed, minLeft), maxLeft);
   });
 
   useEffect(() => {
-    if (storageKey) localStorage.setItem(storageKey, String(leftWidth));
+    if (!storageKey) return;
+    localStorage.setItem(storageKey, String(leftWidth));
   }, [leftWidth, storageKey]);
 
   const onMouseMove = useCallback(
@@ -70,20 +75,7 @@ export function ResizableColumns({
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    // Restore iframe pointer events
-    const iframes = Array.from(document.querySelectorAll("iframe"));
-    for (const el of iframes) {
-      if (el instanceof HTMLIFrameElement) {
-        const prev = el.dataset.prevPointerEvents;
-        if (prev !== undefined) {
-          if (prev === "__unset__") el.style.removeProperty("pointer-events");
-          else el.style.pointerEvents = prev;
-          delete el.dataset.prevPointerEvents;
-        } else {
-          el.style.removeProperty("pointer-events");
-        }
-      }
-    }
+    restoreDragPointerEvents();
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", stopResizing);
   }, [onMouseMove]);
@@ -98,15 +90,7 @@ export function ResizableColumns({
         const rect = containerRef.current.getBoundingClientRect();
         containerLeftRef.current = rect.left;
       }
-      // Disable pointer events on iframes while dragging
-      const iframes = Array.from(document.querySelectorAll("iframe"));
-      for (const el of iframes) {
-        if (el instanceof HTMLIFrameElement) {
-          const current = el.style.pointerEvents;
-          el.dataset.prevPointerEvents = current ? current : "__unset__";
-          el.style.pointerEvents = "none";
-        }
-      }
+      disableDragPointerEvents();
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", stopResizing);
     },

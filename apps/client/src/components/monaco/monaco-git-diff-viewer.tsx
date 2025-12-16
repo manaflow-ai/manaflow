@@ -1,6 +1,6 @@
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { memo, use, useEffect, useMemo, useRef, useState } from "react";
+import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useTheme } from "@/components/theme/use-theme";
 import { loaderInitPromise } from "@/lib/monaco-environment";
@@ -466,6 +466,7 @@ function createDiffEditorMount({
   editorMinHeight,
   getVisibilityTarget,
   onReady,
+  onHeightSettled,
 }: {
   editorMinHeight: number;
   getVisibilityTarget?: () => Element | null;
@@ -475,6 +476,7 @@ function createDiffEditorMount({
     applyLayout: () => void;
     controls: DiffEditorControls;
   }) => void;
+  onHeightSettled?: (height: number) => void;
 }): DiffOnMount {
   return (diffEditor, monacoInstance) => {
     const originalEditor = diffEditor.getOriginalEditor();
@@ -491,6 +493,43 @@ function createDiffEditorMount({
     let isContainerVisible = container.style.visibility !== "hidden";
     let collapsedState = false;
     let targetMinHeight = Math.max(editorMinHeight, DEFAULT_EDITOR_MIN_HEIGHT);
+    let resolvedContentHeight: number | null = null;
+
+    const hasResolvedHeight = () => resolvedContentHeight !== null;
+
+    const getEffectiveMinHeight = () => {
+      if (resolvedContentHeight !== null) {
+        return resolvedContentHeight;
+      }
+
+      return Math.max(targetMinHeight, DEFAULT_EDITOR_MIN_HEIGHT);
+    };
+
+    const applyTargetMinHeight = () => {
+      if (collapsedState) {
+        return;
+      }
+
+      if (hasResolvedHeight()) {
+        container.style.minHeight = "";
+      } else {
+        container.style.minHeight = `${getEffectiveMinHeight()}px`;
+      }
+      container.style.height = "";
+      container.style.overflow = "";
+    };
+
+    const updateResolvedContentHeight = (nextHeight: number) => {
+      const normalizedHeight = Math.max(nextHeight, DEFAULT_MONACO_LINE_HEIGHT);
+
+      if (resolvedContentHeight === normalizedHeight) {
+        return;
+      }
+
+      resolvedContentHeight = normalizedHeight;
+      applyTargetMinHeight();
+      onHeightSettled?.(normalizedHeight);
+    };
 
     const parentElement = container.parentElement;
     let layoutAnchor: HTMLElement | null = null;
@@ -520,7 +559,7 @@ function createDiffEditorMount({
     const computeHeight = (targetEditor: editor.IStandaloneCodeEditor) => {
       const contentHeight = targetEditor.getContentHeight();
       if (contentHeight > 0) {
-        return contentHeight;
+        return { height: contentHeight, measured: true };
       }
 
       const lineHeight = targetEditor.getOption(
@@ -529,16 +568,28 @@ function createDiffEditorMount({
       const model = targetEditor.getModel();
       const lineCount = model ? Math.max(1, model.getLineCount()) : 1;
 
-      return lineCount * lineHeight;
+      return { height: lineCount * lineHeight, measured: false };
     };
 
-    container.style.minHeight = `${targetMinHeight}px`;
+    applyTargetMinHeight();
 
     const applyLayout = () => {
+      const originalHeightInfo = computeHeight(originalEditor);
+      const modifiedHeightInfo = computeHeight(modifiedEditor);
       const height = Math.max(
-        computeHeight(originalEditor),
-        computeHeight(modifiedEditor),
+        originalHeightInfo.height,
+        modifiedHeightInfo.height,
       );
+      const heightMatchesOriginal =
+        originalHeightInfo.height >= modifiedHeightInfo.height &&
+        originalHeightInfo.measured;
+      const heightMatchesModified =
+        modifiedHeightInfo.height >= originalHeightInfo.height &&
+        modifiedHeightInfo.measured;
+
+      if ((heightMatchesOriginal || heightMatchesModified) && height > 0) {
+        updateResolvedContentHeight(height);
+      }
 
       const modifiedInfo = modifiedEditor.getLayoutInfo();
       const originalInfo = originalEditor.getLayoutInfo();
@@ -548,7 +599,7 @@ function createDiffEditorMount({
         modifiedInfo.width ||
         originalInfo.width;
 
-      const enforcedHeight = Math.max(targetMinHeight, height);
+      const enforcedHeight = Math.max(getEffectiveMinHeight(), height);
 
       if (containerWidth > 0 && enforcedHeight > 0) {
         diffEditor.layout({ width: containerWidth, height: enforcedHeight });
@@ -577,15 +628,6 @@ function createDiffEditorMount({
       container.style.transform = "translateX(100000px)";
     };
 
-    const applyTargetMinHeight = () => {
-      if (collapsedState) {
-        return;
-      }
-      container.style.minHeight = `${targetMinHeight}px`;
-      container.style.height = "";
-      container.style.overflow = "";
-    };
-
     const updateCollapsedState = (collapsed: boolean) => {
       collapsedState = collapsed;
       if (collapsed) {
@@ -600,6 +642,7 @@ function createDiffEditorMount({
 
     const updateTargetMinHeight = (nextTarget: number) => {
       targetMinHeight = Math.max(nextTarget, DEFAULT_EDITOR_MIN_HEIGHT);
+      resolvedContentHeight = null;
       if (!collapsedState) {
         applyTargetMinHeight();
         applyLayout();
@@ -869,6 +912,11 @@ function MonacoFileDiffRow({
   const diffControlsRef = useRef<DiffEditorControls | null>(null);
   const isExpandedRef = useRef(isExpanded);
   const rowContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isHeightSettled, setIsHeightSettled] = useState(false);
+
+  useEffect(() => {
+    setIsHeightSettled(false);
+  }, [file.filePath, editorMinHeight]);
 
   useEffect(() => {
     isExpandedRef.current = isExpanded;
@@ -878,6 +926,10 @@ function MonacoFileDiffRow({
   useEffect(() => {
     diffControlsRef.current?.updateTargetMinHeight(editorMinHeight);
   }, [editorMinHeight]);
+
+  const handleHeightSettled = useCallback(() => {
+    setIsHeightSettled(true);
+  }, []);
 
   const onEditorMount = useMemo(
     () =>
@@ -889,8 +941,9 @@ function MonacoFileDiffRow({
           controls.updateTargetMinHeight(editorMinHeight);
           controls.updateCollapsedState(!isExpandedRef.current);
         },
+        onHeightSettled: handleHeightSettled,
       }),
-    [editorMinHeight],
+    [editorMinHeight, handleHeightSettled],
   );
 
   return (
@@ -913,7 +966,9 @@ function MonacoFileDiffRow({
         className="overflow-hidden border-b border-neutral-200 dark:border-neutral-800 flex flex-col"
         style={
           isExpanded
-            ? { minHeight: editorMinHeight }
+            ? isHeightSettled
+              ? undefined
+              : { minHeight: editorMinHeight }
             : { minHeight: 0, height: 0 }
         }
         aria-hidden={!isExpanded}
@@ -940,7 +995,10 @@ function MonacoFileDiffRow({
             Diff content omitted due to size
           </div>
         ) : canRenderEditor ? (
-          <div className="relative" style={{ minHeight: editorMinHeight }}>
+          <div
+            className="relative"
+            style={isHeightSettled ? undefined : { minHeight: editorMinHeight }}
+          >
             <DiffEditor
               language={file.language}
               original={file.oldContent}
@@ -1119,7 +1177,7 @@ export function MonacoGitDiffViewer({
   return (
     <div className="grow bg-white dark:bg-neutral-900">
       <div className="flex flex-col -space-y-[2px]">
-        {fileGroups.map((file) => (
+        {fileGroups.map((file, index) => (
           <MemoMonacoFileDiffRow
             key={`monaco:${file.filePath}`}
             file={file}
@@ -1127,7 +1185,13 @@ export function MonacoGitDiffViewer({
             onToggle={() => toggleFile(file.filePath)}
             editorTheme={editorTheme}
             diffOptions={diffOptions}
-            classNames={classNames?.fileDiffRow}
+            classNames={{
+              ...classNames?.fileDiffRow,
+              button: cn(
+                classNames?.fileDiffRow?.button,
+                index === 0 && "!border-t-0"
+              ),
+            }}
           />
         ))}
         <hr className="border-neutral-200 dark:border-neutral-800" />

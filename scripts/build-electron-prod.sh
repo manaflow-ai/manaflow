@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Resolve repository root relative to this script
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLIENT_DIR="$ROOT_DIR/apps/client"

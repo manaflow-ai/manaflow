@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { resolveWorkspacePackages } from "./electron-vite-plugin-resolve-workspace";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 function createExternalizeDepsPlugin(
   options?: Parameters<typeof externalizeDepsPlugin>[0]
@@ -29,6 +30,16 @@ function createExternalizeDepsPlugin(
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
 
+const SentryVitePlugin = process.env.SENTRY_AUTH_TOKEN ? sentryVitePlugin({
+  org: "manaflow",
+  project: "cmux-client-electron",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  sourcemaps: {
+    filesToDeleteAfterUpload: ["**/*.map"],
+  },
+  telemetry: false
+}) : undefined;
+
 export default defineConfig({
   main: {
     plugins: [
@@ -39,9 +50,11 @@ export default defineConfig({
           "@cmux/shared",
           "@cmux/convex",
           "@cmux/www-openapi-client",
+          "@sentry/electron",
         ],
       }),
       resolveWorkspacePackages(),
+      SentryVitePlugin,
     ],
     envDir: repoRoot,
     build: {
@@ -51,15 +64,17 @@ export default defineConfig({
         },
         treeshake: "smallest",
       },
+      sourcemap: true,
     },
     envPrefix: "NEXT_PUBLIC_",
   },
   preload: {
     plugins: [
       createExternalizeDepsPlugin({
-        exclude: ["@cmux/server", "@cmux/server/**"],
+        exclude: ["@cmux/server", "@cmux/server/**", "@sentry/electron"],
       }),
       resolveWorkspacePackages(),
+      SentryVitePlugin,
     ],
     envDir: repoRoot,
     build: {
@@ -73,6 +88,7 @@ export default defineConfig({
         },
         treeshake: "smallest",
       },
+      sourcemap: true,
     },
     envPrefix: "NEXT_PUBLIC_",
   },
@@ -83,10 +99,11 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve("index.html"),
+          index: resolve("index-electron.html"),
         },
         treeshake: "recommended",
       },
+      sourcemap: true,
     },
     resolve: {
       alias: {
@@ -107,6 +124,7 @@ export default defineConfig({
       }),
       react(),
       tailwindcss(),
+      SentryVitePlugin,
     ],
     envPrefix: "NEXT_PUBLIC_",
   },

@@ -108,6 +108,20 @@ export const setName = authMutation({
   },
 });
 
+// Internal helper to verify team membership (used by actions that need access control)
+export const checkTeamMembership = internalQuery({
+  args: { teamId: v.string(), userId: v.string() },
+  handler: async (ctx, { teamId, userId }) => {
+    const membership = await ctx.db
+      .query("teamMemberships")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId)
+      )
+      .first();
+    return { isMember: !!membership };
+  },
+});
+
 // Internal helper to fetch a team by ID (used by HTTP handlers for redirects)
 export const getByTeamIdInternal = internalQuery({
   args: { teamId: v.string() },

@@ -73,11 +73,11 @@ export const evaluateAndCrownWinner = authMutation({
 
       // Check if already marked for evaluation
       if (
-        task.crownEvaluationError === "pending_evaluation" ||
-        task.crownEvaluationError === "in_progress"
+        task.crownEvaluationStatus === "pending" ||
+        task.crownEvaluationStatus === "in_progress"
       ) {
         console.log(
-          `[Crown] Task ${args.taskId} already marked for evaluation (${task.crownEvaluationError})`
+          `[Crown] Task ${args.taskId} already marked for evaluation (${task.crownEvaluationStatus})`
         );
         return "pending";
       }
@@ -85,7 +85,8 @@ export const evaluateAndCrownWinner = authMutation({
       // Mark that crown evaluation is needed
       // The server will handle the actual evaluation using Claude Code
       await ctx.db.patch(args.taskId, {
-        crownEvaluationError: "pending_evaluation",
+        crownEvaluationStatus: "pending",
+        crownEvaluationError: undefined,
         updatedAt: Date.now(),
       });
 
@@ -149,6 +150,7 @@ export const setCrownWinner = authMutation({
 
     // Clear crown evaluation error
     await ctx.db.patch(taskRun.taskId, {
+      crownEvaluationStatus: "succeeded",
       crownEvaluationError: undefined,
       updatedAt: Date.now(),
     });
@@ -166,11 +168,20 @@ export const setCrownWinner = authMutation({
       teamId,
     });
 
-    // Mark PR creation needed
+    // Mark PR creation needed and clear any existing PR associations
     await ctx.db.patch(args.taskRunId, {
       pullRequestUrl: "pending",
       pullRequests: undefined,
     });
+
+    // Clear junction table entries for this taskRun
+    const existingJunctionEntries = await ctx.db
+      .query("taskRunPullRequests")
+      .withIndex("by_task_run", (q) => q.eq("taskRunId", args.taskRunId))
+      .collect();
+    for (const entry of existingJunctionEntries) {
+      await ctx.db.delete(entry._id);
+    }
 
     return args.taskRunId;
   },
@@ -182,13 +193,11 @@ export const getCrownedRun = authQuery({
     taskId: v.id("tasks"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const crownedRun = await ctx.db
       .query("taskRuns")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .filter((q) => q.eq(q.field("isCrowned"), true))
       .first();
 
@@ -211,16 +220,42 @@ export const getCrownEvaluation = authQuery({
       return null;
     }
 
-    const userId = ctx.identity.subject;
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const evaluation = await ctx.db
       .query("crownEvaluations")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId as Id<"tasks">))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .first();
 
     return evaluation;
+  },
+});
+
+export const getTasksWithCrowns = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    
+    // Get all crowned runs for this team/user
+    const crownedRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    // Extract unique task IDs
+    const taskIds = new Set<Id<"tasks">>();
+    for (const run of crownedRuns) {
+      taskIds.add(run.taskId);
+    }
+
+    return Array.from(taskIds);
   },
 });
 
@@ -350,6 +385,7 @@ export const workerFinalize = internalMutation({
     }
 
     await ctx.db.patch(args.taskId, {
+      crownEvaluationStatus: "succeeded",
       crownEvaluationError: undefined,
       isCompleted: true,
       updatedAt: now,

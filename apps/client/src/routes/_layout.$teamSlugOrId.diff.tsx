@@ -5,7 +5,7 @@ import {
   type SelectOption,
 } from "@/components/ui/searchable-select";
 import { useSocket } from "@/contexts/socket/use-socket";
-import { branchesQueryOptions } from "@/queries/branches";
+import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
@@ -75,10 +75,10 @@ function DashboardDiffPage() {
   );
 
   const branchesQuery = useRQ({
-    ...branchesQueryOptions({
-      teamSlugOrId,
-      repoFullName: selectedProject || "",
+    ...getApiIntegrationsGithubBranchesOptions({
+      query: { repo: selectedProject || "" },
     }),
+    staleTime: 10_000,
     enabled: !!selectedProject && !isEnvironmentProject,
   });
 

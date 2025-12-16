@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { homedir } from "node:os";
 import { log } from "../logger";
 import { WORKSPACE_ROOT, execAsync, execFileAsync } from "./utils";
 
@@ -10,19 +11,46 @@ type ExecError = Error & {
   status?: number;
 };
 
-let gitRepoPath: string | null = null;
+let cachedRepoPath: string | null = null;
+let cachedRepoHint: string | null = null;
+let cachedRepoPaths: string[] = [];
 
-export async function detectGitRepoPath(): Promise<string> {
-  if (gitRepoPath) {
-    return gitRepoPath;
+const PROTECTED_BRANCH_FALLBACKS = new Set(["main", "master"]);
+type BranchProtectionCheckResult = {
+  isProtected: boolean;
+  reason?: "remote_head" | "fallback";
+  remoteHead?: string | null;
+};
+
+const getRepoHint = (): string | null => {
+  const repoFull = process.env.CMUX_REPO_FULL?.trim();
+  if (repoFull) {
+    const repoFromFull = repoFull.split("/").pop()?.trim();
+    if (repoFromFull) {
+      return repoFromFull;
+    }
   }
+  const repoName = process.env.CMUX_REPO?.trim();
+  return repoName || null;
+};
 
-  if (existsSync(join(WORKSPACE_ROOT, ".git"))) {
-    gitRepoPath = WORKSPACE_ROOT;
-    log("INFO", "Git repository found at workspace root", {
-      path: gitRepoPath,
-    });
-    return gitRepoPath;
+const hasGitDirectory = (candidatePath: string): boolean => {
+  try {
+    const gitPath = join(candidatePath, ".git");
+    return existsSync(gitPath) && statSync(gitPath).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const normalizeBranchName = (value: string): string =>
+  value.replace(/^refs\/(heads|remotes\/origin)\//, "").replace(/^origin\//, "").trim();
+
+const scanWorkspaceForRepos = (): string[] => {
+  const candidates: string[] = [];
+
+  if (hasGitDirectory(WORKSPACE_ROOT)) {
+    candidates.push(WORKSPACE_ROOT);
   }
 
   try {
@@ -30,17 +58,8 @@ export async function detectGitRepoPath(): Promise<string> {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         const subDirPath = join(WORKSPACE_ROOT, entry.name);
-        const gitPath = join(subDirPath, ".git");
-        try {
-          if (existsSync(gitPath) && statSync(gitPath).isDirectory()) {
-            gitRepoPath = subDirPath;
-            log("INFO", "Git repository found in subdirectory", {
-              path: gitRepoPath,
-            });
-            return gitRepoPath;
-          }
-        } catch {
-          continue;
+        if (hasGitDirectory(subDirPath)) {
+          candidates.push(subDirPath);
         }
       }
     }
@@ -50,24 +69,168 @@ export async function detectGitRepoPath(): Promise<string> {
     });
   }
 
-  log("WARN", "No git repository found, using workspace root", {
+  return Array.from(new Set(candidates));
+};
+
+const resolveHomeDirectory = (): string => {
+  const envHome = process.env.HOME?.trim();
+  if (envHome) {
+    return envHome;
+  }
+
+  try {
+    const osHome = homedir();
+    if (osHome) {
+      return osHome;
+    }
+  } catch {
+    // no-op, fall through to default
+  }
+
+  return "/root";
+};
+
+export async function detectGitRepoPath(): Promise<string> {
+  const repoHint = getRepoHint();
+
+  if (
+    cachedRepoPath &&
+    cachedRepoHint === repoHint &&
+    hasGitDirectory(cachedRepoPath)
+  ) {
+    return cachedRepoPath;
+  }
+
+  const repoPaths = scanWorkspaceForRepos();
+  cachedRepoPaths = repoPaths;
+  let selectedPath = repoPaths[0];
+
+  if (repoHint) {
+    const matchedByHint = repoPaths.find((candidate) => {
+      const name = basename(candidate);
+      return name === repoHint;
+    });
+    if (matchedByHint) {
+      selectedPath = matchedByHint;
+    } else if (repoPaths.length > 1) {
+      log("WARN", "Multiple git repositories found, hint did not match", {
+        repoHint,
+        candidates: repoPaths,
+      });
+    }
+  }
+
+  if (selectedPath) {
+    cachedRepoPath = selectedPath;
+    cachedRepoHint = repoHint ?? null;
+    log("INFO", "Git repository selected", {
+      path: selectedPath,
+      repoHint,
+      candidates: repoPaths,
+    });
+    return selectedPath;
+  }
+
+  log("WARN", "No git repository found, defaulting to workspace root", {
     path: WORKSPACE_ROOT,
+    repoHint,
   });
-  gitRepoPath = WORKSPACE_ROOT;
-  return gitRepoPath;
+  cachedRepoPath = WORKSPACE_ROOT;
+  cachedRepoHint = repoHint ?? null;
+  cachedRepoPaths = [WORKSPACE_ROOT];
+  return WORKSPACE_ROOT;
+}
+
+export async function listGitRepoPaths(): Promise<string[]> {
+  const repoHint = getRepoHint();
+  const validCache =
+    cachedRepoPaths.length > 0 &&
+    cachedRepoHint === repoHint &&
+    (cachedRepoPaths.every((path) => hasGitDirectory(path)) ||
+      (cachedRepoPaths.length === 1 &&
+        cachedRepoPaths[0] === WORKSPACE_ROOT));
+
+  if (validCache) {
+    return [...cachedRepoPaths];
+  }
+
+  const selected = await detectGitRepoPath();
+  if (!cachedRepoPaths.includes(selected)) {
+    cachedRepoPaths = [selected];
+  }
+  return [...cachedRepoPaths];
+}
+
+async function getRemoteHeadBranch(repoPath: string): Promise<string | null> {
+  const result = await runGitCommand(
+    "git symbolic-ref refs/remotes/origin/HEAD",
+    true,
+    repoPath,
+  );
+
+  if (!result || result.exitCode !== 0) {
+    return null;
+  }
+
+  const ref = result.stdout.trim();
+  if (!ref) {
+    return null;
+  }
+
+  const normalized = normalizeBranchName(ref);
+  return normalized.length > 0 ? normalized : null;
+}
+
+async function checkProtectedBranch(
+  branchName: string,
+  repoPath: string,
+): Promise<BranchProtectionCheckResult> {
+  const normalizedBranch = normalizeBranchName(branchName);
+  if (!normalizedBranch) {
+    return { isProtected: false };
+  }
+
+  const remoteHead = await getRemoteHeadBranch(repoPath);
+
+  if (remoteHead && normalizeBranchName(remoteHead) === normalizedBranch) {
+    return {
+      isProtected: true,
+      reason: "remote_head",
+      remoteHead,
+    };
+  }
+
+  if (PROTECTED_BRANCH_FALLBACKS.has(normalizedBranch)) {
+    return {
+      isProtected: true,
+      reason: "fallback",
+      remoteHead,
+    };
+  }
+
+  return {
+    isProtected: false,
+    remoteHead,
+  };
 }
 
 export async function runGitCommand(
   command: string,
   allowFailure = false,
+  repoPathOverride?: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number } | null> {
   const formatOutput = (value: string | Buffer): string => String(value);
 
   try {
-    const repoPath = await detectGitRepoPath();
+    const repoPath =
+      repoPathOverride ?? (await detectGitRepoPath());
     const result = await execAsync(command, {
       cwd: repoPath,
       maxBuffer: 10 * 1024 * 1024,
+      env: {
+        ...process.env,
+        HOME: resolveHomeDirectory(),
+      },
     });
     const stdout = formatOutput(result.stdout);
     const stderr = formatOutput(result.stderr);
@@ -101,14 +264,20 @@ export async function runGitCommand(
 export async function runGitCommandSafe(
   args: string[],
   allowFailure = false,
+  repoPathOverride?: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number } | null> {
   const formatOutput = (value: string | Buffer): string => String(value);
 
   try {
-    const repoPath = await detectGitRepoPath();
+    const repoPath =
+      repoPathOverride ?? (await detectGitRepoPath());
     const result = await execFileAsync("git", args, {
       cwd: repoPath,
       maxBuffer: 10 * 1024 * 1024,
+      env: {
+        ...process.env,
+        HOME: resolveHomeDirectory(),
+      },
     });
     const stdout = formatOutput(result.stdout);
     const stderr = formatOutput(result.stderr);
@@ -325,13 +494,17 @@ export async function getCurrentBranch(): Promise<string | null> {
 }
 
 async function ensureGitRepository(gitPath: string): Promise<boolean> {
-  const gitCheck = await runGitCommand("git rev-parse --git-dir", true);
+  const gitCheck = await runGitCommand(
+    "git rev-parse --git-dir",
+    true,
+    gitPath,
+  );
   if (gitCheck && gitCheck.exitCode === 0) {
     return true;
   }
 
   log("WARN", "Not in a git repository, initializing", { gitPath });
-  const initResult = await runGitCommand("git init", true);
+  const initResult = await runGitCommand("git init", true, gitPath);
   if (!initResult || initResult.exitCode !== 0) {
     log("ERROR", "Failed to initialize git repository", {
       gitPath,
@@ -344,24 +517,45 @@ async function ensureGitRepository(gitPath: string): Promise<boolean> {
   return true;
 }
 
-async function configureRemote(remoteUrl: string): Promise<void> {
-  const currentRemote = await runGitCommand("git remote get-url origin", true);
+async function configureRemote(
+  remoteUrl: string,
+  repoPath: string,
+): Promise<void> {
+  const currentRemote = await runGitCommand(
+    "git remote get-url origin",
+    true,
+    repoPath,
+  );
   const currentUrl = currentRemote?.stdout.trim();
 
   if (!currentUrl) {
-    log("INFO", "Adding origin remote", { remoteUrl });
-    await runGitCommandSafe(["remote", "add", "origin", remoteUrl]);
+    log("INFO", "Adding origin remote", { remoteUrl, repoPath });
+    await runGitCommandSafe(
+      ["remote", "add", "origin", remoteUrl],
+      false,
+      repoPath,
+    );
   } else if (currentUrl !== remoteUrl) {
     log("INFO", "Updating origin remote", {
       currentRemote: currentUrl,
       remoteUrl,
+      repoPath,
     });
-    await runGitCommandSafe(["remote", "set-url", "origin", remoteUrl]);
+    await runGitCommandSafe(
+      ["remote", "set-url", "origin", remoteUrl],
+      false,
+      repoPath,
+    );
   }
 
-  const updatedRemote = await runGitCommand("git remote -v", true);
+  const updatedRemote = await runGitCommand(
+    "git remote -v",
+    true,
+    repoPath,
+  );
   if (updatedRemote) {
     log("INFO", "Current git remotes", {
+      repoPath,
       remotes: updatedRemote.stdout.trim().split("\n"),
     });
   }
@@ -374,74 +568,89 @@ function truncateOutput(output: string | undefined, length = 200): string {
 async function stageAndCommitChanges(
   branchName: string,
   commitMessage: string,
+  repoPath: string,
 ): Promise<void> {
-  await runGitCommand("git add -A");
-  log("INFO", "Staged all changes");
+  await runGitCommand("git add -A", false, repoPath);
+  log("INFO", "Staged all changes", { repoPath });
 
-  await runGitCommandSafe(["checkout", "-B", branchName]);
-  log("INFO", "Checked out branch", { branchName });
+  await runGitCommandSafe(["checkout", "-B", branchName], false, repoPath);
+  log("INFO", "Checked out branch", { branchName, repoPath });
 
-  const status = await runGitCommand("git status --short", true);
+  const status = await runGitCommand("git status --short", true, repoPath);
   const hasChanges = Boolean(status?.stdout.trim());
 
   if (status) {
     const lines = status.stdout.trim().split("\n");
     log("INFO", "Git status before commit", {
       branchName,
+      repoPath,
       entries: lines.slice(0, 10),
       totalLines: status.stdout.trim() === "" ? 0 : lines.length,
     });
   }
 
   if (!hasChanges) {
-    log("INFO", "No changes to commit", { branchName });
+    log("INFO", "No changes to commit", { branchName, repoPath });
     return;
   }
 
   const commitResult = await runGitCommandSafe(
     ["commit", "-m", commitMessage],
     true,
+    repoPath,
   );
 
   if (commitResult) {
     log("INFO", "Created commit", {
       branchName,
+      repoPath,
       stdout: truncateOutput(commitResult.stdout),
       stderr: truncateOutput(commitResult.stderr),
     });
   } else {
-    log("WARN", "Commit command did not produce output", { branchName });
+    log("WARN", "Commit command did not produce output", {
+      branchName,
+      repoPath,
+    });
   }
 }
 
-async function syncWithRemote(branchName: string): Promise<void> {
+async function syncWithRemote(
+  branchName: string,
+  repoPath: string,
+): Promise<void> {
   const remoteExists = await runGitCommandSafe(
     ["ls-remote", "--heads", "origin", branchName],
     true,
+    repoPath,
   );
 
   if (remoteExists?.stdout.trim()) {
     log("INFO", "Remote branch exists, rebasing", {
       branchName,
+      repoPath,
       remoteHead: remoteExists.stdout.trim().slice(0, 120),
     });
 
-    const pullResult = await runGitCommandSafe([
-      "pull",
-      "--rebase",
-      "origin",
-      branchName,
-    ]);
+    const pullResult = await runGitCommandSafe(
+      ["pull", "--rebase", "origin", branchName],
+      false,
+      repoPath,
+    );
 
     if (pullResult) {
       log("INFO", "Rebased branch onto remote", {
         branchName,
+        repoPath,
         stdout: truncateOutput(pullResult.stdout),
         stderr: truncateOutput(pullResult.stderr),
       });
     }
   } else {
-    log("INFO", "Remote branch does not exist, will create", { branchName });
+    log("INFO", "Remote branch does not exist, will create", {
+      branchName,
+      repoPath,
+    });
   }
 }
 
@@ -465,43 +674,72 @@ export async function autoCommitAndPush({
     remoteUrl,
   });
 
-  const gitPath = await detectGitRepoPath();
+  const repoPaths = await listGitRepoPaths();
+  const repoHint = getRepoHint();
+  const targets = repoPaths.length > 0 ? repoPaths : [WORKSPACE_ROOT];
 
-  const isRepo = await ensureGitRepository(gitPath);
-  if (!isRepo) {
-    return;
-  }
-
-  if (remoteUrl) {
-    await configureRemote(remoteUrl);
-  }
-
-  await stageAndCommitChanges(branchName, commitMessage);
-  await syncWithRemote(branchName);
-
-  log("INFO", "Pushing to remote", {
-    branchName,
-    command: `git push -u origin ${branchName}`,
-  });
-
-  const pushResult = await runGitCommandSafe([
-    "push",
-    "-u",
-    "origin",
-    branchName,
-  ]);
-
-  if (pushResult) {
-    log("INFO", "Push completed", {
+  for (const repoPath of targets) {
+    const repoName = basename(repoPath);
+    log("INFO", "Auto-commit repository target", {
       branchName,
-      exitCode: pushResult.exitCode,
-      stdout: truncateOutput(pushResult.stdout),
-      stderr: truncateOutput(pushResult.stderr),
+      repoPath,
     });
+
+    const isRepo = await ensureGitRepository(repoPath);
+    if (!isRepo) {
+      log("WARN", "Skipping repository, ensure failed", { repoPath });
+      continue;
+    }
+
+    const protection = await checkProtectedBranch(branchName, repoPath);
+    if (protection.isProtected) {
+      log("WARN", "Auto-commit skipped protected branch", {
+        branchName,
+        repoPath,
+        remoteHead: protection.remoteHead,
+        reason: protection.reason,
+      });
+      continue;
+    }
+
+    const applyRemoteUrl =
+      remoteUrl &&
+      (targets.length === 1 || (repoHint && repoName === repoHint))
+        ? remoteUrl
+        : undefined;
+
+    if (applyRemoteUrl) {
+      await configureRemote(applyRemoteUrl, repoPath);
+    }
+
+    await stageAndCommitChanges(branchName, commitMessage, repoPath);
+    await syncWithRemote(branchName, repoPath);
+
+    log("INFO", "Pushing to remote", {
+      branchName,
+      repoPath,
+      command: `git push -u origin ${branchName}`,
+    });
+
+    const pushResult = await runGitCommandSafe(
+      ["push", "-u", "origin", branchName],
+      false,
+      repoPath,
+    );
+
+    if (pushResult) {
+      log("INFO", "Push completed", {
+        branchName,
+        repoPath,
+        exitCode: pushResult.exitCode,
+        stdout: truncateOutput(pushResult.stdout),
+        stderr: truncateOutput(pushResult.stderr),
+      });
+    }
   }
 
   log("INFO", "Auto-commit finished successfully", {
     branchName,
-    exitCode: pushResult?.exitCode,
+    repositoriesProcessed: targets.length,
   });
 }

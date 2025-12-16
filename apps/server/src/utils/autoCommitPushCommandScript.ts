@@ -3,6 +3,7 @@
 import { $ } from "bun";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const branchName = process.env.CMUX_BRANCH_NAME;
@@ -13,6 +14,26 @@ if (!branchName || !commitMessage) {
   console.error("[cmux auto-commit] commit message:", commitMessage);
   process.exit(1);
 }
+
+const resolveHomeDirectory = (): string => {
+  const envHome = process.env.HOME?.trim();
+  if (envHome) {
+    return envHome;
+  }
+
+  try {
+    const osHome = homedir();
+    if (osHome) {
+      return osHome;
+    }
+  } catch {
+    // ignore and fall back to default
+  }
+
+  return "/root";
+};
+
+process.env.HOME = resolveHomeDirectory();
 
 const formatError = (error: unknown) => {
   if (error instanceof Error) {

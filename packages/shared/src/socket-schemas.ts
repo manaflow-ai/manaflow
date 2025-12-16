@@ -5,6 +5,7 @@ import type {
   AggregatePullRequestSummary,
   PullRequestActionResult,
 } from "./pull-request-state";
+import type { IframePreflightResult } from "./iframe-preflight";
 
 // Client to Server Events
 export const CreateTerminalSchema = z.object({
@@ -34,6 +35,8 @@ export const StartTaskSchema = z.object({
   taskDescription: z.string(),
   projectFullName: z.string(),
   taskId: typedZid("tasks"),
+  // Pre-created task run IDs (one per agent) - if provided, server skips creating runs
+  taskRunIds: z.array(typedZid("taskRuns")).optional(),
   selectedAgents: z.array(z.string()).optional(),
   isCloudMode: z.boolean().optional().default(false),
   images: z
@@ -47,6 +50,58 @@ export const StartTaskSchema = z.object({
     .optional(),
   theme: z.enum(["dark", "light", "system"]).optional(),
   environmentId: typedZid("environments").optional(),
+});
+
+export const CreateLocalWorkspaceSchema = z.object({
+  teamSlugOrId: z.string(),
+  projectFullName: z.string().optional(),
+  repoUrl: z.string().optional(),
+  branch: z.string().optional(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  workspaceName: z.string().optional(),
+  descriptor: z.string().optional(),
+  sequence: z.number().optional(),
+});
+
+export const CreateLocalWorkspaceResponseSchema = z.object({
+  success: z.boolean(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  workspaceName: z.string().optional(),
+  workspacePath: z.string().optional(),
+  workspaceUrl: z.string().optional(),
+  pending: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+export const CreateCloudWorkspaceSchema = z
+  .object({
+    teamSlugOrId: z.string(),
+    environmentId: typedZid("environments").optional(),
+    projectFullName: z.string().optional(),
+    repoUrl: z.string().optional(),
+    taskId: typedZid("tasks").optional(),
+    taskRunId: typedZid("taskRuns").optional(),
+    theme: z.enum(["dark", "light", "system"]).optional(),
+  })
+  .refine(
+    (value) => Boolean(value.environmentId || value.projectFullName),
+    "Either environmentId or projectFullName is required"
+  );
+
+export const CreateCloudWorkspaceResponseSchema = z.object({
+  success: z.boolean(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  workspaceUrl: z.string().optional(),
+  pending: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+export const AuthenticateSchema = z.object({
+  authToken: z.string(),
+  authJson: z.string().optional(),
 });
 
 // Server to Client Events
@@ -82,6 +137,10 @@ export const TaskStartedSchema = z.object({
   taskId: typedZid("tasks"),
   worktreePath: z.string(),
   terminalId: z.string(),
+});
+
+export const TaskAcknowledgedSchema = z.object({
+  taskId: typedZid("tasks"),
 });
 
 export const TaskErrorSchema = z.object({
@@ -231,11 +290,6 @@ export const GitHubFetchReposSchema = z.object({
   teamSlugOrId: z.string(),
 });
 
-export const GitHubFetchBranchesSchema = z.object({
-  teamSlugOrId: z.string(),
-  repo: z.string(),
-});
-
 export const GitHubBranchSchema = z.object({
   name: z.string(),
   lastCommitSha: z.string().optional(),
@@ -243,13 +297,6 @@ export const GitHubBranchSchema = z.object({
   isDefault: z.boolean().optional(),
   lastKnownBaseSha: z.string().optional(),
   lastKnownMergeCommitSha: z.string().optional(),
-});
-
-export const GitHubBranchesResponseSchema = z.object({
-  success: z.boolean(),
-  branches: z.array(GitHubBranchSchema),
-  defaultBranch: z.string().optional(),
-  error: z.string().optional(),
 });
 
 export const GitHubReposResponseSchema = z.object({
@@ -377,6 +424,15 @@ export type TerminalInput = z.infer<typeof TerminalInputSchema>;
 export type Resize = z.infer<typeof ResizeSchema>;
 export type CloseTerminal = z.infer<typeof CloseTerminalSchema>;
 export type StartTask = z.infer<typeof StartTaskSchema>;
+export type CreateLocalWorkspace = z.infer<typeof CreateLocalWorkspaceSchema>;
+export type CreateLocalWorkspaceResponse = z.infer<
+  typeof CreateLocalWorkspaceResponseSchema
+>;
+export type CreateCloudWorkspace = z.infer<typeof CreateCloudWorkspaceSchema>;
+export type CreateCloudWorkspaceResponse = z.infer<
+  typeof CreateCloudWorkspaceResponseSchema
+>;
+export type Authenticate = z.infer<typeof AuthenticateSchema>;
 export type TerminalCreated = z.infer<typeof TerminalCreatedSchema>;
 export type TerminalOutput = z.infer<typeof TerminalOutputSchema>;
 export type TerminalExit = z.infer<typeof TerminalExitSchema>;
@@ -384,6 +440,7 @@ export type TerminalClosed = z.infer<typeof TerminalClosedSchema>;
 export type TerminalClear = z.infer<typeof TerminalClearSchema>;
 export type TerminalRestore = z.infer<typeof TerminalRestoreSchema>;
 export type TaskStarted = z.infer<typeof TaskStartedSchema>;
+export type TaskAcknowledged = z.infer<typeof TaskAcknowledgedSchema>;
 export type TaskError = z.infer<typeof TaskErrorSchema>;
 export type GitStatusRequest = z.infer<typeof GitStatusRequestSchema>;
 export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
@@ -404,10 +461,6 @@ export type FileInfo = z.infer<typeof FileInfoSchema>;
 export type ListFilesResponse = z.infer<typeof ListFilesResponseSchema>;
 export type VSCodeSpawned = z.infer<typeof VSCodeSpawnedSchema>;
 export type GitHubBranch = z.infer<typeof GitHubBranchSchema>;
-export type GitHubFetchBranches = z.infer<typeof GitHubFetchBranchesSchema>;
-export type GitHubBranchesResponse = z.infer<
-  typeof GitHubBranchesResponseSchema
->;
 export type GitHubReposResponse = z.infer<typeof GitHubReposResponseSchema>;
 export type GitHubAuthResponse = z.infer<typeof GitHubAuthResponseSchema>;
 export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
@@ -427,10 +480,22 @@ export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
 
 // Socket.io event map types
 export interface ClientToServerEvents {
+  authenticate: (
+    data: Authenticate,
+    callback?: (response?: { ok: boolean; error?: string }) => void
+  ) => void;
   // Terminal operations
   "start-task": (
     data: StartTask,
-    callback: (response: TaskStarted | TaskError) => void
+    callback: (response: TaskAcknowledged | TaskStarted | TaskError) => void
+  ) => void;
+  "create-local-workspace": (
+    data: CreateLocalWorkspace,
+    callback: (response: CreateLocalWorkspaceResponse) => void
+  ) => void;
+  "create-cloud-workspace": (
+    data: CreateCloudWorkspace,
+    callback: (response: CreateCloudWorkspaceResponse) => void
   ) => void;
   "git-status": (data: GitStatusRequest) => void;
   "git-diff": (
@@ -454,10 +519,6 @@ export interface ClientToServerEvents {
   "github-fetch-repos": (
     data: GitHubFetchRepos,
     callback: (response: GitHubReposResponse) => void
-  ) => void;
-  "github-fetch-branches": (
-    data: GitHubFetchBranches,
-    callback: (response: GitHubBranchesResponse) => void
   ) => void;
   // Create a draft pull request for a given task run
   "github-create-draft-pr": (
@@ -495,8 +556,15 @@ export interface ClientToServerEvents {
       response: { ok: true; time: string } | { ok: false; error: string }
     ) => void
   ) => void;
+  "iframe-preflight": (
+    data: { url: string },
+    callback: (response: IframePreflightResult) => void
+  ) => void;
   "check-provider-status": (
     callback: (response: ProviderStatusResponse) => void
+  ) => void;
+  "get-local-vscode-serve-web-origin": (
+    callback: (response: { baseUrl: string | null; port: number | null }) => void
   ) => void;
   "archive-task": (
     data: ArchiveTask,
@@ -525,6 +593,8 @@ export interface ServerToClientEvents {
   "vscode-spawned": (data: VSCodeSpawned) => void;
   "default-repo": (data: DefaultRepo) => void;
   "available-editors": (data: AvailableEditors) => void;
+  "task-started": (data: TaskStarted) => void;
+  "task-failed": (data: TaskError) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

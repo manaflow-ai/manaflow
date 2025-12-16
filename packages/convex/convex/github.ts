@@ -179,6 +179,7 @@ export const listProviderConnections = authQuery({
       .withIndex("by_team", (q) => q.eq("teamId", teamId))
       .collect();
     return rows.map((r) => ({
+      id: r._id,
       installationId: r.installationId,
       accountLogin: r.accountLogin,
       accountType: r.accountType,
@@ -707,5 +708,87 @@ export const replaceAllRepos = authMutation({
       )
     );
     return insertedIds;
+  },
+});
+
+// Internal mutation to insert a manual repo
+export const insertManualRepoInternal = internalMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    userId: v.string(),
+    fullName: v.string(),
+    org: v.string(),
+    name: v.string(),
+    gitRemote: v.string(),
+    providerRepoId: v.number(),
+    ownerLogin: v.string(),
+    ownerType: v.union(v.literal("User"), v.literal("Organization")),
+    defaultBranch: v.string(),
+    lastPushedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const now = Date.now();
+
+    // Check for existing repo to prevent duplicates
+    const existing = await ctx.db
+      .query("repos")
+      .withIndex("by_team_fullName", (q) =>
+        q.eq("teamId", teamId).eq("fullName", args.fullName)
+      )
+      .first();
+
+    if (existing) {
+      // Update existing repo with new data (keep manual flag as is)
+      await ctx.db.patch(existing._id, {
+        org: args.org,
+        name: args.name,
+        gitRemote: args.gitRemote,
+        provider: "github",
+        providerRepoId: args.providerRepoId,
+        ownerLogin: args.ownerLogin,
+        ownerType: args.ownerType,
+        visibility: "public",
+        defaultBranch: args.defaultBranch,
+        lastPushedAt: args.lastPushedAt,
+        lastSyncedAt: now,
+      });
+      return existing._id;
+    }
+
+    return await ctx.db.insert("repos", {
+      fullName: args.fullName,
+      org: args.org,
+      name: args.name,
+      gitRemote: args.gitRemote,
+      provider: "github",
+      userId: args.userId,
+      teamId,
+      providerRepoId: args.providerRepoId,
+      ownerLogin: args.ownerLogin,
+      ownerType: args.ownerType,
+      visibility: "public",
+      defaultBranch: args.defaultBranch,
+      lastPushedAt: args.lastPushedAt,
+      lastSyncedAt: now,
+      manual: true,
+    });
+  },
+});
+
+// Internal query to check if repo exists
+export const getRepoByFullNameInternal = internalQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    fullName: v.string(),
+  },
+  handler: async (ctx, { teamSlugOrId, fullName }) => {
+    const teamId = await getTeamId(ctx, teamSlugOrId);
+    return await ctx.db
+      .query("repos")
+      .withIndex("by_team_fullName", (q) =>
+        q.eq("teamId", teamId).eq("fullName", fullName)
+      )
+      .first();
   },
 });

@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>cmux • terminals</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #020617;
+        color: #e2e8f0;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(10, 14, 27, 0.85);
+        backdrop-filter: blur(12px);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+
+      .brand-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.2rem 0.6rem;
+        border-radius: 9999px;
+        background: rgba(59, 130, 246, 0.2);
+        color: #38bdf8;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+      }
+
+      .brand-title {
+        font-size: 1rem;
+        color: rgba(148, 163, 184, 0.85);
+      }
+
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 0.75rem;
+        padding: 0.6rem 1.2rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        background: linear-gradient(120deg, rgba(56, 189, 248, 0.88), rgba(14, 165, 233, 0.92));
+        color: #020617;
+        cursor: pointer;
+        transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+        box-shadow: 0 12px 24px rgba(8, 112, 184, 0.35);
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 16px 30px rgba(8, 112, 184, 0.45);
+      }
+
+      button:active {
+        transform: translateY(0);
+        box-shadow: 0 8px 18px rgba(8, 112, 184, 0.35);
+        filter: brightness(0.95);
+      }
+
+      button:focus-visible {
+        outline: 2px solid rgba(14, 165, 233, 0.9);
+        outline-offset: 3px;
+      }
+
+      main {
+        flex: 1;
+        padding: 1.5rem;
+        display: grid;
+        gap: 1.5rem;
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        align-content: start;
+      }
+
+      .terminal-card {
+        display: flex;
+        flex-direction: column;
+        border-radius: 0.9rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: linear-gradient(180deg, rgba(14, 20, 38, 0.95), rgba(10, 16, 31, 0.92));
+        min-height: 320px;
+        overflow: hidden;
+        box-shadow: 0 20px 44px rgba(7, 11, 20, 0.55);
+        position: relative;
+      }
+
+      .terminal-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid rgba(94, 110, 140, 0.25);
+        background: rgba(12, 20, 35, 0.92);
+      }
+
+      .terminal-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+      }
+
+      .terminal-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #f8fafc;
+      }
+
+      .terminal-status {
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(148, 163, 184, 0.75);
+      }
+
+      .terminal-close {
+        background: rgba(15, 23, 42, 0.68);
+        color: rgba(148, 163, 184, 0.85);
+        padding: 0.25rem 0.6rem;
+        font-size: 1rem;
+        border-radius: 0.55rem;
+        box-shadow: none;
+      }
+
+      .terminal-close:hover {
+        background: rgba(248, 113, 113, 0.18);
+        color: #fca5a5;
+      }
+
+      .terminal-body {
+        position: relative;
+        flex: 1;
+        min-height: 320px;
+      }
+
+      .xterm-surface {
+        position: absolute;
+        inset: 0;
+      }
+
+      .terminal-footer {
+        padding: 0.6rem 1rem;
+        border-top: 1px solid rgba(94, 110, 140, 0.2);
+        background: rgba(10, 17, 33, 0.92);
+        font-size: 0.75rem;
+        color: rgba(148, 163, 184, 0.75);
+        display: flex;
+        justify-content: space-between;
+      }
+
+      footer {
+        padding: 1rem 1.5rem 2rem;
+        text-align: center;
+        font-size: 0.85rem;
+        color: rgba(148, 163, 184, 0.75);
+      }
+
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="brand-pill">cmux</span>
+        <span class="brand-title">terminal sanity</span>
+      </div>
+      <button id="new-terminal" type="button">New terminal</button>
+    </header>
+    <main id="terminal-grid" aria-live="polite"></main>
+    <footer>Creates real shells on demand. Resize the window or the panel to push PTY resize.</footer>
+
+    <script type="module">
+      import { Terminal } from "https://esm.sh/@xterm/xterm@5.5.0";
+      import { FitAddon } from "https://esm.sh/@xterm/addon-fit@0.10.0";
+      import { AttachAddon } from "https://esm.sh/@xterm/addon-attach@0.11.0";
+      import { WebglAddon } from "https://esm.sh/@xterm/addon-webgl@0.18.0";
+      import { WebLinksAddon } from "https://esm.sh/@xterm/addon-web-links@0.11.0";
+      import { SearchAddon } from "https://esm.sh/@xterm/addon-search@0.15.0";
+      import { Unicode11Addon } from "https://esm.sh/@xterm/addon-unicode11@0.8.0";
+
+      const QUERY_KEY = "tabs";
+
+      const grid = document.getElementById("terminal-grid");
+      const newTerminalButton = document.getElementById("new-terminal");
+      const sessions = new Set();
+      let sessionCounter = 0;
+
+      newTerminalButton.addEventListener("click", () => {
+        void spawnTerminal();
+      });
+
+      const initialIds = parseQueryIds();
+      if (initialIds.length > 0) {
+        for (const id of initialIds) {
+          void spawnTerminal(id);
+        }
+      } else {
+        void spawnTerminal();
+      }
+
+      function parseQueryIds() {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get(QUERY_KEY);
+        if (!raw) {
+          return [];
+        }
+        const entries = raw
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+        return Array.from(new Set(entries));
+      }
+
+      function updateUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const ids = Array.from(
+          new Set(
+            Array.from(sessions)
+              .map((session) => session.id)
+              .filter((id) => typeof id === "string" && id.length > 0)
+          )
+        );
+
+        if (ids.length === 0) {
+          params.delete(QUERY_KEY);
+        } else {
+          params.set(QUERY_KEY, ids.join(","));
+        }
+
+        const query = params.toString();
+        const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+        window.history.replaceState({}, "", next);
+      }
+
+      function findSessionById(id) {
+        for (const session of sessions) {
+          if (session.id === id) {
+            return session;
+          }
+        }
+        return undefined;
+      }
+
+      async function spawnTerminal(existingId) {
+        if (existingId && findSessionById(existingId)) {
+          // Already attached in this view.
+          return;
+        }
+
+        const session = createTerminalCard(++sessionCounter);
+        sessions.add(session);
+        grid.prepend(session.card);
+
+        if (existingId) {
+          session.id = existingId;
+          session.card.dataset.sessionId = existingId;
+          updateTerminalTitle(session);
+          session.status.textContent = "Reconnecting…";
+          connectSession(session);
+          updateUrl();
+          return;
+        }
+
+        try {
+          session.status.textContent = "Starting…";
+          session.card.dataset.state = "starting";
+          const dims = measure(session);
+          const response = await fetch("/api/tabs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
+          });
+
+          if (!response.ok) {
+            throw new Error(`request failed (${response.status})`);
+          }
+
+          const payload = await response.json();
+          session.id = payload.id;
+          session.card.dataset.sessionId = session.id;
+          updateTerminalTitle(session);
+          updateUrl();
+          connectSession(session);
+        } catch (error) {
+          session.status.textContent = `Error: ${String(error.message ?? error)}`;
+          session.card.dataset.state = "error";
+          teardown(session, { removeCard: true });
+        }
+      }
+
+      function createTerminalCard(index) {
+        const card = document.createElement("section");
+        card.className = "terminal-card";
+
+        const toolbar = document.createElement("div");
+        toolbar.className = "terminal-toolbar";
+        card.append(toolbar);
+
+        const meta = document.createElement("div");
+        meta.className = "terminal-meta";
+        toolbar.append(meta);
+
+        const title = document.createElement("span");
+        title.className = "terminal-title";
+        title.textContent = `Terminal ${index}`;
+        meta.append(title);
+
+        const status = document.createElement("span");
+        status.className = "terminal-status";
+        status.textContent = "Idle";
+        meta.append(status);
+
+        const closeButton = document.createElement("button");
+        closeButton.className = "terminal-close";
+        closeButton.type = "button";
+        closeButton.title = "Close terminal";
+        closeButton.textContent = "×";
+        toolbar.append(closeButton);
+
+        const body = document.createElement("div");
+        body.className = "terminal-body";
+        card.append(body);
+
+        const termSurface = document.createElement("div");
+        termSurface.className = "xterm-surface";
+        body.append(termSurface);
+
+        const footer = document.createElement("div");
+        footer.className = "terminal-footer";
+        footer.innerHTML = '<span>Shift+Insert to paste</span><span>Ctrl+Shift+F → search</span>';
+        card.append(footer);
+
+        const term = new Terminal({
+          allowProposedApi: true,
+          fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+          fontSize: 14,
+          cursorBlink: true,
+          scrollback: 8000,
+          theme: {
+            background: "#0f172a",
+            foreground: "#e2e8f0",
+            cursor: "#38bdf8",
+            selectionForeground: "#0f172a",
+            selectionBackground: "rgba(56, 189, 248, 0.4)"
+          }
+        });
+
+        const fitAddon = new FitAddon();
+        const webLinksAddon = new WebLinksAddon();
+        const searchAddon = new SearchAddon();
+        const unicodeAddon = new Unicode11Addon();
+
+        term.loadAddon(fitAddon);
+        term.loadAddon(webLinksAddon);
+        term.loadAddon(searchAddon);
+        term.loadAddon(unicodeAddon);
+        unicodeAddon.activate(term);
+
+        term.open(termSurface);
+
+        try {
+          const webglAddon = new WebglAddon();
+          term.loadAddon(webglAddon);
+          webglAddon.onContextLoss(() => {
+            webglAddon.dispose();
+          });
+        } catch {
+          // Ignore WebGL failures; the terminal will fall back to canvas.
+        }
+
+        const session = {
+          index,
+          card,
+          title,
+          term,
+          fitAddon,
+          status,
+          closeButton,
+          body,
+          socket: null,
+          socketReady: false,
+          closing: false,
+          resizeObserver: undefined,
+          attachAddon: null,
+          id: null
+        };
+
+        const resizeObserver = new ResizeObserver(() => {
+          fitAndMaybeResize(session);
+        });
+        resizeObserver.observe(body);
+        session.resizeObserver = resizeObserver;
+
+        closeButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          closeSession(session);
+        });
+
+        card.addEventListener("click", () => {
+          focusTerm(session);
+        });
+
+        fitAndMaybeResize(session);
+        focusTerm(session);
+
+        return session;
+      }
+
+      function updateTerminalTitle(session) {
+        if (!session.id) {
+          session.title.textContent = `Terminal ${session.index}`;
+          return;
+        }
+        const suffix = session.id.slice(0, 8);
+        session.title.textContent = `Terminal ${session.index} · ${suffix}`;
+      }
+
+      function connectSession(session) {
+        if (!session.id) {
+          return;
+        }
+
+        session.card.classList.remove("terminal-error", "terminal-closed");
+        session.status.textContent = "Connecting…";
+        session.card.dataset.state = "connecting";
+        session.socketReady = false;
+
+        if (session.socket && session.socket.readyState === WebSocket.OPEN) {
+          session.closing = true;
+          session.socket.close();
+        }
+
+        const wsUrl = new URL(`/ws/${session.id}`, window.location.origin);
+        wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+
+        const socket = new WebSocket(wsUrl);
+        socket.binaryType = "arraybuffer";
+        session.socket = socket;
+
+        const attach = new AttachAddon(socket, { bidirectional: true });
+        session.attachAddon?.dispose();
+        session.attachAddon = attach;
+        session.term.loadAddon(attach);
+
+        socket.addEventListener("open", () => {
+          session.socketReady = true;
+          session.status.textContent = "Connected";
+          session.card.dataset.state = "connected";
+          session.closing = false;
+          focusTerm(session);
+          fitAndMaybeResize(session);
+          window.setTimeout(() => fitAndMaybeResize(session), 100);
+        });
+
+        socket.addEventListener("close", () => {
+          session.socketReady = false;
+          session.socket = null;
+          session.attachAddon?.dispose();
+          session.attachAddon = null;
+
+          if (session.closing) {
+            session.closing = false;
+            return;
+          }
+
+          session.status.textContent = "Disconnected";
+          session.card.dataset.state = "disconnected";
+          session.card.classList.add("terminal-closed");
+        });
+
+        socket.addEventListener("error", () => {
+          session.status.textContent = "Connection error";
+          session.card.dataset.state = "error";
+          session.card.classList.add("terminal-error");
+        });
+      }
+
+      function closeSession(session) {
+        session.closing = true;
+        if (session.id) {
+          fetch(`/api/tabs/${session.id}`, { method: "DELETE" }).catch(() => {});
+        }
+        teardown(session, { removeCard: true });
+      }
+
+      function teardown(session, options = {}) {
+        const { removeCard = false } = options;
+        if (!sessions.delete(session)) {
+          if (removeCard) {
+            session.card.remove();
+          }
+          return;
+        }
+
+        session.resizeObserver?.disconnect();
+        session.attachAddon?.dispose();
+        session.attachAddon = null;
+
+        if (session.socket && session.socket.readyState === WebSocket.OPEN) {
+          session.socket.close();
+        } else {
+          session.socket = null;
+          session.socketReady = false;
+          session.closing = false;
+        }
+
+        if (removeCard) {
+          session.card.remove();
+        } else {
+          session.card.classList.add("terminal-closed");
+        }
+
+        session.term.dispose();
+
+        updateUrl();
+      }
+
+      function normalizedDimensions(cols, rows) {
+        const safeCols = Number.isFinite(cols) && cols > 0 ? cols : 80;
+        const safeRows = Number.isFinite(rows) && rows > 0 ? rows : 24;
+        return {
+          cols: Math.max(20, Math.min(320, Math.round(safeCols))),
+          rows: Math.max(8, Math.min(120, Math.round(safeRows)))
+        };
+      }
+
+      function measure(session) {
+        const { term, fitAddon } = session;
+        fitAddon.fit();
+        return normalizedDimensions(term.cols, term.rows);
+      }
+
+      function fitAndMaybeResize(session) {
+        const { term, fitAddon } = session;
+        fitAddon.fit();
+        const dims = normalizedDimensions(term.cols, term.rows);
+        if (session.socketReady && session.socket && session.socket.readyState === WebSocket.OPEN) {
+          session.socket.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
+        }
+        return dims;
+      }
+
+      function focusTerm(session) {
+        session.term.focus();
+      }
+
+      window.addEventListener("resize", () => {
+        window.requestAnimationFrame(() => {
+          sessions.forEach((session) => fitAndMaybeResize(session));
+        });
+      });
+    </script>
+  </body>
+</html>

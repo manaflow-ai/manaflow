@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+log() {
+  printf '[cmux-dockerd] %s\n' "$*"
+}
+
+if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^docker\\.service'; then
+  log "stopping systemd docker.service"
+  systemctl stop docker.socket >/dev/null 2>&1 || true
+  systemctl stop docker.service || true
+  exit 0
+fi
+
+if command -v pkill >/dev/null 2>&1; then
+  pkill -x dockerd >/dev/null 2>&1 || true
+else
+  pids=$(ps -eo pid,comm | awk '$2 == "dockerd" {print $1}')
+  if [ -n "$pids" ]; then
+    log "terminating dockerd processes: $pids"
+    for pid in $pids; do
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+  fi
+fi

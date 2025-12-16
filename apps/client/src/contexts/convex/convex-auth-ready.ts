@@ -6,6 +6,5 @@ export const convexAuthReadyPromise = new Promise<boolean>((resolve) => {
 });
 
 export function signalConvexAuthReady(isAuthenticated: boolean) {
-  console.log("signalConvexAuthReady", isAuthenticated);
   convexAuthReadyPromiseResolveFn?.(isAuthenticated);
 }

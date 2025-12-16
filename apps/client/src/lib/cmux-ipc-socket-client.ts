@@ -2,6 +2,34 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 
 type EventHandler = (...args: unknown[]) => void;
 
+const formatRpcErrorMessage = (event: string, error: unknown): string => {
+  if (error instanceof Error) {
+    return `RPC '${event}' failed: ${error.message}`;
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return `RPC '${event}' failed: ${(error as { message: string }).message}`;
+  }
+
+  const fallback =
+    typeof error === "string"
+      ? error
+      : (() => {
+          try {
+            return JSON.stringify(error);
+          } catch {
+            return String(error);
+          }
+        })();
+
+  return `RPC '${event}' failed: ${fallback}`;
+};
+
 export class CmuxIpcSocketClient {
   private handlers = new Map<string, Set<EventHandler>>();
   public connected = false;
@@ -80,7 +108,11 @@ export class CmuxIpcSocketClient {
       window.cmux
         .rpc(key, ...data)
         .then((res: unknown) => cb(res))
-        .catch((err: unknown) => cb({ error: String(err) }));
+        .catch((err: unknown) => {
+          const message = formatRpcErrorMessage(key, err);
+          console.error("[CmuxIpcSocketClient] RPC error", { event: key, err });
+          cb({ error: message });
+        });
     } else {
       void window.cmux.rpc(key, ...args);
     }

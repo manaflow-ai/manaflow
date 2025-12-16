@@ -1,6 +1,6 @@
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_nnucpxen";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_osr8ngj4";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_r6j3rkmo";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_xo8ptbkl";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_x4zc18s4";
-export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_bp1tdp4o";
+export {
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID,
+  MORPH_SNAPSHOT_PRESETS,
+} from "@cmux/shared";
+export type { MorphSnapshotId } from "@cmux/shared";

@@ -77,6 +77,12 @@ const DevServerResponseSchema = z
     workerUrl: z.string().openapi({
       example: "https://instance.morph.cloud:39377",
     }),
+    vncUrl: z.string().openapi({
+      example: "https://instance.morph.cloud:39380/vnc.html",
+    }),
+    cdpUrl: z.string().openapi({
+      example: "https://instance.morph.cloud:39381/json/version",
+    }),
     status: z.string().openapi({
       example: "running",
     }),
@@ -163,6 +169,9 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
         branch: body.branch || "main",
       },
     });
+    void (async () => {
+      await instance.setWakeOn(true, true);
+    })();
 
     console.log(`Created dev server instance: ${instance.id}`);
 
@@ -173,15 +182,26 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     const workerService = exposedServices.find(
       (service) => service.port === 39377
     );
+    const vncService = exposedServices.find((service) => service.port === 39380);
+    const cdpService = exposedServices.find((service) => service.port === 39381);
 
-    if (!vscodeService || !workerService) {
+    if (!vscodeService || !workerService || !vncService || !cdpService) {
       // Stop the instance if services are not available
       await instance.stop();
-      throw new Error("VSCode or worker service not found");
+      throw new Error("VSCode, worker, VNC, or DevTools service not found");
     }
 
     const vscodeUrl = `${vscodeService.url}/?folder=/root/workspace`;
     console.log(`VSCode URL: ${vscodeUrl}`);
+
+    const vncUrl = new URL("/vnc.html", vncService.url);
+    const vncSearchParams = new URLSearchParams();
+    vncSearchParams.set("autoconnect", "1");
+    vncSearchParams.set("resize", "scale");
+    vncSearchParams.set("reconnect", "1");
+    vncSearchParams.set("reconnect_delay", "1000");
+    vncUrl.search = `?${vncSearchParams.toString()}`;
+    const vncUrlString = vncUrl.toString();
 
     // Connect to the worker management namespace
     const clientSocket: Socket<WorkerToServerEvents, ServerToWorkerEvents> =
@@ -265,6 +285,8 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
         instanceId: instance.id,
         vscodeUrl,
         workerUrl: workerService.url,
+        vncUrl: vncUrlString,
+        cdpUrl: `${cdpService.url}/json/version`,
         status: "running",
         taskId: body.taskId,
         terminalCreated,

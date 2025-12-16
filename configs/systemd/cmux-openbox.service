@@ -1,0 +1,19 @@
+[Unit]
+Description=Cmux Openbox window manager
+After=cmux-tigervnc.service dbus.service
+Requires=cmux-tigervnc.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:1
+Environment=HOME=/root
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStartPre=/bin/sleep 1
+ExecStart=/usr/bin/openbox
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/openbox.log
+StandardError=append:/var/log/cmux/openbox.log
+
+[Install]
+WantedBy=cmux.target

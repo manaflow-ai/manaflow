@@ -5,12 +5,32 @@
   log file in production builds.
 */
 
+import * as Sentry from "@sentry/electron/main";
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { app } from "electron";
+import { createRequire } from "node:module";
+import { app, session } from "electron";
 
 import { clearLogDirectory } from "./log-management/clear-log-directory";
 import { resolveLogFilePath } from "./log-management/log-paths";
+import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
+
+// Provide CommonJS require in ESM main bundle so dependencies relying on require work.
+const require = createRequire(import.meta.url);
+(globalThis as typeof globalThis & { require?: typeof require }).require = require;
+
+const PARTITION = "persist:cmux";
+
+// Sentry must initialize before the Electron app "ready" event fires.
+Sentry.init({
+  dsn: SENTRY_ELECTRON_DSN,
+  ipcMode: Sentry.IPCMode.Both,
+  ipcNamespace: "sentry-ipc",
+  getSessions: () => [
+    session.defaultSession,
+    session.fromPartition(PARTITION),
+  ],
+});
 
 function timestamp(): string {
   return new Date().toISOString();

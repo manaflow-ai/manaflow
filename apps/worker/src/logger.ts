@@ -1,8 +1,20 @@
-import { promises, mkdirSync } from "node:fs";
+import { promises, mkdirSync, existsSync } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
-const LOG_FILE = "/var/log/cmux/worker.log";
+// Use /var/log/cmux if we have permissions, otherwise use temp dir
+let LOG_FILE = "/var/log/cmux/worker.log";
+let canWriteToVarLog = false;
 
-mkdirSync("/var/log/cmux", { recursive: true });
+try {
+  mkdirSync("/var/log/cmux", { recursive: true });
+  canWriteToVarLog = true;
+} catch {
+  // Fallback to temp directory for local development
+  const tempLogDir = path.join(os.tmpdir(), "cmux-logs");
+  mkdirSync(tempLogDir, { recursive: true });
+  LOG_FILE = path.join(tempLogDir, "worker.log");
+}
 
 export function log(
   level: string,

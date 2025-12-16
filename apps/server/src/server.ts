@@ -4,13 +4,18 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { GitDiffManager } from "./gitDiff";
 
-import { createProxyApp, setupWebSocketProxy } from "./proxyApp";
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
 import { getConvex } from "./utils/convexClient";
 import { dockerLogger, serverLogger } from "./utils/fileLogger";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
+import {
+  ensureVSCodeServeWeb,
+  getVSCodeServeWebBaseUrl,
+  stopVSCodeServeWeb,
+  type VSCodeServeWebHandle,
+} from "./vscode/serveWeb";
 
 const execAsync = promisify(exec);
 
@@ -25,49 +30,18 @@ export type GitRepoInfo = {
 
 export async function startServer({
   port,
-  publicPath,
   defaultRepo,
 }: {
   port: number;
-  publicPath: string;
   defaultRepo?: GitRepoInfo | null;
 }) {
-  // Set up global error handlers to prevent crashes
-  process.on("unhandledRejection", (reason, promise) => {
-    serverLogger.error("Unhandled Rejection at:", promise, "reason:", reason);
-    // Don't exit the process - just log the error
-  });
-
-  process.on("uncaughtException", (error) => {
-    serverLogger.error("Uncaught Exception:", error);
-    // Don't exit for file system errors
-    if (
-      error &&
-      typeof error === "object" &&
-      "errno" in error &&
-      "syscall" in error &&
-      "path" in error
-    ) {
-      const fsError = error;
-      if (fsError.errno === 0 || fsError.syscall === "TODO") {
-        serverLogger.error(
-          "File system watcher error - continuing without watching:",
-          fsError.path,
-        );
-        return;
-      }
-    }
-    // For other critical errors, still exit
-    process.exit(1);
-  });
-
   // Check system limits and warn if too low
   try {
     const { stdout } = await execAsync("ulimit -n");
     const limit = parseInt(stdout.trim(), 10);
     if (limit < 8192) {
       serverLogger.warn(
-        `System file descriptor limit is low: ${limit}. Consider increasing it with 'ulimit -n 8192' to avoid file watcher issues.`,
+        `System file descriptor limit is low: ${limit}. Consider increasing it with 'ulimit -n 8192' to avoid file watcher issues.`
       );
     }
   } catch (error) {
@@ -77,13 +51,11 @@ export async function startServer({
   // Git diff manager instance
   const gitDiffManager = new GitDiffManager();
 
-  // Create Express proxy app
-  const proxyApp = createProxyApp({ publicPath });
-
-  // Create HTTP server with Express app
-  const httpServer = createServer(proxyApp);
-
-  setupWebSocketProxy(httpServer);
+  // Create HTTP server for socket connections (no HTTP proxying)
+  const httpServer = createServer((_, res) => {
+    res.statusCode = 404;
+    res.end("Not found");
+  });
 
   // Create Socket.IO transport
   const rt = createSocketIOTransport(httpServer);
@@ -91,15 +63,16 @@ export async function startServer({
   // Set up all socket handlers
   setupSocketHandlers(rt, gitDiffManager, defaultRepo);
 
+  let vscodeServeHandle: VSCodeServeWebHandle | null = null;
+
   const server = httpServer.listen(port, async () => {
     serverLogger.info(`Terminal server listening on port ${port}`);
-    serverLogger.info(`Visit http://localhost:${port} to see the app`);
 
     // Store default repo info if provided
     if (defaultRepo?.remoteName) {
       try {
         serverLogger.info(
-          `Storing default repository: ${defaultRepo.remoteName}`,
+          `Storing default repository: ${defaultRepo.remoteName}`
         );
         await getConvex().mutation(api.github.upsertRepo, {
           teamSlugOrId: "default",
@@ -120,7 +93,7 @@ export async function startServer({
         rt.emit("default-repo", defaultRepoData);
 
         serverLogger.info(
-          `Successfully set default repository: ${defaultRepo.remoteName}`,
+          `Successfully set default repository: ${defaultRepo.remoteName}`
         );
       } catch (error) {
         serverLogger.error("Error storing default repo:", error);
@@ -128,8 +101,19 @@ export async function startServer({
     } else if (defaultRepo) {
       serverLogger.warn(
         `Default repo provided but no remote name found:`,
-        defaultRepo,
+        defaultRepo
       );
+    }
+
+    vscodeServeHandle = await ensureVSCodeServeWeb(serverLogger);
+    if (vscodeServeHandle) {
+      vscodeServeHandle.process.on("exit", () => {
+        vscodeServeHandle = null;
+      });
+      const baseUrl = getVSCodeServeWebBaseUrl();
+      if (baseUrl) {
+        serverLogger.info(`VS Code serve-web proxy available at ${baseUrl}`);
+      }
     }
 
     // Startup refresh moved to first authenticated socket connection
@@ -141,7 +125,7 @@ export async function startServer({
   async function cleanup() {
     if (isCleaningUp || isCleanedUp) {
       serverLogger.info(
-        "Cleanup already in progress or completed, skipping...",
+        "Cleanup already in progress or completed, skipping..."
       );
       return;
     }
@@ -161,11 +145,14 @@ export async function startServer({
     // Stop Docker container state sync
     DockerVSCodeInstance.stopContainerStateSync();
 
+    stopVSCodeServeWeb(vscodeServeHandle, serverLogger);
+    vscodeServeHandle = null;
+
     // Stop all VSCode instances using docker commands
     try {
       // Get all cmux containers
       const { stdout } = await execAsync(
-        'docker ps -a --filter "name=cmux-" --format "{{.Names}}"',
+        'docker ps -a --filter "name=cmux-" --format "{{.Names}}"'
       );
       const containerNames = stdout
         .trim()
@@ -174,7 +161,7 @@ export async function startServer({
 
       if (containerNames.length > 0) {
         serverLogger.info(
-          `Stopping ${containerNames.length} VSCode containers: ${containerNames.join(", ")}`,
+          `Stopping ${containerNames.length} VSCode containers: ${containerNames.join(", ")}`
         );
 
         // Stop all containers in parallel with a single docker command
@@ -193,7 +180,7 @@ export async function startServer({
     } catch (error) {
       serverLogger.error(
         "Error stopping containers via docker command:",
-        error,
+        error
       );
     }
 

@@ -708,7 +708,7 @@ def main() -> None:
 
         print(f"Instance ID: {instance.id}")
         # expose the ports
-        expose_ports = [39376, 39377, 39378]
+        expose_ports = [39375, 39376, 39377, 39378, 39379, 39380, 39381]
         for port in expose_ports:
             instance.expose_http_service(port=port, name=f"port-{port}")
         instance.wait_until_ready()
@@ -731,8 +731,13 @@ def main() -> None:
                 "systemctl status cmux.service --no-pager -l | tail -n 80 || true",
                 "ps aux | rg -n 'openvscode-server|node /builtins/build/index.js' -N || true",
                 "ss -lntp | rg -n ':39378' -N || true",
+                "ss -lntp | rg -n ':39379' -N || true",
+                "ss -lntp | rg -n ':39380' -N || true",
+                "ss -lntp | rg -n ':39381' -N || true",
                 "tail -n 80 /var/log/cmux/cmux.service.log || true",
                 "tail -n 80 /var/log/cmux/server.log || true",
+                "tail -n 80 /var/log/cmux/vnc-proxy.log || true",
+                "tail -n 80 /var/log/cmux/tigervnc.log || true",
             ]
             for cmd in diag_cmds:
                 print(f"\n$ {cmd}")
@@ -745,6 +750,7 @@ def main() -> None:
             print(f"Diagnostics failed: {e}")
 
         # check if port 39378 returns a 200
+        url: t.Optional[str] = None
         try:
             services = getattr(instance.networking, "http_services", [])
 
@@ -754,12 +760,20 @@ def main() -> None:
                 return getattr(obj, key, None)
 
             vscode_service = None
+            proxy_service = None
+            vnc_service = None
+            cdp_service = None
             for svc in services or []:
                 port = _get(svc, "port")
                 name = _get(svc, "name")
                 if port == 39378 or name == "port-39378":
                     vscode_service = svc
-                    break
+                elif port == 39379 or name == "port-39379":
+                    proxy_service = svc
+                elif port == 39380 or name == "port-39380":
+                    vnc_service = svc
+                elif port == 39381 or name == "port-39381":
+                    cdp_service = svc
 
             url = _get(vscode_service, "url") if vscode_service is not None else None
             if not url:
@@ -784,11 +798,48 @@ def main() -> None:
                     time.sleep(2)
                 if not ok:
                     print("Port 39378 did not return HTTP 200 within timeout")
+
+            proxy_url = _get(proxy_service, "url") if proxy_service is not None else None
+            if proxy_url:
+                print(f"Proxy URL: {proxy_url}")
+            else:
+                print("No exposed HTTP service found for port 39379")
+
+            vnc_url = _get(vnc_service, "url") if vnc_service is not None else None
+            if vnc_url:
+                novnc_url = f"{vnc_url.rstrip('/')}/vnc.html"
+                ok = False
+                for _ in range(30):
+                    try:
+                        with urllib_request.urlopen(novnc_url, timeout=5) as resp:
+                            code = getattr(resp, "status", getattr(resp, "code", None))
+                            if code == 200:
+                                print(f"Port 39380 check: HTTP {code}")
+                                ok = True
+                                break
+                            print(f"Port 39380 not ready yet, HTTP {code}; retrying...")
+                    except (HTTPError, URLError) as e:
+                        print(f"Port 39380 not ready yet ({e}); retrying...")
+                    time.sleep(2)
+                if not ok:
+                    print("Port 39380 did not return HTTP 200 within timeout")
+                print(f"VNC URL: {novnc_url}")
+            else:
+                print("No exposed HTTP service found for port 39380")
+
+            cdp_url = _get(cdp_service, "url") if cdp_service is not None else None
+            if cdp_url:
+                print(f"DevTools endpoint: {cdp_url}/json/version")
+            else:
+                print("No exposed DevTools service found for port 39381")
         except Exception as e:
-            print(f"Error checking port 39378: {e}")
+            print(f"Error checking exposed services: {e}")
 
         # print the vscode url
-        print(f"VSCode URL: {url}/?folder=/root/workspace")
+        if url:
+            print(f"VSCode URL: {url}/?folder=/root/workspace")
+        else:
+            print("VSCode URL unavailable")
 
         if args.resnapshot:
             # next, wait for any keypress and then snapshot again

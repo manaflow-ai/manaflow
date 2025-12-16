@@ -35,7 +35,7 @@ function TooltipContent({
         sideOffset={sideOffset}
         style={{ "--primary": "black" } as React.CSSProperties}
         className={cn(
-          "bg-primary text-primary-foreground z-[var(--z-modal)] w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance pointer-events-none select-none will-change-[transform,opacity]",
+          "bg-primary text-primary-foreground z-[var(--z-tooltip)] w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance pointer-events-none select-none will-change-[transform,opacity]",
           // enter on delayed-open
           "data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95",
           // instant-open should not animate or transition
@@ -49,7 +49,7 @@ function TooltipContent({
         {...props}
       >
         {children}
-        <TooltipPrimitive.Arrow className="bg-primary fill-primary z-[var(--z-modal)] size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] pointer-events-none select-none" />
+        <TooltipPrimitive.Arrow className="bg-primary fill-primary z-[var(--z-tooltip)] size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] pointer-events-none select-none" />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   );

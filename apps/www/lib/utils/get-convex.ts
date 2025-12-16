@@ -1,5 +1,7 @@
-import { convexClientCache } from "@cmux/shared/node/convex-cache";
-import { ConvexHttpClient } from "convex/browser";
+import {
+  convexClientCache,
+  ConvexHttpClient,
+} from "@cmux/shared/node/convex-cache";
 import { env } from "./www-env";
 
 export function getConvex({ accessToken }: { accessToken: string }) {

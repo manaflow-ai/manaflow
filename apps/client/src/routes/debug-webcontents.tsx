@@ -1,4 +1,4 @@
-import { ElectronWebContentsPage } from "./electron-web-contents";
+import { ElectronWebContentsPage } from "@/components/ElectronWebContentsPage";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/debug-webcontents")({

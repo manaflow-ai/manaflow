@@ -1,0 +1,18 @@
+[Unit]
+Description=Cmux TigerVNC bridge
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:1
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/bin/Xtigervnc :1 -geometry 1920x1080 -depth 24 -localhost -SecurityTypes None -rfbport 5901 -AlwaysShared -AcceptSetDesktopSize=1 -nolisten tcp
+ExecStartPost=/bin/sh -c 'command -v xsetroot >/dev/null 2>&1 && xsetroot -display :1 -solid "#000000" || true'
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/tigervnc.log
+StandardError=append:/var/log/cmux/tigervnc.log
+
+[Install]
+WantedBy=cmux.target

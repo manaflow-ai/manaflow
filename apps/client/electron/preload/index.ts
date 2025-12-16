@@ -1,3 +1,7 @@
+import * as Sentry from "@sentry/electron/renderer";
+
+Sentry.init();
+
 import { electronAPI } from "@electron-toolkit/preload";
 import { contextBridge, ipcRenderer } from "electron";
 import type {
@@ -24,6 +28,34 @@ type LogListener = (entry: ElectronMainLogMessage) => void;
 const mainLogListeners = new Set<LogListener>();
 
 // Cmux IPC API for Electron server communication
+const describeIpcError = (event: string, error: unknown) => {
+  if (error instanceof Error) {
+    return new Error(`RPC '${event}' failed: ${error.message}`);
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return new Error(`RPC '${event}' failed: ${(error as { message: string }).message}`);
+  }
+
+  const fallback =
+    typeof error === "string"
+      ? error
+      : (() => {
+          try {
+            return JSON.stringify(error);
+          } catch {
+            return String(error);
+          }
+        })();
+
+  return new Error(`RPC '${event}' failed: ${fallback}`);
+};
+
 const cmuxAPI = {
   // Get the current webContents ID
   getCurrentWebContentsId: () => {
@@ -37,7 +69,11 @@ const cmuxAPI = {
 
   // RPC call (like socket.emit with acknowledgment)
   rpc: (event: string, ...args: unknown[]) => {
-    return ipcRenderer.invoke("cmux:rpc", { event, args });
+    return ipcRenderer
+      .invoke("cmux:rpc", { event, args })
+      .catch((error: unknown) => {
+        throw describeIpcError(event, error);
+      });
   },
 
   // Subscribe to server events
@@ -163,6 +199,7 @@ const cmuxAPI = {
   webContentsView: {
     create: (options: {
       url: string;
+      requestUrl?: string;
       bounds?: RectanglePayload;
       backgroundColor?: string;
       borderRadius?: number;
@@ -191,7 +228,9 @@ const cmuxAPI = {
         suspended: boolean;
       }>,
     destroy: (id: number) =>
-      ipcRenderer.invoke("cmux:webcontents:destroy", id) as Promise<{ ok: boolean }>,
+      ipcRenderer.invoke("cmux:webcontents:destroy", id) as Promise<{
+        ok: boolean;
+      }>,
     updateStyle: (options: {
       id: number;
       backgroundColor?: string;
@@ -200,13 +239,27 @@ const cmuxAPI = {
       ipcRenderer.invoke("cmux:webcontents:update-style", options) as Promise<{
         ok: boolean;
       }>,
+    isFocused: (id: number) =>
+      ipcRenderer.invoke("cmux:webcontents:is-focused", id) as Promise<{
+        ok: boolean;
+        focused: boolean;
+      }>,
     goBack: (id: number) =>
-      ipcRenderer.invoke("cmux:webcontents:go-back", id) as Promise<{ ok: boolean }>,
+      ipcRenderer.invoke("cmux:webcontents:go-back", id) as Promise<{
+        ok: boolean;
+      }>,
     goForward: (id: number) =>
-      ipcRenderer.invoke("cmux:webcontents:go-forward", id) as Promise<{ ok: boolean }>,
+      ipcRenderer.invoke("cmux:webcontents:go-forward", id) as Promise<{
+        ok: boolean;
+      }>,
     reload: (id: number) =>
-      ipcRenderer.invoke("cmux:webcontents:reload", id) as Promise<{ ok: boolean }>,
-    onEvent: (id: number, callback: (event: ElectronWebContentsEvent) => void) => {
+      ipcRenderer.invoke("cmux:webcontents:reload", id) as Promise<{
+        ok: boolean;
+      }>,
+    onEvent: (
+      id: number,
+      callback: (event: ElectronWebContentsEvent) => void
+    ) => {
       const channel = `cmux:webcontents:event:${id}`;
       const listener = (
         _event: Electron.IpcRendererEvent,
@@ -235,7 +288,9 @@ const cmuxAPI = {
         mode: options?.mode,
       }) as Promise<{ ok: boolean }>,
     closeDevTools: (id: number) =>
-      ipcRenderer.invoke("cmux:webcontents:close-devtools", id) as Promise<{ ok: boolean }>,
+      ipcRenderer.invoke("cmux:webcontents:close-devtools", id) as Promise<{
+        ok: boolean;
+      }>,
   },
 };
 

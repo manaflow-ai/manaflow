@@ -19,6 +19,9 @@ async function main() {
     const instance = await client.instances.start({
       snapshotId: snapshotId,
     });
+    void (async () => {
+      await instance.setWakeOn(true, true);
+    })();
 
     await instance.waitUntilReady();
 

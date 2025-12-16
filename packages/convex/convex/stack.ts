@@ -30,7 +30,7 @@ type UpsertUserArgs = {
   oauthProviders?: Array<{ id: string; accountId: string; email?: string }>;
 };
 
-async function upsertUserCore(ctx: MutationCtx, args: UpsertUserArgs) {
+export async function upsertUserCore(ctx: MutationCtx, args: UpsertUserArgs) {
   const now = Date.now();
   const existing = await ctx.db
     .query("users")
@@ -246,7 +246,7 @@ async function resolveTeamSlug(
   return generateSlugFromName(ctx, args.id, args.displayName);
 }
 
-async function upsertTeamCore(ctx: MutationCtx, args: UpsertTeamArgs) {
+export async function upsertTeamCore(ctx: MutationCtx, args: UpsertTeamArgs) {
   const now = Date.now();
   const existing = await ctx.db
     .query("teams")
@@ -342,7 +342,7 @@ export const deleteTeamPublic = authMutation({
   handler: async (ctx, { id }) => deleteTeamCore(ctx as unknown as MutationCtx, id),
 });
 
-async function ensureMembershipCore(ctx: MutationCtx, teamId: string, userId: string) {
+export async function ensureMembershipCore(ctx: MutationCtx, teamId: string, userId: string) {
     const now = Date.now();
     const existing = await ctx.db
       .query("teamMemberships")

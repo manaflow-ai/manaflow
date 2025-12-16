@@ -129,15 +129,3 @@ const closeAllLoggers = () => {
 process.on("exit", closeAllLoggers);
 process.on("SIGINT", closeAllLoggers);
 process.on("SIGTERM", closeAllLoggers);
-
-process.on("uncaughtException", (error) => {
-  serverLogger.error("Uncaught exception:", error);
-  closeAllLoggers();
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (reason, promise) => {
-  serverLogger.error("Unhandled rejection at:", promise, "reason:", reason);
-  closeAllLoggers();
-  process.exit(1);
-});

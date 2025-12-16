@@ -1,6 +1,7 @@
 import { APITester } from "./APITester";
 import { useEffect } from "react";
 import { initCmuxComments } from "./cmux-comments/cmux-comments";
+import "./zindex.css";
 import "./index.css";
 
 import logo from "./logo.svg";

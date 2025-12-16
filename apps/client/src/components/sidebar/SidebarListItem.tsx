@@ -5,6 +5,7 @@ import { SidebarToggleButton } from "../SidebarToggleButton";
 interface SidebarListItemProps {
   title: ReactNode;
   titleClassName?: string;
+  titleSuffix?: ReactNode;
   secondary?: ReactNode;
   secondaryClassName?: string;
   meta?: ReactNode;
@@ -27,6 +28,7 @@ interface SidebarListItemProps {
 export function SidebarListItem({
   title,
   titleClassName,
+  titleSuffix,
   secondary,
   secondaryClassName,
   meta,
@@ -83,6 +85,9 @@ export function SidebarListItem({
             >
               {title}
             </span>
+            {titleSuffix ? (
+              <span className="flex-shrink-0">{titleSuffix}</span>
+            ) : null}
             {meta ? (
               <span className="ml-auto flex-shrink-0">{meta}</span>
             ) : null}

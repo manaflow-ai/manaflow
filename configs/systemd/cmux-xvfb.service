@@ -1,0 +1,18 @@
+[Unit]
+Description=Cmux virtual framebuffer display
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:1
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/bin/Xvfb :1 -screen 0 1920x1080x24 -nolisten tcp -noreset
+ExecStartPost=/bin/sh -c 'command -v xsetroot >/dev/null 2>&1 && xsetroot -display :1 -solid "#000000" || true'
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/xvfb.log
+StandardError=append:/var/log/cmux/xvfb.log
+
+[Install]
+WantedBy=cmux.target

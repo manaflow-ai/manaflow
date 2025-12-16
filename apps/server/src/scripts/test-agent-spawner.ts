@@ -17,10 +17,10 @@ async function main() {
   }
 
   const agentConfig = AGENT_CONFIGS.find(
-    (agent) => agent.name === "codex/gpt-5"
+    (agent) => agent.name === "codex/gpt-5.1-codex-high"
   );
   if (!agentConfig) {
-    console.error("Could not find codex/gpt-5 agent config");
+    console.error("Could not find codex/gpt-5.1-codex-high agent config");
     process.exit(1);
   }
 
@@ -42,7 +42,7 @@ async function main() {
 
   // Create a task in Convex first
   console.log("\nCreating task in Convex...");
-  const taskId = await getConvex().mutation(api.tasks.create, {
+  const { taskId } = await getConvex().mutation(api.tasks.create, {
     teamSlugOrId: "default",
     projectFullName: "lawrencecchen/cmux",
     text: testOptions.taskDescription,

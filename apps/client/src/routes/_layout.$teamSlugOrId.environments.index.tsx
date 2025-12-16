@@ -1,32 +1,53 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useEnvironmentDraft } from "@/state/environment-draft-store";
 import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
-    await convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.environments.list, {
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.environments.list,
+      args: {
         teamSlugOrId: params.teamSlugOrId,
-      })
-    );
+      },
+    });
   },
   component: EnvironmentsListPage,
 });
 
 function EnvironmentsListPage() {
   const { teamSlugOrId } = Route.useParams();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const draft = useEnvironmentDraft(teamSlugOrId);
 
-  const { data: environments } = useSuspenseQuery(
-    convexQuery(api.environments.list, {
-      teamSlugOrId,
-    })
-  );
+  const environments = useQuery(api.environments.list, {
+    teamSlugOrId,
+  });
+
+  useEffect(() => {
+    if (!draft || draft.step !== "configure" || !draft.instanceId) {
+      return;
+    }
+    void navigate({
+      to: "/$teamSlugOrId/environments/new",
+      params: { teamSlugOrId },
+      search: {
+        step: "configure",
+        selectedRepos: draft.selectedRepos,
+        connectionLogin: undefined,
+        repoSearch: undefined,
+        instanceId: draft.instanceId,
+        snapshotId: draft.snapshotId ?? undefined,
+      },
+      replace: true,
+    });
+  }, [draft, navigate, teamSlugOrId]);
 
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>
@@ -44,6 +65,7 @@ function EnvironmentsListPage() {
               connectionLogin: undefined,
               repoSearch: undefined,
               instanceId: undefined,
+              snapshotId: undefined,
             }}
             className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
           >
@@ -122,6 +144,7 @@ function EnvironmentsListPage() {
                         connectionLogin: undefined,
                         repoSearch: undefined,
                         instanceId: undefined,
+                        snapshotId: env.morphSnapshotId ?? undefined,
                       }}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
                     >
@@ -163,6 +186,7 @@ function EnvironmentsListPage() {
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
+                snapshotId: undefined,
               }}
               className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
             >

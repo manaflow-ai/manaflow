@@ -1,0 +1,21 @@
+:root {
+  --z-base: 0;
+  --z-low: 10;
+  --z-dropdown: 20;
+  --z-sticky-low: 40;
+  --z-sticky: 50;
+  --z-modal: var(--z-sticky);
+
+  --z-iframe: 9998;
+  --z-overlay-behind: 9998;
+  --z-overlay: 9999;
+  --z-context-menu: 10000;
+  --z-popover: 10001;
+  --z-popover-hover: 10010;
+  --z-tooltip: 10020;
+
+  --z-floating-high: 999999;
+  --z-global-blocking: 99999999;
+  --z-sidebar-resize-handle: 10000;
+  --z-commandbar: 100000000;
+}

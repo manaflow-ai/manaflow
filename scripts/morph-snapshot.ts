@@ -240,6 +240,9 @@ class MorphDockerfileExecutor {
       ttlSeconds: 60 * 30,
       ttlAction: "pause",
     });
+    void (async () => {
+      await instance.setWakeOn(true, true);
+    })();
 
     this.instance = instance;
 

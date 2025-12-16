@@ -8,7 +8,7 @@ export const Route = createFileRoute(
   component: PRDetailsRoute,
   loader: async (opts) => {
     const { teamSlugOrId, owner, repo, number } = opts.params;
-    await preloadPullRequestDetail({
+    void preloadPullRequestDetail({
       queryClient: opts.context.queryClient,
       teamSlugOrId,
       owner,

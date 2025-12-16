@@ -1,0 +1,23 @@
+# SQLite databases (runtime cache, not source of truth)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Daemon runtime files
+daemon.lock
+daemon.log
+daemon.pid
+bd.sock
+bd.sock.*
+
+# Merge artifacts
+beads.base.jsonl
+beads.base.meta.json
+beads.left.jsonl
+beads.left.meta.json
+
+# Keep JSONL and config (source of truth for git)
+!issues.jsonl
+!metadata.json
+!config.json

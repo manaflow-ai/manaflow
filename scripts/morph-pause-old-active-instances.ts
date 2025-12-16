@@ -24,6 +24,7 @@ if (Number.isNaN(HOURS_THRESHOLD) || HOURS_THRESHOLD <= 0) {
 }
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
+const STOP_THRESHOLD_DAYS = 3;
 
 function formatRelativeTime(instance: Instance): string {
   const diffMs = Date.now() - instance.created * 1000;
@@ -70,12 +71,13 @@ const staleActiveInstances = instances
   .filter((instance) => now - instance.created * 1000 > thresholdMs)
   .sort((a, b) => a.created - b.created);
 
-// Split into instances to pause (< 1 day) and stop (>= 1 day)
+// Split into instances to pause (< 3 days) and stop (>= 3 days)
+const stopThresholdMs = STOP_THRESHOLD_DAYS * MILLISECONDS_PER_DAY;
 const instancesToPause = staleActiveInstances.filter(
-  (instance) => now - instance.created * 1000 < MILLISECONDS_PER_DAY,
+  (instance) => now - instance.created * 1000 < stopThresholdMs,
 );
 const instancesToStop = staleActiveInstances.filter(
-  (instance) => now - instance.created * 1000 >= MILLISECONDS_PER_DAY,
+  (instance) => now - instance.created * 1000 >= stopThresholdMs,
 );
 
 if (staleActiveInstances.length === 0) {
@@ -90,7 +92,7 @@ console.log(
 );
 
 if (instancesToStop.length > 0) {
-  console.log(`Will STOP (>= 1 day old):`);
+  console.log(`Will PAUSE, or STOP if pause fails (>= ${STOP_THRESHOLD_DAYS} days old):`);
   for (const instance of instancesToStop) {
     const createdAt = new Date(instance.created * 1000).toISOString();
     console.log(
@@ -101,7 +103,7 @@ if (instancesToStop.length > 0) {
 }
 
 if (instancesToPause.length > 0) {
-  console.log(`Will PAUSE (< 1 day old):`);
+  console.log(`Will PAUSE (< ${STOP_THRESHOLD_DAYS} days old):`);
   for (const instance of instancesToPause) {
     const createdAt = new Date(instance.created * 1000).toISOString();
     console.log(
@@ -129,26 +131,27 @@ let index = 0;
 const stopSet = new Set(instancesToStop.map((i) => i.id));
 
 async function processInstance(instance: Instance): Promise<void> {
-  const shouldStop = stopSet.has(instance.id);
-  if (shouldStop) {
-    console.log(`Stopping ${instance.id}...`);
-    try {
-      await instance.stop();
-      console.log(`Stopped ${instance.id}.`);
-    } catch (error) {
+  const isOld = stopSet.has(instance.id);
+  console.log(`Pausing ${instance.id}...`);
+  try {
+    await instance.pause();
+    console.log(`Paused ${instance.id}.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to pause ${instance.id}: ${message}`);
+    if (isOld) {
+      console.log(`Falling back to stopping ${instance.id}...`);
+      try {
+        await instance.stop();
+        console.log(`Stopped ${instance.id}.`);
+      } catch (stopError) {
+        failures += 1;
+        const stopMessage =
+          stopError instanceof Error ? stopError.message : String(stopError);
+        console.error(`Failed to stop ${instance.id}: ${stopMessage}`);
+      }
+    } else {
       failures += 1;
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to stop ${instance.id}: ${message}`);
-    }
-  } else {
-    console.log(`Pausing ${instance.id}...`);
-    try {
-      await instance.pause();
-      console.log(`Paused ${instance.id}.`);
-    } catch (error) {
-      failures += 1;
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to pause ${instance.id}: ${message}`);
     }
   }
 }

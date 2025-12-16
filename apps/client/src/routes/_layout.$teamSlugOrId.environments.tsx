@@ -12,12 +12,14 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/environments")({
     const connectionLogin = z.string().optional().parse(search.connectionLogin);
     const repoSearch = z.string().optional().parse(search.repoSearch);
     const instanceId = z.string().optional().parse(search.instanceId);
+    const snapshotId = z.string().optional().parse(search.snapshotId);
     return {
       step,
       selectedRepos,
       connectionLogin,
       repoSearch,
       instanceId,
+      snapshotId,
     };
   },
 });

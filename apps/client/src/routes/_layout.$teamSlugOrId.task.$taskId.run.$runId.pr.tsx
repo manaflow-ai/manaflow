@@ -3,12 +3,12 @@ import { PersistentWebView } from "@/components/persistent-webview";
 import { getTaskRunPullRequestPersistKey } from "@/lib/persistent-webview-keys";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import z from "zod";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -29,20 +29,19 @@ export const Route = createFileRoute(
     },
   },
   loader: async (opts) => {
-    await Promise.all([
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.getByTask, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-        })
-      ),
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.tasks.getById, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          id: opts.params.taskId,
-        })
-      ),
-    ]);
+    const { teamSlugOrId, taskId } = opts.params;
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.getByTask,
+      args: {
+        teamSlugOrId,
+        taskId,
+      },
+    });
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.getById,
+      args: { teamSlugOrId, id: taskId },
+    });
   },
 });
 
@@ -68,8 +67,8 @@ function RunPullRequestPage() {
     () => selectedRun?.pullRequests ?? [],
     [selectedRun?.pullRequests]
   );
-  const [activeRepo, setActiveRepo] = useState<string | null>(() =>
-    pullRequests[0]?.repoFullName ?? null
+  const [activeRepo, setActiveRepo] = useState<string | null>(
+    () => pullRequests[0]?.repoFullName ?? null
   );
 
   useEffect(() => {
@@ -79,7 +78,10 @@ function RunPullRequestPage() {
       }
       return;
     }
-    if (!activeRepo || !pullRequests.some((pr) => pr.repoFullName === activeRepo)) {
+    if (
+      !activeRepo ||
+      !pullRequests.some((pr) => pr.repoFullName === activeRepo)
+    ) {
       setActiveRepo(pullRequests[0]?.repoFullName ?? null);
     }
   }, [pullRequests, activeRepo]);
@@ -100,7 +102,8 @@ function RunPullRequestPage() {
   }, [runId, activeRepo]);
   const paneBorderRadius = 6;
 
-  const headerTitle = pullRequests.length > 1 ? "Pull Requests" : "Pull Request";
+  const headerTitle =
+    pullRequests.length > 1 ? "Pull Requests" : "Pull Request";
   const activeUrl = activePullRequest?.url ?? fallbackPullRequestUrl;
 
   return (
@@ -126,7 +129,7 @@ function RunPullRequestPage() {
                 rel="noopener noreferrer"
                 className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
               >
-                Open in GitHub
+                Open Heatmap Diff Viewer
                 <svg
                   className="w-3 h-3"
                   fill="none"
@@ -171,7 +174,7 @@ function RunPullRequestPage() {
                           "flex min-w-[160px] items-center justify-between gap-2 px-3 py-2 text-xs transition-colors",
                           isActive
                             ? "border-b-2 border-neutral-900 bg-white text-neutral-900 dark:border-neutral-100 dark:bg-neutral-950 dark:text-neutral-100"
-                            : "border-b-2 border-transparent text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100",
+                            : "border-b-2 border-transparent text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
                         )}
                       >
                         <span className="truncate">{pr.repoFullName}</span>

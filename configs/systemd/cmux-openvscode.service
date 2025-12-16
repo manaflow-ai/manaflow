@@ -1,0 +1,21 @@
+[Unit]
+Description=Cmux OpenVSCode Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/app/app.env
+EnvironmentFile=-/etc/cmux/ide.env
+Environment=HOME=/root
+LogsDirectory=cmux
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStartPre=/bin/bash -lc 'exec /usr/local/lib/cmux/configure-openvscode'
+ExecStart=/bin/bash -lc 'exec /app/openvscode-server/bin/openvscode-server --host 0.0.0.0 --port 39378 --without-connection-token --disable-workspace-trust --disable-telemetry --disable-updates --profile default-profile --verbose /root/workspace'
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/openvscode.log
+StandardError=append:/var/log/cmux/openvscode.log
+
+[Install]
+WantedBy=cmux.target

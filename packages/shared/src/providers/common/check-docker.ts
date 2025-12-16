@@ -8,6 +8,9 @@ import type { DockerStatus } from "../../socket-schemas";
 
 const execAsync = promisify(childProcessExec);
 
+const DOCKER_BINARY_NAME = process.platform === "win32" ? "docker.exe" : "docker";
+const PATH_DELIMITER = process.platform === "win32" ? ";" : ":";
+
 const DOCKER_INFO_COMMAND = "docker info --format '{{json .ServerVersion}}'";
 const DOCKER_VERSION_COMMAND = "docker version --format '{{.Server.Version}}'";
 
@@ -34,6 +37,95 @@ export interface DockerDaemonReadiness {
   version?: string;
   error?: string;
 }
+
+function normalizePathSegment(segment: string): string {
+  const trimmed = segment.trim();
+
+  if (process.platform === "win32") {
+    return trimmed.replace(/\\+/g, "\\").toLowerCase();
+  }
+
+  if (trimmed === "/") {
+    return trimmed;
+  }
+
+  return trimmed.replace(/\/+$/u, "");
+}
+
+function getDockerBinaryDirectoryCandidates(): string[] {
+  const candidates = new Set<string>();
+
+  const macOsCandidates = [
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/Applications/Docker.app/Contents/Resources/bin",
+  ];
+
+  const linuxCandidates = [
+    "/usr/local/bin",
+    "/usr/bin",
+    "/snap/bin",
+  ];
+
+  const windowsCandidates = [
+    "C:/Program Files/Docker/Docker/resources/bin",
+    "C:/Program Files/Docker/Docker",
+  ];
+
+  for (const pathValue of (process.env.DOCKER_EXTRA_PATHS ?? "").split(PATH_DELIMITER)) {
+    const trimmed = pathValue.trim();
+    if (trimmed) {
+      candidates.add(trimmed);
+    }
+  }
+
+  const platformCandidates = process.platform === "darwin"
+    ? macOsCandidates
+    : process.platform === "win32"
+      ? windowsCandidates
+      : linuxCandidates;
+
+  for (const candidate of platformCandidates) {
+    candidates.add(candidate);
+  }
+
+  return Array.from(candidates);
+}
+
+export function ensureDockerBinaryInPath(): void {
+  const currentPath = process.env.PATH ?? "";
+  const parts = currentPath.split(PATH_DELIMITER).filter(Boolean);
+  const seen = new Set(parts.map(normalizePathSegment));
+  const additions: string[] = [];
+
+  for (const directory of getDockerBinaryDirectoryCandidates()) {
+    const binaryPath = join(directory, DOCKER_BINARY_NAME);
+    if (!existsSync(binaryPath)) {
+      continue;
+    }
+
+    const normalizedDirectory = normalizePathSegment(directory);
+    if (seen.has(normalizedDirectory)) {
+      continue;
+    }
+
+    additions.push(directory);
+    seen.add(normalizedDirectory);
+  }
+
+  if (additions.length === 0) {
+    return;
+  }
+
+  const updatedPath = [...additions, ...parts].join(PATH_DELIMITER);
+  process.env.PATH = updatedPath;
+
+  if (process.platform === "win32") {
+    process.env.Path = updatedPath;
+  }
+}
+
+ensureDockerBinaryInPath();
 
 function collectDefaultSocketCandidates(): string[] {
   const defaults = new Set<string>([

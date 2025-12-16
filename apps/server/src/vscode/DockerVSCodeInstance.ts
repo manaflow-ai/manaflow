@@ -8,7 +8,7 @@ import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-d
 import { getConvex } from "../utils/convexClient";
 import { cleanupGitCredentials } from "../utils/dockerGitSetup";
 import { dockerLogger } from "../utils/fileLogger";
-import { getGitHubTokenFromKeychain } from "../utils/getGitHubToken";
+import { getGitHubOAuthToken } from "../utils/getGitHubToken";
 import { getAuthToken, runWithAuthToken } from "../utils/requestContext";
 import {
   VSCodeInstance,
@@ -26,6 +26,8 @@ export interface ContainerMapping {
     vscode: string;
     worker: string;
     extension?: string;
+    proxy?: string;
+    vnc?: string;
   };
   status: "starting" | "running" | "stopped";
   workspacePath?: string;
@@ -40,6 +42,11 @@ interface DockerEvent {
     Attributes?: Record<string, string>;
   };
 }
+
+type HostConfigWithCgroupns =
+  Docker.ContainerCreateOptions["HostConfig"] & {
+    CgroupnsMode?: "host" | "private";
+  };
 
 export class DockerVSCodeInstance extends VSCodeInstance {
   private containerName: string;
@@ -125,7 +132,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
   /**
    * Get the actual host port for a given container port
-   * @param containerPort The port inside the container (e.g., "39378", "39377", "39376")
+   * @param containerPort The port inside the container (e.g., "39378", "39377", "39376", "39379", "39380")
    * @returns The actual host port or null if not found
    */
   async getActualPort(containerPort: string): Promise<string | null> {
@@ -173,6 +180,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
 
       // Also cache other known ports while we're at it
+      if (ports["39375/tcp"]?.[0]?.HostPort) {
+        portMapping["39375"] = ports["39375/tcp"][0].HostPort;
+      }
       if (ports["39378/tcp"]?.[0]?.HostPort) {
         portMapping["39378"] = ports["39378/tcp"][0].HostPort;
       }
@@ -181,6 +191,15 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
       if (ports["39376/tcp"]?.[0]?.HostPort) {
         portMapping["39376"] = ports["39376/tcp"][0].HostPort;
+      }
+      if (ports["39379/tcp"]?.[0]?.HostPort) {
+        portMapping["39379"] = ports["39379/tcp"][0].HostPort;
+      }
+      if (ports["39380/tcp"]?.[0]?.HostPort) {
+        portMapping["39380"] = ports["39380/tcp"][0].HostPort;
+      }
+      if (ports["39381/tcp"]?.[0]?.HostPort) {
+        portMapping["39381"] = ports["39381/tcp"][0].HostPort;
       }
 
       // Update cache
@@ -219,7 +238,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       instanceId: this.instanceId,
       teamSlugOrId: this.teamSlugOrId,
       authToken: this.authToken,
-      ports: { vscode: "", worker: "" },
+      ports: { vscode: "", worker: "", extension: "", proxy: "", vnc: "" },
       status: "starting",
       workspacePath: this.config.workspacePath,
     });
@@ -245,23 +264,39 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     }
 
     // Create container configuration
+    const hostConfig: HostConfigWithCgroupns = {
+      AutoRemove: true,
+      Privileged: true,
+      CgroupnsMode: "host",
+      PortBindings: {
+        "39375/tcp": [{ HostPort: "0" }], // Exec service port
+        "39378/tcp": [{ HostPort: "0" }], // VS Code port
+        "39377/tcp": [{ HostPort: "0" }], // Worker port
+        "39376/tcp": [{ HostPort: "0" }], // Extension socket port
+        "39379/tcp": [{ HostPort: "0" }], // cmux-proxy port
+        "39380/tcp": [{ HostPort: "0" }], // VNC websocket proxy port
+        "39381/tcp": [{ HostPort: "0" }], // Chrome DevTools port
+      },
+      Tmpfs: {
+        "/run": "rw,mode=755",
+        "/run/lock": "rw,mode=755",
+      },
+      Binds: ["/sys/fs/cgroup:/sys/fs/cgroup:rw"],
+    };
+
     const createOptions: Docker.ContainerCreateOptions = {
       name: this.containerName,
       Image: this.imageName,
       Env: envVars,
-      HostConfig: {
-        AutoRemove: true,
-        Privileged: true,
-        PortBindings: {
-          "39378/tcp": [{ HostPort: "0" }], // VS Code port
-          "39377/tcp": [{ HostPort: "0" }], // Worker port
-          "39376/tcp": [{ HostPort: "0" }], // Extension socket port
-        },
-      },
+      HostConfig: hostConfig,
       ExposedPorts: {
+        "39375/tcp": {},
         "39378/tcp": {},
         "39377/tcp": {},
         "39376/tcp": {},
+        "39379/tcp": {},
+        "39380/tcp": {},
+        "39381/tcp": {},
       },
     };
     dockerLogger.info(
@@ -287,11 +322,15 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const homeDir = os.homedir();
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
-        const binds = [
-          `${this.config.workspacePath}:/root/workspace`,
-          // Mount the origin directory at the same absolute path to preserve git references
-          `${originPath}:${originPath}:rw`, // Read-write mount for git operations
-        ];
+        const binds =
+          createOptions.HostConfig?.Binds ??
+          ["/sys/fs/cgroup:/sys/fs/cgroup:rw"];
+        if (!createOptions.HostConfig?.Binds) {
+          createOptions.HostConfig!.Binds = binds;
+        }
+        binds.push(`${this.config.workspacePath}:/root/workspace`);
+        // Mount the origin directory at the same absolute path to preserve git references
+        binds.push(`${originPath}:${originPath}:rw`); // Read-write mount for git operations
 
         // Mount SSH directory for git authentication
         const sshDir = path.join(homeDir, ".ssh");
@@ -342,7 +381,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const homeDir = os.homedir();
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
-        const binds = [`${this.config.workspacePath}:/root/workspace`];
+        const binds =
+          createOptions.HostConfig?.Binds ??
+          ["/sys/fs/cgroup:/sys/fs/cgroup:rw"];
+        if (!createOptions.HostConfig?.Binds) {
+          createOptions.HostConfig!.Binds = binds;
+        }
+        binds.push(`${this.config.workspacePath}:/root/workspace`);
 
         // Mount SSH directory for git authentication
         const sshDir = path.join(homeDir, ".ssh");
@@ -424,6 +469,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
     const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
     const extensionPort = ports["39376/tcp"]?.[0]?.HostPort;
+    const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
+    const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
 
     if (!vscodePort) {
       dockerLogger.error(`Available ports:`, ports);
@@ -435,6 +482,16 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       throw new Error("Failed to get worker port mapping for port 39377");
     }
 
+    if (!proxyPort) {
+      dockerLogger.error(`Available ports:`, ports);
+      throw new Error("Failed to get proxy port mapping for port 39379");
+    }
+
+    if (!vncPort) {
+      dockerLogger.error(`Available ports:`, ports);
+      throw new Error("Failed to get VNC port mapping for port 39380");
+    }
+
     // Update the container mapping with actual ports
     const mapping = containerMappings.get(this.containerName);
     if (mapping) {
@@ -442,6 +499,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         vscode: vscodePort,
         worker: workerPort,
         extension: extensionPort,
+        proxy: proxyPort,
+        vnc: vncPort,
       };
       mapping.status = "running";
     }
@@ -455,6 +514,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           vscode: vscodePort,
           worker: workerPort,
           extension: extensionPort,
+          proxy: proxyPort,
+          vnc: vncPort,
         },
       });
     } catch (error) {
@@ -754,7 +815,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
 
       // Get GitHub token from host
-      const githubToken = await getGitHubTokenFromKeychain();
+      const githubToken = await getGitHubOAuthToken();
       if (!githubToken) {
         dockerLogger.info(
           "No GitHub token found on host (Convex, gh, or keychain) - skipping gh auth setup"
@@ -912,7 +973,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     return `docker-${this.containerName}`;
   }
 
-  getPorts(): { vscode?: string; worker?: string; extension?: string } | null {
+  getPorts(): {
+    vscode?: string;
+    worker?: string;
+    extension?: string;
+    proxy?: string;
+    vnc?: string;
+  } | null {
     const mapping = containerMappings.get(this.containerName);
     return mapping?.ports || null;
   }
@@ -1002,7 +1069,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     try {
       // Get GitHub token from host
-      const githubToken = await getGitHubTokenFromKeychain();
+      const githubToken = await getGitHubOAuthToken();
 
       // Read SSH keys if available
       const homeDir = os.homedir();
@@ -1299,11 +1366,15 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
         const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
         const extensionPort = ports["39376/tcp"]?.[0]?.HostPort;
-        if (vscodePort && workerPort) {
+        const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
+        const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
+        if (vscodePort && workerPort && proxyPort && vncPort) {
           mapping.ports = {
             vscode: vscodePort,
             worker: workerPort,
             extension: extensionPort,
+            proxy: proxyPort,
+            vnc: vncPort,
           };
         }
         mapping.status = "running";
@@ -1315,7 +1386,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             return;
           }
           await runWithAuthToken(mapping.authToken, async () => {
-            if (vscodePort && workerPort) {
+            if (vscodePort && workerPort && proxyPort && vncPort) {
               await getConvex().mutation(api.taskRuns.updateVSCodePorts, {
                 teamSlugOrId: mapping.teamSlugOrId,
                 id: taskRunId,
@@ -1323,6 +1394,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                   vscode: vscodePort,
                   worker: workerPort,
                   extension: extensionPort,
+                  proxy: proxyPort,
+                  vnc: vncPort,
                 },
               });
             }

@@ -1,7 +1,7 @@
 import { serverLogger } from "./fileLogger";
 
-const IMPORT_RETRY_ATTEMPTS = 10;
-const IMPORT_RETRY_BASE_DELAY_MS = 100;
+const IMPORT_RETRY_ATTEMPTS = 20;
+const IMPORT_RETRY_BASE_DELAY_MS = 250;
 
 type WwwOpenApiModule = typeof import("@cmux/www-openapi-client");
 type WwwOpenApiClientModule = typeof import("@cmux/www-openapi-client/client");

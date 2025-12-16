@@ -14,7 +14,7 @@ interface ElectronWebContentsPageProps {
   forceWebContentsView?: boolean;
 }
 
-export function ElectronWebContentsPage({
+function ElectronWebContentsPage({
   forceWebContentsView,
 }: ElectronWebContentsPageProps = {}) {
   const [layoutInstanceKey, setLayoutInstanceKey] = useState(0);
@@ -26,7 +26,7 @@ export function ElectronWebContentsPage({
   const handleDumpStates = useCallback(() => {
     if (!isElectron) {
       console.info(
-        "WebContentsView snapshot unavailable outside Electron runtime",
+        "WebContentsView snapshot unavailable outside Electron runtime"
       );
       return;
     }
@@ -82,7 +82,7 @@ export function ElectronWebContentsPage({
                 "inline-flex items-center rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm transition focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:focus-visible:outline-neutral-400",
                 isElectron
                   ? "hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                  : "cursor-not-allowed opacity-60",
+                  : "cursor-not-allowed opacity-60"
               )}
             >
               Dump WebContents State
@@ -329,18 +329,18 @@ function MiniBrowser({ forceWebContentsView }: MiniBrowserProps) {
       createTab(url, {
         id: `electron-mini-browser-default-${index}`,
         persistKey: `electron-mini-browser-default-${index}`,
-      }),
+      })
     );
     return base.length > 0 ? base : [createTab("https://example.com/")];
   }, []);
 
   const [tabs, setTabs] = useState<BrowserTab[]>(initialTabs);
   const [activeId, setActiveId] = useState<string>(
-    initialTabs[0]?.id ?? createTab("https://example.com/").id,
+    initialTabs[0]?.id ?? createTab("https://example.com/").id
   );
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeId) ?? tabs[0] ?? null,
-    [tabs, activeId],
+    [tabs, activeId]
   );
   const [addressBarValue, setAddressBarValue] = useState(activeTab?.url ?? "");
 
@@ -374,11 +374,11 @@ function MiniBrowser({ forceWebContentsView }: MiniBrowserProps) {
                 url: nextUrl,
                 title: deriveTabTitle(nextUrl),
               }
-            : tab,
-        ),
+            : tab
+        )
       );
     },
-    [activeTab, addressBarValue],
+    [activeTab, addressBarValue]
   );
 
   const handleAddTab = useCallback(() => {
@@ -403,7 +403,7 @@ function MiniBrowser({ forceWebContentsView }: MiniBrowserProps) {
         return next;
       });
     },
-    [activeId],
+    [activeId]
   );
 
   if (!isElectron) {
@@ -445,7 +445,7 @@ function MiniBrowser({ forceWebContentsView }: MiniBrowserProps) {
                     "group flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition",
                     isActive
                       ? "bg-neutral-900 text-neutral-100 dark:bg-neutral-200 dark:text-neutral-900"
-                      : "bg-neutral-200/70 text-neutral-700 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700",
+                      : "bg-neutral-200/70 text-neutral-700 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
                   )}
                 >
                   <span className="max-w-[160px] truncate">{tab.title}</span>
@@ -507,7 +507,7 @@ function MiniBrowser({ forceWebContentsView }: MiniBrowserProps) {
                 retainOnUnmount
                 className={cn(
                   "absolute inset-0 h-full w-full transition-opacity duration-200",
-                  isActive ? "opacity-100" : "opacity-0",
+                  isActive ? "opacity-100" : "opacity-0"
                 )}
                 style={{ pointerEvents: isActive ? "auto" : "none" }}
                 backgroundColor="#ffffff"

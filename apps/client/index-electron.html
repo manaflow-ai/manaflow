@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en" style="block-size: 100%; margin: 0; overflow: clip">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>cmux</title>
+  </head>
+  <body class="antialiased">
+    <div id="root" class="h-dvh flex flex-col"></div>
+    <script>
+      // Polyfill for Stack Auth in browser environment
+      if (typeof global === "undefined") {
+        window.global = window;
+      }
+    </script>
+    <script type="module" src="/src/main-electron.tsx"></script>
+  </body>
+</html>
