@@ -610,11 +610,13 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                   } else {
                     // Create task and taskRun for screenshot collection
                     // The existing worker infrastructure will pick this up and process it
+                    // Use "system" as fallback for legacy configs without createdByUserId
+                    const previewUserId = previewConfig.createdByUserId ?? "system";
                     const taskId = await _ctx.runMutation(
                       internal.tasks.createForPreview,
                       {
                         teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                        userId: previewUserId,
                         previewRunId: runId,
                         repoFullName,
                         prNumber,
@@ -629,7 +631,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       {
                         taskId,
                         teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                        userId: previewUserId,
                         prUrl,
                         environmentId: previewConfig.environmentId,
                         newBranch: headRef,

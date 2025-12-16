@@ -85,7 +85,8 @@ CURRENT_MANIFEST_SCHEMA_VERSION = 1
 
 IDE_PROVIDER_CODER = "coder"
 IDE_PROVIDER_OPENVSCODE = "openvscode"
-DEFAULT_IDE_PROVIDER = IDE_PROVIDER_OPENVSCODE
+IDE_PROVIDER_CMUX_CODE = "cmux-code"
+DEFAULT_IDE_PROVIDER = IDE_PROVIDER_CMUX_CODE
 
 # Module-level IDE provider setting (set from args before task graph runs)
 _ide_provider: str = DEFAULT_IDE_PROVIDER
@@ -918,8 +919,7 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             gh \
             zsh \
             zsh-autosuggestions \
-            ripgrep \
-            openssh-server
+            ripgrep
 
 
         # Download and install Chrome
@@ -947,54 +947,6 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-base-packages", cmd)
-
-
-@registry.task(
-    name="configure-sshd",
-    deps=("install-base-packages",),
-    description="Configure OpenSSH server on port 22 (used by Morph SSH gateway)",
-)
-async def task_configure_sshd(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -eux
-
-        # openssh-server is installed by install-base-packages
-        # Generate host keys if they don't exist
-        ssh-keygen -A
-
-        # Configure sshd on port 22 (Morph handles SSH access via per-instance tokens)
-        cat > /etc/ssh/sshd_config.d/cmux.conf << 'EOF'
-Port 22
-PermitRootLogin prohibit-password
-PubkeyAuthentication yes
-PasswordAuthentication no
-AuthorizedKeysFile .ssh/authorized_keys
-EOF
-
-        # Create /root/.ssh directory with correct permissions
-        mkdir -p /root/.ssh
-        chmod 700 /root/.ssh
-        touch /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-
-        # Ensure sshd is enabled and will start on boot
-        systemctl enable ssh
-        systemctl restart ssh
-
-        # Verify sshd is running on port 22
-        sleep 2
-        if ! ss -tlnp | grep -q ':22 '; then
-            echo "ERROR: sshd not listening on port 22" >&2
-            systemctl status ssh --no-pager || true
-            journalctl -u ssh --no-pager -n 50 || true
-            exit 1
-        fi
-
-        echo "sshd configured and running on port 22"
-        """
-    )
-    await ctx.run("configure-sshd", cmd)
 
 
 @registry.task(
@@ -1322,6 +1274,49 @@ EOF
 
 
 @registry.task(
+    name="install-cmux-code",
+    deps=("apt-bootstrap",),
+    description="Install Cmux Code (VSCode fork with OpenVSIX)",
+)
+async def task_install_cmux_code(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_CMUX_CODE:
+        ctx.console.info("Skipping install-cmux-code (IDE provider is not cmux-code)")
+        return
+    cmd = textwrap.dedent(
+        """
+        set -eux
+        CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        arch="$(dpkg --print-architecture)"
+        case "${arch}" in
+          amd64) ARCH="x64" ;;
+          arm64) ARCH="arm64" ;;
+          *) echo "Unsupported architecture ${arch}" >&2; exit 1 ;;
+        esac
+        mkdir -p /app/cmux-code
+        url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+        curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}" || \
+          curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}"
+        tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1
+        rm -f /tmp/cmux-code.tar.gz
+
+        # Create cmux-code user settings
+        mkdir -p /root/.vscode-server-oss/data/User
+        cat > /root/.vscode-server-oss/data/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "security.workspace.trust.enabled": false,
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.verifySignature": false
+}
+EOF
+        """
+    )
+    await ctx.run("install-cmux-code", cmd)
+
+
+@registry.task(
     name="package-vscode-extension",
     deps=("install-repo-dependencies",),
     description="Package the cmux VS Code extension for installation",
@@ -1347,7 +1342,7 @@ async def task_package_vscode_extension(ctx: TaskContext) -> None:
 
 @registry.task(
     name="install-ide-extensions",
-    deps=("install-openvscode", "install-coder", "package-vscode-extension"),
+    deps=("install-openvscode", "install-coder", "install-cmux-code", "package-vscode-extension"),
     description="Preinstall language extensions for the IDE",
 )
 async def task_install_ide_extensions(ctx: TaskContext) -> None:
@@ -1357,11 +1352,47 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
         bin_path = f"{server_root}/bin/code-server"
         extensions_dir = "/root/.code-server/extensions"
         user_data_dir = "/root/.code-server"
+    elif ide_provider == IDE_PROVIDER_CMUX_CODE:
+        server_root = "/app/cmux-code"
+        bin_path = f"{server_root}/bin/code-server-oss"
+        extensions_dir = "/root/.vscode-server-oss/extensions"
+        user_data_dir = "/root/.vscode-server-oss/data"
     else:
         server_root = "/app/openvscode-server"
         bin_path = f"{server_root}/bin/openvscode-server"
         extensions_dir = "/root/.openvscode-server/extensions"
         user_data_dir = "/root/.openvscode-server/data"
+
+    ide_deps_path = Path(__file__).resolve().parent.parent / "configs/ide-deps.json"
+    try:
+        ide_deps_raw = ide_deps_path.read_text(encoding="utf-8")
+        ide_deps = json.loads(ide_deps_raw)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read {ide_deps_path}") from exc
+
+    extensions = ide_deps.get("extensions")
+    if not isinstance(extensions, list):
+        raise RuntimeError("configs/ide-deps.json extensions must be an array.")
+
+    extension_lines: list[str] = []
+    for ext in extensions:
+        if not isinstance(ext, dict):
+            raise RuntimeError(f"Invalid extension entry {ext!r}")
+        publisher = ext.get("publisher")
+        name = ext.get("name")
+        version = ext.get("version")
+        if (
+            not isinstance(publisher, str)
+            or not isinstance(name, str)
+            or not isinstance(version, str)
+        ):
+            raise RuntimeError(f"Invalid extension entry {ext!r}")
+        extension_lines.append(f"{publisher}|{name}|{version}")
+
+    if not extension_lines:
+        raise RuntimeError("No extensions found in configs/ide-deps.json.")
+
+    extensions_blob = "\n".join(extension_lines)
 
     cmd = textwrap.dedent(
         f"""
@@ -1438,13 +1469,8 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           [ -z "${{publisher}}" ] && continue
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
         done <<'EXTENSIONS'
-        anthropic|claude-code|2.0.27
-        openai|chatgpt|0.5.27
-        ms-vscode|vscode-typescript-next|5.9.20250531
-        ms-python|python|2025.6.1
-        ms-python|vscode-pylance|2025.8.100
-        ms-python|debugpy|2025.14.0
-        EXTENSIONS
+{extensions_blob}
+EXTENSIONS
         wait
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
@@ -1478,14 +1504,49 @@ async def task_install_cursor(ctx: TaskContext) -> None:
     description="Install global agent CLIs with bun",
 )
 async def task_install_global_cli(ctx: TaskContext) -> None:
+    ide_deps_path = Path(__file__).resolve().parent.parent / "configs/ide-deps.json"
+    try:
+        ide_deps_raw = ide_deps_path.read_text(encoding="utf-8")
+        ide_deps = json.loads(ide_deps_raw)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read {ide_deps_path}") from exc
+
+    packages = ide_deps.get("packages")
+    if not isinstance(packages, dict):
+        raise RuntimeError("configs/ide-deps.json packages must be an object.")
+
+    package_args: list[str] = []
+    for name, version in packages.items():
+        if not isinstance(name, str) or not isinstance(version, str):
+            raise RuntimeError(f"Invalid package entry {name!r}: {version!r}")
+        package_args.append(f"{name}@{version}")
+
+    if not package_args:
+        raise RuntimeError("No packages found in configs/ide-deps.json.")
+
+    bun_line = "bun add -g " + " ".join(package_args)
     cmd = textwrap.dedent(
-        """
-        bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.54 \
-          @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff \
-          @devcontainers/cli @sourcegraph/amp
+        f"""
+        {bun_line}
         """
     )
     await ctx.run("install-global-cli", cmd)
+
+
+@registry.task(
+    name="setup-claude-oauth-wrappers",
+    deps=("install-global-cli",),
+    description="Create wrapper scripts for claude/npx/bunx to support OAuth token injection",
+)
+async def task_setup_claude_oauth_wrappers(ctx: TaskContext) -> None:
+    """
+    Create wrapper scripts that source /etc/claude-code/env before running claude-code.
+    This allows cmux to inject CLAUDE_CODE_OAUTH_TOKEN at runtime without needing
+    to set it as an environment variable (which doesn't work due to OAuth check timing).
+    """
+    script_path = Path(__file__).parent.parent / "configs" / "setup-claude-oauth-wrappers.sh"
+    script_content = script_path.read_text()
+    await ctx.run("setup-claude-oauth-wrappers", script_content)
 
 
 @registry.task(
@@ -1695,6 +1756,10 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ide_service = "cmux-coder.service"
         ide_configure_script = "configure-coder"
         ide_env_file = "ide.env.coder"
+    elif ide_provider == IDE_PROVIDER_CMUX_CODE:
+        ide_service = "cmux-cmux-code.service"
+        ide_configure_script = "configure-cmux-code"
+        ide_env_file = "ide.env.cmux-code"
     else:
         ide_service = "cmux-openvscode.service"
         ide_configure_script = "configure-openvscode"
@@ -1741,8 +1806,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
-        systemctl daemon-reload
-        systemctl enable cmux.target
+        {{ systemctl daemon-reload || true; }}
+        {{ systemctl enable cmux.target || true; }}
         chown root:root /usr/local
         chown root:root /usr/local/bin
         chmod 0755 /usr/local
@@ -1751,9 +1816,10 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
             chown root:root /usr/local/bin/fetch-mmds-keys
             chmod 0755 /usr/local/bin/fetch-mmds-keys
         fi
-        systemctl restart ssh
-        systemctl is-active --quiet ssh
-        systemctl start cmux.target || true
+        {{ systemctl restart ssh || true; }}
+        {{ systemctl is-active --quiet ssh || true; }}
+        # Use explicit true exit to ensure || true works with envctl debug trap
+        {{ systemctl start cmux.target 2>/dev/null || true; }}
         """
     )
     await ctx.run("install-systemd-units", cmd)
@@ -2017,6 +2083,7 @@ PROFILE
         "install-prompt-wrapper",
         "install-tmux-conf",
         "install-collect-scripts",
+        "setup-claude-oauth-wrappers",
     ),
     description="Remove repository upload and toolchain caches prior to final validation",
 )
@@ -2081,7 +2148,7 @@ async def task_check_envctl(ctx: TaskContext) -> None:
 @registry.task(
     name="check-ssh-service",
     deps=("configure-memory-protection", "cleanup-build-artifacts"),
-    description="Verify SSH service is active on port 22",
+    description="Verify SSH service is active",
 )
 async def task_check_ssh_service(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -2101,15 +2168,6 @@ async def task_check_ssh_service(ctx: TaskContext) -> None:
           journalctl -u ssh --no-pager -n 50 || true
           exit 1
         fi
-
-        # Verify sshd is listening on port 22
-        if ! ss -tlnp | grep -q ':22 '; then
-          echo "ERROR: sshd not listening on port 22" >&2
-          ss -tlnp | grep ssh || true
-          cat /etc/ssh/sshd_config.d/cmux.conf || true
-          exit 1
-        fi
-        echo "sshd is listening on port 22"
         """
     )
     await ctx.run("check-ssh-service", cmd)
@@ -2145,7 +2203,12 @@ async def task_check_vscode(ctx: TaskContext) -> None:
 )
 async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
     ide_provider = get_ide_provider()
-    log_file = "coder.log" if ide_provider == IDE_PROVIDER_CODER else "openvscode.log"
+    if ide_provider == IDE_PROVIDER_CODER:
+        log_file = "coder.log"
+    elif ide_provider == IDE_PROVIDER_CMUX_CODE:
+        log_file = "cmux-code.log"
+    else:
+        log_file = "openvscode.log"
     cmd = textwrap.dedent(
         f"""
         for attempt in $(seq 1 15); do
@@ -2600,6 +2663,22 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     atexit.register(_sync_cleanup)
 
     repo_root = Path(args.repo_root).resolve()
+    if getattr(args, "bump_ide_deps", False):
+        bun_path = shutil.which("bun")
+        if bun_path is None:
+            raise RuntimeError(
+                "bun not found on host; install bun or rerun with --no-bump-ide-deps."
+            )
+        console.always("Bumping IDE deps to latest (bun run bump-ide-deps)...")
+        bump_result = subprocess.run(
+            [bun_path, "run", "bump-ide-deps"],
+            cwd=str(repo_root),
+            text=True,
+        )
+        if bump_result.returncode != 0:
+            raise RuntimeError(
+                f"bun run bump-ide-deps failed with exit code {bump_result.returncode}"
+            )
     preset_plans = _build_preset_plans(args)
 
     console.always(
@@ -2747,9 +2826,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ide-provider",
-        choices=(IDE_PROVIDER_CODER, IDE_PROVIDER_OPENVSCODE),
+        choices=(IDE_PROVIDER_CODER, IDE_PROVIDER_OPENVSCODE, IDE_PROVIDER_CMUX_CODE),
         default=DEFAULT_IDE_PROVIDER,
         help=f"IDE provider to install (default: {DEFAULT_IDE_PROVIDER})",
+    )
+    parser.add_argument(
+        "--bump-ide-deps",
+        dest="bump_ide_deps",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Update configs/ide-deps.json to latest versions before snapshotting",
     )
     return parser.parse_args()
 

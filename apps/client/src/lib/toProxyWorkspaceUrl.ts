@@ -106,25 +106,7 @@ export function toProxyWorkspaceUrl(
   workspaceUrl: string,
   preferredOrigin?: string | null
 ): string {
-  const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
-    workspaceUrl,
-    preferredOrigin
-  );
-  const components = parseMorphUrl(normalizedUrl);
-
-  if (!components) {
-    return normalizedUrl;
-  }
-
-  // In web mode, use the Morph URLs directly without proxy rewriting
-  if (env.NEXT_PUBLIC_WEB_MODE) {
-    return normalizedUrl;
-  }
-
-  const scope = "base"; // Default scope
-  const proxiedUrl = new URL(components.url.toString());
-  proxiedUrl.hostname = `cmux-${components.morphId}-${scope}-${components.port}.cmux.app`;
-  return proxiedUrl.toString();
+  return rewriteLocalWorkspaceUrlIfNeeded(workspaceUrl, preferredOrigin);
 }
 
 export function toMorphVncUrl(sourceUrl: string): string | null {

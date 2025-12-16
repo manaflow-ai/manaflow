@@ -1197,9 +1197,12 @@ export async function runPreviewJob(
       prNumber: run.prNumber,
     });
 
+    // Use "system" as fallback for legacy configs without createdByUserId
+    const configUserId = config.createdByUserId ?? "system";
+
     taskId = await ctx.runMutation(internal.tasks.createForPreview, {
       teamId: run.teamId,
-      userId: config.createdByUserId,
+      userId: configUserId,
       previewRunId,
       repoFullName: run.repoFullName,
       prNumber: run.prNumber,
@@ -1213,7 +1216,7 @@ export async function runPreviewJob(
       {
         taskId,
         teamId: run.teamId,
-        userId: config.createdByUserId,
+        userId: configUserId,
         prUrl: run.prUrl,
         environmentId: config.environmentId,
         newBranch: run.headRef,

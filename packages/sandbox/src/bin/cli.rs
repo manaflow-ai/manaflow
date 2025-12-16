@@ -853,6 +853,8 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::InternalProxy { address } => {
             let mut stream = tokio::net::TcpStream::connect(address).await?;
+            // Enable TCP_NODELAY for low-latency proxying
+            stream.set_nodelay(true)?;
             let (mut ri, mut wi) = stream.split();
             let mut stdin = tokio::io::stdin();
             let mut stdout = tokio::io::stdout();

@@ -1,10 +1,9 @@
 {
-  "schemaVersion": 2,
-  "updatedAt": "2025-12-13T03:00:43Z",
+  "schemaVersion": 1,
+  "updatedAt": "2025-12-16T07:55:53Z",
   "presets": [
     {
-      "presetId": "morph_4vcpu_16gb_48gb",
-      "provider": "morph",
+      "presetId": "4vcpu_16gb_48gb",
       "label": "Standard workspace",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
@@ -177,15 +176,19 @@
         },
         {
           "version": 34,
-          "snapshotId": "snapshot_kk6xlmaa",
-          "capturedAt": "2025-12-13T03:00:22Z"
+          "snapshotId": "snapshot_bv46m6us",
+          "capturedAt": "2025-12-16T07:06:17Z"
+        },
+        {
+          "version": 35,
+          "snapshotId": "snapshot_n53wv98d",
+          "capturedAt": "2025-12-16T07:55:53Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
     },
     {
-      "presetId": "morph_8vcpu_32gb_48gb",
-      "provider": "morph",
+      "presetId": "8vcpu_32gb_48gb",
       "label": "Performance workspace",
       "cpu": "8 vCPU",
       "memory": "32 GB RAM",
@@ -358,15 +361,19 @@
         },
         {
           "version": 34,
-          "snapshotId": "snapshot_ag6p4wtf",
-          "capturedAt": "2025-12-13T03:00:43Z"
+          "snapshotId": "snapshot_xzvnwwc1",
+          "capturedAt": "2025-12-16T07:05:47Z"
+        },
+        {
+          "version": 35,
+          "snapshotId": "snapshot_wgp0rrue",
+          "capturedAt": "2025-12-16T07:55:28Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
     },
     {
-      "presetId": "morph_6vcpu_24gb_48gb",
-      "provider": "morph",
+      "presetId": "6vcpu_24gb_48gb",
       "label": "Standard workspace",
       "cpu": "6 vCPU",
       "memory": "24 GB RAM",
@@ -378,52 +385,6 @@
           "capturedAt": "2025-11-18T22:38:55Z"
         }
       ]
-    },
-    {
-      "presetId": "freestyle_default",
-      "provider": "freestyle",
-      "label": "Freestyle sandbox",
-      "cpu": "Default",
-      "memory": "Default",
-      "disk": "Default",
-      "versions": [
-        {
-          "version": 4,
-          "snapshotId": "jnvqx",
-          "capturedAt": "2025-11-30T06:30:27Z"
-        },
-        {
-          "version": 5,
-          "snapshotId": "uvslo",
-          "capturedAt": "2025-11-30T20:04:30Z"
-        },
-        {
-          "version": 6,
-          "snapshotId": "gfilg",
-          "capturedAt": "2025-11-30T21:22:32Z"
-        },
-        {
-          "version": 7,
-          "snapshotId": "vhbna",
-          "capturedAt": "2025-12-01T04:48:42Z"
-        },
-        {
-          "version": 8,
-          "snapshotId": "teccv",
-          "capturedAt": "2025-12-02T01:10:16Z"
-        },
-        {
-          "version": 9,
-          "snapshotId": "xdymu",
-          "capturedAt": "2025-12-03T07:28:40Z"
-        },
-        {
-          "version": 10,
-          "snapshotId": "pytdi",
-          "capturedAt": "2025-12-04T03:01:57Z"
-        }
-      ],
-      "description": "Freestyle cloud sandbox environment."
     }
   ]
 }
