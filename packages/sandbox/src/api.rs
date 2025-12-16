@@ -256,10 +256,25 @@ async fn proxy_sandbox(
     })
 }
 
+/// Parse subdomain pattern to extract sandbox index and port.
+/// Format: {index}-{port}.rest (e.g., "0-39380.localhost:46835")
+fn parse_subdomain(host: &str) -> Option<(usize, u16)> {
+    let subdomain = host.split('.').next()?;
+    let parts: Vec<&str> = subdomain.split('-').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let index = parts[0].parse::<usize>().ok()?;
+    let port = parts[1].parse::<u16>().ok()?;
+    Some((index, port))
+}
+
 /// Subdomain routing: {index}-{port}.host -> proxy to sandbox[index]'s internal port
 /// Example: 0-39380.localhost:46835 -> sandbox 0's internal port 39380 (noVNC)
+/// Handles both HTTP requests and WebSocket upgrades.
 async fn subdomain_proxy(
     state: State<AppState>,
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     headers: HeaderMap,
     req: axum::http::Request<Body>,
 ) -> Response {
@@ -269,20 +284,9 @@ async fn subdomain_proxy(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
 
-    // Parse subdomain pattern: {index}-{port}.rest
-    // e.g., "0-39380.localhost" or "1-39381.localhost:46835"
-    let subdomain = host.split('.').next().unwrap_or("");
-    let parts: Vec<&str> = subdomain.split('-').collect();
-
-    if parts.len() != 2 {
+    // Parse subdomain pattern
+    let Some((index, port)) = parse_subdomain(host) else {
         return (StatusCode::NOT_FOUND, "Not found").into_response();
-    }
-
-    let Ok(index) = parts[0].parse::<usize>() else {
-        return (StatusCode::BAD_REQUEST, "Invalid sandbox index").into_response();
-    };
-    let Ok(port) = parts[1].parse::<u16>() else {
-        return (StatusCode::BAD_REQUEST, "Invalid port").into_response();
     };
 
     // Find sandbox by index
@@ -290,25 +294,50 @@ async fn subdomain_proxy(
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to list sandboxes: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to list sandboxes").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to list sandboxes",
+            )
+                .into_response();
         }
     };
 
     let sandbox = sandboxes.iter().find(|s| s.index == index);
     let Some(sandbox) = sandbox else {
-        return (StatusCode::NOT_FOUND, format!("Sandbox with index {} not found", index)).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            format!("Sandbox with index {} not found", index),
+        )
+            .into_response();
     };
 
-    let sandbox_ip = &sandbox.network.sandbox_ip;
-
-    // Proxy the request to the sandbox's internal port
-    // For now, just redirect - full HTTP proxy would need hyper client
-    // Preserve query string for noVNC and other services that use URL parameters
+    let sandbox_ip = sandbox.network.sandbox_ip.clone();
     let path_and_query = req
         .uri()
         .path_and_query()
         .map(|pq| pq.as_str())
-        .unwrap_or("/");
+        .unwrap_or("/")
+        .to_string();
+
+    // Check if this is a WebSocket upgrade (for noVNC/websockify)
+    if let Ok(ws) = ws {
+        tracing::info!(
+            sandbox_index = index,
+            port = port,
+            sandbox_ip = %sandbox_ip,
+            path = %path_and_query,
+            "subdomain WebSocket proxy"
+        );
+
+        return ws.on_upgrade(move |client_socket| async move {
+            if let Err(e) = proxy_websocket(client_socket, &sandbox_ip, port, &path_and_query).await
+            {
+                tracing::error!("WebSocket proxy error: {e}");
+            }
+        });
+    }
+
+    // HTTP reverse proxy
     let target_url = format!("http://{}:{}{}", sandbox_ip, port, path_and_query);
 
     tracing::info!(
@@ -316,11 +345,176 @@ async fn subdomain_proxy(
         port = port,
         sandbox_ip = %sandbox_ip,
         target_url = %target_url,
-        "subdomain routing"
+        "subdomain HTTP proxy"
     );
 
-    // Return redirect for now (full proxy implementation would use hyper)
-    axum::response::Redirect::temporary(&target_url).into_response()
+    // Build the proxied request with matching method
+    let client = reqwest::Client::new();
+    let method = req.method().clone();
+    let proxy_req = client.request(
+        reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET),
+        &target_url,
+    );
+
+    // Copy relevant request headers
+    let mut proxy_req = proxy_req;
+    for (key, value) in headers.iter() {
+        // Skip hop-by-hop headers
+        if key == HOST || key == "connection" || key == "upgrade" {
+            continue;
+        }
+        if let Ok(val_str) = value.to_str() {
+            if let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_str().as_bytes()) {
+                proxy_req = proxy_req.header(name, val_str);
+            }
+        }
+    }
+
+    match proxy_req.send().await {
+        Ok(resp) => {
+            let status = StatusCode::from_u16(resp.status().as_u16())
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            let mut response = axum::response::Response::builder().status(status);
+
+            // Copy headers from upstream response
+            for (key, value) in resp.headers() {
+                if let Ok(name) = axum::http::header::HeaderName::try_from(key.as_str()) {
+                    if let Ok(val) = axum::http::header::HeaderValue::from_bytes(value.as_bytes()) {
+                        response = response.header(name, val);
+                    }
+                }
+            }
+
+            // Stream the body
+            match resp.bytes().await {
+                Ok(body) => response
+                    .body(Body::from(body))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+                Err(e) => {
+                    tracing::error!("Failed to read proxy response body: {e}");
+                    StatusCode::BAD_GATEWAY.into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Proxy request failed: {e}");
+            (StatusCode::BAD_GATEWAY, format!("Proxy error: {e}")).into_response()
+        }
+    }
+}
+
+/// Proxy WebSocket connection to sandbox internal port.
+/// Used for noVNC websockify connections.
+async fn proxy_websocket(
+    client_socket: axum::extract::ws::WebSocket,
+    sandbox_ip: &str,
+    port: u16,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+
+    let url = format!("ws://{}:{}{}", sandbox_ip, port, path);
+    tracing::debug!("Connecting to upstream WebSocket: {}", url);
+
+    let (upstream_ws, _) = tokio_tungstenite::connect_async(&url).await?;
+    let (mut upstream_sink, mut upstream_stream) = upstream_ws.split();
+
+    let (mut client_sink, mut client_stream) = client_socket.split();
+
+    // Spawn task to forward client -> upstream
+    let client_to_upstream = tokio::spawn(async move {
+        while let Some(msg_result) = client_stream.next().await {
+            match msg_result {
+                Ok(axum::extract::ws::Message::Binary(data)) => {
+                    if upstream_sink
+                        .send(TungsteniteMessage::Binary(data.to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(axum::extract::ws::Message::Text(text)) => {
+                    if upstream_sink
+                        .send(TungsteniteMessage::Text(text.to_string()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(axum::extract::ws::Message::Close(_)) => break,
+                Ok(axum::extract::ws::Message::Ping(data)) => {
+                    if upstream_sink
+                        .send(TungsteniteMessage::Ping(data.to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(axum::extract::ws::Message::Pong(data)) => {
+                    if upstream_sink
+                        .send(TungsteniteMessage::Pong(data.to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Forward upstream -> client
+    while let Some(msg_result) = upstream_stream.next().await {
+        match msg_result {
+            Ok(TungsteniteMessage::Binary(data)) => {
+                if client_sink
+                    .send(axum::extract::ws::Message::Binary(data.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(TungsteniteMessage::Text(text)) => {
+                if client_sink
+                    .send(axum::extract::ws::Message::Text(text.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(TungsteniteMessage::Close(_)) => break,
+            Ok(TungsteniteMessage::Ping(data)) => {
+                if client_sink
+                    .send(axum::extract::ws::Message::Ping(data.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(TungsteniteMessage::Pong(data)) => {
+                if client_sink
+                    .send(axum::extract::ws::Message::Pong(data.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(_) => {} // Ignore Frame messages
+            Err(_) => break,
+        }
+    }
+
+    client_to_upstream.abort();
+    Ok(())
 }
 
 /// Multiplexed WebSocket endpoint - handles multiple PTY sessions over a single connection.

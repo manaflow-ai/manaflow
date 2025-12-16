@@ -833,7 +833,10 @@ fi
                 Ok(Err(e)) => Err(format!("{} command error: {}", name, e)),
                 Err(_) => {
                     // Timeout is expected for backgrounded processes
-                    debug!("{} command timed out (expected for backgrounded process)", name);
+                    debug!(
+                        "{} command timed out (expected for backgrounded process)",
+                        name
+                    );
                     Ok(())
                 }
             }
@@ -856,7 +859,7 @@ fi
             "Xvfb",
         )
         .await
-        .map_err(|e| SandboxError::Internal(e))?;
+        .map_err(SandboxError::Internal)?;
 
         // Wait briefly for Xvfb to start
         sleep(Duration::from_millis(200)).await;
@@ -918,7 +921,7 @@ fi
             "x11vnc",
         )
         .await
-        .map_err(|e| SandboxError::Internal(e))?;
+        .map_err(SandboxError::Internal)?;
 
         // Brief wait then verify x11vnc is running
         sleep(Duration::from_millis(200)).await;
@@ -935,7 +938,8 @@ fi
         )
         .await;
 
-        let vnc_running = matches!(verify_vnc_result, Ok(Ok(ref output)) if output.status.success());
+        let vnc_running =
+            matches!(verify_vnc_result, Ok(Ok(ref output)) if output.status.success());
         if !vnc_running {
             return Err(SandboxError::Internal(format!(
                 "x11vnc failed to start on port {}",
@@ -961,7 +965,10 @@ fi
         )
         .await
         {
-            debug!("websockify failed to start (non-critical, noVNC may not be installed): {}", e);
+            debug!(
+                "websockify failed to start (non-critical, noVNC may not be installed): {}",
+                e
+            );
         }
 
         // Start Chrome with remote debugging (if installed) - non-critical
@@ -989,7 +996,10 @@ fi
         )
         .await
         {
-            debug!("Chrome failed to start (non-critical, may not be installed): {}", e);
+            debug!(
+                "Chrome failed to start (non-critical, may not be installed): {}",
+                e
+            );
         }
 
         info!(
