@@ -45,6 +45,17 @@ pub struct SandboxNetwork {
     pub cidr: u8,
 }
 
+/// Display configuration for a sandbox's isolated X11/VNC stack.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct SandboxDisplay {
+    /// X11 display number (e.g., 10 for :10)
+    pub display_number: u16,
+    /// VNC port (5900 + display_number, e.g., 5910)
+    pub vnc_port: u16,
+    /// Chrome DevTools Protocol port
+    pub cdp_port: u16,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct SandboxSummary {
     pub id: Uuid,
@@ -54,6 +65,10 @@ pub struct SandboxSummary {
     pub workspace: String,
     pub status: SandboxStatus,
     pub network: SandboxNetwork,
+    /// Display configuration for isolated X11/VNC desktop.
+    /// Each sandbox has its own virtual display, VNC server, and Chrome instance.
+    #[serde(default)]
+    pub display: Option<SandboxDisplay>,
     /// Correlation ID (tab_id) for matching placeholders to created sandboxes.
     /// Set by client when creating a placeholder; used to update in-place when
     /// the server responds with the real sandbox.

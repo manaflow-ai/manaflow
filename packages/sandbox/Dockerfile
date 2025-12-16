@@ -129,6 +129,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   systemd \
   systemd-sysv \
   dbus \
+  dbus-x11 \
   ca-certificates \
   curl \
   bash \
@@ -159,6 +160,29 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   openssh-server \
   jq \
   findutils \
+  xvfb \
+  x11vnc \
+  openbox \
+  xterm \
+  x11-xserver-utils \
+  libx11-6 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxext6 \
+  libxfixes3 \
+  libxrandr2 \
+  libxrender1 \
+  libxtst6 \
+  libnss3 \
+  libatk1.0-0 \
+  libatk-bridge2.0-0 \
+  libcups2 \
+  libdrm2 \
+  libgbm1 \
+  libasound2t64 \
+  libpango-1.0-0 \
+  libcairo2 \
+  fonts-liberation \
   && mkdir -p -m 755 /etc/apt/keyrings \
   && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -166,6 +190,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   && apt-get update \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Google Chrome
+RUN arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" ;; \
+    aarch64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb" ;; \
+    *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL -o /tmp/chrome.deb "$chrome_url" && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends /tmp/chrome.deb || true && \
+  rm -f /tmp/chrome.deb && \
+  rm -rf /var/lib/apt/lists/*
 
 # Configure sshd for sandbox access
 RUN mkdir -p /run/sshd && \

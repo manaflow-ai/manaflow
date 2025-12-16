@@ -2,7 +2,7 @@ use crate::errors::{SandboxError, SandboxResult};
 use crate::ip_pool::{IpLease, IpPool};
 use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
-    MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
+    MuxServerMessage, PtySessionId, SandboxDisplay, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
 use crate::mux::terminal::{DaFilter, VirtualTerminal};
 use crate::service::SandboxService;
@@ -65,6 +65,8 @@ struct SandboxHandle {
     lease: IpLease,
     /// Correlation ID for matching placeholders to created sandboxes (from tab_id)
     correlation_id: Option<String>,
+    /// Display configuration for isolated X11/VNC desktop
+    display: Option<SandboxDisplay>,
 }
 
 #[derive(Clone)]
@@ -787,6 +789,143 @@ fi
         }
     }
 
+    /// Start X11 stack (Xvfb + openbox + x11vnc + Chrome) inside a sandbox namespace.
+    /// This runs the processes inside the sandbox using nsenter.
+    /// Uses timeouts to prevent hanging if commands block.
+    async fn start_x11_stack(
+        &self,
+        inner_pid: u32,
+        display_number: u16,
+        vnc_port: u16,
+        cdp_port: u16,
+    ) -> SandboxResult<()> {
+        use tokio::time::timeout;
+        let cmd_timeout = Duration::from_secs(5);
+        let x11_display = format!(":{}", display_number);
+
+        // Helper to run nsenter command with timeout
+        async fn run_nsenter_with_timeout(
+            nsenter_path: &str,
+            pid: u32,
+            cmd: &[String],
+            timeout_duration: Duration,
+            name: &str,
+        ) -> bool {
+            let result = timeout(
+                timeout_duration,
+                Command::new(nsenter_path)
+                    .args(nsenter_args(pid, None, cmd))
+                    .output(),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(output)) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        debug!("{} start warning: {}", name, stderr);
+                    }
+                    true
+                }
+                Ok(Err(e)) => {
+                    debug!("{} command error: {}", name, e);
+                    false
+                }
+                Err(_) => {
+                    debug!("{} command timed out", name);
+                    false
+                }
+            }
+        }
+
+        // Start Xvfb (virtual framebuffer)
+        let xvfb_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "Xvfb {} -screen 0 1920x1080x24 -nolisten tcp -noreset &",
+                x11_display
+            ),
+        ];
+        run_nsenter_with_timeout(
+            &self.nsenter_path,
+            inner_pid,
+            &xvfb_cmd,
+            cmd_timeout,
+            "Xvfb",
+        )
+        .await;
+
+        // Wait briefly for Xvfb to start
+        sleep(Duration::from_millis(200)).await;
+
+        // Start openbox window manager
+        let openbox_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!("DISPLAY={} openbox &", x11_display),
+        ];
+        run_nsenter_with_timeout(
+            &self.nsenter_path,
+            inner_pid,
+            &openbox_cmd,
+            cmd_timeout,
+            "openbox",
+        )
+        .await;
+
+        // Start x11vnc to expose the display
+        let vnc_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "x11vnc -display {} -rfbport {} -nopw -forever -shared -noxdamage &",
+                x11_display, vnc_port
+            ),
+        ];
+        run_nsenter_with_timeout(
+            &self.nsenter_path,
+            inner_pid,
+            &vnc_cmd,
+            cmd_timeout,
+            "x11vnc",
+        )
+        .await;
+
+        // Start Chrome with remote debugging (if installed)
+        let chrome_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!(
+                concat!(
+                    "DISPLAY={} google-chrome --no-sandbox --disable-gpu ",
+                    "--remote-debugging-port={} --remote-debugging-address=0.0.0.0 ",
+                    "--user-data-dir=/tmp/chrome-sandbox-{} ",
+                    "--disable-background-networking --disable-default-apps ",
+                    "--disable-extensions --disable-sync --no-first-run ",
+                    "--start-maximized &"
+                ),
+                x11_display, cdp_port, display_number
+            ),
+        ];
+        run_nsenter_with_timeout(
+            &self.nsenter_path,
+            inner_pid,
+            &chrome_cmd,
+            cmd_timeout,
+            "Chrome",
+        )
+        .await;
+
+        info!(
+            x11_display = %x11_display,
+            vnc_port = vnc_port,
+            cdp_port = cdp_port,
+            "X11 stack started"
+        );
+        Ok(())
+    }
+
     async fn workspace_summary(
         entry: &SandboxEntry,
         child: &mut Child,
@@ -1155,6 +1294,23 @@ impl SandboxService for BubblewrapService {
         };
         timing.record_timer("net_finish", net_finish_timer);
 
+        // Calculate display configuration for isolated X11/VNC desktop
+        // Display numbers start at 10 to avoid conflicts with system displays (:0, :1, etc.)
+        let display_number = (10 + index) as u16;
+        let vnc_port = 5900 + display_number;
+        let cdp_port = 9222 + index as u16;
+        let display = Some(SandboxDisplay {
+            display_number,
+            vnc_port,
+            cdp_port,
+        });
+        info!(
+            display_number = display_number,
+            vnc_port = vnc_port,
+            cdp_port = cdp_port,
+            "sandbox display configured"
+        );
+
         let handle = SandboxHandle {
             id,
             index,
@@ -1164,6 +1320,7 @@ impl SandboxService for BubblewrapService {
             created_at: Utc::now(),
             lease,
             correlation_id: request.tab_id.clone(),
+            display: display.clone(),
         };
 
         let entry = SandboxEntry {
@@ -1172,6 +1329,17 @@ impl SandboxService for BubblewrapService {
             inner_pid,
             env: effective_env,
         };
+
+        // Phase: start X11 stack (Xvfb + openbox + x11vnc) inside the sandbox
+        let x11_timer = crate::timing::Timer::new("x11_stack");
+        if let Err(e) = self
+            .start_x11_stack(inner_pid, display_number, vnc_port, cdp_port)
+            .await
+        {
+            warn!("failed to start X11 stack for sandbox {id}: {e}");
+            // X11 failure is non-fatal - sandbox still works for terminal use
+        }
+        timing.record_timer("x11_stack", x11_timer);
 
         // Phase: finalize
         let finalize_timer = crate::timing::Timer::new("finalize");
@@ -2143,6 +2311,7 @@ impl SandboxHandle {
             workspace: self.workspace.to_string_lossy().to_string(),
             status,
             network: self.network.clone(),
+            display: self.display.clone(),
             correlation_id: self.correlation_id.clone(),
         }
     }
