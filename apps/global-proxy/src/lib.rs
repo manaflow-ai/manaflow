@@ -19,9 +19,8 @@ use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
+use hyper_rustls::HttpsConnectorBuilder;
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
-use rustls::ClientConfig;
 use tokio::{
     io::{AsyncWriteExt, copy_bidirectional},
     sync::oneshot,
@@ -89,10 +88,7 @@ pub enum ProxyError {
 }
 
 struct AppState {
-    /// HTTP client for regular requests (supports HTTP/2 for performance)
     client: HttpClient,
-    /// HTTP client for WebSocket connections (HTTP/1.1 only, required for upgrade)
-    ws_client: HttpClient,
     backend_host: String,
     backend_scheme: Scheme,
     morph_domain_suffix: Option<String>,
@@ -104,34 +100,15 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
 
-    // HTTP/1.1-only client for regular requests (matches original behavior)
-    // Note: hyper has issues with HTTP/2 to morph backend, so we stick with HTTP/1.1
-    let mut http_connector = HttpConnector::new();
-    http_connector.enforce_http(false);
-    let mut tls_config = ClientConfig::builder()
-        .with_safe_defaults()
+    let https = HttpsConnectorBuilder::new()
         .with_webpki_roots()
-        .with_no_client_auth();
-    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let https: HttpsConnector<HttpConnector> = (http_connector, tls_config).into();
+        .https_or_http()
+        .enable_http1()
+        .build();
     let client: HttpClient = Client::builder().build(https);
-
-    // HTTP/1.1-only client for WebSocket connections.
-    // WebSocket upgrade requires HTTP/1.1 - it doesn't work over HTTP/2 since
-    // the Connection/Upgrade headers are hop-by-hop and get stripped.
-    let mut ws_http_connector = HttpConnector::new();
-    ws_http_connector.enforce_http(false);
-    let mut ws_tls_config = ClientConfig::builder()
-        .with_safe_defaults()
-        .with_webpki_roots()
-        .with_no_client_auth();
-    ws_tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let ws_https: HttpsConnector<HttpConnector> = (ws_http_connector, ws_tls_config).into();
-    let ws_client: HttpClient = Client::builder().build(ws_https);
 
     let state = Arc::new(AppState {
         client,
-        ws_client,
         backend_host: config.backend_host,
         backend_scheme: config.backend_scheme,
         morph_domain_suffix: config.morph_domain_suffix,
@@ -647,7 +624,7 @@ async fn handle_websocket(
         .insert(UPGRADE, HeaderValue::from_static("websocket"));
 
     let (backend_stream, backend_headers) =
-        match connect_upstream_websocket(state.ws_client.clone(), backend_request).await {
+        match connect_upstream_websocket(state.client.clone(), backend_request).await {
             Ok(result) => result,
             Err(response) => return response,
         };

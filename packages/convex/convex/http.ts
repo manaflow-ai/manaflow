@@ -21,6 +21,10 @@ import {
   dispatchPreviewJob,
   completePreviewJob,
 } from "./preview_jobs_http";
+import {
+  syncRelease as syncHostScreenshotCollectorRelease,
+  getLatest as getLatestHostScreenshotCollector,
+} from "./hostScreenshotCollector_http";
 
 const http = httpRouter();
 
@@ -124,6 +128,18 @@ http.route({
   path: "/api/preview/complete",
   method: "POST",
   handler: completePreviewJob,
+});
+
+http.route({
+  path: "/api/host-screenshot-collector/sync",
+  method: "POST",
+  handler: syncHostScreenshotCollectorRelease,
+});
+
+http.route({
+  path: "/api/host-screenshot-collector/latest",
+  method: "GET",
+  handler: getLatestHostScreenshotCollector,
 });
 
 export default http;

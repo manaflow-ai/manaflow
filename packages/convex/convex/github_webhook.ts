@@ -540,6 +540,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             if (previewConfig) {
               const prNumber = Number(prPayload.pull_request?.number ?? 0);
               const prUrl = prPayload.pull_request?.html_url ?? null;
+              const prTitle = prPayload.pull_request?.title ?? undefined;
+              const prDescription = prPayload.pull_request?.body ?? undefined;
               const headSha = prPayload.pull_request?.head?.sha ?? null;
               const baseSha = prPayload.pull_request?.base?.sha ?? undefined;
               const headRef = prPayload.pull_request?.head?.ref ?? undefined;
@@ -570,6 +572,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       repoInstallationId: installation,
                       prNumber,
                       prUrl,
+                      prTitle,
+                      prDescription,
                       headSha,
                       baseSha,
                       headRef,
@@ -606,11 +610,13 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                   } else {
                     // Create task and taskRun for screenshot collection
                     // The existing worker infrastructure will pick this up and process it
+                    // Use "system" as fallback for legacy configs without createdByUserId
+                    const previewUserId = previewConfig.createdByUserId ?? "system";
                     const taskId = await _ctx.runMutation(
                       internal.tasks.createForPreview,
                       {
                         teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                        userId: previewUserId,
                         previewRunId: runId,
                         repoFullName,
                         prNumber,
@@ -625,7 +631,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       {
                         taskId,
                         teamId: previewConfig.teamId,
-                        userId: previewConfig.createdByUserId,
+                        userId: previewUserId,
                         prUrl,
                         environmentId: previewConfig.environmentId,
                         newBranch: headRef,

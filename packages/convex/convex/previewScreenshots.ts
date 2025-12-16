@@ -157,26 +157,83 @@ export const triggerGithubComment = internalAction({
       return;
     }
 
-    console.log("[previewScreenshots] Posting GitHub comment", {
-      previewRunId: args.previewRunId,
-      repoFullName: previewRun.repoFullName,
-      prNumber: previewRun.prNumber,
-      screenshotSetId: previewRun.screenshotSetId,
-    });
+    // Build workspace and dev server URLs if we have a taskRunId
+    let workspaceUrl: string | undefined;
+    let devServerUrl: string | undefined;
 
-    await ctx.runAction(internal.github_pr_comments.postPreviewComment, {
-      installationId: previewRun.repoInstallationId,
-      repoFullName: previewRun.repoFullName,
-      prNumber: previewRun.prNumber,
-      screenshotSetId: previewRun.screenshotSetId,
-      previewRunId: args.previewRunId,
-      includePreviousRuns: true,
-      previewConfigId: previewRun.previewConfigId,
-    });
+    if (previewRun.taskRunId) {
+      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+        id: previewRun.taskRunId,
+      });
 
-    console.log("[previewScreenshots] GitHub comment posted successfully", {
-      previewRunId: args.previewRunId,
-    });
+      if (taskRun) {
+        const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+          teamId: previewRun.teamId,
+        });
+        const teamSlug = team?.slug ?? previewRun.teamId;
+        workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
+        devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
+
+        console.log("[previewScreenshots] Built workspace URLs", {
+          previewRunId: args.previewRunId,
+          workspaceUrl,
+          devServerUrl,
+        });
+      }
+    }
+
+    // Check if we have an existing comment to update (from initial posting)
+    if (previewRun.githubCommentId) {
+      console.log("[previewScreenshots] Updating existing GitHub comment", {
+        previewRunId: args.previewRunId,
+        repoFullName: previewRun.repoFullName,
+        prNumber: previewRun.prNumber,
+        screenshotSetId: previewRun.screenshotSetId,
+        commentId: previewRun.githubCommentId,
+      });
+
+      await ctx.runAction(internal.github_pr_comments.updatePreviewComment, {
+        installationId: previewRun.repoInstallationId,
+        repoFullName: previewRun.repoFullName,
+        prNumber: previewRun.prNumber,
+        commentId: previewRun.githubCommentId,
+        screenshotSetId: previewRun.screenshotSetId,
+        previewRunId: args.previewRunId,
+        workspaceUrl,
+        devServerUrl,
+        includePreviousRuns: true,
+        previewConfigId: previewRun.previewConfigId,
+      });
+
+      console.log("[previewScreenshots] GitHub comment updated successfully", {
+        previewRunId: args.previewRunId,
+        commentId: previewRun.githubCommentId,
+      });
+    } else {
+      // No existing comment - create a new one (fallback for edge cases)
+      console.log("[previewScreenshots] Posting new GitHub comment (no existing comment found)", {
+        previewRunId: args.previewRunId,
+        repoFullName: previewRun.repoFullName,
+        prNumber: previewRun.prNumber,
+        screenshotSetId: previewRun.screenshotSetId,
+      });
+
+      await ctx.runAction(internal.github_pr_comments.postPreviewComment, {
+        installationId: previewRun.repoInstallationId,
+        repoFullName: previewRun.repoFullName,
+        prNumber: previewRun.prNumber,
+        screenshotSetId: previewRun.screenshotSetId,
+        previewRunId: args.previewRunId,
+        workspaceUrl,
+        devServerUrl,
+        includePreviousRuns: true,
+        previewConfigId: previewRun.previewConfigId,
+      });
+
+      console.log("[previewScreenshots] GitHub comment posted successfully", {
+        previewRunId: args.previewRunId,
+      });
+    }
   },
 });
 
@@ -276,47 +333,79 @@ export const uploadAndComment = action({
       }
     );
 
-    let githubCommentUrl: string | undefined;
+    let githubCommentUrl: string | undefined = previewRun.githubCommentUrl;
 
-    // Post GitHub comment for completed or skipped status
+    // Post or update GitHub comment for completed or skipped status
     if (
       previewRun.repoInstallationId &&
       screenshotSetId &&
       (args.status === "completed" || args.status === "skipped")
     ) {
-      console.log(
-        "[previewScreenshots] Posting GitHub comment for manual upload",
-        {
-          previewRunId: args.previewRunId,
-          repoFullName: previewRun.repoFullName,
-          prNumber: previewRun.prNumber,
-        }
-      );
-
       try {
-        const commentResult = await ctx.runAction(
-          internal.github_pr_comments.postPreviewComment,
-          {
-            installationId: previewRun.repoInstallationId,
-            repoFullName: previewRun.repoFullName,
-            prNumber: previewRun.prNumber,
-            previewRunId: args.previewRunId,
-            screenshotSetId,
-          }
-        );
-
-        if (!commentResult?.ok) {
-          throw new Error(
-            commentResult.error ?? "Failed to post GitHub comment"
+        // Check if we have an existing comment to update
+        if (previewRun.githubCommentId) {
+          console.log(
+            "[previewScreenshots] Updating existing GitHub comment for manual upload",
+            {
+              previewRunId: args.previewRunId,
+              repoFullName: previewRun.repoFullName,
+              prNumber: previewRun.prNumber,
+              commentId: previewRun.githubCommentId,
+            }
           );
-        }
 
-        if (commentResult.commentUrl) {
-          githubCommentUrl = commentResult.commentUrl;
+          const updateResult = await ctx.runAction(
+            internal.github_pr_comments.updatePreviewComment,
+            {
+              installationId: previewRun.repoInstallationId,
+              repoFullName: previewRun.repoFullName,
+              prNumber: previewRun.prNumber,
+              commentId: previewRun.githubCommentId,
+              screenshotSetId,
+              previewRunId: args.previewRunId,
+            }
+          );
+
+          if (!updateResult?.ok) {
+            throw new Error(
+              updateResult.error ?? "Failed to update GitHub comment"
+            );
+          }
+        } else {
+          // No existing comment - create a new one
+          console.log(
+            "[previewScreenshots] Posting new GitHub comment for manual upload",
+            {
+              previewRunId: args.previewRunId,
+              repoFullName: previewRun.repoFullName,
+              prNumber: previewRun.prNumber,
+            }
+          );
+
+          const commentResult = await ctx.runAction(
+            internal.github_pr_comments.postPreviewComment,
+            {
+              installationId: previewRun.repoInstallationId,
+              repoFullName: previewRun.repoFullName,
+              prNumber: previewRun.prNumber,
+              previewRunId: args.previewRunId,
+              screenshotSetId,
+            }
+          );
+
+          if (!commentResult?.ok) {
+            throw new Error(
+              commentResult.error ?? "Failed to post GitHub comment"
+            );
+          }
+
+          if (commentResult.commentUrl) {
+            githubCommentUrl = commentResult.commentUrl;
+          }
         }
       } catch (error) {
         console.error(
-          "[previewScreenshots] Failed to post GitHub comment:",
+          "[previewScreenshots] Failed to post/update GitHub comment:",
           error
         );
       }

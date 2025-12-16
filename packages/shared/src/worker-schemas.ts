@@ -9,6 +9,14 @@ export const AuthFileSchema = z.object({
   mode: z.string().optional(),
 });
 
+// Post-start command schema for commands that run after TUI starts
+export const PostStartCommandSchema = z.object({
+  description: z.string(),
+  command: z.string(),
+  timeoutMs: z.number().optional(),
+  continueOnError: z.boolean().optional(),
+});
+
 // Worker Registration
 export const WorkerRegisterSchema = z.object({
   workerId: z.string(),
@@ -75,6 +83,8 @@ export const WorkerCreateTerminalSchema = z.object({
   agentModel: z.string().optional(),
   authFiles: z.array(AuthFileSchema).optional(),
   startupCommands: z.array(z.string()).optional(),
+  // Commands to run AFTER the TUI/agent process has started
+  postStartCommands: z.array(PostStartCommandSchema).optional(),
 });
 
 export const WorkerTerminalInputSchema = z.object({
@@ -210,6 +220,7 @@ export const ServerToWorkerCommandSchema = z.object({
 
 // Type exports
 export type AuthFile = z.infer<typeof AuthFileSchema>;
+export type PostStartCommand = z.infer<typeof PostStartCommandSchema>;
 export type WorkerRegister = z.infer<typeof WorkerRegisterSchema>;
 export type WorkerHeartbeat = z.infer<typeof WorkerHeartbeatSchema>;
 export type TerminalAssignment = z.infer<typeof TerminalAssignmentSchema>;

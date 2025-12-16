@@ -359,7 +359,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       imageCount: taskScreenshotSet.images.length,
     });
 
-    // Post GitHub comment if we have installation ID
+    // Post or update GitHub comment if we have installation ID
     if (previewRun.repoInstallationId) {
       const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
         teamId: taskRun.teamId,
@@ -368,44 +368,105 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       const workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
       const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
-      const commentResult = await ctx.runAction(
-        internal.github_pr_comments.postPreviewComment,
-        {
-          installationId: previewRun.repoInstallationId,
-          repoFullName: previewRun.repoFullName,
-          prNumber: previewRun.prNumber,
-          screenshotSetId: taskRun.latestScreenshotSetId,
+      // Determine which comment to update:
+      // 1. Use stored githubCommentId if available - update it
+      // 2. Otherwise, create a new comment
+      const commentIdToUpdate = previewRun.githubCommentId;
+
+      if (commentIdToUpdate) {
+        console.log("[preview-jobs-http] Updating existing GitHub comment", {
+          taskRunId,
           previewRunId: previewRun._id,
-          workspaceUrl,
-          devServerUrl,
+          commentId: commentIdToUpdate,
+        });
+
+        const updateResult = await ctx.runAction(
+          internal.github_pr_comments.updatePreviewComment,
+          {
+            installationId: previewRun.repoInstallationId,
+            repoFullName: previewRun.repoFullName,
+            prNumber: previewRun.prNumber,
+            commentId: commentIdToUpdate,
+            screenshotSetId: taskRun.latestScreenshotSetId,
+            previewRunId: previewRun._id,
+            workspaceUrl,
+            devServerUrl,
+          }
+        );
+
+        if (updateResult.ok) {
+          console.log("[preview-jobs-http] Successfully updated GitHub comment", {
+            taskRunId,
+            previewRunId: previewRun._id,
+            commentId: commentIdToUpdate,
+          });
+
+          const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+
+          return jsonResponse({
+            success: true,
+            commentUrl: previewRun.githubCommentUrl,
+            runStatusUpdated: taskCompletion.runStatusUpdated,
+            alreadyCompleted: taskCompletion.taskAlreadyCompleted,
+          });
+        } else {
+          console.error("[preview-jobs-http] Failed to update GitHub comment", {
+            taskRunId,
+            previewRunId: previewRun._id,
+            commentId: commentIdToUpdate,
+            error: updateResult.error,
+          });
+          return jsonResponse({
+            success: false,
+            error: `Failed to update GitHub comment: ${updateResult.error}`,
+          }, 500);
         }
-      );
-
-      if (commentResult.ok) {
-        console.log("[preview-jobs-http] Successfully posted GitHub comment", {
-          taskRunId,
-          previewRunId: previewRun._id,
-          commentUrl: commentResult.commentUrl,
-        });
-
-        const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
-
-        return jsonResponse({
-          success: true,
-          commentUrl: commentResult.commentUrl,
-          runStatusUpdated: taskCompletion.runStatusUpdated,
-          alreadyCompleted: taskCompletion.taskAlreadyCompleted,
-        });
       } else {
-        console.error("[preview-jobs-http] Failed to post GitHub comment", {
+        // No stored githubCommentId - create a new comment
+        console.log("[preview-jobs-http] Posting new GitHub comment (no stored githubCommentId)", {
           taskRunId,
           previewRunId: previewRun._id,
-          error: commentResult.error,
         });
-        return jsonResponse({
-          success: false,
-          error: `Failed to post GitHub comment: ${commentResult.error}`,
-        }, 500);
+
+        const commentResult = await ctx.runAction(
+          internal.github_pr_comments.postPreviewComment,
+          {
+            installationId: previewRun.repoInstallationId,
+            repoFullName: previewRun.repoFullName,
+            prNumber: previewRun.prNumber,
+            screenshotSetId: taskRun.latestScreenshotSetId,
+            previewRunId: previewRun._id,
+            workspaceUrl,
+            devServerUrl,
+          }
+        );
+
+        if (commentResult.ok) {
+          console.log("[preview-jobs-http] Successfully posted GitHub comment", {
+            taskRunId,
+            previewRunId: previewRun._id,
+            commentUrl: commentResult.commentUrl,
+          });
+
+          const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+
+          return jsonResponse({
+            success: true,
+            commentUrl: commentResult.commentUrl,
+            runStatusUpdated: taskCompletion.runStatusUpdated,
+            alreadyCompleted: taskCompletion.taskAlreadyCompleted,
+          });
+        } else {
+          console.error("[preview-jobs-http] Failed to post GitHub comment", {
+            taskRunId,
+            previewRunId: previewRun._id,
+            error: commentResult.error,
+          });
+          return jsonResponse({
+            success: false,
+            error: `Failed to post GitHub comment: ${commentResult.error}`,
+          }, 500);
+        }
       }
     } else {
       console.log("[preview-jobs-http] No GitHub installation ID, skipping comment", {

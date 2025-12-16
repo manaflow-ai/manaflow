@@ -12,6 +12,7 @@ use crossterm::{
 use futures::StreamExt;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
@@ -30,6 +31,7 @@ use crate::mux::terminal::{
 };
 use crate::mux::ui::ui;
 use crate::sync_files::{detect_sync_files, upload_sync_files_with_list};
+use crate::terminal_guard;
 
 /// Run the multiplexer TUI.
 ///
@@ -50,6 +52,9 @@ pub async fn run_mux_tui(base_url: String, workspace_path: Option<PathBuf>) -> R
     )?;
     enable_raw_mode()?;
 
+    // Mark that terminal modes are enabled so panic hook knows to clean up
+    terminal_guard::TERMINAL_MODES_ENABLED.store(true, Ordering::SeqCst);
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -57,6 +62,8 @@ pub async fn run_mux_tui(base_url: String, workspace_path: Option<PathBuf>) -> R
 
     // Cleanup must happen in reverse order, and PopKeyboardEnhancementFlags
     // must be sent BEFORE LeaveAlternateScreen to properly restore terminal state.
+    // Don't set CLEANUP_DONE until after cleanup succeeds, so the panic hook
+    // can still restore terminal if cleanup panics.
     // Print errors but continue cleanup to ensure all steps run.
     if let Err(e) = disable_raw_mode() {
         eprintln!("Warning: failed to disable raw mode: {e}");
@@ -73,6 +80,16 @@ pub async fn run_mux_tui(base_url: String, workspace_path: Option<PathBuf>) -> R
     if let Err(e) = terminal.show_cursor() {
         eprintln!("Warning: failed to show cursor: {e}");
     }
+
+    // Aggressively drain stdin to consume any leftover terminal responses
+    // (like DA1/DA2 responses to keyboard enhancement or other queries).
+    // This does multiple passes with delays to catch slow responses.
+    terminal_guard::drain_stdin_aggressive();
+
+    // Mark cleanup as done AFTER it succeeds, then reset for potential reuse
+    terminal_guard::CLEANUP_DONE.store(true, Ordering::SeqCst);
+    terminal_guard::TERMINAL_MODES_ENABLED.store(false, Ordering::SeqCst);
+    terminal_guard::CLEANUP_DONE.store(false, Ordering::SeqCst);
 
     result
 }

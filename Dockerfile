@@ -1033,7 +1033,6 @@ EOF
 
 # Ports
 # 39375: Exec service (HTTP)
-# 39376: VS Code Extension Socket Server
 # 39377: Worker service
 # 39378: OpenVSCode server
 # 39379: cmux-proxy
@@ -1041,7 +1040,7 @@ EOF
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
 # 39383: cmux-xterm server
-EXPOSE 39375 39376 39377 39378 39379 39380 39381 39382 39383
+EXPOSE 39375 39377 39378 39379 39380 39381 39382 39383
 
 ENV container=docker
 STOPSIGNAL SIGRTMIN+3

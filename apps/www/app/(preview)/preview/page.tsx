@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { waitUntil } from "@vercel/functions";
 import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
 import { api } from "@cmux/convex/api";
@@ -121,12 +122,51 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     );
   }
 
-  const [auth, teamsResult] = await Promise.all([
+  const [auth, teamsResult, githubAccount, gitlabAccount, bitbucketAccount] = await Promise.all([
     user.getAuthJson(),
     user.listTeams(),
+    user.getConnectedAccount("github"),
+    user.getConnectedAccount("gitlab"),
+    user.getConnectedAccount("bitbucket"),
   ]);
   const teams: StackTeam[] = teamsResult;
   const { accessToken } = auth;
+
+  // Check if user authenticated with GitLab or Bitbucket but not GitHub
+  // These providers are still in beta, so show waitlist in the repo selection box
+  const hasGitHub = !!githubAccount;
+  const hasGitLab = !!gitlabAccount;
+  const hasBitbucket = !!bitbucketAccount;
+
+  const waitlistProviders: ("gitlab" | "bitbucket")[] = !hasGitHub
+    ? [
+        ...(hasGitLab ? (["gitlab"] as const) : []),
+        ...(hasBitbucket ? (["bitbucket"] as const) : []),
+      ]
+    : [];
+
+  // Persist waitlist status to server metadata (non-blocking)
+  if (waitlistProviders.length > 0) {
+    const serverMetadata = user.serverMetadata as Record<string, unknown> | null;
+    const existingWaitlist = serverMetadata?.previewWaitlist as string[] | undefined;
+    // Only update if waitlist providers changed (compare sorted arrays)
+    const existingSorted = existingWaitlist?.slice().sort().join(",") ?? "";
+    const newSorted = waitlistProviders.slice().sort().join(",");
+    if (existingSorted !== newSorted) {
+      waitUntil(
+        user.update({
+          serverMetadata: {
+            ...serverMetadata,
+            previewWaitlist: waitlistProviders,
+            // Only set joinedAt on first registration
+            ...(!existingWaitlist && {
+              previewWaitlistJoinedAt: new Date().toISOString(),
+            }),
+          },
+        })
+      );
+    }
+  }
 
   if (!accessToken) {
     throw new Error("Missing Stack access token");
@@ -249,6 +289,8 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         isAuthenticated={true}
         previewConfigs={previewConfigs}
         popupComplete={popupComplete}
+        waitlistProviders={waitlistProviders}
+        waitlistEmail={user.primaryEmail}
       />
     </div>
   );

@@ -3,7 +3,6 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 
-import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
 
@@ -127,6 +126,15 @@ function isTaskRunJwtAuth(
   return "taskRunJwt" in auth;
 }
 
+function log(
+  level: "INFO" | "WARN" | "ERROR",
+  message: string,
+  data?: Record<string, unknown>
+): void {
+  const logData = data ? ` ${JSON.stringify(data)}` : "";
+  console.log(`[${level}] ${message}${logData}`);
+}
+
 export async function captureScreenshotsForBranch(
   options: BranchCaptureOptions
 ): Promise<{
@@ -212,9 +220,14 @@ If no UI changes exist: Set hasUiChanges=false, take ZERO screenshots, and expla
 <PHASE_2_CAPTURE>
 If UI changes exist, capture screenshots:
 
-1. Read CLAUDE.md or AGENTS.md (may be one level deeper) and install dependencies if needed
-2. Run tmux ls to check if the dev server is running. Dev server should be running on default. Otherwise, start the dev server. Look for instructions in README.md, CLAUDE.md, or framework-specific files (package.json, Makefile, Gemfile, composer.json, requirements.txt, etc.). Use dev_command above if provided.
-3. Look for a list of ports you need to check in the repo. Wait for the server to be ready (curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT should return 200)
+1. FIRST, check if the dev server is ALREADY RUNNING:
+   - Run \`tmux list-windows\` and \`tmux capture-pane -p -t <window>\` to see running processes and their logs
+   - Check if there's a dev server process starting up or already running in any tmux window
+   - The dev server is typically started automatically in this environment - BE PATIENT and monitor the logs
+   - If you see the server is starting/compiling, WAIT for it to finish - do NOT kill it or restart it
+   - Use \`ss -tlnp | grep LISTEN\` to see what ports have servers listening
+2. ONLY if no server is running anywhere: Read CLAUDE.md, README.md, or package.json for setup instructions. Install dependencies if needed, then start the dev server.
+3. BE PATIENT - servers can take time to compile. Monitor tmux logs to see progress. A response from curl (even 404) means the server is up. Do NOT restart the server if it's still compiling.
 4. Navigate to the pages/components modified in the PR
 5. Capture screenshots of the changes, including:
    - The default/resting state of changed components
@@ -224,7 +237,7 @@ If UI changes exist, capture screenshots:
    - Responsive layouts if the PR includes responsive changes
 6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
 7. After taking a screenshot, always open the image to verify that the capture is expected
-8. If screenshot seems outdated, refresh the page and taking the screenshot again.
+8. If screenshot seems outdated, refresh the page and take the screenshot again.
 9. Delete any screenshot files from the filesystem that you do not want included
 </PHASE_2_CAPTURE>
 
@@ -623,4 +636,70 @@ export async function claudeCodeCapturePRScreenshots(
       error: message,
     };
   }
+}
+
+// Re-export utilities
+export { logToScreenshotCollector } from "./logger";
+export { formatClaudeMessage } from "./claudeMessageFormatter";
+
+// CLI entry point - runs when executed directly
+const cliOptionsSchema = z.object({
+  workspaceDir: z.string(),
+  changedFiles: z.array(z.string()),
+  prTitle: z.string(),
+  prDescription: z.string(),
+  baseBranch: z.string(),
+  headBranch: z.string(),
+  outputDir: z.string(),
+  pathToClaudeCodeExecutable: z.string().optional(),
+  installCommand: z.string().optional(),
+  devCommand: z.string().optional(),
+  auth: z.union([
+    z.object({ taskRunJwt: z.string() }),
+    z.object({ anthropicApiKey: z.string() }),
+  ]),
+});
+
+async function main() {
+  const optionsJson = process.env.SCREENSHOT_OPTIONS;
+  if (!optionsJson) {
+    console.error("SCREENSHOT_OPTIONS environment variable is required");
+    process.exit(1);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(optionsJson);
+  } catch (error) {
+    console.error("Failed to parse SCREENSHOT_OPTIONS as JSON:", error);
+    process.exit(1);
+  }
+
+  const validated = cliOptionsSchema.safeParse(parsed);
+  if (!validated.success) {
+    console.error("Invalid SCREENSHOT_OPTIONS:", validated.error.format());
+    process.exit(1);
+  }
+
+  const options = validated.data;
+  const result = await claudeCodeCapturePRScreenshots(options as CaptureScreenshotsOptions);
+
+  // Output result as JSON to stdout
+  console.log(JSON.stringify(result));
+}
+
+// Check if running as CLI (not imported as module)
+// Support various filename patterns: index.js, index.mjs, screenshot-collector.mjs, etc.
+const scriptPath = process.argv[1] ?? "";
+const isRunningAsCli =
+  import.meta.url === `file://${scriptPath}` ||
+  scriptPath.endsWith("/index.js") ||
+  scriptPath.endsWith("/index.mjs") ||
+  scriptPath.includes("screenshot-collector");
+
+if (isRunningAsCli) {
+  main().catch((error) => {
+    console.error("CLI execution failed:", error);
+    process.exit(1);
+  });
 }

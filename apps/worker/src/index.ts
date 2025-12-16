@@ -6,6 +6,7 @@ import {
   WorkerStartScreenshotCollectionSchema,
   type ClientToServerEvents,
   type InterServerEvents,
+  type PostStartCommand,
   type ServerToClientEvents,
   type ServerToWorkerEvents,
   type SocketData,
@@ -625,6 +626,7 @@ managementIO.on("connection", (socket) => {
         taskRunId: validated.taskRunId,
         agentModel: validated.agentModel,
         startupCommands: validated.startupCommands,
+        postStartCommands: validated.postStartCommands,
         taskRunContext: validated.taskRunContext,
       });
 
@@ -1199,6 +1201,7 @@ async function createTerminal(
     taskRunId?: Id<"taskRuns">;
     agentModel?: string;
     startupCommands?: string[];
+    postStartCommands?: PostStartCommand[];
     taskRunContext: WorkerTaskRunContext;
   }
 ): Promise<void> {
@@ -1210,6 +1213,7 @@ async function createTerminal(
     command,
     args = [],
     startupCommands = [],
+    postStartCommands = [],
     taskRunContext,
   } = options;
 
@@ -1409,6 +1413,95 @@ async function createTerminal(
   } catch (error) {
     log("ERROR", "Failed to spawn process", error);
     return;
+  }
+
+  // Execute post-start commands after the TUI process has started
+  // These run in background to not block terminal creation
+  if (postStartCommands && postStartCommands.length > 0) {
+    log(
+      "INFO",
+      `Launching ${postStartCommands.length} post-start command(s) in background`,
+      { postStartCommands: postStartCommands.map((c) => c.description) }
+    );
+
+    (async () => {
+      for (let i = 0; i < postStartCommands.length; i++) {
+        const postCmd = postStartCommands[i]!;
+        const timeoutMs = postCmd.timeoutMs ?? 60000;
+        try {
+          log(
+            "INFO",
+            `[PostStart ${i + 1}/${postStartCommands.length}] ${postCmd.description}: ${postCmd.command}`
+          );
+
+          await new Promise<void>((resolve, reject) => {
+            const p = spawn("bash", ["-lc", postCmd.command], {
+              cwd,
+              env: ptyEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+
+            let stdout = "";
+            let stderr = "";
+            p.stdout.on("data", (d) => {
+              stdout += d.toString();
+            });
+            p.stderr.on("data", (d) => {
+              stderr += d.toString();
+            });
+
+            const timeout = setTimeout(() => {
+              p.kill("SIGTERM");
+              reject(new Error(`Command timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            p.on("exit", (code) => {
+              clearTimeout(timeout);
+              if (code === 0) {
+                log(
+                  "INFO",
+                  `[PostStart ${i + 1}/${postStartCommands.length}] ✓ ${postCmd.description}`,
+                  { stdout: stdout.slice(0, 500) }
+                );
+                resolve();
+              } else {
+                log(
+                  "ERROR",
+                  `[PostStart ${i + 1}/${postStartCommands.length}] ✗ ${postCmd.description} (exit ${code})`,
+                  { stderr: stderr.slice(0, 500), stdout: stdout.slice(0, 500) }
+                );
+                reject(new Error(`Command failed with exit code ${code}: ${stderr.slice(0, 500)}`));
+              }
+            });
+            p.on("error", (e) => {
+              clearTimeout(timeout);
+              log(
+                "ERROR",
+                `[PostStart ${i + 1}/${postStartCommands.length}] ✗ ${postCmd.description}`,
+                e
+              );
+              reject(e);
+            });
+          });
+        } catch (e) {
+          log(
+            "ERROR",
+            `[PostStart ${i + 1}/${postStartCommands.length}] Failed: ${postCmd.description}`,
+            e instanceof Error ? e : new Error(String(e))
+          );
+          if (!postCmd.continueOnError) {
+            log(
+              "ERROR",
+              `[PostStart] Stopping remaining commands due to error`
+            );
+            break;
+          }
+        }
+      }
+      log("INFO", "All post-start commands completed");
+    })().catch((e) => {
+      log("ERROR", "Unexpected error in background post-start commands", e);
+    });
   }
 
   const headlessTerminal = new Terminal({

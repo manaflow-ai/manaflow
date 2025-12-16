@@ -8,3 +8,18 @@ dependencies = ["cdp-use>=1.4.1", "morphcloud>=0.1.91", "requests>=2.32.4"]
 
 [tool.basedpyright]
 reportUnusedCallResult = false
+exclude = [
+    "node_modules",
+    ".git",
+    "logs",
+    "crates",
+    "apps",
+    "packages",
+    "configs",
+    "docs",
+    "docs-ai",
+    "dev-docs",
+    "data",
+    "evals",
+    "prompts",
+]

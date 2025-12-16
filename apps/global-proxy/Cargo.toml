@@ -9,7 +9,6 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 http = "0.2"
 hyper = { version = "0.14", features = ["full"] }
 hyper-rustls = { version = "0.24", default-features = false, features = ["http1", "tokio-runtime", "webpki-roots"] }
-rustls = { version = "0.21", default-features = false }
 lol_html = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

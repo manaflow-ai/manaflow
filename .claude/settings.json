@@ -5,6 +5,28 @@
     "lastShownTime": 1754013974739
   },
   "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bun-check.sh",
+            "type": "command",
+            "timeout": 60
+          }
+        ],
+        "matcher": ""
+      },
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/codex-review.sh",
+            "type": "command",
+            "timeout": 300
+          }
+        ],
+        "matcher": ""
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
