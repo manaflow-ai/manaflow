@@ -116,11 +116,7 @@ export function toProxyWorkspaceUrl(
     return normalizedUrl;
   }
 
-  // In web mode, use the Morph URLs directly without proxy rewriting
-  if (env.NEXT_PUBLIC_WEB_MODE) {
-    return normalizedUrl;
-  }
-
+  // Always use the cmux.app proxy URL for vscode/workspace URLs
   const scope = "base"; // Default scope
   const proxiedUrl = new URL(components.url.toString());
   proxiedUrl.hostname = `cmux-${components.morphId}-${scope}-${components.port}.cmux.app`;
