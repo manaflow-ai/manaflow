@@ -789,7 +789,7 @@ fi
         }
     }
 
-    /// Start X11 stack (Xvfb + openbox + x11vnc + Chrome) inside a sandbox namespace.
+    /// Start X11 stack (Xvfb + openbox + x11vnc + websockify + Chrome) inside a sandbox namespace.
     /// This runs the processes inside the sandbox using nsenter.
     /// Uses timeouts to prevent hanging if commands block.
     /// Returns error if critical components (Xvfb, x11vnc) fail to start.
@@ -798,6 +798,7 @@ fi
         inner_pid: u32,
         display_number: u16,
         vnc_port: u16,
+        novnc_port: u16,
         cdp_port: u16,
     ) -> SandboxResult<()> {
         use tokio::time::timeout;
@@ -942,6 +943,27 @@ fi
             )));
         }
 
+        // Start websockify for noVNC web access - non-critical (requires novnc package)
+        let websockify_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "which websockify >/dev/null 2>&1 && websockify --web=/usr/share/novnc {} localhost:{} &",
+                novnc_port, vnc_port
+            ),
+        ];
+        if let Err(e) = run_nsenter_with_timeout(
+            &self.nsenter_path,
+            inner_pid,
+            &websockify_cmd,
+            cmd_timeout,
+            "websockify",
+        )
+        .await
+        {
+            debug!("websockify failed to start (non-critical, noVNC may not be installed): {}", e);
+        }
+
         // Start Chrome with remote debugging (if installed) - non-critical
         let chrome_cmd = vec![
             "/bin/sh".to_string(),
@@ -973,6 +995,7 @@ fi
         info!(
             x11_display = %x11_display,
             vnc_port = vnc_port,
+            novnc_port = novnc_port,
             cdp_port = cdp_port,
             "X11 stack started"
         );
@@ -1351,25 +1374,28 @@ impl SandboxService for BubblewrapService {
         // Display numbers start at 10 to avoid conflicts with system displays (:0, :1, etc.)
         let display_number = (10 + index) as u16;
         let vnc_port = 5900 + display_number;
+        let novnc_port = 6080 + index as u16;
         let cdp_port = 9222 + index as u16;
 
-        // Phase: start X11 stack (Xvfb + openbox + x11vnc) inside the sandbox
+        // Phase: start X11 stack (Xvfb + openbox + x11vnc + websockify) inside the sandbox
         // Only set display field if X11 stack starts successfully
         let x11_timer = crate::timing::Timer::new("x11_stack");
         let display = match self
-            .start_x11_stack(inner_pid, display_number, vnc_port, cdp_port)
+            .start_x11_stack(inner_pid, display_number, vnc_port, novnc_port, cdp_port)
             .await
         {
             Ok(()) => {
                 info!(
                     display_number = display_number,
                     vnc_port = vnc_port,
+                    novnc_port = novnc_port,
                     cdp_port = cdp_port,
                     "sandbox display configured"
                 );
                 Some(SandboxDisplay {
                     display_number,
                     vnc_port,
+                    novnc_port,
                     cdp_port,
                 })
             }

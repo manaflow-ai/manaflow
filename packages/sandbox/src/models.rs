@@ -52,6 +52,8 @@ pub struct SandboxDisplay {
     pub display_number: u16,
     /// VNC port (5900 + display_number, e.g., 5910)
     pub vnc_port: u16,
+    /// noVNC WebSocket port (6080 + index, e.g., 6080, 6081, 6082)
+    pub novnc_port: u16,
     /// Chrome DevTools Protocol port
     pub cdp_port: u16,
 }

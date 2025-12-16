@@ -164,6 +164,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   x11vnc \
   openbox \
   xterm \
+  novnc \
+  websockify \
   x11-xserver-utils \
   libx11-6 \
   libxcomposite1 \
