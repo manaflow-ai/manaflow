@@ -607,7 +607,8 @@ export const createManual = authMutation({
     if (!identity) {
       throw new Error("Authentication required");
     }
-    const userId = config.createdByUserId;
+    // Use "system" as fallback for legacy configs without createdByUserId
+    const userId = config.createdByUserId ?? "system";
 
     // Step 3: Create task for this preview run (following webhook pattern)
     const taskId = await ctx.runMutation(internal.tasks.createForPreview, {

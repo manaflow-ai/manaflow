@@ -106,6 +106,42 @@ export function detectBrowserLanguage(): TooltipLanguageValue {
   return DEFAULT_TOOLTIP_LANGUAGE;
 }
 
+export const TOOLTIP_LANGUAGE_STORAGE_KEY = "cmux-tooltip-language";
+
+/**
+ * Synchronously gets the initial tooltip language for use as a default value.
+ * This reads directly from localStorage to avoid the race condition where
+ * useLocalStorage returns the default on first render, causing Convex queries
+ * to run with the wrong language.
+ *
+ * Priority:
+ * 1. Stored preference in localStorage
+ * 2. Browser language detection
+ * 3. Default (English)
+ *
+ * This should only be called on the client side.
+ */
+export function getInitialTooltipLanguage(): TooltipLanguageValue {
+  if (typeof window === "undefined") {
+    return DEFAULT_TOOLTIP_LANGUAGE;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TOOLTIP_LANGUAGE_STORAGE_KEY);
+    if (raw !== null) {
+      // Mantine useLocalStorage stores values as JSON, so we need to parse it
+      const stored = JSON.parse(raw) as string;
+      // Validate it's a known language value
+      return normalizeTooltipLanguage(stored);
+    }
+  } catch {
+    // localStorage not available or JSON parse failed
+  }
+
+  // No stored preference - detect from browser
+  return detectBrowserLanguage();
+}
+
 export function normalizeTooltipLanguage(
   raw: string | null | undefined
 ): TooltipLanguageValue {
