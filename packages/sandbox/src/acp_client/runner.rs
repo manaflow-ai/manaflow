@@ -10,6 +10,7 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
 use crate::acp_client::config::{load_last_model, save_last_model, save_last_provider};
@@ -20,6 +21,7 @@ use crate::acp_client::provider::AcpProvider;
 use crate::acp_client::state::{App, ConnectionState, PaletteCommand, UiMode};
 use crate::acp_client::ui::ui;
 use crate::acp_client::workspace_sync::WorkspaceSyncStatus;
+use crate::terminal_guard;
 
 fn spawn_provider_tasks(
     tx: mpsc::UnboundedSender<AppEvent>,
@@ -91,6 +93,9 @@ pub async fn run_chat_tui_with_workspace_status(
     )?;
     enable_raw_mode()?;
 
+    // Mark that terminal modes are enabled so panic hook knows to clean up
+    terminal_guard::TERMINAL_MODES_ENABLED.store(true, Ordering::SeqCst);
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -105,6 +110,8 @@ pub async fn run_chat_tui_with_workspace_status(
         ))
         .await;
 
+    // Perform cleanup - don't set CLEANUP_DONE until after cleanup succeeds,
+    // so the panic hook can still restore terminal if cleanup panics
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -113,6 +120,14 @@ pub async fn run_chat_tui_with_workspace_status(
         DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
+
+    // Aggressively drain stdin to consume any leftover terminal responses
+    terminal_guard::drain_stdin_aggressive();
+
+    // Mark cleanup as done AFTER it succeeds, then reset for potential reuse
+    terminal_guard::CLEANUP_DONE.store(true, Ordering::SeqCst);
+    terminal_guard::TERMINAL_MODES_ENABLED.store(false, Ordering::SeqCst);
+    terminal_guard::CLEANUP_DONE.store(false, Ordering::SeqCst);
 
     match res {
         Ok(_) => Ok(()),

@@ -634,6 +634,14 @@ function buildFilePrompt(
     tooltipLanguage !== DEFAULT_TOOLTIP_LANGUAGE
       ? `\n\nIMPORTANT: Write ALL comments (the "<comment>" part) in ${languageName}. The mostImportantWord should remain as it appears in the code (do not translate code identifiers).`
       : "";
+
+  console.info("[simple-review][prompt] Building prompt", {
+    filePath,
+    tooltipLanguage,
+    languageName,
+    hasLanguageInstruction: languageInstruction.length > 0,
+  });
+
   return `You are reviewing a GitHub diff for ${prLabel}
 File path: ${filePath}
 

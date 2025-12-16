@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -57,7 +58,34 @@ func main() {
 		Host:   net.JoinHostPort(cfg.targetHost, strconv.Itoa(cfg.targetPort)),
 	}
 
+	// Custom dialer with TCP_NODELAY for low-latency proxying
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	// Custom transport with TCP_NODELAY enabled
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				if err := tcpConn.SetNoDelay(true); err != nil {
+					log.Printf("warning: failed to set TCP_NODELAY: %v", err)
+				}
+			}
+			return conn, nil
+		},
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Transport = transport
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
@@ -74,6 +102,8 @@ func main() {
 	}
 
 	proxy.FlushInterval = 100 * time.Millisecond
+
+	log.Print("TCP_NODELAY enabled for low-latency proxying")
 
 	server := &http.Server{
 		Addr:              net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.listenPort)),

@@ -2202,8 +2202,14 @@ impl Perform for VirtualTerminal {
                 }
             }
             // Device Attributes (DA1 and DA2)
+            // Important: We must distinguish between QUERIES (which we respond to) and
+            // RESPONSES (which we ignore). Both DA1 and DA2 responses have the same
+            // intermediate characters as queries, so we use parameter count to distinguish:
+            // - Query: no params or just [0]
+            // - Response: multiple params (e.g., [64, 1, 2, ...] for DA1, [41, 354, 0] for DA2)
             'c' => {
-                if intermediates.is_empty() {
+                let is_query = params_vec.is_empty() || params_vec == [0];
+                if intermediates.is_empty() && is_query {
                     // Primary Device Attributes (DA1): CSI c or CSI 0 c
                     // Respond as xterm-compatible VT420 with capabilities:
                     // 64 = VT420
@@ -2221,14 +2227,16 @@ impl Perform for VirtualTerminal {
                     // 29 = ANSI text locator
                     self.pending_responses
                         .push(b"\x1b[?64;1;2;6;9;15;16;17;18;21;22;28;29c".to_vec());
-                } else if intermediates == [b'>'] {
-                    // Secondary Device Attributes (DA2): CSI > c
+                } else if intermediates == [b'>'] && is_query {
+                    // Secondary Device Attributes (DA2): CSI > c or CSI > 0 c
                     // Respond as xterm version 314+:
                     // 41 = xterm terminal type
                     // 354 = version number (xterm 354+)
                     // 0 = ROM cartridge registration number (always 0)
                     self.pending_responses.push(b"\x1b[>41;354;0c".to_vec());
                 }
+                // DA1 responses (CSI ? params c) and DA2 responses (CSI > params c)
+                // are silently consumed - they have intermediates but multiple params
             }
             // Set scroll region
             'r' => {
@@ -3455,25 +3463,18 @@ impl TerminalManager {
     }
 
     /// Handle output by session ID (used by the mux connection handler).
-    /// Automatically sends any pending responses back to the PTY.
+    /// Note: Terminal query responses (DA1, DA2, DSR, etc.) are handled by the
+    /// sandbox server's VirtualTerminal, not here. This avoids the PTY echo issue
+    /// and prevents duplicate responses.
     pub fn handle_output_by_session(
         &mut self,
         session_id: &PtySessionId,
         data: Vec<u8>,
     ) -> Option<PaneId> {
         let pane_id = *self.session_to_pane.get(session_id)?;
-        let responses = self.handle_output(pane_id, data);
-        // Send any pending responses back to the PTY
-        if !responses.is_empty() {
-            if let Some(sender) = &self.mux_sender {
-                for response in responses {
-                    sender.send(MuxClientMessage::Input {
-                        session_id: session_id.clone(),
-                        data: response,
-                    });
-                }
-            }
-        }
+        // Process the output (this updates terminal state and may generate responses,
+        // but we discard them since the sandbox server handles responses)
+        let _responses = self.handle_output(pane_id, data);
         Some(pane_id)
     }
 
@@ -3964,6 +3965,171 @@ async fn run_gh_command(args: &[String], stdin: Option<&str>) -> (i32, String, S
     }
 }
 
+/// Stateful filter for DA (Device Attributes) sequences.
+///
+/// This filter removes DA1 and DA2 query/response sequences from terminal output
+/// before forwarding to clients. It handles sequences that may be split across
+/// multiple chunks by buffering incomplete escape sequences.
+///
+/// Filtered sequences:
+/// - DA1 query: ESC [ c or ESC [ 0 c
+/// - DA2 query: ESC [ > c or ESC [ > 0 c
+/// - DA1 response: ESC [ ? params c
+/// - DA2 response: ESC [ > params c
+#[derive(Default)]
+pub struct DaFilter {
+    /// Buffer for incomplete escape sequences
+    buffer: Vec<u8>,
+    /// Current parsing state
+    state: DaFilterState,
+}
+
+#[derive(Default, Clone, Copy, PartialEq)]
+enum DaFilterState {
+    #[default]
+    Normal,
+    /// Saw ESC (0x1b)
+    Escape,
+    /// Saw ESC [
+    Csi,
+    /// Saw ESC [ ? (DA1 response)
+    CsiQuestion,
+    /// Saw ESC [ > (DA2 query/response)
+    CsiGreater,
+    /// In DA1/DA2 params (digits and semicolons)
+    InParams,
+}
+
+impl DaFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Process a chunk of data, returning filtered output.
+    /// Call this for each chunk of PTY output.
+    pub fn filter(&mut self, data: &[u8]) -> Vec<u8> {
+        let mut result = Vec::with_capacity(data.len());
+
+        for &byte in data {
+            match self.state {
+                DaFilterState::Normal => {
+                    if byte == 0x1b {
+                        // Start of potential escape sequence
+                        self.buffer.clear();
+                        self.buffer.push(byte);
+                        self.state = DaFilterState::Escape;
+                    } else {
+                        result.push(byte);
+                    }
+                }
+
+                DaFilterState::Escape => {
+                    self.buffer.push(byte);
+                    if byte == b'[' {
+                        self.state = DaFilterState::Csi;
+                    } else {
+                        // Not a CSI sequence, flush buffer
+                        result.extend(&self.buffer);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    }
+                }
+
+                DaFilterState::Csi => {
+                    self.buffer.push(byte);
+                    match byte {
+                        b'?' => self.state = DaFilterState::CsiQuestion,
+                        b'>' => self.state = DaFilterState::CsiGreater,
+                        b'0' => self.state = DaFilterState::InParams,
+                        b'c' => {
+                            // DA1 query: ESC [ c - filter it out
+                            self.buffer.clear();
+                            self.state = DaFilterState::Normal;
+                        }
+                        // Any other character means it's not a DA sequence
+                        _ => {
+                            result.extend(&self.buffer);
+                            self.buffer.clear();
+                            self.state = DaFilterState::Normal;
+                        }
+                    }
+                }
+
+                DaFilterState::CsiQuestion => {
+                    if byte == b'c' {
+                        // DA1 response: ESC [ ? params c - filter it out
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    } else if byte.is_ascii_digit() || byte == b';' {
+                        // Continue accumulating params
+                        self.buffer.push(byte);
+                    } else {
+                        // Not a DA1 response (e.g., ESC[?25h for cursor)
+                        // Flush buffer INCLUDING the current byte
+                        result.extend(&self.buffer);
+                        result.push(byte);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    }
+                }
+
+                DaFilterState::CsiGreater => {
+                    if byte == b'c' {
+                        // DA2 query/response: ESC [ > c or ESC [ > params c - filter it out
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    } else if byte.is_ascii_digit() || byte == b';' {
+                        // Continue accumulating params (DA2 response)
+                        self.buffer.push(byte);
+                    } else {
+                        // Not a DA2 sequence, flush buffer INCLUDING the current byte
+                        result.extend(&self.buffer);
+                        result.push(byte);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    }
+                }
+
+                DaFilterState::InParams => {
+                    if byte == b'c' {
+                        // DA1 query with param: ESC [ 0 c - filter it out
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    } else if byte.is_ascii_digit() || byte == b';' {
+                        // Continue accumulating params
+                        self.buffer.push(byte);
+                    } else {
+                        // Not a DA sequence, flush buffer INCLUDING the current byte
+                        result.extend(&self.buffer);
+                        result.push(byte);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Flush any remaining buffered data.
+    /// Call this when the stream ends to ensure no data is lost.
+    pub fn flush(&mut self) -> Vec<u8> {
+        let result = std::mem::take(&mut self.buffer);
+        self.state = DaFilterState::Normal;
+        result
+    }
+}
+
+/// Stateless filter for DA queries (for simple cases where sequences won't be split).
+/// For streaming use cases, prefer `DaFilter` which handles split sequences.
+pub fn filter_da_queries(data: &[u8]) -> Vec<u8> {
+    let mut filter = DaFilter::new();
+    let mut result = filter.filter(data);
+    result.extend(filter.flush());
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4109,6 +4275,48 @@ mod tests {
         assert_eq!(responses.len(), 1);
         // Response: CSI 8 ; height ; width t
         assert_eq!(responses[0], b"\x1b[8;24;80t");
+    }
+
+    #[test]
+    fn virtual_terminal_ignores_da1_response() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // Process a DA1 RESPONSE (not query) - should be consumed silently, no new response
+        // DA1 response has '?' intermediate and multiple params
+        term.process(b"\x1b[?1;2c"); // VT100 style response
+
+        let responses = term.drain_responses();
+        assert!(
+            responses.is_empty(),
+            "DA1 response should not trigger a new response"
+        );
+    }
+
+    #[test]
+    fn virtual_terminal_ignores_da2_response() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // Process a DA2 RESPONSE (not query) - should be consumed silently, no new response
+        // DA2 response has '>' intermediate and multiple params
+        term.process(b"\x1b[>0;276;0c"); // VT100 style response
+
+        let responses = term.drain_responses();
+        assert!(
+            responses.is_empty(),
+            "DA2 response should not trigger a new response"
+        );
+    }
+
+    #[test]
+    fn virtual_terminal_ignores_own_da_responses() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // Process our own DA responses (as if echoed back from PTY)
+        term.process(b"\x1b[?64;1;2;6;9;15;16;17;18;21;22;28;29c"); // Our DA1 response
+        term.process(b"\x1b[>41;354;0c"); // Our DA2 response
+
+        let responses = term.drain_responses();
+        assert!(
+            responses.is_empty(),
+            "Own DA responses should not trigger new responses"
+        );
     }
 
     #[test]
@@ -6046,5 +6254,204 @@ mod tests {
         term.process(b"\x1b[6 q");
         assert_eq!(term.cursor_style, 6);
         assert!(!term.cursor_blink);
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da1_query() {
+        // DA1 query: ESC [ c
+        let input = b"hello\x1b[cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da1_query_with_param() {
+        // DA1 query with 0 param: ESC [ 0 c
+        let input = b"hello\x1b[0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da2_query() {
+        // DA2 query: ESC [ > c
+        let input = b"hello\x1b[>cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da2_query_with_param() {
+        // DA2 query with 0 param: ESC [ > 0 c
+        let input = b"hello\x1b[>0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da1_response() {
+        // DA1 response: ESC [ ? 1 ; 2 c (VT100 style)
+        let input = b"hello\x1b[?1;2cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da2_response() {
+        // DA2 response: ESC [ > 0 ; 276 ; 0 c
+        let input = b"hello\x1b[>0;276;0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_preserves_other_csi() {
+        // SGR sequence should be preserved: ESC [ 31 m (red text)
+        let input = b"hello\x1b[31mworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"hello\x1b[31mworld");
+    }
+
+    #[test]
+    fn filter_da_queries_preserves_plain_text() {
+        let input = b"hello world";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"hello world");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_multiple() {
+        // Multiple DA queries
+        let input = b"\x1b[chello\x1b[>cworld\x1b[?1;2c!";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld!");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da1_query() {
+        // DA1 query split across two chunks: ESC [ | c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[");
+        let chunk2 = filter.filter(b"cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da2_query() {
+        // DA2 query split: ESC | [ > c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b");
+        let chunk2 = filter.filter(b"[>cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da1_response() {
+        // DA1 response split: ESC [ ? 1 | ; 2 c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[?1");
+        let chunk2 = filter.filter(b";2cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da2_response() {
+        // DA2 response split: ESC [ > 0 ; 276 | ; 0 c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[>0;276");
+        let chunk2 = filter.filter(b";0cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_flushes_incomplete_non_da_sequence() {
+        // Incomplete non-DA sequence should be flushed
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[31");
+        let chunk2 = filter.filter(b"mworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        // ESC [ 31 m is SGR red, should be preserved
+        assert_eq!(result, b"hello\x1b[31mworld");
+    }
+
+    #[test]
+    fn da_filter_handles_lone_esc_at_end() {
+        // ESC at end of chunk, followed by non-CSI
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b");
+        let chunk2 = filter.filter(b"Oworld"); // ESC O is SS3, not CSI
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"hello\x1bOworld");
+    }
+
+    #[test]
+    fn da_filter_preserves_dec_private_mode_show_cursor() {
+        // ESC[?25h - show cursor (DECTCEM)
+        let filtered = filter_da_queries(b"hello\x1b[?25hworld");
+        assert_eq!(filtered, b"hello\x1b[?25hworld");
+    }
+
+    #[test]
+    fn da_filter_preserves_dec_private_mode_hide_cursor() {
+        // ESC[?25l - hide cursor (DECTCEM)
+        let filtered = filter_da_queries(b"hello\x1b[?25lworld");
+        assert_eq!(filtered, b"hello\x1b[?25lworld");
+    }
+
+    #[test]
+    fn da_filter_preserves_mouse_enable() {
+        // ESC[?1000h - enable X10 mouse tracking
+        let filtered = filter_da_queries(b"\x1b[?1000h");
+        assert_eq!(filtered, b"\x1b[?1000h");
+    }
+
+    #[test]
+    fn da_filter_preserves_mouse_disable() {
+        // ESC[?1000l - disable X10 mouse tracking
+        let filtered = filter_da_queries(b"\x1b[?1000l");
+        assert_eq!(filtered, b"\x1b[?1000l");
+    }
+
+    #[test]
+    fn da_filter_preserves_alternate_screen() {
+        // ESC[?1049h - enable alternate screen buffer
+        let filtered = filter_da_queries(b"\x1b[?1049h");
+        assert_eq!(filtered, b"\x1b[?1049h");
+    }
+
+    #[test]
+    fn da_filter_preserves_bracketed_paste() {
+        // ESC[?2004h - enable bracketed paste mode
+        let filtered = filter_da_queries(b"\x1b[?2004h");
+        assert_eq!(filtered, b"\x1b[?2004h");
+    }
+
+    #[test]
+    fn da_filter_preserves_sgr_mouse_mode() {
+        // ESC[>4;1m - modifyOtherKeys (CSI > sequence that isn't DA2)
+        let filtered = filter_da_queries(b"\x1b[>4;1m");
+        assert_eq!(filtered, b"\x1b[>4;1m");
     }
 }

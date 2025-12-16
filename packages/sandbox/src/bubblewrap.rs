@@ -4,7 +4,7 @@ use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
     MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
-use crate::mux::terminal::VirtualTerminal;
+use crate::mux::terminal::{DaFilter, VirtualTerminal};
 use crate::service::SandboxService;
 use crate::timing::TimingReport;
 use async_trait::async_trait;
@@ -39,6 +39,8 @@ const DOCKER_CONTAINER_SOCKET: &str = "/run/docker.sock";
 /// Handle for a multiplexed PTY session.
 struct PtySessionHandle {
     input_tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// Channel to send resize events to the reader thread's VirtualTerminal
+    resize_tx: std::sync::mpsc::Sender<(u16, u16)>,
     master: Box<dyn MasterPty + Send>,
     #[allow(dead_code)]
     child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -866,13 +868,26 @@ fi
             .map_err(|e| SandboxError::Internal(format!("failed to take pty writer: {e}")))?;
 
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        // Channel for sending resize events to the reader thread's VirtualTerminal
+        let (resize_tx, resize_rx) = std::sync::mpsc::channel::<(u16, u16)>();
 
         // Reader thread: PTY -> output channel
+        // Uses a VirtualTerminal to process escape sequences and handle DA queries locally.
+        // This avoids the PTY echo issue where responses sent back through the PTY get echoed.
         let session_id_clone = session_id.clone();
         let output_tx_clone = output_tx.clone();
+        let input_tx_clone = input_tx.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            // Create a VirtualTerminal for processing escape sequences
+            // We use it to detect and respond to terminal queries (DA1, DA2, etc.)
+            let mut vterm = VirtualTerminal::new(rows as usize, cols as usize);
             loop {
+                // Check for any pending resize events (non-blocking)
+                while let Ok((new_rows, new_cols)) = resize_rx.try_recv() {
+                    vterm.resize(new_rows as usize, new_cols as usize);
+                }
+
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         // PTY closed
@@ -883,10 +898,22 @@ fi
                         break;
                     }
                     Ok(n) => {
+                        let data = &buf[..n];
+
+                        // Process through VirtualTerminal to detect queries
+                        vterm.process(data);
+
+                        // Send any pending responses (DA1, DA2, DSR, etc.) back to PTY
+                        let responses = vterm.drain_responses();
+                        for response in responses {
+                            let _ = input_tx_clone.send(response);
+                        }
+
+                        // Forward original output to WebSocket
                         if output_tx_clone
                             .send(MuxServerMessage::Output {
                                 session_id: session_id_clone.clone(),
-                                data: buf[..n].to_vec(),
+                                data: data.to_vec(),
                             })
                             .is_err()
                         {
@@ -916,6 +943,7 @@ fi
 
         Ok(PtySessionHandle {
             input_tx,
+            resize_tx,
             master: pair.master,
             child,
             child_pid,
@@ -1473,6 +1501,8 @@ impl SandboxService for BubblewrapService {
 
         // Create VirtualTerminal for escape sequence processing
         let mut vterm = VirtualTerminal::new(rows as usize, cols as usize);
+        // Stateful DA filter to handle sequences split across chunks
+        let mut da_filter = DaFilter::new();
 
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
@@ -1529,8 +1559,17 @@ impl SandboxService for BubblewrapService {
                                 }
                             }
 
-                            // Forward the original PTY output to WebSocket
-                            if socket.send(Message::Binary(d.into())).await.is_err() {
+                            // Filter DA queries/responses from output before forwarding to client.
+                            // Uses stateful filter to handle sequences split across chunks.
+                            // We handle these locally via VirtualTerminal, so we don't want them
+                            // reaching the user's terminal (which would respond and cause garbage).
+                            let filtered = da_filter.filter(&d);
+                            if filtered.is_empty() {
+                                continue;
+                            }
+
+                            // Forward filtered PTY output to WebSocket
+                            if socket.send(Message::Binary(filtered.into())).await.is_err() {
                                 break;
                             }
                         }
@@ -1846,12 +1885,16 @@ impl SandboxService for BubblewrapService {
                         } => {
                             let sessions = sessions.lock().await;
                             if let Some(handle) = sessions.get(&session_id) {
+                                // Resize the PTY
                                 let _ = handle.master.resize(PtySize {
                                     rows,
                                     cols,
                                     pixel_width: 0,
                                     pixel_height: 0,
                                 });
+                                // Also resize the VirtualTerminal in the reader thread
+                                // so window-size queries return correct dimensions
+                                let _ = handle.resize_tx.send((rows, cols));
                             }
                         }
 

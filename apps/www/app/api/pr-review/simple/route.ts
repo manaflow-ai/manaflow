@@ -96,6 +96,13 @@ export async function GET(request: NextRequest) {
     const modelQueryValue =
       searchParams.get(HEATMAP_MODEL_QUERY_KEY) ?? "default";
 
+    console.info("[simple-review][api] Request params", {
+      prIdentifier,
+      tooltipLanguage,
+      rawLangParam: searchParams.get("lang"),
+      modelQueryValue,
+    });
+
     // Track analytics (fire and forget - don't block the request)
     trackHeatmapReviewRequested({
       repo: repoFullNameStr,

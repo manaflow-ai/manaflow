@@ -132,6 +132,8 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@xterm/xterm": "^5.5.0",
+    "react": "^19.2.2",
+    "react-dom": "^19.2.2",
     "socket.io": "^4.8.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

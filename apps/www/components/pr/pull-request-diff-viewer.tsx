@@ -102,7 +102,8 @@ import {
   TOOLTIP_LANGUAGE_OPTIONS,
   DEFAULT_TOOLTIP_LANGUAGE,
   detectBrowserLanguage,
-  normalizeTooltipLanguage,
+  getInitialTooltipLanguage,
+  TOOLTIP_LANGUAGE_STORAGE_KEY,
   type HeatmapModelQueryValue,
   type TooltipLanguageValue,
 } from "@/lib/services/code-review/model-config";
@@ -601,10 +602,14 @@ export function PullRequestDiffViewer({
       key: "cmux-heatmap-model",
       defaultValue: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
     });
+  // Use getInitialTooltipLanguage() to synchronously read the correct language
+  // from localStorage (or detect from browser) on first render. This avoids the
+  // race condition where useLocalStorage returns "en" initially, causing Convex
+  // queries to run with the wrong language before the stored preference is loaded.
   const [tooltipLanguagePreference, setTooltipLanguagePreference] =
     useLocalStorage<TooltipLanguageValue>({
-      key: "cmux-tooltip-language",
-      defaultValue: DEFAULT_TOOLTIP_LANGUAGE,
+      key: TOOLTIP_LANGUAGE_STORAGE_KEY,
+      defaultValue: getInitialTooltipLanguage(),
     });
   // Detect browser language only on first visit (when no stored preference exists)
   const hasInitializedLanguageRef = useRef(false);
@@ -655,32 +660,16 @@ export function PullRequestDiffViewer({
       }
 
       const model = options?.modelOverride ?? heatmapModelPreferenceRef.current;
-      // Read language directly from localStorage to avoid race conditions on initial mount.
-      // Fall back to browser detection if no stored value, then to ref, then to default.
-      let language = options?.languageOverride;
-      if (!language) {
-        try {
-          const stored = window.localStorage.getItem("cmux-tooltip-language");
-          if (stored) {
-            // Validate it's a known language value
-            const normalized = normalizeTooltipLanguage(stored);
-            language = normalized;
-          } else {
-            // First visit: detect from browser
-            language = detectBrowserLanguage();
-          }
-        } catch {
-          language =
-            tooltipLanguagePreferenceRef.current ?? DEFAULT_TOOLTIP_LANGUAGE;
-        }
-      }
+      // Use getInitialTooltipLanguage() to synchronously read the correct language
+      // or browser detection, avoiding race conditions on initial mount.
+      const language =
+        options?.languageOverride ?? getInitialTooltipLanguage();
 
       console.info("[simple-review][frontend] Starting fetch", {
         repoFullName,
         prNumber,
         model,
         language,
-        rawStoredLanguage: window.localStorage.getItem("cmux-tooltip-language"),
         languageOverride: options?.languageOverride,
       });
       const existingController = activeReviewControllerRef.current;
