@@ -159,6 +159,11 @@ class PersistentIframeManager {
     }
 
     // Create wrapper div
+    // GPU compositing hints and containment to reduce flickering:
+    // - will-change: transform promotes to compositor layer
+    // - contain: strict prevents unnecessary repaints from ancestors
+    // - background: matches loading overlay to prevent white flash during transitions
+    //   (neutral-50 in light mode, neutral-950 in dark mode via light-dark())
     const wrapper = document.createElement("div");
     wrapper.style.cssText = `
       position: fixed;
@@ -173,18 +178,25 @@ class PersistentIframeManager {
       backface-visibility: hidden;
       z-index: var(--z-iframe);
       isolation: isolate;
+      will-change: transform;
+      contain: strict;
+      background: light-dark(#fafafa, #0a0a0a);
+      color-scheme: light dark;
     `;
     wrapper.setAttribute("data-iframe-key", key);
     wrapper.setAttribute("data-drag-disable-pointer", "");
 
     // Create iframe
+    // Use transparent background initially; inherit from wrapper to avoid white flash
+    // color-scheme ensures dark mode support for the iframe background
     const iframe = document.createElement("iframe");
     iframe.style.cssText = `
       width: 100%;
       height: 100%;
       border: 0;
-      background: white;
+      background: transparent;
       display: block;
+      color-scheme: light dark;
     `;
 
     // Apply permissions if provided
