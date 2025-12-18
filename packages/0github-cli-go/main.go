@@ -63,18 +63,46 @@ var (
 func getScoreStyle(score int) lipgloss.Style {
 	switch {
 	case score <= 10:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+		return lipgloss.NewStyle()
 	case score <= 25:
-		return lipgloss.NewStyle().Background(lipgloss.Color("2")).Foreground(lipgloss.Color("0"))
+		return lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("15")) // dark green
 	case score <= 40:
-		return lipgloss.NewStyle().Background(lipgloss.Color("3")).Foreground(lipgloss.Color("0"))
+		return lipgloss.NewStyle().Background(lipgloss.Color("58")).Foreground(lipgloss.Color("15")) // olive/yellow
 	case score <= 60:
-		return lipgloss.NewStyle().Background(lipgloss.Color("208")).Foreground(lipgloss.Color("0"))
+		return lipgloss.NewStyle().Background(lipgloss.Color("208")).Foreground(lipgloss.Color("0")) // orange
 	case score <= 80:
-		return lipgloss.NewStyle().Background(lipgloss.Color("1")).Foreground(lipgloss.Color("15"))
+		return lipgloss.NewStyle().Background(lipgloss.Color("196")).Foreground(lipgloss.Color("15")) // red
 	default:
-		return lipgloss.NewStyle().Background(lipgloss.Color("5")).Foreground(lipgloss.Color("15")).Bold(true)
+		return lipgloss.NewStyle().Background(lipgloss.Color("201")).Foreground(lipgloss.Color("15")).Bold(true) // magenta
 	}
+}
+
+// highlightToken finds and highlights a specific token in the code
+func highlightToken(code string, token *string, score int) string {
+	if token == nil || *token == "" || score <= 10 {
+		return code
+	}
+
+	style := getScoreStyle(score)
+
+	// Find the token in the code (case-sensitive first, then case-insensitive)
+	idx := strings.Index(code, *token)
+	if idx == -1 {
+		// Try case-insensitive
+		lowerCode := strings.ToLower(code)
+		lowerToken := strings.ToLower(*token)
+		idx = strings.Index(lowerCode, lowerToken)
+		if idx == -1 {
+			return code
+		}
+	}
+
+	// Highlight the token
+	before := code[:idx]
+	highlighted := style.Render(code[idx : idx+len(*token)])
+	after := code[idx+len(*token):]
+
+	return before + highlighted + after
 }
 
 func getStatusColor(status string, maxScore int) lipgloss.Color {
@@ -674,33 +702,27 @@ func (m model) renderDiffView(width, height int) string {
 			changeStyle = dimStyle
 		}
 
-		// Score
-		scoreStr := "   "
-		if line.Score > 0 {
-			scoreStr = fmt.Sprintf("%3d", line.Score)
-		}
-		scoreStyled := getScoreStyle(line.Score).Render(scoreStr)
-
-		// Code with syntax highlighting
+		// Code - highlight the important token directly
 		code := line.CodeLine
 		if code == "" {
 			code = line.DiffLine
 		}
-		if lang != "" {
-			code = highlightLine(code, lang)
+
+		// Highlight the most important word with score-based color
+		code = highlightToken(code, line.MostImportantWord, line.Score)
+
+		// Truncate if needed (be careful with ANSI codes)
+		maxCodeLen := width - 16
+		visibleLen := lipgloss.Width(code)
+		if visibleLen > maxCodeLen {
+			// Simple truncation - may cut ANSI codes but generally works
+			code = code[:min(len(code), maxCodeLen*2)] + "…"
 		}
 
-		// Truncate if needed
-		maxCodeLen := width - 20
-		if len(code) > maxCodeLen {
-			code = code[:maxCodeLen-1] + "…"
-		}
-
-		lineStr := fmt.Sprintf("%s %s %s %s %s",
+		lineStr := fmt.Sprintf("%s %s %s %s",
 			dimStyle.Render(oldNum),
 			dimStyle.Render(newNum),
 			changeStyle.Render(changeChar),
-			scoreStyled,
 			code,
 		)
 
