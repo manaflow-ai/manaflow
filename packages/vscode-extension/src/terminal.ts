@@ -74,15 +74,18 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   private _outputBuffer = '';
   private _dimensions: { cols: number; rows: number } = { cols: 80, rows: 24 };
   private _previousDimensions: { cols: number; rows: number } | null = null;
+  private _skipInitialResize: boolean;
 
   public readonly onDidWrite: vscode.Event<string> = this._onDidWrite.event;
   public readonly onDidClose: vscode.Event<number | void> = this._onDidClose.event;
 
   constructor(
     private readonly serverUrl: string,
-    public readonly ptyId: string
+    public readonly ptyId: string,
+    skipInitialResize = false // For restored sessions, skip resize on connect to avoid prompt redraw
   ) {
-    console.log(`[cmux] CmuxPseudoterminal constructor for PTY ${ptyId}`);
+    console.log(`[cmux] CmuxPseudoterminal constructor for PTY ${ptyId}, skipInitialResize: ${skipInitialResize}`);
+    this._skipInitialResize = skipInitialResize;
     this._connectWebSocket();
   }
 
@@ -96,11 +99,15 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 
     this._ws.onopen = () => {
       console.log(`[cmux] WebSocket connected for PTY ${this.ptyId}`);
-      this._ws?.send(JSON.stringify({
-        type: 'resize',
-        cols: this._dimensions.cols,
-        rows: this._dimensions.rows,
-      }));
+      // Skip initial resize for restored sessions to avoid shell prompt redraw
+      // The proper resize will be sent when open() is called with actual dimensions
+      if (!this._skipInitialResize) {
+        this._ws?.send(JSON.stringify({
+          type: 'resize',
+          cols: this._dimensions.cols,
+          rows: this._dimensions.rows,
+        }));
+      }
     };
 
     this._ws.onmessage = async (event) => {
@@ -557,7 +564,7 @@ class CmuxTerminalManager {
         this._restoreInProgress = true; // Mark restore in progress
       } else {
         // After initial sync, create terminals directly (for reconnection scenarios)
-        this._createTerminalForPty(info, false);
+        this._createTerminalForPty(info, false, true); // Is restore/reconnect
       }
     }
 
@@ -661,12 +668,13 @@ class CmuxTerminalManager {
     this._pendingCreations.delete(ptyId);
   }
 
-  private _createTerminalForPty(info: TerminalInfo, shouldFocus: boolean): void {
+  private _createTerminalForPty(info: TerminalInfo, shouldFocus: boolean, isRestore = false): void {
     const config = getConfig();
 
-    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}`);
+    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}`);
 
-    const pty = new CmuxPseudoterminal(config.serverUrl, info.id);
+    // Skip initial resize for restored sessions to avoid shell prompt redraw
+    const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore);
 
     const terminal = vscode.window.createTerminal({
       name: info.name,
@@ -813,7 +821,7 @@ class CmuxTerminalManager {
         console.log(`[cmux] Terminal ${info.id} already exists, skipping`);
         continue;
       }
-      this._createTerminalForPty(info, false); // Don't focus
+      this._createTerminalForPty(info, false, true); // Don't focus, is restore
     }
     this._restoreInProgress = false; // Restore complete, allow new terminal creation
   }
@@ -903,15 +911,17 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
     const queuedPty = terminalManager.popRestoreQueue();
     if (queuedPty) {
       console.log(`[cmux] provideTerminalProfile: restoring queued PTY ${queuedPty.id} (${queuedPty.name})`);
-      const pty = new CmuxPseudoterminal(config.serverUrl, queuedPty.id);
+      // Skip initial resize to avoid shell prompt redraw on reconnect
+      const pty = new CmuxPseudoterminal(config.serverUrl, queuedPty.id, true);
 
       // Track this terminal with its pty - when terminal opens, we'll set up
       // proper tracking without creating a duplicate WebSocket connection
       terminalManager.trackPendingTerminal(queuedPty, pty);
 
-      // Schedule drain for remaining items after this call completes
-      // Uses queueMicrotask to run after current microtask queue empties
-      queueMicrotask(() => terminalManager.drainRestoreQueue());
+      // Drain remaining items SYNCHRONOUSLY to ensure consistent ordering
+      // This creates all remaining terminals in index order before VSCode
+      // can call provideTerminalProfile again and cause race conditions
+      terminalManager.drainRestoreQueue();
 
       return new vscode.TerminalProfile({
         name: queuedPty.name,
@@ -928,8 +938,8 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       if (terminals.length > 0) {
         terminals[0].terminal.show();
       }
-      // Trigger drain to mark restore complete
-      queueMicrotask(() => terminalManager.drainRestoreQueue());
+      // Mark restore complete
+      terminalManager.drainRestoreQueue();
       return undefined;
     }
 
