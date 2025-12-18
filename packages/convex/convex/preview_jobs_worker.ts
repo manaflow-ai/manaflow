@@ -1,11 +1,7 @@
-import {
-  createMorphCloudClient,
-  startInstanceInstancePost,
-  getInstanceInstanceInstanceIdGet,
-  execInstanceInstanceIdExecPost,
-  stopInstanceInstanceInstanceIdDelete,
-  type InstanceModel,
-} from "@cmux/morphcloud-openapi-client";
+"use node";
+
+import type { Instance } from "morphcloud";
+import { getMorphClient } from "../_shared/morph";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
@@ -88,74 +84,60 @@ async function fetchScreenshotCollectorRelease({
  * Get changed files in the PR via Morph exec
  */
 async function getChangedFiles({
-  morphClient,
-  instanceId,
+  instance,
   repoDir,
   baseBranch,
   previewRunId,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   repoDir: string;
   baseBranch: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<string[]> {
   // Get the merge base first
-  const mergeBaseResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["git", "-C", repoDir, "merge-base", `origin/${baseBranch}`, "HEAD"],
-    },
-  });
+  const mergeBaseResult = await instance.exec(
+    `git -C ${repoDir} merge-base origin/${baseBranch} HEAD`
+  );
 
-  if (mergeBaseResponse.error || mergeBaseResponse.data?.exit_code !== 0) {
+  if (mergeBaseResult.exit_code !== 0) {
     console.warn("[preview-jobs] Failed to get merge base, falling back to origin diff", {
       previewRunId,
-      exitCode: mergeBaseResponse.data?.exit_code,
-      stderr: sliceOutput(mergeBaseResponse.data?.stderr),
+      exitCode: mergeBaseResult.exit_code,
+      stderr: sliceOutput(mergeBaseResult.stderr),
     });
 
     // Fallback: diff against origin/baseBranch directly
-    const fallbackResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instanceId },
-      body: {
-        command: ["git", "-C", repoDir, "diff", "--name-only", `origin/${baseBranch}`],
-      },
-    });
+    const fallbackResult = await instance.exec(
+      `git -C ${repoDir} diff --name-only origin/${baseBranch}`
+    );
 
-    if (fallbackResponse.error || fallbackResponse.data?.exit_code !== 0) {
+    if (fallbackResult.exit_code !== 0) {
       throw new Error("Failed to get changed files");
     }
 
-    return (fallbackResponse.data?.stdout || "")
+    return (fallbackResult.stdout || "")
       .split("\n")
       .map((f) => f.trim())
       .filter((f) => f.length > 0);
   }
 
-  const mergeBase = mergeBaseResponse.data?.stdout?.trim();
+  const mergeBase = mergeBaseResult.stdout?.trim();
   if (!mergeBase) {
     throw new Error("Empty merge base result");
   }
 
   // Get changed files between merge base and HEAD
-  const diffResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["git", "-C", repoDir, "diff", "--name-only", `${mergeBase}..HEAD`],
-    },
-  });
+  const diffResult = await instance.exec(
+    `git -C ${repoDir} diff --name-only ${mergeBase}..HEAD`
+  );
 
-  if (diffResponse.error || diffResponse.data?.exit_code !== 0) {
+  if (diffResult.exit_code !== 0) {
     throw new Error(
-      `Failed to get changed files: ${diffResponse.data?.stderr || diffResponse.error}`
+      `Failed to get changed files: ${diffResult.stderr}`
     );
   }
 
-  const changedFiles = (diffResponse.data?.stdout || "")
+  const changedFiles = (diffResult.stdout || "")
     .split("\n")
     .map((f) => f.trim())
     .filter((f) => f.length > 0);
@@ -196,24 +178,16 @@ interface ScreenshotCollectorResult {
  * Verify a file exists and is non-empty on Morph instance
  */
 async function verifyFileOnMorph({
-  morphClient,
-  instanceId,
+  instance,
   filePath,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   filePath: string;
 }): Promise<number> {
-  const verifyResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["stat", "-c", "%s", filePath],
-    },
-  });
+  const result = await instance.exec(`stat -c %s '${filePath}'`);
 
-  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
-  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
+  const fileSize = parseInt(result.stdout?.trim() || "0", 10);
+  if (result.exit_code !== 0 || fileSize === 0) {
     throw new Error(`File ${filePath} missing or empty: size=${fileSize}`);
   }
   return fileSize;
@@ -223,33 +197,25 @@ async function verifyFileOnMorph({
  * Download a file from URL directly to Morph instance via curl
  */
 async function downloadFileToMorph({
-  morphClient,
-  instanceId,
+  instance,
   filePath,
   url,
   previewRunId,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   filePath: string;
   url: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<number> {
-  const downloadResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["curl", "-fsSL", "-o", filePath, url],
-    },
-  });
+  const result = await instance.exec(`curl -fsSL -o '${filePath}' '${url}'`);
 
-  if (downloadResponse.error || downloadResponse.data?.exit_code !== 0) {
+  if (result.exit_code !== 0) {
     throw new Error(
-      `Failed to download file to ${filePath}: ${downloadResponse.data?.stderr || downloadResponse.error}`
+      `Failed to download file to ${filePath}: ${result.stderr}`
     );
   }
 
-  const fileSize = await verifyFileOnMorph({ morphClient, instanceId, filePath });
+  const fileSize = await verifyFileOnMorph({ instance, filePath });
 
   console.log("[preview-jobs] File downloaded successfully", {
     previewRunId,
@@ -282,16 +248,14 @@ async function uploadToStorage(
  */
 async function writeStringToMorph({
   ctx,
-  morphClient,
-  instanceId,
+  instance,
   filePath,
   content,
   previewRunId,
   contentType = "text/plain",
 }: {
   ctx: ActionCtx;
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   filePath: string;
   content: string;
   previewRunId: Id<"previewRuns">;
@@ -308,21 +272,15 @@ async function writeStringToMorph({
   });
 
   // Download via curl on Morph
-  const downloadResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["curl", "-fsSL", "-o", filePath, url],
-    },
-  });
+  const result = await instance.exec(`curl -fsSL -o '${filePath}' '${url}'`);
 
-  if (downloadResponse.error || downloadResponse.data?.exit_code !== 0) {
+  if (result.exit_code !== 0) {
     throw new Error(
-      `Failed to download file to ${filePath}: ${downloadResponse.data?.stderr || downloadResponse.error}`
+      `Failed to download file to ${filePath}: ${result.stderr}`
     );
   }
 
-  const fileSize = await verifyFileOnMorph({ morphClient, instanceId, filePath });
+  const fileSize = await verifyFileOnMorph({ instance, filePath });
 
   console.log("[preview-jobs] File written successfully via curl", {
     previewRunId,
@@ -335,28 +293,20 @@ async function writeStringToMorph({
  * Read a file from Morph VM and return as base64
  */
 async function readFileFromMorph({
-  morphClient,
-  instanceId,
+  instance,
   filePath,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   filePath: string;
 }): Promise<{ base64: string; size: number } | null> {
   // Use base64 to read the file content (works for binary files like images)
-  const response = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["base64", "-w", "0", filePath],
-    },
-  });
+  const result = await instance.exec(`base64 -w 0 '${filePath}'`);
 
-  if (response.error || response.data?.exit_code !== 0) {
+  if (result.exit_code !== 0) {
     return null;
   }
 
-  const base64 = response.data?.stdout?.trim() || "";
+  const base64 = result.stdout?.trim() || "";
   if (!base64) {
     return null;
   }
@@ -391,15 +341,13 @@ function getMimeTypeFromPath(filePath: string): string {
  */
 async function runScreenshotCollector({
   ctx,
-  morphClient,
-  instanceId,
+  instance,
   collectorUrl,
   options,
   previewRunId,
 }: {
   ctx: ActionCtx;
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   collectorUrl: string;
   options: ScreenshotCollectorOptions;
   previewRunId: Id<"previewRuns">;
@@ -415,8 +363,7 @@ async function runScreenshotCollector({
   });
 
   await downloadFileToMorph({
-    morphClient,
-    instanceId,
+    instance,
     filePath: collectorPath,
     url: collectorUrl,
     previewRunId,
@@ -431,8 +378,7 @@ async function runScreenshotCollector({
 
   await writeStringToMorph({
     ctx,
-    morphClient,
-    instanceId,
+    instance,
     filePath: optionsPath,
     content: optionsJson,
     previewRunId,
@@ -453,8 +399,7 @@ console.log(JSON.stringify(result));`;
 
   await writeStringToMorph({
     ctx,
-    morphClient,
-    instanceId,
+    instance,
     filePath: runScriptPath,
     content: runScriptContent,
     previewRunId,
@@ -466,19 +411,9 @@ console.log(JSON.stringify(result));`;
     previewRunId,
   });
 
-  const runResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["/root/.bun/bin/bun", "run", runScriptPath],
-    },
-  });
+  const runResult = await instance.exec(`/root/.bun/bin/bun run ${runScriptPath}`);
 
-  if (runResponse.error) {
-    throw new Error(`Screenshot collector exec error: ${JSON.stringify(runResponse.error)}`);
-  }
-
-  const { exit_code: exitCode, stdout, stderr } = runResponse.data || {};
+  const { exit_code: exitCode, stdout, stderr } = runResult;
 
   console.log("[preview-jobs] Screenshot collector completed", {
     previewRunId,
@@ -553,41 +488,23 @@ console.log(JSON.stringify(result));`;
 }
 
 async function repoHasCommit({
-  morphClient,
-  instanceId,
+  instance,
   repoDir,
   commitSha,
-  previewRunId,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   repoDir: string;
   commitSha: string;
-  previewRunId: Id<"previewRuns">;
 }): Promise<boolean> {
-  const response = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["git", "-C", repoDir, "cat-file", "-e", `${commitSha}^{commit}`],
-    },
-  });
+  const result = await instance.exec(
+    `git -C ${repoDir} cat-file -e '${commitSha}^{commit}'`
+  );
 
-  if (response.error) {
-    console.warn("[preview-jobs] Failed to check commit availability", {
-      previewRunId,
-      commitSha,
-      error: response.error,
-    });
-    return false;
-  }
-
-  return response.data?.exit_code === 0;
+  return result.exit_code === 0;
 }
 
 async function ensureCommitAvailable({
-  morphClient,
-  instanceId,
+  instance,
   repoDir,
   commitSha,
   prNumber,
@@ -595,8 +512,7 @@ async function ensureCommitAvailable({
   headRepoCloneUrl,
   headRef,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   repoDir: string;
   commitSha: string;
   prNumber: number;
@@ -604,7 +520,7 @@ async function ensureCommitAvailable({
   headRepoCloneUrl?: string;
   headRef?: string;
 }): Promise<void> {
-  if (await repoHasCommit({ morphClient, instanceId, repoDir, commitSha, previewRunId })) {
+  if (await repoHasCommit({ instance, repoDir, commitSha })) {
     return;
   }
 
@@ -618,22 +534,15 @@ async function ensureCommitAvailable({
 
   const fetchAttempts: Array<{
     description: string;
-    command: string[];
+    command: string;
   }> = [
     {
       description: "fetch commit by sha",
-      command: ["git", "-C", repoDir, "fetch", "origin", commitSha],
+      command: `git -C ${repoDir} fetch origin ${commitSha}`,
     },
     {
       description: "fetch PR head ref",
-      command: [
-        "git",
-        "-C",
-        repoDir,
-        "fetch",
-        "origin",
-        `+refs/pull/${prNumber}/head:refs/cmux/preview/pull/${prNumber}`,
-      ],
+      command: `git -C ${repoDir} fetch origin '+refs/pull/${prNumber}/head:refs/cmux/preview/pull/${prNumber}'`,
     },
   ];
 
@@ -641,14 +550,7 @@ async function ensureCommitAvailable({
   if (headRepoCloneUrl && headRef) {
     fetchAttempts.unshift({
       description: "fetch from fork repository",
-      command: [
-        "git",
-        "-C",
-        repoDir,
-        "fetch",
-        headRepoCloneUrl,
-        `${headRef}:refs/cmux/preview/fork/${prNumber}`,
-      ],
+      command: `git -C ${repoDir} fetch '${headRepoCloneUrl}' '${headRef}:refs/cmux/preview/fork/${prNumber}'`,
     });
   }
 
@@ -660,29 +562,22 @@ async function ensureCommitAvailable({
       description: attempt.description,
     });
 
-    const fetchResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instanceId },
-      body: {
-        command: attempt.command,
-      },
-    });
+    const result = await instance.exec(attempt.command);
 
-    if (fetchResponse.error || fetchResponse.data?.exit_code !== 0) {
+    if (result.exit_code !== 0) {
       console.warn("[preview-jobs] Targeted fetch failed", {
         previewRunId,
         commitSha,
         prNumber,
         description: attempt.description,
-        exitCode: fetchResponse.data?.exit_code,
-        stderr: sliceOutput(fetchResponse.data?.stderr),
-        stdout: sliceOutput(fetchResponse.data?.stdout),
-        error: fetchResponse.error,
+        exitCode: result.exit_code,
+        stderr: sliceOutput(result.stderr),
+        stdout: sliceOutput(result.stdout),
       });
       continue;
     }
 
-    if (await repoHasCommit({ morphClient, instanceId, repoDir, commitSha, previewRunId })) {
+    if (await repoHasCommit({ instance, repoDir, commitSha })) {
       console.log("[preview-jobs] Commit available after targeted fetch", {
         previewRunId,
         commitSha,
@@ -699,14 +594,12 @@ async function ensureCommitAvailable({
 }
 
 async function stashLocalChanges({
-  morphClient,
-  instanceId,
+  instance,
   repoDir,
   previewRunId,
   headSha,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   repoDir: string;
   previewRunId: Id<"previewRuns">;
   headSha: string;
@@ -717,33 +610,11 @@ async function stashLocalChanges({
     headSha,
   });
 
-  const stashResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: [
-        "git",
-        "-C",
-        repoDir,
-        "stash",
-        "push",
-        "--include-untracked",
-        "--message",
-        `cmux-preview auto-stash before checkout ${headSha}`,
-      ],
-    },
-  });
+  const result = await instance.exec(
+    `git -C ${repoDir} stash push --include-untracked --message 'cmux-preview auto-stash before checkout ${headSha}'`
+  );
 
-  if (stashResponse.error || !stashResponse.data) {
-    console.error("[preview-jobs] Failed to stash changes before checkout", {
-      previewRunId,
-      headSha,
-      error: stashResponse.error,
-    });
-    throw new Error("Failed to stash local changes before checkout");
-  }
-
-  const { exit_code: exitCode, stdout, stderr } = stashResponse.data;
+  const { exit_code: exitCode, stdout, stderr } = result;
   if (exitCode !== 0) {
     console.error("[preview-jobs] Stash command failed", {
       previewRunId,
@@ -767,117 +638,42 @@ async function stashLocalChanges({
   });
 }
 
-async function waitForInstanceReady(
-  morphClient: ReturnType<typeof createMorphCloudClient>,
-  instanceId: string,
-  readinessTimeoutMs = 5 * 60 * 1000,
-): Promise<InstanceModel> {
-  const start = Date.now();
-  while (true) {
-    const response = await getInstanceInstanceInstanceIdGet({
-      client: morphClient,
-      path: { instance_id: instanceId },
-    });
-
-    if (response.error) {
-      throw new Error(`Failed to get instance status: ${JSON.stringify(response.error)}`);
-    }
-
-    const instance = response.data;
-    if (!instance) {
-      throw new Error("Instance data missing from response");
-    }
-
-    if (instance.status === "ready") {
-      return instance;
-    }
-    if (instance.status === "error") {
-      throw new Error("Morph instance entered error state");
-    }
-    if (Date.now() - start > readinessTimeoutMs) {
-      throw new Error("Morph instance did not become ready before timeout");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-}
-
 async function startMorphInstance(
-  morphClient: ReturnType<typeof createMorphCloudClient>,
+  morphClient: NonNullable<ReturnType<typeof getMorphClient>>,
   options: {
     snapshotId: string;
     metadata?: Record<string, string>;
     ttlSeconds?: number;
     ttlAction?: "stop" | "pause";
-    readinessTimeoutMs?: number;
   },
-): Promise<InstanceModel> {
-  const response = await startInstanceInstancePost({
-    client: morphClient,
-    query: {
-      snapshot_id: options.snapshotId,
-    },
-    body: {
-      metadata: options.metadata,
-      ttl_seconds: options.ttlSeconds,
-      ttl_action: options.ttlAction,
-    },
-  });
-
-  if (response.error) {
-    throw new Error(`Failed to start instance: ${JSON.stringify(response.error)}`);
-  }
-
-  const instance = response.data;
-  if (!instance) {
-    throw new Error("Instance data missing from start response");
-  }
-
-  return await waitForInstanceReady(
-    morphClient,
-    instance.id,
-    options.readinessTimeoutMs,
-  );
-}
-
-async function stopMorphInstance(
-  morphClient: ReturnType<typeof createMorphCloudClient>,
-  instanceId: string,
-) {
-  await stopInstanceInstanceInstanceIdDelete({
-    client: morphClient,
-    path: { instance_id: instanceId },
+): Promise<Instance> {
+  // The morphcloud SDK waits for the instance to be ready
+  return await morphClient.instances.start({
+    snapshotId: options.snapshotId,
+    metadata: options.metadata,
+    ttlSeconds: options.ttlSeconds,
+    ttlAction: options.ttlAction,
   });
 }
 
 async function ensureTmuxSession({
-  morphClient,
-  instanceId,
+  instance,
   repoDir,
   previewRunId,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   repoDir: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<void> {
   // Match the orchestrator: create session with -n main for the initial window
-  const sessionCmd = [
-    "zsh",
-    "-lc",
-    `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)} -n main`,
-  ];
-  const response = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: { command: sessionCmd },
-  });
-  if (response.error || response.data?.exit_code !== 0) {
+  const sessionCmd = `zsh -lc "tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)} -n main"`;
+  const result = await instance.exec(sessionCmd);
+  if (result.exit_code !== 0) {
     console.warn("[preview-jobs] Failed to ensure tmux session", {
       previewRunId,
-      exitCode: response.data?.exit_code,
-      stdout: sliceOutput(response.data?.stdout),
-      stderr: sliceOutput(response.data?.stderr),
-      error: response.error,
+      exitCode: result.exit_code,
+      stdout: sliceOutput(result.stdout),
+      stderr: sliceOutput(result.stderr),
     });
   }
 }
@@ -887,16 +683,14 @@ const MAINTENANCE_WINDOW_NAME = "maintenance";
 const DEV_WINDOW_NAME = "dev";
 
 async function runScriptInTmuxWindow({
-  morphClient,
-  instanceId,
+  instance,
   repoDir,
   windowName,
   scriptContent,
   previewRunId,
   useSetE = true,
 }: {
-  morphClient: ReturnType<typeof createMorphCloudClient>;
-  instanceId: string;
+  instance: Instance;
   repoDir: string;
   windowName: string;
   scriptContent: string;
@@ -981,20 +775,15 @@ else
 fi
 `;
 
-  const response = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: { command: ["zsh", "-lc", setupCommand] },
-  });
+  const result = await instance.exec(`zsh -lc ${singleQuote(setupCommand)}`);
 
-  if (response.error || response.data?.exit_code !== 0) {
+  if (result.exit_code !== 0) {
     console.warn("[preview-jobs] Failed to start tmux window", {
       previewRunId,
       windowName,
-      exitCode: response.data?.exit_code,
-      stdout: sliceOutput(response.data?.stdout),
-      stderr: sliceOutput(response.data?.stderr),
-      error: response.error,
+      exitCode: result.exit_code,
+      stdout: sliceOutput(result.stdout),
+      stderr: sliceOutput(result.stderr),
     });
   } else {
     console.log("[preview-jobs] Started tmux window", {
@@ -1008,8 +797,8 @@ export async function runPreviewJob(
   ctx: ActionCtx,
   previewRunId: Id<"previewRuns">,
 ) {
-  const morphApiKey = env.MORPH_API_KEY;
-  if (!morphApiKey) {
+  const morphClient = getMorphClient();
+  if (!morphClient) {
     console.warn("[preview-jobs] MORPH_API_KEY not configured; skipping run", {
       previewRunId,
     });
@@ -1019,10 +808,6 @@ export async function runPreviewJob(
     });
     return;
   }
-
-  const morphClient = createMorphCloudClient({
-    auth: morphApiKey,
-  });
 
   const payload = await ctx.runQuery(internal.previewRuns.getRunWithConfig, {
     previewRunId,
@@ -1187,7 +972,7 @@ export async function runPreviewJob(
   }
 
   const snapshotId = environment.morphSnapshotId;
-  let instance: InstanceModel | null = null;
+  let instance: Instance | null = null;
   let taskId: Id<"tasks"> | null = null;
 
   if (!taskRunId) {
@@ -1331,23 +1116,22 @@ export async function runPreviewJob(
       },
       ttlSeconds: 3600,
       ttlAction: "stop",
-      readinessTimeoutMs: 5 * 60 * 1000,
     });
 
-    const workerService = instance.networking?.http_services?.find(
-      (service: { port?: number }) => service.port === 39377,
+    const workerService = instance.networking.httpServices.find(
+      (service) => service.port === 39377,
     );
     if (!workerService) {
       throw new Error("Worker service not found on instance");
     }
 
     const getServiceUrl = (port: number) =>
-      instance?.networking?.http_services?.find(
-        (service: { port?: number }) => service.port === port,
+      instance?.networking.httpServices.find(
+        (service) => service.port === port,
       )?.url;
 
-    const vscodeService = instance.networking?.http_services?.find(
-      (service: { port?: number }) => service.port === 39378,
+    const vscodeService = instance.networking.httpServices.find(
+      (service) => service.port === 39378,
     );
     const vscodeUrl = vscodeService?.url
       ? `${vscodeService.url}?folder=/root/workspace`
@@ -1362,11 +1146,11 @@ export async function runPreviewJob(
     });
 
     if (taskRunId) {
-      const networking = instance.networking?.http_services?.map((s) => ({
+      const networking = instance.networking.httpServices.map((s) => ({
         status: "running" as const,
         port: s.port || 0,
         url: s.url || "",
-      })) ?? [];
+      }));
 
       await ctx.runMutation(internal.taskRuns.updateVSCodeMetadataInternal, {
         taskRunId,
@@ -1449,48 +1233,34 @@ export async function runPreviewJob(
           try {
             const shellScript = `cd ${repoDir} && printf %s ${escapedToken} | gh auth login --with-token && gh auth setup-git 2>&1`;
 
-            const ghAuthResponse = await execInstanceInstanceIdExecPost({
-              client: morphClient,
-              path: { instance_id: instance.id },
-              body: {
-                command: ["bash", "-lc", shellScript],
-              },
-            });
+            const ghAuthResult = await instance.exec(`bash -lc ${singleQuote(shellScript)}`);
 
             console.log("[preview-jobs] GitHub auth response received", {
               previewRunId,
               attempt,
-              hasError: Boolean(ghAuthResponse.error),
-              exitCode: ghAuthResponse.data?.exit_code,
-              stdout: sliceOutput(ghAuthResponse.data?.stdout, 500),
-              stderr: sliceOutput(ghAuthResponse.data?.stderr, 500),
+              exitCode: ghAuthResult.exit_code,
+              stdout: sliceOutput(ghAuthResult.stdout, 500),
+              stderr: sliceOutput(ghAuthResult.stderr, 500),
             });
 
-            if (ghAuthResponse.error) {
-              lastError = new Error(`API error: ${JSON.stringify(ghAuthResponse.error)}`);
-              console.error("[preview-jobs] GitHub auth API error", {
-                previewRunId,
-                attempt,
-                error: ghAuthResponse.error,
-              });
-            } else if (ghAuthResponse.data?.exit_code === 0) {
+            if (ghAuthResult.exit_code === 0) {
               console.log("[preview-jobs] GitHub authentication configured successfully", {
                 previewRunId,
                 attempt,
-                stdout: sliceOutput(ghAuthResponse.data?.stdout, 500),
-                stderr: sliceOutput(ghAuthResponse.data?.stderr, 500),
+                stdout: sliceOutput(ghAuthResult.stdout, 500),
+                stderr: sliceOutput(ghAuthResult.stderr, 500),
               });
               authSucceeded = true;
               break;
             } else {
-              const errorMessage = ghAuthResponse.data?.stderr || ghAuthResponse.data?.stdout || "Unknown error";
+              const errorMessage = ghAuthResult.stderr || ghAuthResult.stdout || "Unknown error";
               lastError = new Error(`GitHub auth failed: ${errorMessage.slice(0, 500)}`);
               console.warn("[preview-jobs] GitHub auth command failed", {
                 previewRunId,
                 attempt,
-                exitCode: ghAuthResponse.data?.exit_code,
-                stderr: sliceOutput(ghAuthResponse.data?.stderr, 200),
-                stdout: sliceOutput(ghAuthResponse.data?.stdout, 200),
+                exitCode: ghAuthResult.exit_code,
+                stderr: sliceOutput(ghAuthResult.stderr, 200),
+                stdout: sliceOutput(ghAuthResult.stdout, 200),
               });
             }
 
@@ -1548,23 +1318,17 @@ export async function runPreviewJob(
     });
 
     // Fetch the latest changes from origin (fetch all refs)
-    const fetchResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instance.id },
-      body: {
-        command: ["git", "-C", repoDir, "fetch", "origin"],
-      },
-    });
+    const fetchResult = await instance.exec(`git -C ${repoDir} fetch origin`);
 
-    if (fetchResponse.error || fetchResponse.data?.exit_code !== 0) {
+    if (fetchResult.exit_code !== 0) {
       console.error("[preview-jobs] Fetch failed", {
         previewRunId,
-        exitCode: fetchResponse.data?.exit_code,
-        stdout: fetchResponse.data?.stdout,
-        stderr: fetchResponse.data?.stderr,
+        exitCode: fetchResult.exit_code,
+        stdout: fetchResult.stdout,
+        stderr: fetchResult.stderr,
       });
       throw new Error(
-        `Failed to fetch from origin (exit ${fetchResponse.data?.exit_code}): ${fetchResponse.data?.stderr || fetchResponse.data?.stdout}`
+        `Failed to fetch from origin (exit ${fetchResult.exit_code}): ${fetchResult.stderr || fetchResult.stdout}`
       );
     }
 
@@ -1577,21 +1341,17 @@ export async function runPreviewJob(
     // This ensures tools like Claude that run `git diff main..branch` use fresh refs
     // Unlike `git pull`, this updates the ref without requiring checkout or modifying working directory
     const defaultBranch = config.repoDefaultBranch || "main";
-    const updateDefaultBranchResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instance.id },
-      body: {
-        command: ["git", "-C", repoDir, "fetch", "origin", `${defaultBranch}:${defaultBranch}`],
-      },
-    });
+    const updateDefaultBranchResult = await instance.exec(
+      `git -C ${repoDir} fetch origin '${defaultBranch}:${defaultBranch}'`
+    );
 
-    if (updateDefaultBranchResponse.error || updateDefaultBranchResponse.data?.exit_code !== 0) {
+    if (updateDefaultBranchResult.exit_code !== 0) {
       // Non-fatal: log warning but continue - the origin/main ref is still available
       console.warn("[preview-jobs] Failed to update local default branch ref", {
         previewRunId,
         defaultBranch,
-        exitCode: updateDefaultBranchResponse.data?.exit_code,
-        stderr: sliceOutput(updateDefaultBranchResponse.data?.stderr),
+        exitCode: updateDefaultBranchResult.exit_code,
+        stderr: sliceOutput(updateDefaultBranchResult.stderr),
       });
     } else {
       console.log("[preview-jobs] Updated local default branch ref", {
@@ -1603,8 +1363,7 @@ export async function runPreviewJob(
     // Stash any local changes and pull latest from origin before checkout
     // This ensures the working directory is clean and up-to-date with origin
     await stashLocalChanges({
-      morphClient,
-      instanceId: instance.id,
+      instance,
       repoDir,
       previewRunId,
       headSha: run.headSha,
@@ -1617,33 +1376,26 @@ export async function runPreviewJob(
       repoDir,
     });
 
-    const pullResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instance.id },
-      body: {
-        command: ["git", "-C", repoDir, "pull", "--rebase", "origin"],
-      },
-    });
+    const pullResult = await instance.exec(`git -C ${repoDir} pull --rebase origin`);
 
-    if (pullResponse.error || pullResponse.data?.exit_code !== 0) {
+    if (pullResult.exit_code !== 0) {
       // Non-fatal: log warning but continue - we may be in detached HEAD state
       // or the current branch may not track a remote
       console.warn("[preview-jobs] Failed to pull from origin (may be expected)", {
         previewRunId,
-        exitCode: pullResponse.data?.exit_code,
-        stderr: sliceOutput(pullResponse.data?.stderr),
-        stdout: sliceOutput(pullResponse.data?.stdout),
+        exitCode: pullResult.exit_code,
+        stderr: sliceOutput(pullResult.stderr),
+        stdout: sliceOutput(pullResult.stdout),
       });
     } else {
       console.log("[preview-jobs] Pulled latest from origin", {
         previewRunId,
-        stdout: sliceOutput(pullResponse.data?.stdout),
+        stdout: sliceOutput(pullResult.stdout),
       });
     }
 
     await ensureCommitAvailable({
-      morphClient,
-      instanceId: instance.id,
+      instance,
       repoDir,
       commitSha: run.headSha,
       prNumber: run.prNumber,
@@ -1667,27 +1419,10 @@ export async function runPreviewJob(
     // Use -f (force) to discard any local modifications that would conflict
     // This is safe because we already stashed changes above
     const checkoutCmd = run.headRef
-      ? ["git", "-C", repoDir, "checkout", "-f", "-B", run.headRef, run.headSha]
-      : ["git", "-C", repoDir, "checkout", "-f", run.headSha];
+      ? `git -C ${repoDir} checkout -f -B '${run.headRef}' '${run.headSha}'`
+      : `git -C ${repoDir} checkout -f '${run.headSha}'`;
 
-    const checkoutResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instance.id },
-      body: {
-        command: checkoutCmd,
-      },
-    });
-
-    if (checkoutResponse.error) {
-      throw new Error(
-        `Failed to checkout PR branch ${run.headSha}: ${JSON.stringify(checkoutResponse.error)}`,
-      );
-    }
-
-    const checkoutResult = checkoutResponse.data;
-    if (!checkoutResult) {
-      throw new Error("Checkout command returned no data");
-    }
+    const checkoutResult = await instance.exec(checkoutCmd);
 
     if (checkoutResult.exit_code !== 0) {
       console.error("[preview-jobs] Checkout failed - full output", {
@@ -1739,21 +1474,14 @@ export async function runPreviewJob(
         payloadLength: envVarsContent.length,
       });
       // Call envctl with explicit base64 argument to avoid shell quoting issues
-      const envctlResponse = await execInstanceInstanceIdExecPost({
-        client: morphClient,
-        path: { instance_id: instance.id },
-        body: {
-          command: ["envctl", "load", "--base64", envBase64],
-        },
-      });
+      const envctlResult = await instance.exec(`envctl load --base64 '${envBase64}'`);
 
-      if (envctlResponse.error || envctlResponse.data?.exit_code !== 0) {
+      if (envctlResult.exit_code !== 0) {
         console.error("[preview-jobs] Failed to apply environment variables", {
           previewRunId,
-          exitCode: envctlResponse.data?.exit_code,
-          stderr: sliceOutput(envctlResponse.data?.stderr),
-          stdout: sliceOutput(envctlResponse.data?.stdout),
-          error: envctlResponse.error,
+          exitCode: envctlResult.exit_code,
+          stderr: sliceOutput(envctlResult.stderr),
+          stdout: sliceOutput(envctlResult.stdout),
         });
         throw new Error("Failed to apply environment variables via envctl");
       }
@@ -1763,22 +1491,20 @@ export async function runPreviewJob(
         taskRunId,
         convexUrl,
         cmuxIsStaging: env.CMUX_IS_STAGING ?? "true",
-        envctlStdout: sliceOutput(envctlResponse.data?.stdout),
-        envctlStderr: sliceOutput(envctlResponse.data?.stderr),
+        envctlStdout: sliceOutput(envctlResult.stdout),
+        envctlStderr: sliceOutput(envctlResult.stderr),
       });
 
       // Start tmux session and run maintenance/dev scripts if provided
       await ensureTmuxSession({
-        morphClient,
-        instanceId: instance.id,
+        instance,
         repoDir,
         previewRunId,
       });
 
       if (environment.maintenanceScript) {
         await runScriptInTmuxWindow({
-          morphClient,
-          instanceId: instance.id,
+          instance,
           repoDir,
           windowName: MAINTENANCE_WINDOW_NAME,
           scriptContent: environment.maintenanceScript,
@@ -1789,8 +1515,7 @@ export async function runPreviewJob(
 
       if (environment.devScript) {
         await runScriptInTmuxWindow({
-          morphClient,
-          instanceId: instance.id,
+          instance,
           repoDir,
           windowName: DEV_WINDOW_NAME,
           scriptContent: environment.devScript,
@@ -1849,8 +1574,7 @@ export async function runPreviewJob(
 
       // Get changed files via Morph exec
       const changedFiles = await getChangedFiles({
-        morphClient,
-        instanceId: instance.id,
+        instance,
         repoDir,
         baseBranch: defaultBranch,
         previewRunId,
@@ -1879,8 +1603,7 @@ export async function runPreviewJob(
         // Run the screenshot collector via Morph exec
         const collectorResult = await runScreenshotCollector({
           ctx,
-          morphClient,
-          instanceId: instance.id,
+          instance,
           collectorUrl: collectorRelease.url,
           options: screenshotOptions,
           previewRunId,
@@ -1913,8 +1636,7 @@ export async function runPreviewJob(
             try {
               // Read the screenshot file from Morph VM
               const fileData = await readFileFromMorph({
-                morphClient,
-                instanceId: instance.id,
+                instance,
                 filePath: screenshot.path,
               });
 
@@ -2113,7 +1835,7 @@ export async function runPreviewJob(
   } finally {
     if (instance && !keepInstanceForTaskRun) {
       try {
-        await stopMorphInstance(morphClient, instance.id);
+        await instance.stop();
       } catch (stopError) {
         console.warn("[preview-jobs] Failed to stop Morph instance", {
           previewRunId,

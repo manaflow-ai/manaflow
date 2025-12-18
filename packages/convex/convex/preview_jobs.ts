@@ -1,7 +1,6 @@
-import {
-  createMorphCloudClient,
-  stopInstanceInstanceInstanceIdDelete,
-} from "@cmux/morphcloud-openapi-client";
+"use node";
+
+import { getMorphClient } from "../_shared/morph";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
@@ -42,8 +41,8 @@ export const stopPreviewInstance = internalAction({
       return;
     }
 
-    const morphApiKey = process.env.MORPH_API_KEY;
-    if (!morphApiKey) {
+    const morphClient = getMorphClient();
+    if (!morphClient) {
       console.warn(
         "[preview-jobs] Cannot stop Morph instance without MORPH_API_KEY",
         {
@@ -53,15 +52,11 @@ export const stopPreviewInstance = internalAction({
       );
       return;
     }
-
-    const morphClient = createMorphCloudClient({ auth: morphApiKey });
     const stoppedAt = Date.now();
 
     try {
-      await stopInstanceInstanceInstanceIdDelete({
-        client: morphClient,
-        path: { instance_id: containerName },
-      });
+      const instance = await morphClient.instances.get({ instanceId: containerName });
+      await instance.stop();
     } catch (error) {
       console.error("[preview-jobs] Failed to stop Morph instance", {
         previewRunId: previewRun._id,
