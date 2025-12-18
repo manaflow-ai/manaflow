@@ -814,6 +814,9 @@ class CmuxTerminalManager {
 
 let terminalManager: CmuxTerminalManager;
 let initializationPromise: Promise<void> | null = null;
+// Set to true after initial sync if terminals were restored from server
+// Used to skip the automatic provideTerminalProfile call on startup
+let skipNextAutoCreate = false;
 
 class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
   async provideTerminalProfile(
@@ -832,8 +835,15 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       }
     }
 
-    // Always create a new terminal when profile is invoked
-    // Duplicate prevention is handled by _pendingCreations set
+    // Skip auto-creation on startup if terminals were restored from state_sync
+    // This prevents creating a duplicate terminal when VSCode restores terminal panel state
+    if (skipNextAutoCreate) {
+      console.log('[cmux] provideTerminalProfile: skipping auto-create, terminals restored from server');
+      skipNextAutoCreate = false;
+      return undefined;
+    }
+
+    // Create a new terminal when explicitly requested by user
     const result = await terminalManager.createPtyAndGetTerminal();
     if (!result) {
       console.error('[cmux] Failed to create PTY for profile');
@@ -871,6 +881,13 @@ export function activateTerminal(context: vscode.ExtensionContext) {
     console.log('[cmux] Initialization complete');
     initializationPromise = null; // Clear once done
     await terminalManager.waitForInitialSync();
+
+    // If terminals were restored from server, skip the next auto-create
+    // This prevents VSCode from creating a duplicate terminal on startup
+    if (terminalManager.hasTerminals()) {
+      console.log('[cmux] Terminals restored from server, will skip next auto-create');
+      skipNextAutoCreate = true;
+    }
   }).catch((err) => {
     console.error('[cmux] Initialization failed:', err);
     initializationPromise = null; // Clear on error too
