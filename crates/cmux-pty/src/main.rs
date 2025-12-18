@@ -669,6 +669,7 @@ fn create_pty_session_inner(
     cmd.cwd(&request.cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    cmd.env("SHELL", &request.shell);
 
     if let Some(env) = &request.env {
         for (key, value) in env {
