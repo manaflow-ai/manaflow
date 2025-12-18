@@ -418,9 +418,9 @@ class CmuxTerminalManager {
   // Used to detect when pty_created events should be skipped
   private _httpPendingCount = 0;
 
-  // Map of terminal name → pty ID for HTTP-created terminals
-  // Used to set up close listener when VSCode creates the terminal
-  private _httpCreatedTerminals = new Map<string, string>();
+  // Map of terminal name → {ptyId, pty} for terminals created via provideTerminalProfile
+  // Used to set up tracking when VSCode creates the terminal
+  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo }>();
 
   // Queue of PTYs to restore - provideTerminalProfile consumes these
   // This allows VSCode to create terminals via profile provider while reusing existing PTYs
@@ -724,16 +724,11 @@ class CmuxTerminalManager {
       // Mark as pending to prevent duplicate from pty_created event
       this._pendingCreations.add(data.id);
 
-      // Store name → ID mapping so we can set up close listener in onDidOpenTerminal
-      this._httpCreatedTerminals.set(data.name, data.id);
-
       // Create pseudoterminal for this PTY
       const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
 
-      // Clean up pending after a short delay
-      setTimeout(() => {
-        this._pendingCreations.delete(data.id);
-      }, 1000);
+      // Store for tracking when terminal opens
+      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data });
 
       return { pty, name: data.name, id: data.id };
     } catch (err) {
@@ -783,49 +778,75 @@ class CmuxTerminalManager {
   }
 
   /**
-   * Track a terminal restored via provideTerminalProfile.
-   * Sets up name → ID mapping so we can add close listener when terminal opens.
+   * Track a terminal created via provideTerminalProfile.
+   * Stores the pty so we can set up proper tracking when terminal opens.
    */
-  trackRestoredTerminal(info: TerminalInfo): void {
-    this._httpCreatedTerminals.set(info.name, info.id);
+  trackPendingTerminal(info: TerminalInfo, pty: CmuxPseudoterminal): void {
+    this._pendingTerminalSetup.set(info.name, { id: info.id, pty, info });
   }
 
   /**
-   * Handle terminal open event for HTTP-created terminals.
-   * Sets up close listener since these bypass _createTerminalForPty.
+   * Create terminals for any remaining PTYs in the restore queue.
+   * Called after provideTerminalProfile has had a chance to consume from queue.
+   * Handles edge cases:
+   * - Terminal panel was closed (VSCode doesn't call provideTerminalProfile)
+   * - Multiple PTYs but VSCode only calls provideTerminalProfile once
+   */
+  drainRestoreQueue(): void {
+    if (this._restoreQueue.length === 0) {
+      console.log('[cmux] Restore queue empty, nothing to drain');
+      return;
+    }
+
+    console.log(`[cmux] Draining restore queue: ${this._restoreQueue.length} terminals`);
+    while (this._restoreQueue.length > 0) {
+      const info = this._restoreQueue.shift()!;
+      // Check if terminal was already created (by provideTerminalProfile or pty_created event)
+      if (this._terminals.has(info.id)) {
+        console.log(`[cmux] Terminal ${info.id} already exists, skipping`);
+        continue;
+      }
+      this._createTerminalForPty(info, false); // Don't focus
+    }
+  }
+
+  /**
+   * Handle terminal open event for terminals created via provideTerminalProfile.
+   * Sets up tracking and close listener using the already-created pty.
    */
   handleTerminalOpened(terminal: vscode.Terminal): void {
-    const ptyId = this._httpCreatedTerminals.get(terminal.name);
-    if (!ptyId) return;
+    const pending = this._pendingTerminalSetup.get(terminal.name);
+    if (!pending) return;
 
-    console.log(`[cmux] Setting up close listener for HTTP-created terminal ${terminal.name} (${ptyId})`);
-    this._httpCreatedTerminals.delete(terminal.name);
+    console.log(`[cmux] Setting up tracking for terminal ${terminal.name} (${pending.id})`);
+    this._pendingTerminalSetup.delete(terminal.name);
+    this._pendingCreations.delete(pending.id);
 
-    const config = getConfig();
-
-    // Create managed terminal entry
-    const existingPty = this._terminals.get(ptyId)?.pty;
-    if (!existingPty) {
-      // Create a placeholder - the pty was already created in createPtyAndGetTerminal
-      const pty = new CmuxPseudoterminal(config.serverUrl, ptyId);
-      const managed: ManagedTerminal = {
-        terminal,
-        pty,
-        info: { id: ptyId, name: terminal.name, index: 0, shell: '', cwd: '', cols: 80, rows: 24, created_at: Date.now(), alive: true, pid: 0 },
-      };
-      this._terminals.set(ptyId, managed);
-
-      // Set up close listener - clean up local state only
-      // PTYs persist on the server (like tmux)
-      const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
-        if (closedTerminal === terminal) {
-          console.log(`[cmux] HTTP-created terminal ${ptyId} closed (local cleanup only)`);
-          this._terminals.delete(ptyId);
-          closeListener.dispose();
-        }
-      });
-      this._disposables.push(closeListener);
+    // Skip if already tracked (shouldn't happen, but be safe)
+    if (this._terminals.has(pending.id)) {
+      console.log(`[cmux] Terminal ${pending.id} already tracked, skipping`);
+      return;
     }
+
+    // Create managed terminal entry using the existing pty (don't create a new one!)
+    const managed: ManagedTerminal = {
+      terminal,
+      pty: pending.pty,
+      info: pending.info,
+    };
+    this._terminals.set(pending.id, managed);
+
+    // Set up close listener - clean up local state only
+    // PTYs persist on the server (like tmux)
+    const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
+      if (closedTerminal === terminal) {
+        console.log(`[cmux] Terminal ${pending.id} closed (local cleanup only)`);
+        this._terminals.delete(pending.id);
+        closeListener.dispose();
+        pending.pty.dispose();
+      }
+    });
+    this._disposables.push(closeListener);
   }
 
   dispose(): void {
@@ -869,9 +890,9 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       console.log(`[cmux] provideTerminalProfile: restoring queued PTY ${queuedPty.id} (${queuedPty.name})`);
       const pty = new CmuxPseudoterminal(config.serverUrl, queuedPty.id);
 
-      // Track this terminal - the profile provider bypasses _createTerminalForPty
-      // so we need to set up tracking when the terminal opens
-      terminalManager.trackRestoredTerminal(queuedPty);
+      // Track this terminal with its pty - when terminal opens, we'll set up
+      // proper tracking without creating a duplicate WebSocket connection
+      terminalManager.trackPendingTerminal(queuedPty, pty);
 
       return new vscode.TerminalProfile({
         name: queuedPty.name,
@@ -917,6 +938,13 @@ export function activateTerminal(context: vscode.ExtensionContext) {
     console.log('[cmux] Initialization complete');
     initializationPromise = null; // Clear once done
     await terminalManager.waitForInitialSync();
+
+    // Schedule queue drain to run after provideTerminalProfile has consumed from queue.
+    // Using setTimeout(0) ensures this runs after the current microtask queue empties,
+    // giving provideTerminalProfile's await continuation a chance to execute first.
+    // This handles edge cases where VSCode doesn't call provideTerminalProfile
+    // (terminal panel was closed) or calls it fewer times than queued PTYs.
+    setTimeout(() => terminalManager.drainRestoreQueue(), 0);
   }).catch((err) => {
     console.error('[cmux] Initialization failed:', err);
     initializationPromise = null; // Clear on error too
