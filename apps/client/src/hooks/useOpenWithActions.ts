@@ -58,8 +58,13 @@ export function useOpenWithActions({
             vscodeUrl,
             localServeWebOrigin,
           );
-          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
-          window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+          // If the URL already has a folder parameter, use it as-is.
+          // Otherwise, append the default /root/workspace folder.
+          const url = new URL(normalizedUrl);
+          if (!url.searchParams.has("folder")) {
+            url.searchParams.set("folder", "/root/workspace");
+          }
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
           resolve();
         } else if (
           socket &&
