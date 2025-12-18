@@ -265,12 +265,10 @@ impl PtySession {
         if len > 100 {
             info!("[session:{}] Queueing large input: {} bytes", self.id, len);
         }
-        self.input_tx
-            .send(data.as_bytes().to_vec())
-            .map_err(|e| {
-                error!("[session:{}] Input channel send failed: {}", self.id, e);
-                anyhow::anyhow!("PTY input channel closed")
-            })?;
+        self.input_tx.send(data.as_bytes().to_vec()).map_err(|e| {
+            error!("[session:{}] Input channel send failed: {}", self.id, e);
+            anyhow::anyhow!("PTY input channel closed")
+        })?;
         Ok(())
     }
 
@@ -289,7 +287,8 @@ impl PtySession {
         *self.cols.write() = cols;
         *self.rows.write() = rows;
         let inner = self.inner.lock();
-        inner.master
+        inner
+            .master
             .resize(PtySize {
                 rows,
                 cols,
@@ -445,14 +444,20 @@ fn spawn_pty_writer_thread(
                 if let Err(e) = writer.write_all(chunk) {
                     error!(
                         "[writer:{}] Write error on chunk {}: {} (errno: {:?})",
-                        session_id, chunk_num, e, e.raw_os_error()
+                        session_id,
+                        chunk_num,
+                        e,
+                        e.raw_os_error()
                     );
                     return;
                 }
                 if let Err(e) = writer.flush() {
                     error!(
                         "[writer:{}] Flush error on chunk {}: {} (errno: {:?})",
-                        session_id, chunk_num, e, e.raw_os_error()
+                        session_id,
+                        chunk_num,
+                        e,
+                        e.raw_os_error()
                     );
                     return;
                 }
@@ -616,7 +621,10 @@ async fn spawn_pty_reader(
                 }
                 error!(
                     "[reader:{}] Read error: {} (kind: {:?}, errno: {:?})",
-                    session_id, e, e.kind(), e.raw_os_error()
+                    session_id,
+                    e,
+                    e.kind(),
+                    e.raw_os_error()
                 );
                 break;
             }
@@ -626,11 +634,12 @@ async fn spawn_pty_reader(
     // Get exit code
     let exit_code = {
         let mut inner = session.inner.lock();
-        inner.child.try_wait().ok().flatten().map(|s| {
-            s.exit_code()
-                .try_into()
-                .unwrap_or(1)
-        })
+        inner
+            .child
+            .try_wait()
+            .ok()
+            .flatten()
+            .map(|s| s.exit_code().try_into().unwrap_or(1))
     };
 
     info!(
@@ -713,7 +722,10 @@ fn create_pty_session_inner(
         .map_err(|e| ServerError::PtySpawnError(e.to_string()))?;
 
     let session_id = Uuid::new_v4().to_string();
-    let name = request.name.clone().unwrap_or_else(|| state.get_next_terminal_name(&request.shell));
+    let name = request
+        .name
+        .clone()
+        .unwrap_or_else(|| state.get_next_terminal_name(&request.shell));
 
     let created_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -886,12 +898,10 @@ async fn delete_session(
 
     let (session, remaining) = {
         let mut sessions = state.sessions.write();
-        let session = sessions
-            .remove(&session_id)
-            .ok_or_else(|| {
-                warn!("[http] Session not found: {}", session_id);
-                ServerError::SessionNotFound(session_id.clone())
-            })?;
+        let session = sessions.remove(&session_id).ok_or_else(|| {
+            warn!("[http] Session not found: {}", session_id);
+            ServerError::SessionNotFound(session_id.clone())
+        })?;
         (session, sessions.len())
     };
 
@@ -973,10 +983,7 @@ async fn handle_event_websocket(socket: WebSocket, state: Arc<AppState>) {
 
             if let Ok(json) = serde_json::to_string(&event) {
                 if sender.send(Message::Text(json)).await.is_err() {
-                    warn!(
-                        "[events-ws:{}] Failed to send event, closing",
-                        ws_id_clone
-                    );
+                    warn!("[events-ws:{}] Failed to send event, closing", ws_id_clone);
                     break;
                 }
             }
@@ -1237,10 +1244,7 @@ async fn handle_terminal_websocket(
 
                 if let Ok(text) = String::from_utf8(data) {
                     if let Err(e) = session.write_input(&text) {
-                        error!(
-                            "[term-ws:{}] Failed to write to PTY: {}",
-                            session_id, e
-                        );
+                        error!("[term-ws:{}] Failed to write to PTY: {}", session_id, e);
                     }
                 }
             }
@@ -1252,12 +1256,13 @@ async fn handle_terminal_websocket(
                         if let Some(typ) = ctrl.get("type").and_then(|t| t.as_str()) {
                             match typ {
                                 "resize" => {
-                                    let cols = ctrl.get("cols").and_then(|c| c.as_u64()).unwrap_or(80) as u16;
-                                    let rows = ctrl.get("rows").and_then(|r| r.as_u64()).unwrap_or(24) as u16;
-                                    info!(
-                                        "[term-ws:{}] Resize: {}x{}",
-                                        session_id, cols, rows
-                                    );
+                                    let cols =
+                                        ctrl.get("cols").and_then(|c| c.as_u64()).unwrap_or(80)
+                                            as u16;
+                                    let rows =
+                                        ctrl.get("rows").and_then(|r| r.as_u64()).unwrap_or(24)
+                                            as u16;
+                                    info!("[term-ws:{}] Resize: {}x{}", session_id, cols, rows);
                                     if let Err(e) = session.resize(cols, rows) {
                                         error!(
                                             "[term-ws:{}] Failed to resize PTY: {}",
@@ -1296,10 +1301,7 @@ async fn handle_terminal_websocket(
                 }
 
                 if let Err(e) = session.write_input(&text) {
-                    error!(
-                        "[term-ws:{}] Failed to write to PTY: {}",
-                        session_id, e
-                    );
+                    error!("[term-ws:{}] Failed to write to PTY: {}", session_id, e);
                 }
             }
             Ok(Message::Close(reason)) => {
@@ -1311,10 +1313,7 @@ async fn handle_terminal_websocket(
             }
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => continue,
             Err(e) => {
-                warn!(
-                    "[term-ws:{}] WebSocket receive error: {}",
-                    session_id, e
-                );
+                warn!("[term-ws:{}] WebSocket receive error: {}", session_id, e);
                 break;
             }
         }
@@ -1382,9 +1381,7 @@ async fn main() -> Result<()> {
     eprintln!("[pty-server] Server running on {}", addr);
     info!("PTY server running on {}", addr);
 
-    axum::serve(listener, app)
-        .await
-        .context("Server error")?;
+    axum::serve(listener, app).await.context("Server error")?;
 
     Ok(())
 }
@@ -1419,7 +1416,12 @@ mod tests {
         let app = create_test_app();
 
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -1431,7 +1433,12 @@ mod tests {
         let app = create_test_app();
 
         let response = app
-            .oneshot(Request::builder().uri("/sessions").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -1494,7 +1501,11 @@ mod tests {
         // Test writing moderate input (1KB) - should work without blocking
         let input = "a".repeat(1000);
         let result = session.write_input(&input);
-        assert!(result.is_ok(), "Moderate input should not fail: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Moderate input should not fail: {:?}",
+            result.err()
+        );
 
         session.kill();
     }
@@ -1546,12 +1557,20 @@ mod tests {
         // Test with 10KB of input - should work smoothly with new architecture
         let large_input = "a".repeat(10_000);
         let result = session.write_input(&large_input);
-        assert!(result.is_ok(), "Large input should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Large input should succeed: {:?}",
+            result.err()
+        );
 
         // Test with 50KB of input
         let very_large_input = "b".repeat(50_000);
         let result = session.write_input(&very_large_input);
-        assert!(result.is_ok(), "Very large input should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Very large input should succeed: {:?}",
+            result.err()
+        );
 
         // Give time for the writer thread to process
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -1579,7 +1598,12 @@ mod tests {
         for i in 0..5 {
             let paste = format!("# Paste {} {}\n", i, "x".repeat(5000));
             let result = session.write_input(&paste);
-            assert!(result.is_ok(), "Paste {} should succeed: {:?}", i, result.err());
+            assert!(
+                result.is_ok(),
+                "Paste {} should succeed: {:?}",
+                i,
+                result.err()
+            );
         }
 
         // Give time for processing
@@ -1609,7 +1633,9 @@ mod tests {
         // Write and resize concurrently
         for i in 0..20 {
             session.write_input(&format!("echo line{}\n", i)).unwrap();
-            session.resize(80 + (i as u16 % 40), 24 + (i as u16 % 10)).unwrap();
+            session
+                .resize(80 + (i as u16 % 40), 24 + (i as u16 % 10))
+                .unwrap();
         }
 
         session.kill();
