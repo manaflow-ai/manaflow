@@ -78,7 +78,7 @@ function LayoutComponent() {
       <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
         <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-        <div className="min-w-full md:min-w-0 grow snap-start snap-always">
+        <div className="min-w-full md:min-w-0 grow snap-start snap-always flex flex-col">
           <Suspense fallback={<div>Loading...</div>}>
             <Outlet />
           </Suspense>
