@@ -426,6 +426,11 @@ class CmuxTerminalManager {
   // This allows VSCode to create terminals via profile provider while reusing existing PTYs
   private _restoreQueue: TerminalInfo[] = [];
 
+  // True while initial restore is in progress
+  // Used to skip extra provideTerminalProfile calls during page load
+  // Set to false after drain completes, allowing new terminal creation
+  private _restoreInProgress = false;
+
   private _ptyClient: PtyClient;
   private _disposables: { dispose: () => void }[] = [];
   private _initialized = false;
@@ -549,6 +554,7 @@ class CmuxTerminalManager {
         console.log(`[cmux] Queueing PTY ${info.id} for restore`);
         this._restoreQueue.push(info);
         this._pendingCreations.add(info.id);
+        this._restoreInProgress = true; // Mark restore in progress
       } else {
         // After initial sync, create terminals directly (for reconnection scenarios)
         this._createTerminalForPty(info, false);
@@ -794,7 +800,8 @@ class CmuxTerminalManager {
    */
   drainRestoreQueue(): void {
     if (this._restoreQueue.length === 0) {
-      console.log('[cmux] Restore queue empty, nothing to drain');
+      console.log('[cmux] Restore queue empty, restore complete');
+      this._restoreInProgress = false; // Restore complete, allow new terminal creation
       return;
     }
 
@@ -808,6 +815,14 @@ class CmuxTerminalManager {
       }
       this._createTerminalForPty(info, false); // Don't focus
     }
+    this._restoreInProgress = false; // Restore complete, allow new terminal creation
+  }
+
+  /**
+   * Check if restore is currently in progress.
+   */
+  isRestoreInProgress(): boolean {
+    return this._restoreInProgress;
   }
 
   /**
@@ -870,7 +885,7 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
   ): Promise<vscode.TerminalProfile | undefined> {
     console.log('[cmux] provideTerminalProfile called');
 
-    // Wait for initialization if still in progress
+    // Wait for initialization - this ensures state_sync has populated the queue
     if (initializationPromise) {
       console.log('[cmux] provideTerminalProfile: waiting for initialization...');
       try {
@@ -894,13 +909,32 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       // proper tracking without creating a duplicate WebSocket connection
       terminalManager.trackPendingTerminal(queuedPty, pty);
 
+      // Schedule drain for remaining items after this call completes
+      // Uses queueMicrotask to run after current microtask queue empties
+      queueMicrotask(() => terminalManager.drainRestoreQueue());
+
       return new vscode.TerminalProfile({
         name: queuedPty.name,
         pty,
       });
     }
 
-    // No queued PTYs - create a new terminal
+    // Queue is empty - check if restore is still in progress
+    if (terminalManager.isRestoreInProgress() && terminalManager.hasTerminals()) {
+      // Restore in progress but queue is empty - terminals were consumed by earlier calls
+      // VSCode is asking for an extra one during restore, skip it
+      console.log('[cmux] provideTerminalProfile: restore in progress, focusing existing');
+      const terminals = terminalManager.getTerminals();
+      if (terminals.length > 0) {
+        terminals[0].terminal.show();
+      }
+      // Trigger drain to mark restore complete
+      queueMicrotask(() => terminalManager.drainRestoreQueue());
+      return undefined;
+    }
+
+    // Fresh start with no existing PTYs - create a new terminal
+    console.log('[cmux] provideTerminalProfile: creating new PTY');
     const result = await terminalManager.createPtyAndGetTerminal();
     if (!result) {
       console.error('[cmux] Failed to create PTY for profile');
@@ -934,21 +968,15 @@ export function activateTerminal(context: vscode.ExtensionContext) {
   // Store the initialization promise so the profile provider can wait for it
   // Note: We don't auto-create terminals - VSCode will call provideTerminalProfile
   // when it needs a terminal (based on configurationDefaults setting cmux as default)
+  // IMPORTANT: Don't set initializationPromise = null inside the callback!
+  // That creates a race where provideTerminalProfile sees null before sync completes.
   initializationPromise = terminalManager.initialize().then(async () => {
     console.log('[cmux] Initialization complete');
-    initializationPromise = null; // Clear once done
     await terminalManager.waitForInitialSync();
-
-    // Schedule queue drain to run after provideTerminalProfile has consumed from queue.
-    // Using setTimeout(0) ensures this runs after the current microtask queue empties,
-    // giving provideTerminalProfile's await continuation a chance to execute first.
-    // This handles edge cases where VSCode doesn't call provideTerminalProfile
-    // (terminal panel was closed) or calls it fewer times than queued PTYs.
-    setTimeout(() => terminalManager.drainRestoreQueue(), 0);
+    console.log('[cmux] Initial sync complete, queue ready');
   }).catch((err) => {
     console.error('[cmux] Initialization failed:', err);
-    initializationPromise = null; // Clear on error too
-    throw err; // Re-throw so the provider knows it failed
+    throw err;
   });
 
   // Handle cmux-managed terminals when they open
