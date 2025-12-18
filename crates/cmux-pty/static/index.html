@@ -569,15 +569,19 @@
 
       async function createTerminal() {
         try {
+          // Just POST to create - the WebSocket pty_created event will add it to the UI
           const res = await fetch("/sessions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({})
           });
           const info = await res.json();
-          addSession(info);
-          activateSession(info.id);
-          updateCount(1);
+          // Activate after a short delay to let WebSocket event add the session
+          setTimeout(() => {
+            if (sessions.has(info.id)) {
+              activateSession(info.id);
+            }
+          }, 100);
         } catch (err) {
           console.error("Failed to create terminal:", err);
         }
@@ -585,9 +589,11 @@
 
       async function deleteSession(id) {
         try {
+          // Just DELETE - the WebSocket pty_deleted event will remove it from the UI
           await fetch(`/sessions/${id}`, { method: "DELETE" });
-        } catch {}
-        removeSession(id, true);
+        } catch (err) {
+          console.error("Failed to delete terminal:", err);
+        }
       }
 
       function removeSession(id, updateActive) {
