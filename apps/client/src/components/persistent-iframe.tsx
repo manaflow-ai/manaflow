@@ -446,7 +446,7 @@ export function PersistentIframe({
       {overlayElement && overlayContent && shouldShowOverlay
         ? createPortal(
             <div className={overlayContent.className}>
-              <div className="pointer-events-auto flex flex-col items-center gap-3 text-center">
+              <div className="pointer-events-auto flex flex-col items-center justify-center gap-3 text-center">
                 {overlayContent.node}
                 {resumeMessage ? (
                   <p className="text-sm text-neutral-600 dark:text-neutral-300">
