@@ -52,12 +52,6 @@ enum ServerError {
 
     #[error("Failed to spawn PTY: {0}")]
     PtySpawnError(String),
-
-    #[error("PTY I/O error: {0}")]
-    PtyIoError(String),
-
-    #[error("Internal error: {0}")]
-    Internal(String),
 }
 
 impl IntoResponse for ServerError {
@@ -65,8 +59,6 @@ impl IntoResponse for ServerError {
         let (status, message) = match &self {
             ServerError::SessionNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             ServerError::PtySpawnError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            ServerError::PtyIoError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            ServerError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 
         let body = serde_json::json!({ "error": message });
@@ -195,15 +187,6 @@ enum ClientMessage {
 
     #[serde(rename = "delete_pty")]
     DeletePty { pty_id: String },
-
-    #[serde(rename = "input")]
-    Input { data: String },
-
-    #[serde(rename = "resize")]
-    Resize { cols: u16, rows: u16 },
-
-    #[serde(rename = "signal")]
-    Signal { signal: String },
 }
 
 // =============================================================================
@@ -269,17 +252,6 @@ impl PtySession {
             error!("[session:{}] Input channel send failed: {}", self.id, e);
             anyhow::anyhow!("PTY input channel closed")
         })?;
-        Ok(())
-    }
-
-    /// Try to send input without blocking. Returns error if channel is full.
-    fn try_write_input(&self, data: &str) -> Result<()> {
-        self.input_tx
-            .try_send(data.as_bytes().to_vec())
-            .map_err(|e| {
-                warn!("[session:{}] Input channel try_send failed: {}", self.id, e);
-                anyhow::anyhow!("PTY input channel error: {}", e)
-            })?;
         Ok(())
     }
 
@@ -517,11 +489,9 @@ fn find_utf8_boundary(bytes: &[u8]) -> usize {
     if end == bytes.len() {
         // Find the last non-continuation byte
         for i in (0..bytes.len()).rev() {
-            // Not a continuation byte (doesn't start with 10)
-            if bytes[i] & 0b1100_0000 != 0b1000_0000 {
-                if std::str::from_utf8(&bytes[..i]).is_ok() {
-                    return i;
-                }
+            // Not a continuation byte (doesn't start with 10) and valid UTF-8 up to that point
+            if bytes[i] & 0b1100_0000 != 0b1000_0000 && std::str::from_utf8(&bytes[..i]).is_ok() {
+                return i;
             }
         }
         return 0;
@@ -1124,9 +1094,6 @@ async fn handle_event_websocket(socket: WebSocket, state: Arc<AppState>) {
 
                 state.reindex_sessions();
                 state.broadcast_event(ServerEvent::PtyDeleted { pty_id });
-            }
-            _ => {
-                // Input/Resize/Signal are for terminal-specific connections
             }
         }
     }
