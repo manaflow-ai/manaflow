@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 
 const (
 	apiBaseURL      = "https://0github.com"
-	minSidebarWidth = 36
+	minSidebarWidth = 42
 )
 
 // Styles
@@ -55,6 +56,15 @@ var (
 	removeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("1")).
 			Bold(true)
+
+	// Delta-style line backgrounds
+	addLineBg = lipgloss.NewStyle().
+			Background(lipgloss.Color("22")). // dark green
+			Foreground(lipgloss.Color("15"))
+
+	removeLineBg = lipgloss.NewStyle().
+			Background(lipgloss.Color("52")). // dark red
+			Foreground(lipgloss.Color("15"))
 
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("7"))
@@ -161,6 +171,8 @@ type FileData struct {
 	SkipReason string
 	Lines      []LineData
 	MaxScore   int
+	Additions  int
+	Deletions  int
 }
 
 // SSE Event
@@ -187,22 +199,29 @@ type SSEEvent struct {
 type sseEventMsg SSEEvent
 type sseErrorMsg struct{ err error }
 type sseDoneMsg struct{}
+type githubFilesMsg struct {
+	files []GitHubFile
+}
+type githubErrorMsg struct{ err error }
 
 // Model
 type model struct {
-	owner       string
-	repo        string
-	prNumber    int
-	files       map[string]*FileData
-	fileOrder   []string
-	isComplete  bool
-	err         error
-	width       int
-	height      int
-	activePane  string // "files" or "diff"
-	fileIndex   int
-	diffScroll  int
-	showTooltip bool
+	owner          string
+	repo           string
+	prNumber       int
+	files          map[string]*FileData
+	fileOrder      []string
+	isComplete     bool
+	err            error
+	width          int
+	height         int
+	activePane     string // "files" or "diff"
+	fileIndex      int
+	diffScroll     int
+	showTooltip    bool
+	githubLoaded   bool   // true when GitHub diff is loaded
+	aiAnnotating   bool   // true when 0github is streaming
+	sideBySide     bool   // true for side-by-side view, false for unified
 }
 
 func initialModel(owner, repo string, prNumber int) model {
@@ -218,7 +237,18 @@ func initialModel(owner, repo string, prNumber int) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.startSSE()
+	// First fetch GitHub files, then start 0github SSE for AI annotations
+	return m.fetchGitHubFiles()
+}
+
+func (m model) fetchGitHubFiles() tea.Cmd {
+	return func() tea.Msg {
+		files, err := fetchGitHubPRFiles(m.owner, m.repo, m.prNumber)
+		if err != nil {
+			return githubErrorMsg{err}
+		}
+		return githubFilesMsg{files}
+	}
 }
 
 func (m model) startSSE() tea.Cmd {
@@ -366,6 +396,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "t":
 			m.showTooltip = !m.showTooltip
+		case "s":
+			m.sideBySide = !m.sideBySide
+			m.diffScroll = 0
 		case "j", "down":
 			if m.activePane == "files" {
 				if m.fileIndex < len(m.fileOrder)-1 {
@@ -438,47 +471,89 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+	case githubFilesMsg:
+		// Populate files from GitHub
+		m.githubLoaded = true
+		m.isComplete = true // Mark as complete since we're not using 0github for now
+		for _, ghFile := range msg.files {
+			lines := parseDiffPatch(ghFile.Patch, ghFile.Filename)
+			m.fileOrder = append(m.fileOrder, ghFile.Filename)
+			m.files[ghFile.Filename] = &FileData{
+				FilePath:  ghFile.Filename,
+				Status:    "complete",
+				Lines:     lines,
+				Additions: ghFile.Additions,
+				Deletions: ghFile.Deletions,
+			}
+		}
+		// TODO: Re-enable 0github AI annotations later
+		// m.aiAnnotating = true
+		// return m, listenSSE(sseEventChan)
+		return m, nil
+
+	case githubErrorMsg:
+		m.err = msg.err
+		return m, nil
+
 	case sseEventMsg:
 		event := SSEEvent(msg)
 		switch event.Type {
 		case "file":
-			if _, exists := m.files[event.FilePath]; !exists {
-				m.fileOrder = append(m.fileOrder, event.FilePath)
-				m.files[event.FilePath] = &FileData{
-					FilePath: event.FilePath,
-					Status:   "streaming",
-					Lines:    []LineData{},
-				}
-			} else {
-				m.files[event.FilePath].Status = "streaming"
-			}
-		case "skip":
-			if _, exists := m.files[event.FilePath]; !exists {
-				m.fileOrder = append(m.fileOrder, event.FilePath)
-			}
-			m.files[event.FilePath] = &FileData{
-				FilePath:   event.FilePath,
-				Status:     "skipped",
-				SkipReason: event.Reason,
-				Lines:      []LineData{},
-			}
-		case "line":
+			// Mark file as streaming (AI annotating) - only if file exists from GitHub
 			if file, exists := m.files[event.FilePath]; exists {
-				line := LineData{
-					ChangeType:        event.ChangeType,
-					DiffLine:          event.DiffLine,
-					CodeLine:          event.CodeLine,
-					MostImportantWord: event.MostImportantWord,
-					ShouldReviewWhy:   event.ShouldReviewWhy,
-					Score:             event.Score,
-					ScoreNormalized:   event.ScoreNormalized,
-					OldLineNumber:     event.OldLineNumber,
-					NewLineNumber:     event.NewLineNumber,
+				file.Status = "streaming"
+			}
+			// Don't create new files - GitHub is source of truth
+		case "skip":
+			// Mark file as skipped - only if file exists from GitHub
+			if file, exists := m.files[event.FilePath]; exists {
+				file.Status = "skipped"
+				file.SkipReason = event.Reason
+			}
+			// Don't create new files - GitHub is source of truth
+		case "line":
+			// Overlay AI scores on existing GitHub lines (preserve GitHub order)
+			if file, exists := m.files[event.FilePath]; exists {
+				// Find matching line by line numbers and change type
+				for i := range file.Lines {
+					line := &file.Lines[i]
+					lineMatches := false
+
+					// Match based on change type and corresponding line number
+					switch event.ChangeType {
+					case "add":
+						if line.ChangeType == "add" &&
+							event.NewLineNumber != nil && line.NewLineNumber != nil &&
+							*event.NewLineNumber == *line.NewLineNumber {
+							lineMatches = true
+						}
+					case "delete", "remove":
+						if line.ChangeType == "delete" &&
+							event.OldLineNumber != nil && line.OldLineNumber != nil &&
+							*event.OldLineNumber == *line.OldLineNumber {
+							lineMatches = true
+						}
+					case "context":
+						if line.ChangeType == "context" &&
+							event.OldLineNumber != nil && line.OldLineNumber != nil &&
+							*event.OldLineNumber == *line.OldLineNumber {
+							lineMatches = true
+						}
+					}
+
+					if lineMatches {
+						// Overlay AI annotations onto existing GitHub line
+						line.MostImportantWord = event.MostImportantWord
+						line.ShouldReviewWhy = event.ShouldReviewWhy
+						line.Score = event.Score
+						line.ScoreNormalized = event.ScoreNormalized
+						if event.Score > file.MaxScore {
+							file.MaxScore = event.Score
+						}
+						break
+					}
 				}
-				file.Lines = append(file.Lines, line)
-				if event.Score > file.MaxScore {
-					file.MaxScore = event.Score
-				}
+				// Don't append unmatched lines - GitHub is source of truth for order
 			}
 		case "file-complete":
 			if file, exists := m.files[event.FilePath]; exists {
@@ -490,6 +565,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "complete":
 			m.isComplete = true
+			m.aiAnnotating = false
 			return m, nil
 		case "error":
 			m.err = fmt.Errorf("%s", event.Message)
@@ -498,11 +574,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenSSE(sseEventChan)
 
 	case sseErrorMsg:
-		m.err = msg.err
+		// Don't treat SSE errors as fatal - we still have GitHub data
+		m.aiAnnotating = false
+		m.isComplete = true
 		return m, nil
 
 	case sseDoneMsg:
 		m.isComplete = true
+		m.aiAnnotating = false
 		return m, nil
 	}
 
@@ -512,6 +591,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.width == 0 {
 		return "Loading..."
+	}
+	if !m.githubLoaded && m.err == nil {
+		return "Fetching PR from GitHub..."
 	}
 
 	// Calculate dimensions
@@ -586,8 +668,16 @@ func (m model) renderFileList(width, height int) string {
 
 		iconStyle := lipgloss.NewStyle().Foreground(getStatusColor(file.Status, file.MaxScore))
 
-		// Truncate filename
-		maxNameLen := width - 12
+		// Build additions/deletions string
+		addDelStr := ""
+		if file.Additions > 0 || file.Deletions > 0 {
+			addStr := addStyle.Render(fmt.Sprintf("+%d", file.Additions))
+			delStr := removeStyle.Render(fmt.Sprintf("-%d", file.Deletions))
+			addDelStr = fmt.Sprintf("%s%s", addStr, delStr)
+		}
+
+		// Truncate filename - leave room for +X-Y
+		maxNameLen := width - 20
 		if len(fileName) > maxNameLen {
 			fileName = fileName[:maxNameLen-1] + "…"
 		}
@@ -598,7 +688,7 @@ func (m model) renderFileList(width, height int) string {
 			scoreStr = fmt.Sprintf("%3d", file.MaxScore)
 		}
 
-		line := fmt.Sprintf("%s %-*s %s", iconStyle.Render(icon), maxNameLen, fileName, scoreStr)
+		line := fmt.Sprintf("%s %-*s %s %s", iconStyle.Render(icon), maxNameLen, fileName, addDelStr, scoreStr)
 
 		if isSelected {
 			if isFocused {
@@ -660,11 +750,13 @@ func (m model) renderDiffView(width, height int) string {
 		langTag = fmt.Sprintf(" [%s]", lang)
 	}
 
-	header := fmt.Sprintf("%s%s", arrow, file.FilePath)
-	headerRight := fmt.Sprintf("%d lines%s", len(file.Lines), langTag)
-	if file.MaxScore > 0 {
-		headerRight = fmt.Sprintf("%d lines (max: %d)%s", len(file.Lines), file.MaxScore, langTag)
+	viewMode := "unified"
+	if m.sideBySide {
+		viewMode = "side-by-side"
 	}
+
+	header := fmt.Sprintf("%s%s", arrow, file.FilePath)
+	headerRight := fmt.Sprintf("%s | %d lines%s", viewMode, len(file.Lines), langTag)
 
 	headerLine := lipgloss.JoinHorizontal(lipgloss.Top,
 		headerStyle.Render(header),
@@ -684,15 +776,34 @@ func (m model) renderDiffView(width, height int) string {
 		return borderStyle.Width(width).Height(height).Render(b.String())
 	}
 
-	// Render lines
+	if m.sideBySide {
+		return m.renderSideBySide(&b, file, lang, width, height, isFocused, borderStyle)
+	}
+	return m.renderUnified(&b, file, lang, width, height, isFocused, borderStyle)
+}
+
+func (m model) renderUnified(b *strings.Builder, file *FileData, lang string, width, height int, isFocused bool, borderStyle lipgloss.Style) string {
 	visibleLines := height - 5
 	maxScroll := max(0, len(file.Lines)-visibleLines)
 	if m.diffScroll > maxScroll {
 		m.diffScroll = maxScroll
 	}
 
+	lineWidth := width - 4 // account for border
+
 	for i := m.diffScroll; i < min(m.diffScroll+visibleLines, len(file.Lines)); i++ {
 		line := file.Lines[i]
+
+		// Handle hunk headers specially
+		if line.ChangeType == "hunk" {
+			hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true).
+				Background(lipgloss.Color("236"))
+			hunkText := line.CodeLine
+			hunkPadded := hunkText + strings.Repeat(" ", max(0, lineWidth-len(hunkText)))
+			b.WriteString(hunkStyle.Render(hunkPadded))
+			b.WriteString("\n")
+			continue
+		}
 
 		// Line numbers
 		oldNum := "    "
@@ -704,48 +815,56 @@ func (m model) renderDiffView(width, height int) string {
 			newNum = fmt.Sprintf("%4d", *line.NewLineNumber)
 		}
 
-		// Change indicator
-		var changeChar string
-		var changeStyle lipgloss.Style
-		switch line.ChangeType {
-		case "+":
-			changeChar = "+"
-			changeStyle = addStyle
-		case "-":
-			changeChar = "-"
-			changeStyle = removeStyle
-		default:
-			changeChar = " "
-			changeStyle = dimStyle
-		}
-
-		// Code - syntax highlight + highlight the important token
+		// Code content with syntax highlighting
 		code := line.CodeLine
 		if code == "" {
 			code = line.DiffLine
 		}
 
-		// Apply syntax highlighting and token highlight together
-		code = highlightCodeWithToken(code, lang, line.MostImportantWord, line.Score)
+		// Build the full line with background spanning entire width
+		var lineStr string
+		codeWidth := lineWidth - 12 // 4+1+4+1+1+1 = 12 for "NNNN NNNN X "
 
-		// Truncate if needed (be careful with ANSI codes)
-		maxCodeLen := width - 16
-		visibleLen := lipgloss.Width(code)
-		if visibleLen > maxCodeLen {
-			// Simple truncation - may cut ANSI codes but generally works
-			code = code[:min(len(code), maxCodeLen*2)] + "…"
+		// Pad/truncate code
+		codePadded := code
+		if len(code) < codeWidth {
+			codePadded = code + strings.Repeat(" ", codeWidth-len(code))
+		} else if len(code) > codeWidth {
+			codePadded = code[:codeWidth-1] + "…"
 		}
 
-		lineStr := fmt.Sprintf("%s %s %s %s",
-			dimStyle.Render(oldNum),
-			dimStyle.Render(newNum),
-			changeStyle.Render(changeChar),
-			code,
-		)
+		switch line.ChangeType {
+		case "add", "+":
+			// Syntax highlight with preserved background
+			highlighted := highlightLinePreserveBg(codePadded, lang)
+			// Set background, then content, then padding
+			prefix := fmt.Sprintf("%s %s + ", oldNum, newNum)
+			// Calculate visible width for padding
+			contentWidth := len(prefix) + lipgloss.Width(highlighted)
+			padding := ""
+			if contentWidth < lineWidth {
+				padding = strings.Repeat(" ", lineWidth-contentWidth)
+			}
+			// Wrap entire line in background
+			lineStr = addLineBg.Render(prefix + highlighted + padding)
 
-		// Add tooltip
-		if m.showTooltip && line.Score > 0 && line.ShouldReviewWhy != nil {
-			lineStr += dimStyle.Italic(true).Render(fmt.Sprintf(" # %s", *line.ShouldReviewWhy))
+		case "delete", "remove", "-":
+			highlighted := highlightLinePreserveBg(codePadded, lang)
+			prefix := fmt.Sprintf("%s %s - ", oldNum, newNum)
+			contentWidth := len(prefix) + lipgloss.Width(highlighted)
+			padding := ""
+			if contentWidth < lineWidth {
+				padding = strings.Repeat(" ", lineWidth-contentWidth)
+			}
+			lineStr = removeLineBg.Render(prefix + highlighted + padding)
+
+		default: // context - normal syntax highlighting
+			highlighted := highlightLine(codePadded, lang)
+			lineStr = fmt.Sprintf("%s %s   %s",
+				dimStyle.Render(oldNum),
+				dimStyle.Render(newNum),
+				highlighted,
+			)
 		}
 
 		b.WriteString(lineStr)
@@ -754,25 +873,175 @@ func (m model) renderDiffView(width, height int) string {
 
 	// Scroll indicator
 	if len(file.Lines) > visibleLines {
-		upArrow := " "
-		downArrow := " "
-		if m.diffScroll > 0 {
-			upArrow = "↑"
-		}
-		if m.diffScroll+visibleLines < len(file.Lines) {
-			downArrow = "↓"
-		}
-		hint := ""
-		if isFocused {
-			hint = " (j/k scroll, [/] files)"
-		}
-		b.WriteString(dimStyle.Render(fmt.Sprintf("%s%s Lines %d-%d/%d%s",
-			upArrow, downArrow,
-			m.diffScroll+1, min(m.diffScroll+visibleLines, len(file.Lines)), len(file.Lines),
-			hint)))
+		m.renderScrollIndicator(b, visibleLines, len(file.Lines), isFocused)
 	}
 
 	return borderStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m model) renderSideBySide(b *strings.Builder, file *FileData, lang string, width, height int, isFocused bool, borderStyle lipgloss.Style) string {
+	// Build paired lines for side-by-side view
+	type sidePair struct {
+		left  *LineData // old/deleted
+		right *LineData // new/added
+	}
+
+	var pairs []sidePair
+	var pendingDeletes []*LineData
+
+	for i := range file.Lines {
+		line := &file.Lines[i]
+
+		if line.ChangeType == "hunk" {
+			// Flush pending deletes
+			for _, d := range pendingDeletes {
+				pairs = append(pairs, sidePair{left: d, right: nil})
+			}
+			pendingDeletes = nil
+			pairs = append(pairs, sidePair{left: line, right: line}) // hunk on both sides
+		} else if line.ChangeType == "delete" {
+			pendingDeletes = append(pendingDeletes, line)
+		} else if line.ChangeType == "add" {
+			if len(pendingDeletes) > 0 {
+				// Pair with pending delete
+				pairs = append(pairs, sidePair{left: pendingDeletes[0], right: line})
+				pendingDeletes = pendingDeletes[1:]
+			} else {
+				pairs = append(pairs, sidePair{left: nil, right: line})
+			}
+		} else { // context
+			// Flush pending deletes
+			for _, d := range pendingDeletes {
+				pairs = append(pairs, sidePair{left: d, right: nil})
+			}
+			pendingDeletes = nil
+			pairs = append(pairs, sidePair{left: line, right: line})
+		}
+	}
+	// Flush remaining deletes
+	for _, d := range pendingDeletes {
+		pairs = append(pairs, sidePair{left: d, right: nil})
+	}
+
+	visibleLines := height - 5
+	maxScroll := max(0, len(pairs)-visibleLines)
+	if m.diffScroll > maxScroll {
+		m.diffScroll = maxScroll
+	}
+
+	halfWidth := (width - 3) / 2 // -3 for separator
+	codeWidth := halfWidth - 6   // -6 for line number
+
+	for i := m.diffScroll; i < min(m.diffScroll+visibleLines, len(pairs)); i++ {
+		pair := pairs[i]
+
+		// Handle hunk headers
+		if pair.left != nil && pair.left.ChangeType == "hunk" {
+			hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+			hunkText := pair.left.CodeLine
+			if len(hunkText) > width-4 {
+				hunkText = hunkText[:width-5] + "…"
+			}
+			b.WriteString(hunkStyle.Render(hunkText))
+			b.WriteString("\n")
+			continue
+		}
+
+		// Left side (old)
+		leftStr := m.renderSideLine(pair.left, lang, codeWidth, true)
+		// Right side (new)
+		rightStr := m.renderSideLine(pair.right, lang, codeWidth, false)
+
+		b.WriteString(leftStr)
+		b.WriteString(dimStyle.Render("│"))
+		b.WriteString(rightStr)
+		b.WriteString("\n")
+	}
+
+	// Scroll indicator
+	if len(pairs) > visibleLines {
+		m.renderScrollIndicator(b, visibleLines, len(pairs), isFocused)
+	}
+
+	return borderStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m model) renderSideLine(line *LineData, lang string, codeWidth int, isLeft bool) string {
+	totalWidth := codeWidth + 5 // 4 for line number + 1 space
+
+	if line == nil {
+		// Empty side - fill with spaces
+		return strings.Repeat(" ", totalWidth)
+	}
+
+	// Line number
+	lineNum := "    "
+	if isLeft && line.OldLineNumber != nil {
+		lineNum = fmt.Sprintf("%4d", *line.OldLineNumber)
+	} else if !isLeft && line.NewLineNumber != nil {
+		lineNum = fmt.Sprintf("%4d", *line.NewLineNumber)
+	}
+
+	// Code content
+	code := line.CodeLine
+	if code == "" {
+		code = line.DiffLine
+	}
+
+	// Pad/truncate code
+	codePadded := code
+	if len(code) < codeWidth {
+		codePadded = code + strings.Repeat(" ", codeWidth-len(code))
+	} else if len(code) > codeWidth {
+		codePadded = code[:codeWidth-1] + "…"
+	}
+
+	switch line.ChangeType {
+	case "add", "+":
+		// Syntax highlight with preserved background
+		highlighted := highlightLinePreserveBg(codePadded, lang)
+		prefix := lineNum + " "
+		contentWidth := len(prefix) + lipgloss.Width(highlighted)
+		padding := ""
+		if contentWidth < totalWidth {
+			padding = strings.Repeat(" ", totalWidth-contentWidth)
+		}
+		return addLineBg.Render(prefix + highlighted + padding)
+
+	case "delete", "remove", "-":
+		highlighted := highlightLinePreserveBg(codePadded, lang)
+		prefix := lineNum + " "
+		contentWidth := len(prefix) + lipgloss.Width(highlighted)
+		padding := ""
+		if contentWidth < totalWidth {
+			padding = strings.Repeat(" ", totalWidth-contentWidth)
+		}
+		return removeLineBg.Render(prefix + highlighted + padding)
+
+	default:
+		// Context lines get normal syntax highlighting
+		highlighted := highlightLine(codePadded, lang)
+		return dimStyle.Render(lineNum) + " " + highlighted
+	}
+}
+
+func (m model) renderScrollIndicator(b *strings.Builder, visibleLines, totalLines int, isFocused bool) {
+	upArrow := " "
+	downArrow := " "
+	if m.diffScroll > 0 {
+		upArrow = "↑"
+	}
+	if m.diffScroll+visibleLines < totalLines {
+		downArrow = "↓"
+	}
+	hint := ""
+	if isFocused {
+		hint = " (j/k scroll, s: toggle view)"
+	}
+	b.WriteString(dimStyle.Render(fmt.Sprintf("%s%s Lines %d-%d/%d%s",
+		upArrow, downArrow,
+		m.diffScroll+1, min(m.diffScroll+visibleLines, totalLines), totalLines,
+		hint)))
 }
 
 func (m model) renderStatusBar() string {
@@ -801,8 +1070,12 @@ func (m model) renderStatusBar() string {
 		}
 		status = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(
 			fmt.Sprintf("%d files | %d lines | %d flagged", fileCount, totalLines, flagged))
+	} else if m.aiAnnotating {
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("AI analyzing...")
+	} else if m.githubLoaded {
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Render("GitHub loaded, waiting for AI...")
 	} else {
-		status = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading...")
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading GitHub...")
 	}
 
 	controls := dimStyle.Render(" | Tab: switch | t: tooltips | q: quit")
@@ -871,8 +1144,281 @@ func highlightLine(code, lang string) string {
 	return b.String()
 }
 
+// highlightLinePreserveBg applies syntax highlighting but replaces reset codes
+// to preserve background color. Use this when rendering on colored backgrounds.
+func highlightLinePreserveBg(code, lang string) string {
+	highlighted := highlightLine(code, lang)
+	// Replace [0m (reset all) with [39m (reset foreground only)
+	// This preserves the background color
+	return strings.ReplaceAll(highlighted, "\x1b[0m", "\x1b[39m")
+}
+
+// Git helper functions
+
+// getGitRemoteURL returns the origin remote URL
+func getGitRemoteURL() (string, error) {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("not a git repository or no origin remote: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// parseGitRemote extracts owner/repo from a git remote URL
+func parseGitRemote(remoteURL string) (owner, repo string, err error) {
+	// SSH format: git@github.com:owner/repo.git
+	re := regexp.MustCompile(`git@github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?$`)
+	if matches := re.FindStringSubmatch(remoteURL); matches != nil {
+		return matches[1], matches[2], nil
+	}
+
+	// HTTPS format: https://github.com/owner/repo.git
+	re = regexp.MustCompile(`github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?$`)
+	if matches := re.FindStringSubmatch(remoteURL); matches != nil {
+		return matches[1], matches[2], nil
+	}
+
+	return "", "", fmt.Errorf("could not parse GitHub remote URL: %s", remoteURL)
+}
+
+// getCurrentBranch returns the current git branch name
+func getCurrentBranch() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("could not get current branch: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// GitHubPR represents a PR from the GitHub API
+type GitHubPR struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	Head   struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+}
+
+// GitHubFile represents a file in a PR from the GitHub API
+type GitHubFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"` // added, removed, modified, renamed
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Patch     string `json:"patch"`
+}
+
+// fetchGitHubPRFiles fetches all files in a PR from GitHub API
+func fetchGitHubPRFiles(owner, repo string, prNumber int) ([]GitHubFile, error) {
+	var allFiles []GitHubFile
+	page := 1
+	perPage := 100
+
+	for {
+		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d/files?per_page=%d&page=%d",
+			owner, repo, prNumber, perPage, page)
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+		if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		} else if token := os.Getenv("GH_TOKEN"); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch PR files: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		}
+
+		var files []GitHubFile
+		if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+			return nil, fmt.Errorf("failed to parse PR files: %w", err)
+		}
+
+		allFiles = append(allFiles, files...)
+
+		if len(files) < perPage {
+			break
+		}
+		page++
+	}
+
+	return allFiles, nil
+}
+
+// parseDiffPatch parses a unified diff patch into lines
+func parseDiffPatch(patch, filePath string) []LineData {
+	if patch == "" {
+		return nil
+	}
+
+	var lines []LineData
+	patchLines := strings.Split(patch, "\n")
+
+	var oldLine, newLine int
+
+	for _, line := range patchLines {
+		if len(line) == 0 {
+			continue
+		}
+
+		// Parse hunk header: @@ -start,count +start,count @@
+		if strings.HasPrefix(line, "@@") {
+			re := regexp.MustCompile(`@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+			if matches := re.FindStringSubmatch(line); matches != nil {
+				oldLine, _ = strconv.Atoi(matches[1])
+				newLine, _ = strconv.Atoi(matches[2])
+			}
+			// Add hunk header as context
+			lines = append(lines, LineData{
+				ChangeType: "hunk",
+				DiffLine:   line,
+				CodeLine:   line,
+			})
+			continue
+		}
+
+		var changeType string
+		var codeLine string
+		var oldNum, newNum *int
+
+		if strings.HasPrefix(line, "+") {
+			changeType = "add"
+			codeLine = line[1:]
+			newNum = &newLine
+			newLine++
+		} else if strings.HasPrefix(line, "-") {
+			changeType = "delete"
+			codeLine = line[1:]
+			oldNum = &oldLine
+			oldLine++
+		} else if strings.HasPrefix(line, " ") || len(line) > 0 {
+			changeType = "context"
+			if len(line) > 0 && line[0] == ' ' {
+				codeLine = line[1:]
+			} else {
+				codeLine = line
+			}
+			oldNum = &oldLine
+			newNum = &newLine
+			oldLine++
+			newLine++
+		} else {
+			continue
+		}
+
+		// Copy values to avoid pointer issues
+		var oldNumCopy, newNumCopy *int
+		if oldNum != nil {
+			v := *oldNum
+			oldNumCopy = &v
+		}
+		if newNum != nil {
+			v := *newNum
+			newNumCopy = &v
+		}
+
+		lines = append(lines, LineData{
+			ChangeType:    changeType,
+			DiffLine:      line,
+			CodeLine:      codeLine,
+			OldLineNumber: oldNumCopy,
+			NewLineNumber: newNumCopy,
+		})
+	}
+
+	return lines
+}
+
+// findPRForBranch finds the PR number for a given branch
+func findPRForBranch(owner, repo, branch string) (int, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls?head=%s:%s&state=open",
+		owner, repo, owner, branch)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	// Try to use GITHUB_TOKEN if available
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else if token := os.Getenv("GH_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query GitHub API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var prs []GitHubPR
+	if err := json.NewDecoder(resp.Body).Decode(&prs); err != nil {
+		return 0, fmt.Errorf("failed to parse GitHub response: %w", err)
+	}
+
+	if len(prs) == 0 {
+		return 0, fmt.Errorf("no open PR found for branch '%s'", branch)
+	}
+
+	return prs[0].Number, nil
+}
+
+// detectPRFromCurrentDir detects the PR from the current git directory
+func detectPRFromCurrentDir() (owner, repo string, prNumber int, err error) {
+	remoteURL, err := getGitRemoteURL()
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	owner, repo, err = parseGitRemote(remoteURL)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	branch, err := getCurrentBranch()
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	if branch == "main" || branch == "master" {
+		return "", "", 0, fmt.Errorf("cannot detect PR from main/master branch - please checkout a feature branch or specify PR URL")
+	}
+
+	prNumber, err = findPRForBranch(owner, repo, branch)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	return owner, repo, prNumber, nil
+}
+
 // Parse PR URL
 func parsePRUrl(input string) (owner, repo string, prNumber int, err error) {
+	// Support "." to auto-detect from current directory
+	if input == "." {
+		return detectPRFromCurrentDir()
+	}
+
 	// Full URL: https://github.com/owner/repo/pull/123
 	re := regexp.MustCompile(`(?:github\.com|0github\.com)/([\w.-]+)/([\w.-]+)/pull/(\d+)`)
 	if matches := re.FindStringSubmatch(input); matches != nil {
@@ -887,17 +1433,21 @@ func parsePRUrl(input string) (owner, repo string, prNumber int, err error) {
 		return matches[1], matches[2], prNumber, nil
 	}
 
-	return "", "", 0, fmt.Errorf("invalid PR URL format")
+	return "", "", 0, fmt.Errorf("invalid PR URL format. Use: PR URL, owner/repo#123, or '.' to detect from current repo")
 }
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: 0github <pr-url>")
+		fmt.Println("Usage: 0github <pr-url|.>")
 		fmt.Println("  pr-url: https://github.com/owner/repo/pull/123 or owner/repo#123")
+		fmt.Println("  .     : Auto-detect PR from current git branch")
 		os.Exit(1)
 	}
 
 	if os.Args[1] == "--legend" || os.Args[1] == "-h" || os.Args[1] == "--help" {
+		fmt.Println("\nUsage: 0github <pr-url|.>")
+		fmt.Println("  pr-url: https://github.com/owner/repo/pull/123 or owner/repo#123")
+		fmt.Println("  .     : Auto-detect PR from current git branch")
 		fmt.Println("\nScore Legend:")
 		fmt.Println("    0-10  - Minimal attention needed")
 		fmt.Println("   11-25  - Low attention")
@@ -912,7 +1462,7 @@ func main() {
 		fmt.Println("  Enter/l/→   - Focus diff view")
 		fmt.Println("  h/←         - Focus file list")
 		fmt.Println("  [/]         - Prev/next file")
-		fmt.Println("  t           - Toggle tooltips")
+		fmt.Println("  s           - Toggle unified/side-by-side view")
 		fmt.Println("  g/G         - Go to top/bottom")
 		fmt.Println("  q           - Quit")
 		return
@@ -924,57 +1474,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize SSE channel
-	sseEventChan = make(chan SSEEvent, 100)
+	// Show detected PR info if using "."
+	if os.Args[1] == "." {
+		fmt.Fprintf(os.Stderr, "Detected PR: %s/%s#%d\n", owner, repo, prNumber)
+	}
 
 	m := initialModel(owner, repo, prNumber)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	// Start SSE streaming in background
-	go func() {
-		url := fmt.Sprintf("%s/api/pr-review/simple?repoFullName=%s/%s&prNumber=%d",
-			apiBaseURL, owner, repo, prNumber)
-
-		resp, err := http.Get(url)
-		if err != nil {
-			sseEventChan <- SSEEvent{Type: "error", Message: err.Error()}
-			close(sseEventChan)
-			return
-		}
-		defer resp.Body.Close()
-
-		scanner := bufio.NewScanner(resp.Body)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "" {
-				continue
-			}
-
-			var event SSEEvent
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
-				continue
-			}
-
-			sseEventChan <- event
-		}
-		close(sseEventChan)
-	}()
-
-	// Start listening for events
-	go func() {
-		for event := range sseEventChan {
-			p.Send(sseEventMsg(event))
-		}
-		p.Send(sseDoneMsg{})
-	}()
+	// TODO: Re-enable 0github AI annotations later
+	// sseEventChan = make(chan SSEEvent, 100)
+	// go func() { ... }()
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
