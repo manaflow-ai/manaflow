@@ -820,6 +820,13 @@ class CmuxTerminalManager {
   }
 
   /**
+   * Check if a terminal with the given name is queued for restore.
+   */
+  hasQueuedTerminal(name: string): boolean {
+    return this._restoreQueue.some(t => t.name === name);
+  }
+
+  /**
    * Get a queued PTY to restore, if any.
    * Used by provideTerminalProfile to reuse existing PTYs on startup.
    */
@@ -1190,11 +1197,17 @@ export function deactivateTerminal() {
 /**
  * Check if cmux-pty is managing a terminal with the given name.
  * Used by extension.ts to avoid creating duplicate tmux terminals.
+ * Checks both active terminals and terminals queued for restore.
  */
 export function hasCmuxPtyTerminal(name: string): boolean {
   if (!terminalManager) return false;
+  // Check active terminals
   const terminals = terminalManager.getTerminals();
-  return terminals.some(t => t.info.name === name);
+  if (terminals.some(t => t.info.name === name)) {
+    return true;
+  }
+  // Also check queued terminals (pending restore)
+  return terminalManager.hasQueuedTerminal(name);
 }
 
 /**
