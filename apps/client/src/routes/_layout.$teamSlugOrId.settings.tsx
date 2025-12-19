@@ -36,6 +36,10 @@ const PROVIDER_INFO: Record<string, ProviderInfo> = {
   OPENAI_API_KEY: {
     url: "https://platform.openai.com/api-keys",
   },
+  CODEX_AUTH_JSON: {
+    helpText:
+      "Paste the contents of ~/.codex/auth.json here. This allows Codex to use your OpenAI authentication.",
+  },
   OPENROUTER_API_KEY: {
     url: "https://openrouter.ai/keys",
   },
@@ -878,6 +882,23 @@ function SettingsComponent() {
                             </div>
 
                             <div className="md:w-[min(100%,480px)] md:flex-shrink-0 self-start">
+                              {key.envVar === "CODEX_AUTH_JSON" ? (
+                                <div className="relative">
+                                  <textarea
+                                    id={key.envVar}
+                                    value={apiKeyValues[key.envVar] || ""}
+                                    onChange={(e) =>
+                                      handleApiKeyChange(
+                                        key.envVar,
+                                        e.target.value
+                                      )
+                                    }
+                                    rows={4}
+                                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                                    placeholder='{"token": "...", ...}'
+                                  />
+                                </div>
+                              ) : (
                               <div className="relative">
                                 <input
                                   type={
@@ -946,6 +967,7 @@ function SettingsComponent() {
                                   )}
                                 </button>
                               </div>
+                              )}
                               {originalApiKeyValues[key.envVar] && (
                                 <div className="flex items-center gap-1 mt-1">
                                   <svg

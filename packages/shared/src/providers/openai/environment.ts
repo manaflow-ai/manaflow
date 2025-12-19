@@ -3,6 +3,34 @@ import type {
   EnvironmentResult,
 } from "../common/environment-result";
 
+/**
+ * Apply API keys for OpenAI Codex.
+ * If CODEX_AUTH_JSON is provided, inject it as ~/.codex/auth.json.
+ * This takes precedence over any local auth.json file.
+ */
+export function applyCodexApiKeys(
+  keys: Record<string, string>
+): Partial<EnvironmentResult> {
+  const files: EnvironmentResult["files"] = [];
+
+  const authJson = keys.CODEX_AUTH_JSON;
+  if (authJson) {
+    // Validate that it's valid JSON before injecting
+    try {
+      JSON.parse(authJson);
+      files.push({
+        destinationPath: "$HOME/.codex/auth.json",
+        contentBase64: Buffer.from(authJson).toString("base64"),
+        mode: "600",
+      });
+    } catch {
+      console.warn("CODEX_AUTH_JSON is not valid JSON, skipping injection");
+    }
+  }
+
+  return { files };
+}
+
 export async function getOpenAIEnvironment(
   _ctx: EnvironmentContext
 ): Promise<EnvironmentResult> {
