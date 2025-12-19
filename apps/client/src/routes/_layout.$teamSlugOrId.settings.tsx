@@ -25,6 +25,16 @@ interface ProviderInfo {
   helpText?: string;
 }
 
+// Available models for crown evaluation
+const CROWN_MODELS = [
+  { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+  { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
+  { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
+  { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "anthropic" },
+  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic" },
+  { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: "anthropic" },
+] as const;
+
 const PROVIDER_INFO: Record<string, ProviderInfo> = {
   CLAUDE_CODE_OAUTH_TOKEN: {
     helpText:
@@ -96,6 +106,11 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const [crownSystemPrompt, setCrownSystemPrompt] = useState<string>("");
+  const [originalCrownSystemPrompt, setOriginalCrownSystemPrompt] =
+    useState<string>("");
+  const [crownModel, setCrownModel] = useState<string>("");
+  const [originalCrownModel, setOriginalCrownModel] = useState<string>("");
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -122,6 +137,11 @@ function SettingsComponent() {
   // Query workspace settings
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
+  );
+
+  // Query crown settings
+  const { data: crownSettings } = useQuery(
+    convexQuery(api.crownSettings.get, { teamSlugOrId })
   );
 
   // Initialize form values when data loads
@@ -184,6 +204,16 @@ function SettingsComponent() {
       setOriginalAutoPrEnabled(effective);
     }
   }, [workspaceSettings]);
+
+  // Initialize crown settings when data loads
+  useEffect(() => {
+    if (crownSettings !== undefined) {
+      setCrownSystemPrompt(crownSettings?.systemPrompt || "");
+      setOriginalCrownSystemPrompt(crownSettings?.systemPrompt || "");
+      setCrownModel(crownSettings?.model || "");
+      setOriginalCrownModel(crownSettings?.model || "");
+    }
+  }, [crownSettings]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -281,11 +311,17 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Check crown settings changes
+    const crownSettingsChanged =
+      crownSystemPrompt !== originalCrownSystemPrompt ||
+      crownModel !== originalCrownModel;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      crownSettingsChanged
     );
   };
 
@@ -324,6 +360,20 @@ function SettingsComponent() {
         setOriginalContainerSettingsData(containerSettingsData);
       }
 
+      // Save crown settings if changed
+      if (
+        crownSystemPrompt !== originalCrownSystemPrompt ||
+        crownModel !== originalCrownModel
+      ) {
+        await convex.mutation(api.crownSettings.update, {
+          teamSlugOrId,
+          systemPrompt: crownSystemPrompt || undefined,
+          model: crownModel || undefined,
+        });
+        setOriginalCrownSystemPrompt(crownSystemPrompt);
+        setOriginalCrownModel(crownModel);
+      }
+
       for (const key of apiKeys) {
         const value = apiKeyValues[key.envVar] || "";
         const originalValue = originalApiKeyValues[key.envVar] || "";
@@ -356,17 +406,26 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
-        const actions = [];
-        if (savedCount > 0) {
-          actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
-        }
-        if (deletedCount > 0) {
-          actions.push(
-            `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
-          );
-        }
-        toast.success(`Successfully ${actions.join(" and ")}`);
+      const crownChanged =
+        crownSystemPrompt !== originalCrownSystemPrompt ||
+        crownModel !== originalCrownModel;
+      const workspaceChanged =
+        worktreePath !== originalWorktreePath ||
+        autoPrEnabled !== originalAutoPrEnabled;
+      const containerChanged =
+        containerSettingsData &&
+        originalContainerSettingsData &&
+        JSON.stringify(containerSettingsData) !==
+          JSON.stringify(originalContainerSettingsData);
+
+      if (
+        savedCount > 0 ||
+        deletedCount > 0 ||
+        crownChanged ||
+        workspaceChanged ||
+        containerChanged
+      ) {
+        toast.success("Settings saved successfully");
       } else {
         toast.info("No changes to save");
       }
@@ -657,7 +716,7 @@ function SettingsComponent() {
                   Crown Evaluator
                 </h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 space-y-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -675,6 +734,72 @@ function SettingsComponent() {
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
                   />
+                </div>
+
+                {/* Model Selection */}
+                <div>
+                  <label
+                    htmlFor="crownModel"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Evaluation Model
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Select which AI model to use for evaluating agent solutions. Leave empty to use
+                    the default (GPT-5 Mini if OpenAI key is set, Claude 3.5 Sonnet otherwise).
+                  </p>
+                  <select
+                    id="crownModel"
+                    value={crownModel}
+                    onChange={(e) => setCrownModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
+                  >
+                    <option value="">Default (auto-detect)</option>
+                    <optgroup label="OpenAI (requires OPENAI_API_KEY)">
+                      {CROWN_MODELS.filter((m) => m.provider === "openai").map(
+                        (model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.name}
+                          </option>
+                        )
+                      )}
+                    </optgroup>
+                    <optgroup label="Anthropic (requires ANTHROPIC_API_KEY)">
+                      {CROWN_MODELS.filter((m) => m.provider === "anthropic").map(
+                        (model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.name}
+                          </option>
+                        )
+                      )}
+                    </optgroup>
+                  </select>
+                </div>
+
+                {/* System Prompt */}
+                <div>
+                  <label
+                    htmlFor="crownSystemPrompt"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Custom System Prompt
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Customize the system prompt used when evaluating agent solutions. Leave empty
+                    to use the default prompt. This allows you to tailor evaluation criteria.
+                  </p>
+                  <textarea
+                    id="crownSystemPrompt"
+                    value={crownSystemPrompt}
+                    onChange={(e) => setCrownSystemPrompt(e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
+                    placeholder="You select the best implementation from structured diff inputs and explain briefly why."
+                  />
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
+                    Default: "You select the best implementation from structured diff inputs and
+                    explain briefly why."
+                  </p>
                 </div>
               </div>
             </div>

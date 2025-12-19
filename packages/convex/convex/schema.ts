@@ -667,6 +667,14 @@ const convexSchema = defineSchema({
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
+  crownSettings: defineTable({
+    systemPrompt: v.optional(v.string()), // Custom system prompt for crown evaluation
+    model: v.optional(v.string()), // Model to use for crown evaluation (e.g., "gpt-5-mini", "claude-3-5-sonnet-20241022")
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
 
   // System and user comments attached to a task
   taskComments: defineTable({

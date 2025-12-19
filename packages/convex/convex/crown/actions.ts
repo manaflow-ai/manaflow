@@ -15,8 +15,17 @@ import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
 
-const OPENAI_CROWN_MODEL = "gpt-5-mini";
-const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
+const DEFAULT_OPENAI_CROWN_MODEL = "gpt-5-mini";
+const DEFAULT_ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
+
+// Models that use OpenAI provider
+const OPENAI_MODELS = ["gpt-5-mini", "gpt-4o", "gpt-4o-mini"];
+// Models that use Anthropic provider
+const ANTHROPIC_MODELS = [
+  "claude-3-5-sonnet-20241022",
+  "claude-sonnet-4-20250514",
+  "claude-3-5-haiku-20241022",
+];
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -27,25 +36,81 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-function resolveCrownModel(): {
+function resolveCrownModel(customModel?: string): {
   provider: "openai" | "anthropic";
   model: LanguageModel;
 } {
   const openaiKey = env.OPENAI_API_KEY;
+  const anthropicKey = env.ANTHROPIC_API_KEY;
+
+  // If a custom model is specified, use it
+  if (customModel) {
+    if (OPENAI_MODELS.includes(customModel)) {
+      if (!openaiKey) {
+        throw new ConvexError(
+          `Crown evaluation model "${customModel}" requires an OpenAI API key`
+        );
+      }
+      const openai = createOpenAI({
+        apiKey: openaiKey,
+        baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+      });
+      return { provider: "openai", model: openai(customModel) };
+    }
+
+    if (ANTHROPIC_MODELS.includes(customModel)) {
+      if (!anthropicKey) {
+        throw new ConvexError(
+          `Crown evaluation model "${customModel}" requires an Anthropic API key`
+        );
+      }
+      const anthropic = createAnthropic({ apiKey: anthropicKey });
+      return { provider: "anthropic", model: anthropic(customModel) };
+    }
+
+    // Unknown model, try to infer provider from name
+    if (customModel.startsWith("gpt-") || customModel.startsWith("o1")) {
+      if (!openaiKey) {
+        throw new ConvexError(
+          `Crown evaluation model "${customModel}" requires an OpenAI API key`
+        );
+      }
+      const openai = createOpenAI({
+        apiKey: openaiKey,
+        baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+      });
+      return { provider: "openai", model: openai(customModel) };
+    }
+
+    if (customModel.startsWith("claude-")) {
+      if (!anthropicKey) {
+        throw new ConvexError(
+          `Crown evaluation model "${customModel}" requires an Anthropic API key`
+        );
+      }
+      const anthropic = createAnthropic({ apiKey: anthropicKey });
+      return { provider: "anthropic", model: anthropic(customModel) };
+    }
+
+    throw new ConvexError(
+      `Unknown crown evaluation model: "${customModel}". Use an OpenAI (gpt-*) or Anthropic (claude-*) model.`
+    );
+  }
+
+  // Default behavior: prefer OpenAI, fallback to Anthropic
   if (openaiKey) {
     const openai = createOpenAI({
       apiKey: openaiKey,
       baseURL: CLOUDFLARE_OPENAI_BASE_URL,
     });
-    return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
+    return { provider: "openai", model: openai(DEFAULT_OPENAI_CROWN_MODEL) };
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     const anthropic = createAnthropic({ apiKey: anthropicKey });
     return {
       provider: "anthropic",
-      model: anthropic(ANTHROPIC_CROWN_MODEL),
+      model: anthropic(DEFAULT_ANTHROPIC_CROWN_MODEL),
     };
   }
 
@@ -54,11 +119,20 @@ function resolveCrownModel(): {
   );
 }
 
+const DEFAULT_SYSTEM_PROMPT =
+  "You select the best implementation from structured diff inputs and explain briefly why.";
+
+export interface CrownEvaluationOptions {
+  customModel?: string;
+  customSystemPrompt?: string;
+}
+
 export async function performCrownEvaluation(
   prompt: string,
-  candidates: CrownEvaluationCandidate[]
+  candidates: CrownEvaluationCandidate[],
+  options?: CrownEvaluationOptions
 ): Promise<CrownEvaluationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const { model, provider } = resolveCrownModel(options?.customModel);
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -103,12 +177,13 @@ Example response:
 
 IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 
+  const systemPrompt = options?.customSystemPrompt || DEFAULT_SYSTEM_PROMPT;
+
   try {
     const { object } = await generateObject({
       model,
       schema: CrownEvaluationResponseSchema,
-      system:
-        "You select the best implementation from structured diff inputs and explain briefly why.",
+      system: systemPrompt,
       prompt: evaluationPrompt,
       ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
@@ -123,9 +198,10 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 
 export async function performCrownSummarization(
   prompt: string,
-  gitDiff: string
+  gitDiff: string,
+  options?: CrownEvaluationOptions
 ): Promise<CrownSummarizationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const { model, provider } = resolveCrownModel(options?.customModel);
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -177,9 +253,14 @@ export const evaluate = action({
     prompt: v.string(),
     candidates: v.array(CrownEvaluationCandidateValidator),
     teamSlugOrId: v.string(),
+    customModel: v.optional(v.string()),
+    customSystemPrompt: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
-    return performCrownEvaluation(args.prompt, args.candidates);
+    return performCrownEvaluation(args.prompt, args.candidates, {
+      customModel: args.customModel,
+      customSystemPrompt: args.customSystemPrompt,
+    });
   },
 });
 
@@ -188,8 +269,13 @@ export const summarize = action({
     prompt: v.string(),
     gitDiff: v.string(),
     teamSlugOrId: v.string(),
+    customModel: v.optional(v.string()),
+    customSystemPrompt: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
-    return performCrownSummarization(args.prompt, args.gitDiff);
+    return performCrownSummarization(args.prompt, args.gitDiff, {
+      customModel: args.customModel,
+      customSystemPrompt: args.customSystemPrompt,
+    });
   },
 });

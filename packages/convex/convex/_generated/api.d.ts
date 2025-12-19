@@ -15,6 +15,7 @@ import type * as codeReviewActions from "../codeReviewActions.js";
 import type * as codeReview_http from "../codeReview_http.js";
 import type * as comments from "../comments.js";
 import type * as containerSettings from "../containerSettings.js";
+import type * as crownSettings from "../crownSettings.js";
 import type * as crown from "../crown.js";
 import type * as crown_actions from "../crown/actions.js";
 import type * as crown_http from "../crown_http.js";
@@ -79,6 +80,7 @@ declare const fullApi: ApiFromModules<{
   codeReview_http: typeof codeReview_http;
   comments: typeof comments;
   containerSettings: typeof containerSettings;
+  crownSettings: typeof crownSettings;
   crown: typeof crown;
   "crown/actions": typeof crown_actions;
   crown_http: typeof crown_http;
