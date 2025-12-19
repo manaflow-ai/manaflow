@@ -288,14 +288,14 @@ export function WorkspaceQuickActions({
               "border",
               canCreateLocal
                 ? [
-                    "bg-white dark:bg-neutral-800",
-                    "text-neutral-700 dark:text-neutral-200",
+                    "bg-white dark:bg-transparent",
+                    "text-neutral-700 dark:text-neutral-300",
                     "border-neutral-200 dark:border-neutral-600",
-                    "hover:bg-neutral-50 dark:hover:bg-neutral-700",
+                    "hover:bg-neutral-50 dark:hover:bg-neutral-800",
                     "hover:border-neutral-300 dark:hover:border-neutral-500",
                   ]
                 : [
-                    "bg-neutral-50 dark:bg-neutral-800/50",
+                    "bg-neutral-50 dark:bg-transparent",
                     "text-neutral-400 dark:text-neutral-500",
                     "border-neutral-100 dark:border-neutral-700",
                     "cursor-not-allowed",
@@ -333,14 +333,14 @@ export function WorkspaceQuickActions({
               "border",
               canCreateCloud
                 ? [
-                    "bg-white dark:bg-neutral-800",
-                    "text-neutral-700 dark:text-neutral-200",
+                    "bg-white dark:bg-transparent",
+                    "text-neutral-700 dark:text-neutral-300",
                     "border-neutral-200 dark:border-neutral-600",
-                    "hover:bg-neutral-50 dark:hover:bg-neutral-700",
+                    "hover:bg-neutral-50 dark:hover:bg-neutral-800",
                     "hover:border-neutral-300 dark:hover:border-neutral-500",
                   ]
                 : [
-                    "bg-neutral-50 dark:bg-neutral-800/50",
+                    "bg-neutral-50 dark:bg-transparent",
                     "text-neutral-400 dark:text-neutral-500",
                     "border-neutral-100 dark:border-neutral-700",
                     "cursor-not-allowed",
