@@ -675,7 +675,11 @@ class CmuxTerminalManager {
   private _createTerminalForPty(info: TerminalInfo, shouldFocus: boolean, isRestore = false): void {
     const config = getConfig();
 
-    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}`);
+    // Determine if this terminal should open in editor pane
+    // The "cmux" session (main agent terminal) should be in editor pane
+    const shouldOpenInEditor = info.name === 'cmux';
+
+    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}`);
 
     // Skip initial resize for restored sessions to avoid shell prompt redraw
     const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore);
@@ -683,6 +687,8 @@ class CmuxTerminalManager {
     const terminal = vscode.window.createTerminal({
       name: info.name,
       pty,
+      // Open "cmux" session in editor pane, others in panel
+      location: shouldOpenInEditor ? vscode.TerminalLocation.Editor : vscode.TerminalLocation.Panel,
     });
 
     const managed: ManagedTerminal = { terminal, pty, info };
@@ -1179,4 +1185,45 @@ export function deactivateTerminal() {
   console.log('[cmux-terminal] Terminal module deactivating...');
   // PTYs persist on the server (like tmux) - no cleanup needed
   console.log('[cmux-terminal] Terminal module deactivated');
+}
+
+/**
+ * Check if cmux-pty is managing a terminal with the given name.
+ * Used by extension.ts to avoid creating duplicate tmux terminals.
+ */
+export function hasCmuxPtyTerminal(name: string): boolean {
+  if (!terminalManager) return false;
+  const terminals = terminalManager.getTerminals();
+  return terminals.some(t => t.info.name === name);
+}
+
+/**
+ * Wait for cmux-pty to sync and check if it has a terminal with the given name.
+ * Returns true if cmux-pty has the terminal, false if not found after waiting.
+ */
+export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 10000): Promise<boolean> {
+  if (!terminalManager) return false;
+
+  // Wait for initial sync to complete
+  try {
+    await terminalManager.waitForInitialSync();
+  } catch {
+    return false;
+  }
+
+  // Check if terminal exists
+  if (hasCmuxPtyTerminal(name)) {
+    return true;
+  }
+
+  // Wait a bit more in case state_sync arrives later
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (hasCmuxPtyTerminal(name)) {
+      return true;
+    }
+  }
+
+  return false;
 }
