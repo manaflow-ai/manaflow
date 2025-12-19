@@ -576,6 +576,7 @@ export const getRunDiffContext = authQuery({
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
         screenshotSets: [],
+        prInfo: null,
       };
     }
 
@@ -614,14 +615,16 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    // Fetch run document once (used for screenshots and PR info)
+    const runDoc = await ctx.db.get(args.runId);
+    const runIsAuthorized =
+      runDoc &&
+      runDoc.teamId === teamId &&
+      runDoc.taskId === args.taskId;
+
     const screenshotSets = await (async () => {
-      const runDoc = await ctx.db.get(args.runId);
       // Prevent leaking screenshots for runs outside the authenticated task/team
-      if (
-        !runDoc ||
-        runDoc.teamId !== teamId ||
-        runDoc.taskId !== args.taskId
-      ) {
+      if (!runIsAuthorized || !runDoc) {
         return [];
       }
 
@@ -653,11 +656,27 @@ export const getRunDiffContext = authQuery({
       );
     })();
 
+    // Extract PR info from the run for workflow checks display
+    // We pick the first PR from the pullRequests array if available
+    const prInfo = (() => {
+      if (!runIsAuthorized || !runDoc) return null;
+      const prs = runDoc.pullRequests;
+      if (!prs || prs.length === 0) return null;
+      // Find first PR with a number
+      const firstPrWithNumber = prs.find((pr) => pr.number !== undefined);
+      if (!firstPrWithNumber || firstPrWithNumber.number === undefined) return null;
+      return {
+        repoFullName: firstPrWithNumber.repoFullName,
+        prNumber: firstPrWithNumber.number,
+      };
+    })();
+
     return {
       task: taskWithImages,
       taskRuns,
       branchMetadataByRepo,
       screenshotSets,
+      prInfo,
     };
   },
 });

@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useQuery } from "convex/react";
 import { MonacoGitDiffViewer } from "./monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "./RunScreenshotGallery";
+import { useCombinedWorkflowData, WorkflowRunsSection } from "./WorkflowRunsSection";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import type { TaskRunWithChildren } from "@/types/task";
@@ -80,6 +81,33 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
   const screenshotSets = runDiffContext?.screenshotSets ?? [];
   const screenshotSetsLoading = runDiffContext === undefined && screenshotSets.length === 0;
 
+  // PR info for workflow runs/checks display
+  const prInfo = runDiffContext?.prInfo;
+
+  // Fetch workflow data if this run has an associated PR
+  const workflowData = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: prInfo?.repoFullName || "",
+    prNumber: prInfo?.prNumber || 0,
+  });
+
+  // Only show workflow section if we have PR info
+  const hasWorkflowData = Boolean(prInfo && prInfo.prNumber > 0);
+
+  // Track expanded state for workflow checks - auto-expand if any check failed
+  const hasAnyFailure = useMemo(() => {
+    return workflowData.allRuns.some(
+      (run) => run.conclusion === "failure" || run.conclusion === "timed_out" || run.conclusion === "action_required"
+    );
+  }, [workflowData.allRuns]);
+
+  const [checksExpandedOverride, setChecksExpandedOverride] = useState<boolean | null>(null);
+  const checksExpanded = checksExpandedOverride !== null ? checksExpandedOverride : hasAnyFailure;
+
+  const handleToggleChecks = () => {
+    setChecksExpandedOverride(!checksExpanded);
+  };
+
   if (!selectedRun || !normalizedHeadBranch) {
     return (
       <div className="flex h-full items-center justify-center px-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
@@ -122,6 +150,14 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
         <RunScreenshotGallery
           screenshotSets={screenshotSets}
           highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+        />
+      )}
+      {hasWorkflowData && (
+        <WorkflowRunsSection
+          allRuns={workflowData.allRuns}
+          isLoading={workflowData.isLoading}
+          isExpanded={checksExpanded}
+          onToggle={handleToggleChecks}
         />
       )}
       <MonacoGitDiffViewer diffs={allDiffs} />
