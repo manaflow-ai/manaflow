@@ -91,6 +91,12 @@ import { annotateAgentOrdinals } from "./task-tree/annotateAgentOrdinals";
 type PreviewService = NonNullable<TaskRunWithChildren["networking"]>[number];
 type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
+/**
+ * Feature flag to show/hide preview URLs in the sidebar.
+ * Set to true to re-enable preview URLs and "Add preview URL" button.
+ */
+const SHOW_PREVIEW_URLS = false;
+
 function getStatusIcon(status: TaskRunStatus): ReactElement {
   switch (status) {
     case "pending":
@@ -2125,7 +2131,7 @@ function TaskRunDetails({
       ) : null}
 
       {/* Hide preview ports and custom previews for preview screenshot jobs */}
-      {!run.isPreviewJob && (
+      {SHOW_PREVIEW_URLS && !run.isPreviewJob && (
         <>
           {previewServices.map((service) => (
             <div key={service.port} className="relative group mt-px">

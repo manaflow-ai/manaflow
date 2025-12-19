@@ -5,7 +5,6 @@ import * as vscode from "vscode";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
-const debugShowOutput = process.env.CMUX_DEBUG_SHOW_OUTPUT === "1";
 
 // Log immediately when module loads
 console.log("[cmux] Extension module loaded");
@@ -387,14 +386,6 @@ export function activate(context: vscode.ExtensionContext) {
   outputChannel.appendLine("=== cmux Extension Activating ===");
 
   log("[cmux] Extension activated, output channel ready");
-
-  // In dev runs, optionally show output for visibility
-  if (debugShowOutput) {
-    outputChannel.show(true);
-  } else {
-    // Otherwise keep the panel closed for a cleaner UX
-    vscode.commands.executeCommand("workbench.action.closePanel");
-  }
 
   log("cmux is being activated");
 
