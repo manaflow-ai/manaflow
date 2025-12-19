@@ -5,13 +5,19 @@ import type {
 
 /**
  * Apply API keys for OpenAI Codex.
- * If CODEX_AUTH_JSON is provided, inject it as ~/.codex/auth.json.
- * This takes precedence over any local auth.json file.
+ *
+ * Priority order:
+ * 1. CODEX_AUTH_JSON - If provided, inject as ~/.codex/auth.json (OAuth tokens from `codex auth`)
+ * 2. OPENAI_API_KEY - Fallback if no auth.json, injected as environment variable
+ *
+ * When CODEX_AUTH_JSON is provided, OPENAI_API_KEY is ignored since auth.json
+ * contains OAuth tokens that Codex CLI prefers over API keys.
  */
 export function applyCodexApiKeys(
   keys: Record<string, string>
 ): Partial<EnvironmentResult> {
   const files: EnvironmentResult["files"] = [];
+  const env: Record<string, string> = {};
 
   const authJson = keys.CODEX_AUTH_JSON;
   if (authJson) {
@@ -23,12 +29,20 @@ export function applyCodexApiKeys(
         contentBase64: Buffer.from(authJson).toString("base64"),
         mode: "600",
       });
+      // Don't inject OPENAI_API_KEY when auth.json is provided
+      return { files, env };
     } catch {
       console.warn("CODEX_AUTH_JSON is not valid JSON, skipping injection");
     }
   }
 
-  return { files };
+  // Fallback: inject OPENAI_API_KEY as environment variable
+  const openaiKey = keys.OPENAI_API_KEY;
+  if (openaiKey) {
+    env.OPENAI_API_KEY = openaiKey;
+  }
+
+  return { files, env };
 }
 
 export async function getOpenAIEnvironment(
