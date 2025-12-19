@@ -71,33 +71,35 @@ var (
 )
 
 func getScoreStyle(score int) lipgloss.Style {
+	// Use background colors for word highlighting - all scores get some highlight
 	switch {
 	case score <= 10:
-		return lipgloss.NewStyle()
+		// Very low score - subtle gray background
+		return lipgloss.NewStyle().Background(lipgloss.Color("239")).Foreground(lipgloss.Color("252"))
 	case score <= 25:
-		return lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("15")) // dark green
+		return lipgloss.NewStyle().Background(lipgloss.Color("23")).Foreground(lipgloss.Color("15")) // teal
 	case score <= 40:
-		return lipgloss.NewStyle().Background(lipgloss.Color("58")).Foreground(lipgloss.Color("15")) // olive/yellow
+		return lipgloss.NewStyle().Background(lipgloss.Color("136")).Foreground(lipgloss.Color("0")) // dark yellow
 	case score <= 60:
 		return lipgloss.NewStyle().Background(lipgloss.Color("208")).Foreground(lipgloss.Color("0")) // orange
 	case score <= 80:
 		return lipgloss.NewStyle().Background(lipgloss.Color("196")).Foreground(lipgloss.Color("15")) // red
 	default:
-		return lipgloss.NewStyle().Background(lipgloss.Color("201")).Foreground(lipgloss.Color("15")).Bold(true) // magenta
+		return lipgloss.NewStyle().Background(lipgloss.Color("201")).Foreground(lipgloss.Color("0")).Bold(true) // magenta
 	}
 }
 
 // highlightCodeWithToken applies syntax highlighting and highlights a specific token
 func highlightCodeWithToken(code string, lang string, token *string, score int) string {
-	// If no token to highlight or low score, just do syntax highlighting
-	if token == nil || *token == "" || score <= 10 {
+	// If no token to highlight, just do syntax highlighting
+	if token == nil || *token == "" {
 		if lang != "" {
 			return highlightLine(code, lang)
 		}
 		return code
 	}
 
-	// Find the token position in raw code
+	// Find the token position in raw code (exact match first)
 	idx := strings.Index(code, *token)
 	if idx == -1 {
 		// Try case-insensitive
@@ -474,22 +476,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case githubFilesMsg:
 		// Populate files from GitHub
 		m.githubLoaded = true
-		m.isComplete = true // Mark as complete since we're not using 0github for now
 		for _, ghFile := range msg.files {
 			lines := parseDiffPatch(ghFile.Patch, ghFile.Filename)
 			m.fileOrder = append(m.fileOrder, ghFile.Filename)
 			m.files[ghFile.Filename] = &FileData{
 				FilePath:  ghFile.Filename,
-				Status:    "complete",
+				Status:    "pending",
 				Lines:     lines,
 				Additions: ghFile.Additions,
 				Deletions: ghFile.Deletions,
 			}
 		}
-		// TODO: Re-enable 0github AI annotations later
-		// m.aiAnnotating = true
-		// return m, listenSSE(sseEventChan)
-		return m, nil
+		// Start 0github AI annotations
+		m.aiAnnotating = true
+		return m, listenSSE(sseEventChan)
 
 	case githubErrorMsg:
 		m.err = msg.err
@@ -515,8 +515,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Overlay AI scores on existing GitHub lines (preserve GitHub order)
 			if file, exists := m.files[event.FilePath]; exists {
 				// Find matching line by line numbers and change type
+				// Skip lines that already have annotations (SSE events come in order)
 				for i := range file.Lines {
 					line := &file.Lines[i]
+
+					// Skip lines that already have annotations
+					if line.MostImportantWord != nil {
+						continue
+					}
+
 					lineMatches := false
 
 					// Match based on change type and corresponding line number
@@ -541,7 +548,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 
+					// Fallback: match by code content when line numbers don't match
+					// (handles 0github API line number offset bug for new files)
+					if !lineMatches && event.CodeLine != "" {
+						eventChangeType := event.ChangeType
+						if eventChangeType == "remove" {
+							eventChangeType = "delete" // normalize
+						}
+						if line.ChangeType == eventChangeType {
+							eventCode := strings.TrimSpace(event.CodeLine)
+							lineCode := strings.TrimSpace(line.CodeLine)
+							if eventCode != "" && lineCode != "" && eventCode == lineCode {
+								lineMatches = true
+							}
+						}
+					}
+
 					if lineMatches {
+						// Verify token exists in the line before setting annotation
+						// (prevents mismatches from fallback matching)
+						if event.MostImportantWord != nil && *event.MostImportantWord != "" {
+							token := *event.MostImportantWord
+							lineCode := line.CodeLine
+							if lineCode == "" {
+								lineCode = line.DiffLine
+							}
+							// Check if token exists (case-insensitive)
+							if !strings.Contains(strings.ToLower(lineCode), strings.ToLower(token)) {
+								continue // Token not in this line, try next
+							}
+						}
+
 						// Overlay AI annotations onto existing GitHub line
 						line.MostImportantWord = event.MostImportantWord
 						line.ShouldReviewWhy = event.ShouldReviewWhy
@@ -789,7 +826,8 @@ func (m model) renderUnified(b *strings.Builder, file *FileData, lang string, wi
 		m.diffScroll = maxScroll
 	}
 
-	lineWidth := width - 4 // account for border
+	totalWidth := width - 4 // account for border
+	codeWidth := totalWidth - 12 // 4+1+4+1+1+1 = 12 for "NNNN NNNN X "
 
 	for i := m.diffScroll; i < min(m.diffScroll+visibleLines, len(file.Lines)); i++ {
 		line := file.Lines[i]
@@ -799,7 +837,7 @@ func (m model) renderUnified(b *strings.Builder, file *FileData, lang string, wi
 			hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true).
 				Background(lipgloss.Color("236"))
 			hunkText := line.CodeLine
-			hunkPadded := hunkText + strings.Repeat(" ", max(0, lineWidth-len(hunkText)))
+			hunkPadded := hunkText + strings.Repeat(" ", max(0, totalWidth-len(hunkText)))
 			b.WriteString(hunkStyle.Render(hunkPadded))
 			b.WriteString("\n")
 			continue
@@ -821,53 +859,61 @@ func (m model) renderUnified(b *strings.Builder, file *FileData, lang string, wi
 			code = line.DiffLine
 		}
 
-		// Build the full line with background spanning entire width
-		var lineStr string
-		codeWidth := lineWidth - 12 // 4+1+4+1+1+1 = 12 for "NNNN NNNN X "
+		// Truncate code if too long (no padding - allows inline comments)
+		codeTruncated := code
+		if len(code) > codeWidth {
+			codeTruncated = code[:codeWidth-1] + "…"
+		}
 
-		// Pad/truncate code
-		codePadded := code
-		if len(code) < codeWidth {
-			codePadded = code + strings.Repeat(" ", codeWidth-len(code))
-		} else if len(code) > codeWidth {
-			codePadded = code[:codeWidth-1] + "…"
+		// Build code part - only color the gutter, not the whole line
+		var codeStr string
+		var highlighted string
+		if line.MostImportantWord != nil {
+			highlighted = highlightCodeWithToken(codeTruncated, lang, line.MostImportantWord, line.Score)
+		} else {
+			highlighted = highlightLine(codeTruncated, lang)
 		}
 
 		switch line.ChangeType {
 		case "add", "+":
-			// Syntax highlight with preserved background
-			highlighted := highlightLinePreserveBg(codePadded, lang)
-			// Set background, then content, then padding
-			prefix := fmt.Sprintf("%s %s + ", oldNum, newNum)
-			// Calculate visible width for padding
-			contentWidth := len(prefix) + lipgloss.Width(highlighted)
-			padding := ""
-			if contentWidth < lineWidth {
-				padding = strings.Repeat(" ", lineWidth-contentWidth)
-			}
-			// Wrap entire line in background
-			lineStr = addLineBg.Render(prefix + highlighted + padding)
+			// Green gutter only
+			gutter := addLineBg.Render(fmt.Sprintf("%s %s + ", oldNum, newNum))
+			codeStr = gutter + highlighted
 
 		case "delete", "remove", "-":
-			highlighted := highlightLinePreserveBg(codePadded, lang)
-			prefix := fmt.Sprintf("%s %s - ", oldNum, newNum)
-			contentWidth := len(prefix) + lipgloss.Width(highlighted)
-			padding := ""
-			if contentWidth < lineWidth {
-				padding = strings.Repeat(" ", lineWidth-contentWidth)
-			}
-			lineStr = removeLineBg.Render(prefix + highlighted + padding)
+			// Red gutter only
+			gutter := removeLineBg.Render(fmt.Sprintf("%s %s - ", oldNum, newNum))
+			codeStr = gutter + highlighted
 
-		default: // context - normal syntax highlighting
-			highlighted := highlightLine(codePadded, lang)
-			lineStr = fmt.Sprintf("%s %s   %s",
+		default:
+			// Context - dim gutter
+			codeStr = fmt.Sprintf("%s %s   %s",
 				dimStyle.Render(oldNum),
 				dimStyle.Render(newNum),
 				highlighted,
 			)
 		}
 
-		b.WriteString(lineStr)
+		// Build inline comment (appended directly after code)
+		var commentStr string
+		if m.showTooltip && line.ShouldReviewWhy != nil && *line.ShouldReviewWhy != "" {
+			// Color from gray (low score) to red (high score)
+			color := "244" // gray
+			switch {
+			case line.Score >= 80:
+				color = "196" // bright red
+			case line.Score >= 60:
+				color = "203" // light red
+			case line.Score >= 40:
+				color = "210" // salmon
+			case line.Score >= 20:
+				color = "247" // light gray
+			}
+			commentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Italic(true)
+			commentStr = commentStyle.Render(fmt.Sprintf("  # %s", *line.ShouldReviewWhy))
+		}
+
+		b.WriteString(codeStr + commentStr)
 		b.WriteString("\n")
 	}
 
@@ -929,8 +975,9 @@ func (m model) renderSideBySide(b *strings.Builder, file *FileData, lang string,
 		m.diffScroll = maxScroll
 	}
 
-	halfWidth := (width - 3) / 2 // -3 for separator
-	codeWidth := halfWidth - 6   // -6 for line number
+	totalWidth := width - 4 // account for border
+	halfWidth := (totalWidth - 1) / 2 // -1 for separator
+	codeWidth := halfWidth - 5        // -5 for line number + space
 
 	for i := m.diffScroll; i < min(m.diffScroll+visibleLines, len(pairs)); i++ {
 		pair := pairs[i]
@@ -939,8 +986,8 @@ func (m model) renderSideBySide(b *strings.Builder, file *FileData, lang string,
 		if pair.left != nil && pair.left.ChangeType == "hunk" {
 			hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 			hunkText := pair.left.CodeLine
-			if len(hunkText) > width-4 {
-				hunkText = hunkText[:width-5] + "…"
+			if len(hunkText) > totalWidth {
+				hunkText = hunkText[:totalWidth-1] + "…"
 			}
 			b.WriteString(hunkStyle.Render(hunkText))
 			b.WriteString("\n")
@@ -948,13 +995,41 @@ func (m model) renderSideBySide(b *strings.Builder, file *FileData, lang string,
 		}
 
 		// Left side (old)
-		leftStr := m.renderSideLine(pair.left, lang, codeWidth, true)
+		leftStr := m.renderSideLine(pair.left, lang, codeWidth, true, false)
 		// Right side (new)
-		rightStr := m.renderSideLine(pair.right, lang, codeWidth, false)
+		rightStr := m.renderSideLine(pair.right, lang, codeWidth, false, false)
 
 		b.WriteString(leftStr)
 		b.WriteString(dimStyle.Render("│"))
 		b.WriteString(rightStr)
+
+		// Build inline comment (prefer right/new line comment, fall back to left)
+		if m.showTooltip {
+			var commentLine *LineData
+			if pair.right != nil && pair.right.ShouldReviewWhy != nil && *pair.right.ShouldReviewWhy != "" {
+				commentLine = pair.right
+			} else if pair.left != nil && pair.left.ShouldReviewWhy != nil && *pair.left.ShouldReviewWhy != "" {
+				commentLine = pair.left
+			}
+
+			if commentLine != nil {
+				// Color from gray (low score) to red (high score)
+				color := "244" // gray
+				switch {
+				case commentLine.Score >= 80:
+					color = "196" // bright red
+				case commentLine.Score >= 60:
+					color = "203" // light red
+				case commentLine.Score >= 40:
+					color = "210" // salmon
+				case commentLine.Score >= 20:
+					color = "247" // light gray
+				}
+				commentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Italic(true)
+				b.WriteString(commentStyle.Render(fmt.Sprintf("  # %s", *commentLine.ShouldReviewWhy)))
+			}
+		}
+
 		b.WriteString("\n")
 	}
 
@@ -966,7 +1041,7 @@ func (m model) renderSideBySide(b *strings.Builder, file *FileData, lang string,
 	return borderStyle.Width(width).Height(height).Render(b.String())
 }
 
-func (m model) renderSideLine(line *LineData, lang string, codeWidth int, isLeft bool) string {
+func (m model) renderSideLine(line *LineData, lang string, codeWidth int, isLeft bool, showTooltip bool) string {
 	totalWidth := codeWidth + 5 // 4 for line number + 1 space
 
 	if line == nil {
@@ -996,31 +1071,25 @@ func (m model) renderSideLine(line *LineData, lang string, codeWidth int, isLeft
 		codePadded = code[:codeWidth-1] + "…"
 	}
 
+	// Syntax highlight with optional word highlighting
+	var highlighted string
+	if line.MostImportantWord != nil {
+		highlighted = highlightCodeWithToken(codePadded, lang, line.MostImportantWord, line.Score)
+	} else {
+		highlighted = highlightLine(codePadded, lang)
+	}
+
+	// Only color the gutter (line number), not the whole line
 	switch line.ChangeType {
 	case "add", "+":
-		// Syntax highlight with preserved background
-		highlighted := highlightLinePreserveBg(codePadded, lang)
-		prefix := lineNum + " "
-		contentWidth := len(prefix) + lipgloss.Width(highlighted)
-		padding := ""
-		if contentWidth < totalWidth {
-			padding = strings.Repeat(" ", totalWidth-contentWidth)
-		}
-		return addLineBg.Render(prefix + highlighted + padding)
+		gutter := addLineBg.Render(lineNum + " ")
+		return gutter + highlighted
 
 	case "delete", "remove", "-":
-		highlighted := highlightLinePreserveBg(codePadded, lang)
-		prefix := lineNum + " "
-		contentWidth := len(prefix) + lipgloss.Width(highlighted)
-		padding := ""
-		if contentWidth < totalWidth {
-			padding = strings.Repeat(" ", totalWidth-contentWidth)
-		}
-		return removeLineBg.Render(prefix + highlighted + padding)
+		gutter := removeLineBg.Render(lineNum + " ")
+		return gutter + highlighted
 
 	default:
-		// Context lines get normal syntax highlighting
-		highlighted := highlightLine(codePadded, lang)
 		return dimStyle.Render(lineNum) + " " + highlighted
 	}
 }
@@ -1151,6 +1220,51 @@ func highlightLinePreserveBg(code, lang string) string {
 	// Replace [0m (reset all) with [39m (reset foreground only)
 	// This preserves the background color
 	return strings.ReplaceAll(highlighted, "\x1b[0m", "\x1b[39m")
+}
+
+// highlightCodeWithTokenPreserveBg highlights code with syntax + token highlighting,
+// preserving background colors for delta-style rendering
+func highlightCodeWithTokenPreserveBg(code string, lang string, token *string, score int) string {
+	highlighted := highlightCodeWithToken(code, lang, token, score)
+	// Replace [0m (reset all) with [39m (reset foreground only)
+	return strings.ReplaceAll(highlighted, "\x1b[0m", "\x1b[39m")
+}
+
+// highlightImportantWord highlights a specific word in the code with intensity-based color
+func highlightImportantWord(code string, word *string, score int) string {
+	if word == nil || *word == "" || score < 20 {
+		return code
+	}
+
+	// Find the word in the code (case-insensitive search, case-preserving replace)
+	idx := strings.Index(strings.ToLower(code), strings.ToLower(*word))
+	if idx == -1 {
+		return code
+	}
+
+	// Get the actual text from code (preserves original case)
+	actualWord := code[idx : idx+len(*word)]
+
+	// Choose highlight style based on score intensity
+	var style lipgloss.Style
+	switch {
+	case score >= 80:
+		// Critical - bright magenta background
+		style = lipgloss.NewStyle().Background(lipgloss.Color("201")).Foreground(lipgloss.Color("0")).Bold(true)
+	case score >= 60:
+		// High - red/orange background
+		style = lipgloss.NewStyle().Background(lipgloss.Color("196")).Foreground(lipgloss.Color("15")).Bold(true)
+	case score >= 40:
+		// Medium - yellow background
+		style = lipgloss.NewStyle().Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0"))
+	default:
+		// Low - subtle cyan underline
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Underline(true)
+	}
+
+	// Replace the word with highlighted version
+	highlighted := style.Render(actualWord)
+	return code[:idx] + highlighted + code[idx+len(*word):]
 }
 
 // Git helper functions
@@ -1479,13 +1593,49 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Detected PR: %s/%s#%d\n", owner, repo, prNumber)
 	}
 
+	// Initialize SSE channel for 0github AI annotations
+	sseEventChan = make(chan SSEEvent, 1000)
+
 	m := initialModel(owner, repo, prNumber)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	// TODO: Re-enable 0github AI annotations later
-	// sseEventChan = make(chan SSEEvent, 100)
-	// go func() { ... }()
+	// Start 0github SSE streaming in background
+	go func() {
+		url := fmt.Sprintf("%s/api/pr-review/simple?repoFullName=%s/%s&prNumber=%d",
+			apiBaseURL, owner, repo, prNumber)
+
+		resp, err := http.Get(url)
+		if err != nil {
+			sseEventChan <- SSEEvent{Type: "error", Message: err.Error()}
+			close(sseEventChan)
+			return
+		}
+		defer resp.Body.Close()
+
+		scanner := bufio.NewScanner(resp.Body)
+		buf := make([]byte, 0, 64*1024)
+		scanner.Buffer(buf, 1024*1024)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if data == "" {
+				continue
+			}
+
+			var event SSEEvent
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				continue
+			}
+
+			sseEventChan <- event
+		}
+		close(sseEventChan)
+	}()
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
