@@ -106,21 +106,7 @@ export function toProxyWorkspaceUrl(
   workspaceUrl: string,
   preferredOrigin?: string | null
 ): string {
-  const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
-    workspaceUrl,
-    preferredOrigin
-  );
-  const components = parseMorphUrl(normalizedUrl);
-
-  if (!components) {
-    return normalizedUrl;
-  }
-
-  // Always use the cmux.app proxy URL for vscode/workspace URLs
-  const scope = "base"; // Default scope
-  const proxiedUrl = new URL(components.url.toString());
-  proxiedUrl.hostname = `cmux-${components.morphId}-${scope}-${components.port}.cmux.app`;
-  return proxiedUrl.toString();
+  return rewriteLocalWorkspaceUrlIfNeeded(workspaceUrl, preferredOrigin);
 }
 
 export function toMorphVncUrl(sourceUrl: string): string | null {

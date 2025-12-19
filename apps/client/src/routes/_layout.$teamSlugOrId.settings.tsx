@@ -20,6 +20,42 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
 });
 
+interface ProviderInfo {
+  url?: string;
+  helpText?: string;
+}
+
+const PROVIDER_INFO: Record<string, ProviderInfo> = {
+  CLAUDE_CODE_OAUTH_TOKEN: {
+    helpText:
+      "Run `claude setup-token` in your terminal and paste the output here. Preferred over API key.",
+  },
+  ANTHROPIC_API_KEY: {
+    url: "https://console.anthropic.com/settings/keys",
+  },
+  OPENAI_API_KEY: {
+    url: "https://platform.openai.com/api-keys",
+  },
+  OPENROUTER_API_KEY: {
+    url: "https://openrouter.ai/keys",
+  },
+  GEMINI_API_KEY: {
+    url: "https://console.cloud.google.com/apis/credentials",
+  },
+  MODEL_STUDIO_API_KEY: {
+    url: "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
+  },
+  AMP_API_KEY: {
+    url: "https://ampcode.com/settings",
+  },
+  CURSOR_API_KEY: {
+    url: "https://cursor.com/dashboard?tab=integrations",
+  },
+  XAI_API_KEY: {
+    url: "https://console.x.ai/",
+  },
+};
+
 function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
@@ -747,46 +783,7 @@ function SettingsComponent() {
 
                       {/* Group API keys by provider for better organization */}
                       {apiKeys.map((key) => {
-                        const getProviderInfo = (envVar: string) => {
-                          switch (envVar) {
-                            case "ANTHROPIC_API_KEY":
-                              return {
-                                url: "https://console.anthropic.com/settings/keys",
-                              };
-                            case "OPENAI_API_KEY":
-                              return {
-                                url: "https://platform.openai.com/api-keys",
-                              };
-                            case "OPENROUTER_API_KEY":
-                              return {
-                                url: "https://openrouter.ai/keys",
-                              };
-                            case "GEMINI_API_KEY":
-                              return {
-                                url: "https://console.cloud.google.com/apis/credentials",
-                              };
-                            case "MODEL_STUDIO_API_KEY":
-                              return {
-                                url: "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
-                              };
-                            case "AMP_API_KEY":
-                              return {
-                                url: "https://ampcode.com/settings",
-                              };
-                            case "CURSOR_API_KEY":
-                              return {
-                                url: "https://cursor.com/dashboard?tab=integrations",
-                              };
-                            case "XAI_API_KEY":
-                              return {
-                                url: "https://console.x.ai/",
-                              };
-                            default:
-                              return null;
-                          }
-                        };
-
-                        const providerInfo = getProviderInfo(key.envVar);
+                        const providerInfo = PROVIDER_INFO[key.envVar];
                         const usedModels = apiKeyModelsByEnv[key.envVar] ?? [];
 
                         return (
@@ -803,6 +800,11 @@ function SettingsComponent() {
                                   >
                                     {key.displayName}
                                   </label>
+                                  {providerInfo?.helpText && (
+                                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                                      {providerInfo.helpText}
+                                    </p>
+                                  )}
                                   {usedModels.length > 0 && (
                                     <div className="mt-1 space-y-1">
                                       <div className="flex items-center gap-2 min-w-0">
@@ -891,13 +893,15 @@ function SettingsComponent() {
                                   }
                                   className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
                                   placeholder={
-                                    key.envVar === "ANTHROPIC_API_KEY"
-                                      ? "sk-ant-api03-..."
-                                      : key.envVar === "OPENAI_API_KEY"
-                                        ? "sk-proj-..."
-                                        : key.envVar === "OPENROUTER_API_KEY"
-                                          ? "sk-or-v1-..."
-                                          : `Enter your ${key.displayName}`
+                                    key.envVar === "CLAUDE_CODE_OAUTH_TOKEN"
+                                      ? "sk-ant-oat01-..."
+                                      : key.envVar === "ANTHROPIC_API_KEY"
+                                        ? "sk-ant-api03-..."
+                                        : key.envVar === "OPENAI_API_KEY"
+                                          ? "sk-proj-..."
+                                          : key.envVar === "OPENROUTER_API_KEY"
+                                            ? "sk-or-v1-..."
+                                            : `Enter your ${key.displayName}`
                                   }
                                 />
                                 <button
