@@ -5,6 +5,10 @@ import {
   type AgentConfig,
   type EnvironmentResult,
 } from "@cmux/shared/agentConfig";
+import {
+  resolveAgentConfig,
+  isSupportedProvider,
+} from "@cmux/shared/providerTemplates";
 import type {
   WorkerCreateTerminal,
   WorkerTerminalFailed,
@@ -1026,12 +1030,38 @@ export async function spawnAllAgents(
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult[]> {
-  // If selectedAgents is provided, map each entry to an AgentConfig to preserve duplicates
-  const agentsToSpawn = options.selectedAgents
-    ? options.selectedAgents
-        .map((name) => AGENT_CONFIGS.find((agent) => agent.name === name))
-        .filter((a): a is AgentConfig => Boolean(a))
-    : AGENT_CONFIGS;
+  // If selectedAgents is provided, resolve each to an AgentConfig dynamically
+  let agentsToSpawn: AgentConfig[];
+
+  if (options.selectedAgents) {
+    const resolvedAgents = await Promise.all(
+      options.selectedAgents.map(async (name) => {
+        // Use dynamic resolution for all models
+        if (isSupportedProvider(name)) {
+          try {
+            const config = await resolveAgentConfig(name);
+            if (config) {
+              return config;
+            }
+          } catch (error) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to resolve agent config for: ${name}`,
+              error
+            );
+          }
+        }
+
+        serverLogger.warn(
+          `[AgentSpawner] Unknown agent config: ${name}, skipping`
+        );
+        return null;
+      })
+    );
+
+    agentsToSpawn = resolvedAgents.filter((a): a is AgentConfig => a !== null);
+  } else {
+    agentsToSpawn = AGENT_CONFIGS;
+  }
 
   // Validate taskRunIds count matches agents count if provided
   if (options.taskRunIds && options.taskRunIds.length !== agentsToSpawn.length) {

@@ -34,6 +34,10 @@
       "import": "./src/agentConfig.ts",
       "types": "./src/agentConfig.ts"
     },
+    "./providerTemplates": {
+      "import": "./src/providerTemplates.ts",
+      "types": "./src/providerTemplates.ts"
+    },
     "./terminal-config": {
       "import": "./src/terminal-config.ts",
       "types": "./src/terminal-config.ts"
