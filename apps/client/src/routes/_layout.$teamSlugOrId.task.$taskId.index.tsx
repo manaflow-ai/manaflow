@@ -187,14 +187,11 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         try {
           const created = await createTerminalTab({
             baseUrl,
-            request: {
-              cmd: "tmux",
-              args: ["new-session", "-A", "cmux"],
-            },
+            request: {},
           });
           tabs = [created.id];
         } catch (error) {
-          console.error("Failed to create default tmux terminal", error);
+          console.error("Failed to create default terminal", error);
           return;
         }
       }
