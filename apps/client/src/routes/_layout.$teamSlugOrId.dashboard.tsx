@@ -8,6 +8,7 @@ import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFoote
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
 import { TaskList } from "@/components/dashboard/TaskList";
 import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
+import { WorkspaceQuickActions } from "@/components/dashboard/WorkspaceQuickActions";
 import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
@@ -1040,6 +1041,16 @@ function DashboardComponent() {
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
             />
+
+            {/* Workspace Quick Actions - create workspaces without a task */}
+            <div className="mt-3 px-1">
+              <WorkspaceQuickActions
+                teamSlugOrId={teamSlugOrId}
+                selectedProject={selectedProject}
+                isEnvSelected={isEnvSelected}
+              />
+            </div>
+
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel
                 teamSlugOrId={teamSlugOrId}
