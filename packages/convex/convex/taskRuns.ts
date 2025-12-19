@@ -576,6 +576,7 @@ export const getRunDiffContext = authQuery({
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
         screenshotSets: [],
+        screenshotJobStatus: null,
       };
     }
 
@@ -614,7 +615,7 @@ export const getRunDiffContext = authQuery({
       }
     }
 
-    const screenshotSets = await (async () => {
+    const { screenshotSets, screenshotJobStatus } = await (async () => {
       const runDoc = await ctx.db.get(args.runId);
       // Prevent leaking screenshots for runs outside the authenticated task/team
       if (
@@ -622,7 +623,19 @@ export const getRunDiffContext = authQuery({
         runDoc.teamId !== teamId ||
         runDoc.taskId !== args.taskId
       ) {
-        return [];
+        return { screenshotSets: [], screenshotJobStatus: null };
+      }
+
+      // Check if this run is a preview job and get its status from previewRuns table
+      let jobStatus: "pending" | "running" | "completed" | "failed" | "skipped" | null = null;
+      if (runDoc.isPreviewJob) {
+        const previewRun = await ctx.db
+          .query("previewRuns")
+          .filter((q) => q.eq(q.field("taskRunId"), args.runId))
+          .first();
+        if (previewRun) {
+          jobStatus = previewRun.status;
+        }
       }
 
       const screenshotSetDocs = await ctx.db
@@ -634,7 +647,7 @@ export const getRunDiffContext = authQuery({
 
       const trimmedScreenshotSets = screenshotSetDocs.slice(0, 20);
 
-      return Promise.all(
+      const setsWithUrls = await Promise.all(
         trimmedScreenshotSets.map(async (set) => {
           const imagesWithUrls = await Promise.all(
             set.images.map(async (image) => {
@@ -651,6 +664,8 @@ export const getRunDiffContext = authQuery({
           };
         }),
       );
+
+      return { screenshotSets: setsWithUrls, screenshotJobStatus: jobStatus };
     })();
 
     return {
@@ -658,6 +673,7 @@ export const getRunDiffContext = authQuery({
       taskRuns,
       branchMetadataByRepo,
       screenshotSets,
+      screenshotJobStatus,
     };
   },
 });

@@ -638,6 +638,7 @@ function RunDiffPage() {
   });
 
   const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotJobStatus = runDiffContextQuery.data?.screenshotJobStatus ?? null;
   const screenshotSetsLoading =
     runDiffContextQuery.isLoading && screenshotSets.length === 0;
 
@@ -872,6 +873,7 @@ function RunDiffPage() {
               <RunScreenshotGallery
                 screenshotSets={screenshotSets}
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+                screenshotJobStatus={screenshotJobStatus}
               />
             )}
             <div className="flex-1 min-h-0 flex flex-col">
