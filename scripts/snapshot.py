@@ -1944,74 +1944,40 @@ JSON
 
 
 @registry.task(
-    name="build-env-binaries",
+    name="build-rust-binaries",
     deps=("upload-repo", "install-rust-toolchain"),
-    description="Build envd/envctl binaries via cargo install",
+    description="Build Rust binaries with a shared target dir",
 )
-async def task_build_env_binaries(ctx: TaskContext) -> None:
+async def task_build_rust_binaries(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
         f"""
+        set -euo pipefail
         export RUSTUP_HOME=/usr/local/rustup
         export CARGO_HOME=/usr/local/cargo
+        export CARGO_TARGET_DIR={repo}/target
         export PATH="${{CARGO_HOME}}/bin:$PATH"
-        cd {repo}
-        cargo install --path crates/cmux-env --locked --force
+        cargo build --locked --release --manifest-path {repo}/crates/cmux-env/Cargo.toml
+        cargo build --locked --release --manifest-path {repo}/crates/cmux-proxy/Cargo.toml
+        cargo build --locked --release --manifest-path {repo}/crates/cmux-pty/Cargo.toml
         """
     )
-    await ctx.run("build-env-binaries", cmd, timeout=60 * 30)
-
-
-@registry.task(
-    name="build-cmux-proxy",
-    deps=("upload-repo", "install-rust-toolchain"),
-    description="Build cmux-proxy binary via cargo install",
-)
-async def task_build_cmux_proxy(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        export RUSTUP_HOME=/usr/local/rustup
-        export CARGO_HOME=/usr/local/cargo
-        export PATH="${{CARGO_HOME}}/bin:$PATH"
-        cd {repo}
-        cargo install --path crates/cmux-proxy --locked --force
-        """
-    )
-    await ctx.run("build-cmux-proxy", cmd, timeout=60 * 30)
-
-
-@registry.task(
-    name="build-cmux-pty",
-    deps=("upload-repo", "install-rust-toolchain"),
-    description="Build cmux-pty binary (server + CLI) via cargo install",
-)
-async def task_build_cmux_pty(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        export RUSTUP_HOME=/usr/local/rustup
-        export CARGO_HOME=/usr/local/cargo
-        export PATH="${{CARGO_HOME}}/bin:$PATH"
-        cd {repo}
-        cargo install --path crates/cmux-pty --locked --force
-        """
-    )
-    await ctx.run("build-cmux-pty", cmd, timeout=60 * 30)
+    await ctx.run("build-rust-binaries", cmd, timeout=60 * 30)
 
 
 @registry.task(
     name="link-rust-binaries",
-    deps=("build-env-binaries", "build-cmux-proxy", "build-cmux-pty"),
+    deps=("build-rust-binaries",),
     description="Symlink built Rust binaries into /usr/local/bin",
 )
 async def task_link_rust_binaries(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
-        """
-        install -m 0755 /usr/local/cargo/bin/envd /usr/local/bin/envd
-        install -m 0755 /usr/local/cargo/bin/envctl /usr/local/bin/envctl
-        install -m 0755 /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
-        install -m 0755 /usr/local/cargo/bin/cmux-pty /usr/local/bin/cmux-pty
+        f"""
+        install -m 0755 {repo}/target/release/envd /usr/local/bin/envd
+        install -m 0755 {repo}/target/release/envctl /usr/local/bin/envctl
+        install -m 0755 {repo}/target/release/cmux-proxy /usr/local/bin/cmux-proxy
+        install -m 0755 {repo}/target/release/cmux-pty /usr/local/bin/cmux-pty
         """
     )
     await ctx.run("link-rust-binaries", cmd)

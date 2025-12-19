@@ -16,7 +16,7 @@ ARG GO_VERSION=1.25.2
 ARG GITHUB_TOKEN
 ARG IDE_PROVIDER=cmux-code
 
-FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-builder
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-base
 
 ARG RUST_VERSION
 ARG BUILDPLATFORM
@@ -55,29 +55,80 @@ rustup target add x86_64-unknown-linux-gnu --toolchain "${RUST_VERSION}"
 cargo --version
 EOF
 
-WORKDIR /cmux
-
-# Copy only Rust crates
-COPY crates ./crates
-
-# Build Rust binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
-  --mount=type=cache,target=/cmux/crates/target \
+  cargo install cargo-chef --locked
+
+WORKDIR /cmux
+
+FROM rust-base AS rust-chef
+WORKDIR /cmux
+COPY crates/cmux-env/Cargo.toml crates/cmux-env/Cargo.lock crates/cmux-env/
+COPY crates/cmux-proxy/Cargo.toml crates/cmux-proxy/Cargo.lock crates/cmux-proxy/
+COPY crates/cmux-pty/Cargo.toml crates/cmux-pty/Cargo.lock crates/cmux-pty/
+RUN mkdir -p crates/cmux-env/src/bin crates/cmux-proxy/src crates/cmux-pty/src && \
+  printf 'fn main() {}\n' > crates/cmux-env/src/bin/envd.rs && \
+  printf 'fn main() {}\n' > crates/cmux-env/src/bin/envctl.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-env/src/lib.rs && \
+  printf 'fn main() {}\n' > crates/cmux-proxy/src/main.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-proxy/src/lib.rs && \
+  printf 'fn main() {}\n' > crates/cmux-pty/src/main.rs
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-env && cargo chef prepare --recipe-path /cmux/recipe-env.json"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-proxy && cargo chef prepare --recipe-path /cmux/recipe-proxy.json"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-pty && cargo chef prepare --recipe-path /cmux/recipe-pty.json"
+
+FROM rust-base AS rust-builder
+ENV CARGO_TARGET_DIR=/cmux/target
+WORKDIR /cmux
+COPY --from=rust-chef /cmux/recipe-env.json /cmux/recipe-env.json
+COPY --from=rust-chef /cmux/recipe-proxy.json /cmux/recipe-proxy.json
+COPY --from=rust-chef /cmux/recipe-pty.json /cmux/recipe-pty.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/target \
   if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
   # Cross-compile to x86_64 when building on a non-amd64 builder
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
   export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
   export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
-  cargo install --path crates/cmux-env --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-proxy --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-pty --target x86_64-unknown-linux-gnu --locked --force; \
+  cargo chef cook --recipe-path /cmux/recipe-env.json --release --locked --target x86_64-unknown-linux-gnu && \
+  cargo chef cook --recipe-path /cmux/recipe-proxy.json --release --locked --target x86_64-unknown-linux-gnu && \
+  cargo chef cook --recipe-path /cmux/recipe-pty.json --release --locked --target x86_64-unknown-linux-gnu; \
   else \
   # Build natively for the requested platform (e.g., arm64 on Apple Silicon)
-  cargo install --path crates/cmux-env --locked --force && \
-  cargo install --path crates/cmux-proxy --locked --force && \
-  cargo install --path crates/cmux-pty --locked --force; \
+  cargo chef cook --recipe-path /cmux/recipe-env.json --release --locked && \
+  cargo chef cook --recipe-path /cmux/recipe-proxy.json --release --locked && \
+  cargo chef cook --recipe-path /cmux/recipe-pty.json --release --locked; \
   fi
+
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/target \
+  if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
+  export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
+  export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
+  cargo build --release --locked --manifest-path crates/cmux-env/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  cargo build --release --locked --manifest-path crates/cmux-proxy/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  cargo build --release --locked --manifest-path crates/cmux-pty/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  target_dir="/cmux/target/x86_64-unknown-linux-gnu/release"; \
+  else \
+  cargo build --release --locked --manifest-path crates/cmux-env/Cargo.toml && \
+  cargo build --release --locked --manifest-path crates/cmux-proxy/Cargo.toml && \
+  cargo build --release --locked --manifest-path crates/cmux-pty/Cargo.toml && \
+  target_dir="/cmux/target/release"; \
+  fi && \
+  install -m 0755 "${target_dir}/envd" /usr/local/cargo/bin/envd && \
+  install -m 0755 "${target_dir}/envctl" /usr/local/cargo/bin/envctl && \
+  install -m 0755 "${target_dir}/cmux-proxy" /usr/local/cargo/bin/cmux-proxy && \
+  install -m 0755 "${target_dir}/cmux-pty" /usr/local/cargo/bin/cmux-pty
 
 # Stage 2: Build base stage (runs natively on ARM64, cross-compiles to x86_64)
 FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS builder-base
