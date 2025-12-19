@@ -13,6 +13,7 @@ import type {
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
 import { useMutation } from "convex/react";
+import { useNavigate } from "@tanstack/react-router";
 import { FolderOpen, Cloud, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ export function WorkspaceQuickActions({
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
   const { theme } = useTheme();
+  const navigate = useNavigate();
   const [isCreatingLocal, setIsCreatingLocal] = useState(false);
   const [isCreatingCloud, setIsCreatingCloud] = useState(false);
 
@@ -88,9 +90,21 @@ export function WorkspaceQuickActions({
           },
           async (response: CreateLocalWorkspaceResponse) => {
             if (response.success) {
-              toast.success(
-                `Local workspace "${reservation.workspaceName}" created`
-              );
+              const effectiveTaskId = response.taskId ?? reservation.taskId;
+              const effectiveTaskRunId =
+                response.taskRunId ?? reservation.taskRunId;
+
+              // Navigate to the workspace
+              if (effectiveTaskId && effectiveTaskRunId) {
+                void navigate({
+                  to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                  params: {
+                    teamSlugOrId,
+                    taskId: effectiveTaskId,
+                    runId: effectiveTaskRunId,
+                  },
+                });
+              }
             } else {
               toast.error(
                 response.error || "Failed to create local workspace"
@@ -113,6 +127,7 @@ export function WorkspaceQuickActions({
     teamSlugOrId,
     reserveLocalWorkspace,
     addTaskToExpand,
+    navigate,
   ]);
 
   const handleCreateCloudWorkspace = useCallback(async () => {
@@ -159,7 +174,20 @@ export function WorkspaceQuickActions({
             },
             async (response: CreateCloudWorkspaceResponse) => {
               if (response.success) {
-                toast.success("Cloud workspace created");
+                const effectiveTaskId = response.taskId ?? taskId;
+                const effectiveTaskRunId = response.taskRunId;
+
+                // Navigate to the workspace
+                if (effectiveTaskId && effectiveTaskRunId) {
+                  void navigate({
+                    to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                    params: {
+                      teamSlugOrId,
+                      taskId: effectiveTaskId,
+                      runId: effectiveTaskRunId,
+                    },
+                  });
+                }
               } else {
                 toast.error(
                   response.error || "Failed to create cloud workspace"
@@ -196,7 +224,20 @@ export function WorkspaceQuickActions({
             },
             async (response: CreateCloudWorkspaceResponse) => {
               if (response.success) {
-                toast.success("Cloud workspace created");
+                const effectiveTaskId = response.taskId ?? taskId;
+                const effectiveTaskRunId = response.taskRunId;
+
+                // Navigate to the workspace
+                if (effectiveTaskId && effectiveTaskRunId) {
+                  void navigate({
+                    to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                    params: {
+                      teamSlugOrId,
+                      taskId: effectiveTaskId,
+                      runId: effectiveTaskRunId,
+                    },
+                  });
+                }
               } else {
                 toast.error(
                   response.error || "Failed to create cloud workspace"
@@ -221,6 +262,7 @@ export function WorkspaceQuickActions({
     createTask,
     addTaskToExpand,
     theme,
+    navigate,
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
@@ -269,7 +311,7 @@ export function WorkspaceQuickActions({
         </TooltipTrigger>
         <TooltipContent side="bottom">
           {canCreateLocal ? (
-            <p>Create a local Docker workspace</p>
+            <p>Create a local workspace</p>
           ) : (
             <p>Select a repository to create a local workspace</p>
           )}

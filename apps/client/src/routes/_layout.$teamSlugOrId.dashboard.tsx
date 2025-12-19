@@ -1043,7 +1043,7 @@ function DashboardComponent() {
             />
 
             {/* Workspace Quick Actions - create workspaces without a task */}
-            <div className="mt-3 px-1">
+            <div className="mt-2 px-1">
               <WorkspaceQuickActions
                 teamSlugOrId={teamSlugOrId}
                 selectedProject={selectedProject}
