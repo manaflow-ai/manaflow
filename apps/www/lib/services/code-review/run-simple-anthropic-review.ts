@@ -703,3 +703,254 @@ function stripLeadingTrailingCodeFences(text: string): string {
 
   return lines.slice(start, end + 1).join("\n");
 }
+
+// Type for local diff review (no GitHub fetch)
+export type LocalDiffFile = {
+  filePath: string;
+  diffText: string;
+};
+
+export type LocalDiffReviewStreamOptions = {
+  files: LocalDiffFile[];
+  repoName?: string;
+  modelConfig?: ModelConfig;
+  tooltipLanguage?: TooltipLanguageValue;
+  onChunk?: (chunk: string) => void | Promise<void>;
+  onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
+  signal?: AbortSignal;
+};
+
+/**
+ * Run AI review on locally-provided diffs (no GitHub fetch).
+ * This is used for `./0github .` mode when user wants to review local changes.
+ */
+export async function runLocalDiffReviewStream(
+  options: LocalDiffReviewStreamOptions
+): Promise<SimpleReviewStreamResult> {
+  const {
+    files,
+    repoName = "local",
+    modelConfig,
+    tooltipLanguage = DEFAULT_TOOLTIP_LANGUAGE,
+    onChunk,
+    signal,
+  } = options;
+  const onEvent = options.onEvent ?? null;
+
+  const emitEvent = async (event: SimpleReviewParsedEvent): Promise<void> => {
+    if (!onEvent) {
+      return;
+    }
+    await onEvent(event);
+  };
+
+  if (signal?.aborted) {
+    throw new Error("Stream aborted before start");
+  }
+
+  // Filter files (same logic as PR review)
+  const candidateFiles: LocalDiffFile[] = [];
+
+  for (const file of files) {
+    const skipReason = detectSkipReason(file.filePath, file.diffText);
+    if (skipReason) {
+      await emitEvent({
+        type: "skip",
+        filePath: file.filePath,
+        reason: skipReason,
+      });
+      continue;
+    }
+    candidateFiles.push(file);
+  }
+
+  const diffCharacterCount = candidateFiles.reduce(
+    (total, file) => total + file.diffText.length,
+    0
+  );
+
+  if (candidateFiles.length === 0) {
+    return {
+      diffCharacterCount,
+      finalText: "",
+    };
+  }
+
+  // Use same model config as PR review
+  const effectiveModelConfig: ModelConfig =
+    modelConfig ?? getDefaultHeatmapModelConfig();
+
+  const anthropic = createAnthropic({
+    apiKey: env.ANTHROPIC_API_KEY,
+    baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+  });
+
+  const openai = createOpenAI({
+    apiKey: env.OPENAI_API_KEY,
+    baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+  });
+
+  const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
+  const finalChunks: string[] = [];
+
+  const results = await Promise.allSettled(
+    candidateFiles.map((file) =>
+      runWithSemaphore(async () => {
+        if (signal?.aborted) {
+          throw new Error("Stream aborted");
+        }
+
+        await emitEvent({
+          type: "file",
+          filePath: file.filePath,
+        });
+
+        const parser = new SimpleReviewParser(file.filePath);
+        let aborted = false;
+        let emittedLine = false;
+        const fileChunks: string[] = [];
+        const handleAbort = () => {
+          aborted = true;
+        };
+
+        if (signal) {
+          signal.addEventListener("abort", handleAbort);
+        }
+
+        // Use repoName as the label (instead of PR URL)
+        const prompt = buildFilePrompt(repoName, file.filePath, file.diffText, tooltipLanguage);
+
+        try {
+          const modelInstance =
+            effectiveModelConfig.provider === "openai"
+              ? openai(effectiveModelConfig.model)
+              : anthropic(effectiveModelConfig.model);
+
+          const stream = streamText({
+            model: modelInstance,
+            prompt,
+            temperature: 0,
+            maxRetries: 2,
+          });
+
+          for await (const delta of stream.textStream) {
+            if (aborted) {
+              throw new Error("Stream aborted");
+            }
+            if (delta.length === 0) {
+              continue;
+            }
+
+            finalChunks.push(delta);
+            fileChunks.push(delta);
+
+            if (onChunk) {
+              await onChunk(delta);
+            }
+
+            const events = parser.push(delta);
+            if (events.length > 0) {
+              for (const event of events) {
+                if (event.type === "line") {
+                  emittedLine = true;
+                }
+                await emitEvent(event);
+              }
+            }
+          }
+
+          const remaining = parser.flush();
+          if (remaining.length > 0) {
+            for (const event of remaining) {
+              if (event.type === "line") {
+                emittedLine = true;
+              }
+              await emitEvent(event);
+            }
+          }
+
+          if (!emittedLine) {
+            const fileText = fileChunks.join("");
+            console.warn("[local-review] Model returned no annotations", {
+              repoName,
+              filePath: file.filePath,
+              preview: buildTextPreview(fileText),
+            });
+            await emitEvent({
+              type: "skip",
+              filePath: file.filePath,
+              reason: "model returned no annotated lines",
+            });
+            await emitEvent({
+              type: "file-complete",
+              filePath: file.filePath,
+              status: "skipped",
+              summary: "model returned no annotated lines",
+            });
+          } else {
+            await emitEvent({
+              type: "file-complete",
+              filePath: file.filePath,
+              status: "success",
+            });
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : String(error ?? "Unknown error");
+
+          const isAbortError = message.includes("Stream aborted") || message.includes("aborted");
+          if (!isAbortError) {
+            console.error("[local-review] File stream failed", {
+              repoName,
+              filePath: file.filePath,
+              message,
+            });
+          }
+
+          await emitEvent({
+            type: "skip",
+            filePath: file.filePath,
+            reason: `error: ${message}`,
+          });
+          await emitEvent({
+            type: "file-complete",
+            filePath: file.filePath,
+            status: "error",
+            summary: message,
+          });
+          throw error;
+        } finally {
+          if (signal) {
+            signal.removeEventListener("abort", handleAbort);
+          }
+        }
+      })
+    )
+  );
+
+  const rejected = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected"
+  );
+
+  if (rejected.length > 0) {
+    const firstReason = rejected[0]?.reason ?? "unknown error";
+    throw firstReason instanceof Error
+      ? firstReason
+      : new Error(String(firstReason));
+  }
+
+  const finalText = finalChunks.join("");
+
+  console.info("[local-review] Stream completed", {
+    repoName,
+    processedFiles: candidateFiles.length,
+    finalLength: finalText.length,
+  });
+
+  return {
+    diffCharacterCount,
+    finalText,
+  };
+}

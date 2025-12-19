@@ -24,6 +24,27 @@ const (
 	minSidebarWidth = 42
 )
 
+// Diff mode for local diff
+type DiffMode string
+
+const (
+	DiffModeUnstaged DiffMode = "unstaged" // git diff (default)
+	DiffModeStaged   DiffMode = "staged"   // git diff --staged
+	DiffModeBranch   DiffMode = "branch"   // git diff origin/main..HEAD
+)
+
+// LocalDiffFile represents a file diff for local mode
+type LocalDiffFile struct {
+	FilePath string `json:"filePath"`
+	DiffText string `json:"diffText"`
+}
+
+// LocalDiffRequest is the request body for the local diff API
+type LocalDiffRequest struct {
+	Files    []LocalDiffFile `json:"files"`
+	RepoName string          `json:"repoName,omitempty"`
+}
+
 // Styles
 var (
 	focusedBorderStyle = lipgloss.NewStyle().
@@ -99,12 +120,19 @@ func highlightCodeWithToken(code string, lang string, token *string, score int) 
 		return code
 	}
 
+	// Handle special tokens that describe operators rather than literal text
+	actualToken := *token
+	if actualToken == "walrus" {
+		// The walrus operator := should be highlighted, not the word "walrus"
+		actualToken = ":="
+	}
+
 	// Find the token position in raw code (exact match first)
-	idx := strings.Index(code, *token)
+	idx := strings.Index(code, actualToken)
 	if idx == -1 {
 		// Try case-insensitive
 		lowerCode := strings.ToLower(code)
-		lowerToken := strings.ToLower(*token)
+		lowerToken := strings.ToLower(actualToken)
 		idx = strings.Index(lowerCode, lowerToken)
 	}
 
@@ -116,10 +144,13 @@ func highlightCodeWithToken(code string, lang string, token *string, score int) 
 		return code
 	}
 
+	// Use the actual token length for slicing
+	tokenLen := len(actualToken)
+
 	// Split code into parts
 	before := code[:idx]
-	tokenText := code[idx : idx+len(*token)]
-	after := code[idx+len(*token):]
+	tokenText := code[idx : idx+tokenLen]
+	after := code[idx+tokenLen:]
 
 	// Syntax highlight each part
 	if lang != "" {
@@ -205,6 +236,10 @@ type githubFilesMsg struct {
 	files []GitHubFile
 }
 type githubErrorMsg struct{ err error }
+type localDiffsMsg struct {
+	files []LocalDiffFile
+}
+type localDiffsErrorMsg struct{ err error }
 
 // Model
 type model struct {
@@ -221,9 +256,12 @@ type model struct {
 	fileIndex      int
 	diffScroll     int
 	showTooltip    bool
-	githubLoaded   bool   // true when GitHub diff is loaded
-	aiAnnotating   bool   // true when 0github is streaming
-	sideBySide     bool   // true for side-by-side view, false for unified
+	githubLoaded   bool     // true when GitHub diff is loaded
+	aiAnnotating   bool     // true when 0github is streaming
+	sideBySide     bool     // true for side-by-side view, false for unified
+	isLocalMode    bool     // true when reviewing local git diff
+	diffMode       DiffMode // which git diff mode to use (local mode only)
+	localDiffs     []LocalDiffFile // local diff files (local mode only)
 }
 
 func initialModel(owner, repo string, prNumber int) model {
@@ -238,9 +276,37 @@ func initialModel(owner, repo string, prNumber int) model {
 	}
 }
 
+func initialModelLocal(repoName string, diffMode DiffMode) model {
+	return model{
+		owner:       "",
+		repo:        repoName,
+		prNumber:    0,
+		files:       make(map[string]*FileData),
+		fileOrder:   []string{},
+		activePane:  "files",
+		showTooltip: true,
+		isLocalMode: true,
+		diffMode:    diffMode,
+	}
+}
+
 func (m model) Init() tea.Cmd {
-	// First fetch GitHub files, then start 0github SSE for AI annotations
+	if m.isLocalMode {
+		// Local mode: fetch local git diff
+		return m.fetchLocalDiffs()
+	}
+	// GitHub mode: fetch GitHub files, then start 0github SSE for AI annotations
 	return m.fetchGitHubFiles()
+}
+
+func (m model) fetchLocalDiffs() tea.Cmd {
+	return func() tea.Msg {
+		files, err := getLocalDiff(m.diffMode)
+		if err != nil {
+			return localDiffsErrorMsg{err}
+		}
+		return localDiffsMsg{files}
+	}
 }
 
 func (m model) fetchGitHubFiles() tea.Cmd {
@@ -250,6 +316,69 @@ func (m model) fetchGitHubFiles() tea.Cmd {
 			return githubErrorMsg{err}
 		}
 		return githubFilesMsg{files}
+	}
+}
+
+// startLocalReview POSTs local diffs to the API and starts SSE streaming
+func (m model) startLocalReview() tea.Cmd {
+	return func() tea.Msg {
+		// Prepare request body
+		reqBody := LocalDiffRequest{
+			Files:    m.localDiffs,
+			RepoName: m.repo,
+		}
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return sseErrorMsg{fmt.Errorf("failed to marshal request: %w", err)}
+		}
+
+		// POST to local review endpoint
+		url := fmt.Sprintf("%s/api/pr-review/local", apiBaseURL)
+		req, err := http.NewRequest("POST", url, strings.NewReader(string(bodyBytes)))
+		if err != nil {
+			return sseErrorMsg{fmt.Errorf("failed to create request: %w", err)}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return sseErrorMsg{fmt.Errorf("failed to POST local diffs: %w", err)}
+		}
+
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			return sseErrorMsg{fmt.Errorf("API returned status %d", resp.StatusCode)}
+		}
+
+		// Start reading SSE stream in background
+		go func() {
+			defer resp.Body.Close()
+			scanner := bufio.NewScanner(resp.Body)
+			buf := make([]byte, 0, 64*1024)
+			scanner.Buffer(buf, 1024*1024)
+
+			for scanner.Scan() {
+				line := scanner.Text()
+				if !strings.HasPrefix(line, "data:") {
+					continue
+				}
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data == "" {
+					continue
+				}
+
+				var event SSEEvent
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					continue
+				}
+
+				sseEventChan <- event
+			}
+			close(sseEventChan)
+		}()
+
+		return nil
 	}
 }
 
@@ -492,6 +621,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenSSE(sseEventChan)
 
 	case githubErrorMsg:
+		m.err = msg.err
+		return m, nil
+
+	case localDiffsMsg:
+		// Populate files from local git diff
+		m.githubLoaded = true
+		m.localDiffs = msg.files
+		for _, localFile := range msg.files {
+			lines := parseDiffPatch(localFile.DiffText, localFile.FilePath)
+			m.fileOrder = append(m.fileOrder, localFile.FilePath)
+			// Count additions/deletions from lines
+			adds, dels := 0, 0
+			for _, line := range lines {
+				switch line.ChangeType {
+				case "add":
+					adds++
+				case "delete":
+					dels++
+				}
+			}
+			m.files[localFile.FilePath] = &FileData{
+				FilePath:  localFile.FilePath,
+				Status:    "pending",
+				Lines:     lines,
+				Additions: adds,
+				Deletions: dels,
+			}
+		}
+		// Start local AI annotations via POST to /api/pr-review/local
+		m.aiAnnotating = true
+		return m, m.startLocalReview()
+
+	case localDiffsErrorMsg:
 		m.err = msg.err
 		return m, nil
 
@@ -1306,6 +1468,123 @@ func getCurrentBranch() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// getRepoName returns the repository name from git remote
+func getRepoName() string {
+	remoteURL, err := getGitRemoteURL()
+	if err != nil {
+		return "local"
+	}
+	_, repo, err := parseGitRemote(remoteURL)
+	if err != nil {
+		return "local"
+	}
+	return repo
+}
+
+// getLocalDiff runs git diff and returns file diffs
+func getLocalDiff(mode DiffMode) ([]LocalDiffFile, error) {
+	var args []string
+	switch mode {
+	case DiffModeStaged:
+		args = []string{"diff", "--staged"}
+	case DiffModeBranch:
+		// Find the merge base with main/master
+		mergeBase, err := getMergeBase()
+		if err != nil {
+			return nil, fmt.Errorf("could not find merge base: %w", err)
+		}
+		args = []string{"diff", mergeBase + "..HEAD"}
+	default: // DiffModeUnstaged
+		args = []string{"diff"}
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff failed: %w", err)
+	}
+
+	diffText := string(output)
+	if strings.TrimSpace(diffText) == "" {
+		return nil, fmt.Errorf("no changes found")
+	}
+
+	return splitDiffIntoFiles(diffText), nil
+}
+
+// getMergeBase finds the merge base with origin/main or origin/master
+func getMergeBase() (string, error) {
+	// Try origin/main first
+	cmd := exec.Command("git", "merge-base", "origin/main", "HEAD")
+	output, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(output)), nil
+	}
+
+	// Fall back to origin/master
+	cmd = exec.Command("git", "merge-base", "origin/master", "HEAD")
+	output, err = cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(output)), nil
+	}
+
+	// Fall back to main (local)
+	cmd = exec.Command("git", "merge-base", "main", "HEAD")
+	output, err = cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(output)), nil
+	}
+
+	// Fall back to master (local)
+	cmd = exec.Command("git", "merge-base", "master", "HEAD")
+	output, err = cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(output)), nil
+	}
+
+	return "", fmt.Errorf("could not find main/master branch")
+}
+
+// splitDiffIntoFiles splits a unified diff into individual file diffs
+func splitDiffIntoFiles(diffText string) []LocalDiffFile {
+	var files []LocalDiffFile
+	lines := strings.Split(diffText, "\n")
+	var currentFile *LocalDiffFile
+	var currentLines []string
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "diff --git ") {
+			// Save previous file
+			if currentFile != nil {
+				currentFile.DiffText = strings.Join(currentLines, "\n")
+				files = append(files, *currentFile)
+			}
+
+			// Parse file path from "diff --git a/path b/path"
+			parts := strings.Split(line, " ")
+			if len(parts) >= 4 {
+				// Get b/path and remove the b/ prefix
+				bPath := parts[len(parts)-1]
+				if strings.HasPrefix(bPath, "b/") {
+					bPath = bPath[2:]
+				}
+				currentFile = &LocalDiffFile{FilePath: bPath}
+				currentLines = []string{line}
+			}
+		} else if currentFile != nil {
+			currentLines = append(currentLines, line)
+		}
+	}
+
+	// Save last file
+	if currentFile != nil {
+		currentFile.DiffText = strings.Join(currentLines, "\n")
+		files = append(files, *currentFile)
+	}
+
+	return files
+}
+
 // GitHubPR represents a PR from the GitHub API
 type GitHubPR struct {
 	Number int    `json:"number"`
@@ -1551,94 +1830,143 @@ func parsePRUrl(input string) (owner, repo string, prNumber int, err error) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: 0github <pr-url|.>")
+	// Parse flags
+	var staged, branch bool
+	var positionalArgs []string
+
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--staged":
+			staged = true
+		case "--branch":
+			branch = true
+		case "--legend", "-h", "--help":
+			printHelp()
+			return
+		default:
+			positionalArgs = append(positionalArgs, arg)
+		}
+	}
+
+	if len(positionalArgs) < 1 {
+		fmt.Println("Usage: 0github <pr-url|.> [--staged|--branch]")
 		fmt.Println("  pr-url: https://github.com/owner/repo/pull/123 or owner/repo#123")
-		fmt.Println("  .     : Auto-detect PR from current git branch")
+		fmt.Println("  .     : Review local git diff (no PR required)")
+		fmt.Println("\nLocal Mode Flags:")
+		fmt.Println("  --staged : Review only staged changes (git diff --staged)")
+		fmt.Println("  --branch : Review all changes on branch vs main")
 		os.Exit(1)
 	}
 
-	if os.Args[1] == "--legend" || os.Args[1] == "-h" || os.Args[1] == "--help" {
-		fmt.Println("\nUsage: 0github <pr-url|.>")
-		fmt.Println("  pr-url: https://github.com/owner/repo/pull/123 or owner/repo#123")
-		fmt.Println("  .     : Auto-detect PR from current git branch")
-		fmt.Println("\nScore Legend:")
-		fmt.Println("    0-10  - Minimal attention needed")
-		fmt.Println("   11-25  - Low attention")
-		fmt.Println("   26-40  - Moderate attention")
-		fmt.Println("   41-60  - Notable concern")
-		fmt.Println("   61-80  - High attention needed")
-		fmt.Println("   81-100 - Critical review required")
-		fmt.Println("\nControls:")
-		fmt.Println("  j/k or ↑/↓  - Navigate")
-		fmt.Println("  J/K         - Page up/down")
-		fmt.Println("  Tab         - Switch between file list and diff")
-		fmt.Println("  Enter/l/→   - Focus diff view")
-		fmt.Println("  h/←         - Focus file list")
-		fmt.Println("  [/]         - Prev/next file")
-		fmt.Println("  s           - Toggle unified/side-by-side view")
-		fmt.Println("  g/G         - Go to top/bottom")
-		fmt.Println("  q           - Quit")
-		return
-	}
+	input := positionalArgs[0]
 
-	owner, repo, prNumber, err := parsePRUrl(os.Args[1])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Show detected PR info if using "."
-	if os.Args[1] == "." {
-		fmt.Fprintf(os.Stderr, "Detected PR: %s/%s#%d\n", owner, repo, prNumber)
-	}
-
-	// Initialize SSE channel for 0github AI annotations
+	// Initialize SSE channel for AI annotations
 	sseEventChan = make(chan SSEEvent, 1000)
 
-	m := initialModel(owner, repo, prNumber)
+	var m model
+	var isLocalMode bool
+
+	if input == "." {
+		// Try to detect PR first
+		owner, repo, prNumber, err := detectPRFromCurrentDir()
+		if err != nil {
+			// No PR found - use local mode
+			isLocalMode = true
+			diffMode := DiffModeUnstaged
+			if staged {
+				diffMode = DiffModeStaged
+			} else if branch {
+				diffMode = DiffModeBranch
+			}
+
+			repoName := getRepoName()
+			fmt.Fprintf(os.Stderr, "No PR found, using local mode (%s) for %s\n", diffMode, repoName)
+			m = initialModelLocal(repoName, diffMode)
+		} else {
+			// PR found - use GitHub mode
+			fmt.Fprintf(os.Stderr, "Detected PR: %s/%s#%d\n", owner, repo, prNumber)
+			m = initialModel(owner, repo, prNumber)
+		}
+	} else {
+		// Parse as PR URL
+		owner, repo, prNumber, err := parsePRUrl(input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		m = initialModel(owner, repo, prNumber)
+	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	// Start 0github SSE streaming in background
-	go func() {
-		url := fmt.Sprintf("%s/api/pr-review/simple?repoFullName=%s/%s&prNumber=%d",
-			apiBaseURL, owner, repo, prNumber)
+	// Start SSE streaming in background (only for GitHub mode - local mode starts in Update)
+	if !isLocalMode && !m.isLocalMode {
+		go func() {
+			url := fmt.Sprintf("%s/api/pr-review/simple?repoFullName=%s/%s&prNumber=%d",
+				apiBaseURL, m.owner, m.repo, m.prNumber)
 
-		resp, err := http.Get(url)
-		if err != nil {
-			sseEventChan <- SSEEvent{Type: "error", Message: err.Error()}
+			resp, err := http.Get(url)
+			if err != nil {
+				sseEventChan <- SSEEvent{Type: "error", Message: err.Error()}
+				close(sseEventChan)
+				return
+			}
+			defer resp.Body.Close()
+
+			scanner := bufio.NewScanner(resp.Body)
+			buf := make([]byte, 0, 64*1024)
+			scanner.Buffer(buf, 1024*1024)
+
+			for scanner.Scan() {
+				line := scanner.Text()
+				if !strings.HasPrefix(line, "data:") {
+					continue
+				}
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data == "" {
+					continue
+				}
+
+				var event SSEEvent
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					continue
+				}
+
+				sseEventChan <- event
+			}
 			close(sseEventChan)
-			return
-		}
-		defer resp.Body.Close()
-
-		scanner := bufio.NewScanner(resp.Body)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "" {
-				continue
-			}
-
-			var event SSEEvent
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
-				continue
-			}
-
-			sseEventChan <- event
-		}
-		close(sseEventChan)
-	}()
+		}()
+	}
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func printHelp() {
+	fmt.Println("\nUsage: 0github <pr-url|.> [--staged|--branch]")
+	fmt.Println("  pr-url: https://github.com/owner/repo/pull/123 or owner/repo#123")
+	fmt.Println("  .     : Review local git diff (falls back to local mode if no PR)")
+	fmt.Println("\nLocal Mode Flags (only used with '.'):")
+	fmt.Println("  --staged : Review only staged changes (git diff --staged)")
+	fmt.Println("  --branch : Review all changes on branch vs main")
+	fmt.Println("\nScore Legend:")
+	fmt.Println("    0-10  - Minimal attention needed")
+	fmt.Println("   11-25  - Low attention")
+	fmt.Println("   26-40  - Moderate attention")
+	fmt.Println("   41-60  - Notable concern")
+	fmt.Println("   61-80  - High attention needed")
+	fmt.Println("   81-100 - Critical review required")
+	fmt.Println("\nControls:")
+	fmt.Println("  j/k or ↑/↓  - Navigate")
+	fmt.Println("  J/K         - Page up/down")
+	fmt.Println("  Tab         - Switch between file list and diff")
+	fmt.Println("  Enter/l/→   - Focus diff view")
+	fmt.Println("  h/←         - Focus file list")
+	fmt.Println("  [/]         - Prev/next file")
+	fmt.Println("  s           - Toggle unified/side-by-side view")
+	fmt.Println("  a           - Toggle AI annotations")
+	fmt.Println("  g/G         - Go to top/bottom")
+	fmt.Println("  q           - Quit")
 }
