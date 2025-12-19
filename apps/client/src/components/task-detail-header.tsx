@@ -1,6 +1,7 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
+import { WorkflowRunsBadge, type CombinedRun } from "@/components/WorkflowRunsSection";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,8 @@ interface TaskDetailHeaderProps {
   onPanelSettings?: () => void;
   onOpenLocalWorkspace?: () => void;
   teamSlugOrId: string;
+  workflowRuns?: CombinedRun[];
+  workflowRunsLoading?: boolean;
 }
 
 const ENABLE_MERGE_BUTTON = false;
@@ -209,6 +212,8 @@ export function TaskDetailHeader({
   onPanelSettings,
   onOpenLocalWorkspace,
   teamSlugOrId,
+  workflowRuns,
+  workflowRunsLoading,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -316,6 +321,12 @@ export function TaskDetailHeader({
                 defaultHeadRef={normalizedHeadBranch || undefined}
               />
             </Suspense>
+          )}
+          {workflowRuns !== undefined && (
+            <WorkflowRunsBadge
+              allRuns={workflowRuns}
+              isLoading={workflowRunsLoading ?? false}
+            />
           )}
         </div>
 

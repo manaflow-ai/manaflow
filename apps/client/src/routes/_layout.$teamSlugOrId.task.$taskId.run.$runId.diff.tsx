@@ -446,6 +446,68 @@ function collectAgentNamesFromRuns(
   return ordered;
 }
 
+function useAggregatedWorkflowData({
+  teamSlugOrId,
+  pullRequests,
+}: {
+  teamSlugOrId: string;
+  pullRequests: Array<{ repoFullName: string; number: number }> | undefined;
+}) {
+  // Fetch workflow data for the first PR (if any)
+  // We need to call hooks unconditionally, so we use skip logic
+  const pr0 = pullRequests?.[0];
+  const pr1 = pullRequests?.[1];
+  const pr2 = pullRequests?.[2];
+  const pr3 = pullRequests?.[3];
+
+  const data0 = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: pr0?.repoFullName ?? '',
+    prNumber: pr0?.number ?? 0,
+    headSha: undefined,
+  });
+
+  const data1 = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: pr1?.repoFullName ?? '',
+    prNumber: pr1?.number ?? 0,
+    headSha: undefined,
+  });
+
+  const data2 = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: pr2?.repoFullName ?? '',
+    prNumber: pr2?.number ?? 0,
+    headSha: undefined,
+  });
+
+  const data3 = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: pr3?.repoFullName ?? '',
+    prNumber: pr3?.number ?? 0,
+    headSha: undefined,
+  });
+
+  return useMemo(() => {
+    if (!pullRequests || pullRequests.length === 0) {
+      return { allRuns: [], isLoading: false };
+    }
+
+    const allSources = [
+      { data: data0, enabled: !!pr0 },
+      { data: data1, enabled: !!pr1 },
+      { data: data2, enabled: !!pr2 },
+      { data: data3, enabled: !!pr3 },
+    ];
+
+    const enabledSources = allSources.filter((s) => s.enabled);
+    const isLoading = enabledSources.some((s) => s.data.isLoading);
+    const allRuns = enabledSources.flatMap((s) => s.data.allRuns);
+
+    return { allRuns, isLoading };
+  }, [pullRequests, pr0, pr1, pr2, pr3, data0, data1, data2, data3]);
+}
+
 function WorkflowRunsWrapper({
   teamSlugOrId,
   repoFullName,
@@ -648,6 +710,12 @@ function RunDiffPage() {
     ) as Array<{ repoFullName: string; number: number; url?: string }> | undefined;
   }, [selectedRun]);
 
+  // Aggregate workflow data from all PRs for the badge
+  const aggregatedWorkflowData = useAggregatedWorkflowData({
+    teamSlugOrId,
+    pullRequests,
+  });
+
   // Track expanded state for each PR's checks
   const [checksExpandedByRepo, setChecksExpandedByRepo] = useState<Record<string, boolean | null>>({});
 
@@ -837,6 +905,8 @@ function RunDiffPage() {
             onCollapseAllChecks={collapseAllChecks}
             onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
+            workflowRuns={pullRequests && pullRequests.length > 0 ? aggregatedWorkflowData.allRuns : undefined}
+            workflowRunsLoading={aggregatedWorkflowData.isLoading}
           />
           {task?.text && (
             <div className="mb-2 px-3.5">
