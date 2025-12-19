@@ -84,10 +84,13 @@ function VSCodeComponent() {
     id: taskRunId,
   });
 
+  // Only use local serve-web URL rewriting for truly local workspaces (provider === "other")
+  // Docker workspaces should use the Docker-forwarded URL directly
+  const shouldUseLocalServeWeb = taskRun?.vscode?.provider === "other";
   const workspaceUrl = taskRun?.vscode?.workspaceUrl
     ? toProxyWorkspaceUrl(
         taskRun.vscode.workspaceUrl,
-        localServeWeb.data?.baseUrl
+        shouldUseLocalServeWeb ? localServeWeb.data?.baseUrl : null
       )
     : null;
   const disablePreflight = taskRun?.vscode?.workspaceUrl

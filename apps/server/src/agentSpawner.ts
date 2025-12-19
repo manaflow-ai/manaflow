@@ -701,10 +701,19 @@ export async function spawnAgent(
           `${unsetCommand}exec ${commandString}`,
         ];
 
+    // Build cmux-pty specific command (the actual agent command without tmux/bash wrapper)
+    // For cmux-pty, we want to run the command directly in a shell so env vars expand
+    const ptyCommandString = `${unsetCommand}${commandString}`;
+
+    // Use cmux-pty backend - worker will fall back to tmux if cmux-pty server unavailable
     const terminalCreationCommand: WorkerCreateTerminal = {
       terminalId: tmuxSessionName,
+      backend: "cmux-pty",
+      // tmux command/args for fallback when cmux-pty is unavailable
       command: "tmux",
       args: tmuxArgs,
+      // cmux-pty specific: the actual command to run in the PTY shell
+      ptyCommand: ptyCommandString,
       cols: 80,
       rows: 74,
       env: envVars,

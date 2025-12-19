@@ -91,6 +91,7 @@ async function main() {
           cols: 80,
           rows: 24,
           env: {},
+          backend: "tmux",
           authFiles: [
             {
               contentBase64: claudeJsonBase64,
