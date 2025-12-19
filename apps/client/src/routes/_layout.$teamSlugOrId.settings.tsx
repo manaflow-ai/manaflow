@@ -144,10 +144,12 @@ function SettingsComponent() {
       setOriginalTeamSlug(s);
       setTeamSlugError("");
       const n =
-        (teamInfo as unknown as { name?: string; displayName?: string }).name ||
-        (teamInfo as unknown as { name?: string; displayName?: string })
-          .displayName ||
-        "";
+        ("name" in teamInfo && typeof teamInfo.name === "string"
+          ? teamInfo.name
+          : "") ||
+        ("displayName" in teamInfo && typeof teamInfo.displayName === "string"
+          ? teamInfo.displayName
+          : "");
       setTeamName(n);
       setOriginalTeamName(n);
       setTeamNameError("");
@@ -176,9 +178,11 @@ function SettingsComponent() {
     if (workspaceSettings !== undefined) {
       setWorktreePath(workspaceSettings?.worktreePath || "");
       setOriginalWorktreePath(workspaceSettings?.worktreePath || "");
-      const enabled = (
-        workspaceSettings as unknown as { autoPrEnabled?: boolean }
-      )?.autoPrEnabled;
+      const enabled =
+        "autoPrEnabled" in workspaceSettings &&
+        typeof workspaceSettings.autoPrEnabled === "boolean"
+          ? workspaceSettings.autoPrEnabled
+          : undefined;
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
