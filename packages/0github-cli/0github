@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Run the 0github CLI with bun for faster startup
+# Resolve symlinks to find the actual script location
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+exec bun run "$SCRIPT_DIR/src/cli.tsx" "$@"

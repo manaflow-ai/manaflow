@@ -1,0 +1,25 @@
+{
+  "name": "@cmux/0github-cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "0github": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "bun build src/cli.tsx --outdir dist --target node",
+    "dev": "bun run src/cli.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "cli-highlight": "^2.1.11",
+    "commander": "^12.1.0",
+    "ink": "^6.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.2"
+  }
+}
