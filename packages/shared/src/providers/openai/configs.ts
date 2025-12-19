@@ -5,6 +5,109 @@ import { checkOpenAIRequirements } from "./check-requirements";
 import { startCodexCompletionDetector } from "./completion-detector";
 import { getOpenAIEnvironment } from "./environment";
 
+export const CODEX_GPT_5_2_CODEX_XHIGH_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-xhigh",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="xhigh"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-high",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="high"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-medium",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="medium"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-low",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="low"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
 export const CODEX_GPT_5_1_CODEX_MAX_XHIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max-xhigh",
   command: "bunx",
