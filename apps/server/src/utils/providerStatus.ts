@@ -99,6 +99,10 @@ export async function checkAllProvidersStatusWebMode(options: {
       // Special handling for Claude agents: CLAUDE_CODE_OAUTH_TOKEN OR ANTHROPIC_API_KEY
       // (OAuth token is preferred, but API key works too)
       const isClaudeAgent = agent.name.startsWith("claude/");
+      // Special handling for Codex agents: CODEX_AUTH_JSON OR OPENAI_API_KEY
+      // (auth.json with OAuth tokens is preferred, but API key works too)
+      const isCodexAgent = agent.name.startsWith("codex/");
+
       if (isClaudeAgent) {
         const hasOAuthToken =
           apiKeys.CLAUDE_CODE_OAUTH_TOKEN &&
@@ -109,6 +113,14 @@ export async function checkAllProvidersStatusWebMode(options: {
           missingRequirements.push(
             "Claude OAuth Token or Anthropic API Key"
           );
+        }
+      } else if (isCodexAgent) {
+        const hasAuthJson =
+          apiKeys.CODEX_AUTH_JSON && apiKeys.CODEX_AUTH_JSON.trim() !== "";
+        const hasApiKey =
+          apiKeys.OPENAI_API_KEY && apiKeys.OPENAI_API_KEY.trim() !== "";
+        if (!hasAuthJson && !hasApiKey) {
+          missingRequirements.push("Codex Auth JSON or OpenAI API Key");
         }
       } else {
         // For other agents, check all required keys
