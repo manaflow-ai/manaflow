@@ -92,6 +92,7 @@ COPY --from=rust-chef /cmux/recipe-pty.json /cmux/recipe-pty.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
   --mount=type=cache,target=/cmux/target \
+  export CARGO_BUILD_JOBS="$(nproc)" && \
   if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
   # Cross-compile to x86_64 when building on a non-amd64 builder
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
@@ -111,6 +112,7 @@ COPY crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
   --mount=type=cache,target=/cmux/target \
+  export CARGO_BUILD_JOBS="$(nproc)" && \
   if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
   export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \

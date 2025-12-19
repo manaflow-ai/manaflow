@@ -1957,6 +1957,7 @@ async def task_build_rust_binaries(ctx: TaskContext) -> None:
         export CARGO_HOME=/usr/local/cargo
         export CARGO_TARGET_DIR={repo}/target
         export PATH="${{CARGO_HOME}}/bin:$PATH"
+        export CARGO_BUILD_JOBS="$(nproc)"
         cargo build --locked --release --manifest-path {repo}/crates/cmux-env/Cargo.toml
         cargo build --locked --release --manifest-path {repo}/crates/cmux-proxy/Cargo.toml
         cargo build --locked --release --manifest-path {repo}/crates/cmux-pty/Cargo.toml
