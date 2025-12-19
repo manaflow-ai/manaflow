@@ -212,6 +212,7 @@ exit 0`;
     },
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
       // Only route through cmux proxy when NOT using OAuth token
       // OAuth token users go directly to Anthropic API (they pay via their subscription)
       ...(hasOAuthToken
