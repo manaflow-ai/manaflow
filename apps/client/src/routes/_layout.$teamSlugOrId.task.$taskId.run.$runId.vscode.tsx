@@ -9,7 +9,7 @@ import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { getTaskRunPersistKey } from "@/lib/persistent-webview-keys";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
+import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
   preloadTaskRunIframes,
   TASK_RUN_IFRAME_ALLOW,
@@ -62,18 +62,14 @@ export const Route = createFileRoute(
         ),
       ]);
       if (result) {
-        const workspaceUrl = result.vscode?.workspaceUrl;
-        // Only use local serve-web for truly local workspaces (provider === "other")
-        // Docker workspaces should use the Docker-forwarded URL directly
-        const shouldUseLocalServeWeb = result.vscode?.provider === "other";
+        const workspaceUrl = getWorkspaceUrl(
+          result.vscode?.workspaceUrl,
+          result.vscode?.provider,
+          localServeWeb.baseUrl
+        );
         await preloadTaskRunIframes([
           {
-            url: workspaceUrl
-              ? toProxyWorkspaceUrl(
-                  workspaceUrl,
-                  shouldUseLocalServeWeb ? localServeWeb.baseUrl : null
-                )
-              : "",
+            url: workspaceUrl ?? "",
             taskRunId: opts.params.runId,
           },
         ]);
@@ -90,15 +86,11 @@ function VSCodeComponent() {
     id: taskRunId,
   });
 
-  // Only use local serve-web URL rewriting for truly local workspaces (provider === "other")
-  // Docker workspaces should use the Docker-forwarded URL directly
-  const shouldUseLocalServeWeb = taskRun?.vscode?.provider === "other";
-  const workspaceUrl = taskRun?.vscode?.workspaceUrl
-    ? toProxyWorkspaceUrl(
-        taskRun.vscode.workspaceUrl,
-        shouldUseLocalServeWeb ? localServeWeb.data?.baseUrl : null
-      )
-    : null;
+  const workspaceUrl = getWorkspaceUrl(
+    taskRun?.vscode?.workspaceUrl,
+    taskRun?.vscode?.provider,
+    localServeWeb.data?.baseUrl
+  );
   const disablePreflight = taskRun?.vscode?.workspaceUrl
     ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
     : false;
