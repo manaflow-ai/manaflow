@@ -1038,6 +1038,7 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
         return new vscode.TerminalProfile({
           name: lastPty.name,
           pty,
+          location: vscode.TerminalLocation.Editor,
         });
       }
     }
@@ -1067,6 +1068,7 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
     return new vscode.TerminalProfile({
       name: result.name,
       pty: result.pty,
+      location: vscode.TerminalLocation.Editor,
     });
   }
 }
