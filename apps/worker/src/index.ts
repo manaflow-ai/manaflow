@@ -1235,6 +1235,11 @@ async function createPtySession(options: {
   rows?: number;
   env?: Record<string, string>;
   name?: string;
+  metadata?: {
+    location?: "editor" | "panel";
+    type?: "agent" | "dev" | "maintenance" | "shell";
+    managed?: boolean;
+  };
 }): Promise<PtySessionInfo> {
   const response = await fetch(`${PTY_SERVER_URL}/sessions`, {
     method: "POST",
@@ -1246,6 +1251,7 @@ async function createPtySession(options: {
       rows: options.rows || 24,
       env: options.env,
       name: options.name,
+      metadata: options.metadata,
     }),
   });
 
@@ -1395,6 +1401,7 @@ async function createTerminal(
           rows,
           env: ptyEnv,
           name: terminalId,
+          metadata: { location: "editor", type: "agent", managed: true },
         });
 
         log("INFO", `[createTerminal] PTY session created: ${session.id}`, {

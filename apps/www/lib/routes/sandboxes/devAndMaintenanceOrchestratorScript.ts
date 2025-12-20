@@ -71,6 +71,11 @@ async function createPtySession(options: {
   rows?: number;
   env?: Record<string, string>;
   name?: string;
+  metadata?: {
+    location?: "editor" | "panel";
+    type?: "agent" | "dev" | "maintenance" | "shell";
+    managed?: boolean;
+  };
 }): Promise<PtySessionInfo> {
   const response = await fetch(`${PTY_SERVER_URL}/sessions`, {
     method: "POST",
@@ -82,6 +87,7 @@ async function createPtySession(options: {
       rows: options.rows || 24,
       env: options.env,
       name: options.name,
+      metadata: options.metadata,
     }),
   });
 
@@ -323,6 +329,7 @@ async function createWindows(): Promise<void> {
         name: config.maintenanceWindowName,
         cwd: config.workspaceRoot,
         shell: "/bin/zsh",
+        metadata: { location: "panel", type: "maintenance", managed: true },
       });
       maintenancePtyId = session.id;
       console.log(`[ORCHESTRATOR] ${config.maintenanceWindowName} PTY created: ${session.id}`);
@@ -334,6 +341,7 @@ async function createWindows(): Promise<void> {
         name: config.devWindowName,
         cwd: config.workspaceRoot,
         shell: "/bin/zsh",
+        metadata: { location: "panel", type: "dev", managed: true },
       });
       devPtyId = session.id;
       console.log(`[ORCHESTRATOR] ${config.devWindowName} PTY created: ${session.id}`);

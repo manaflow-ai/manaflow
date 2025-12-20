@@ -8,6 +8,17 @@ import { randomUUID } from 'crypto';
 // Unique client ID for this VSCode instance
 const CLIENT_ID = randomUUID();
 
+interface TerminalMetadata {
+  /** Where to open the terminal: "editor" for Editor pane, "panel" for bottom Panel */
+  location?: 'editor' | 'panel';
+  /** Terminal type for identification */
+  type?: 'agent' | 'dev' | 'maintenance' | 'shell';
+  /** Explicitly mark as cmux-managed */
+  managed?: boolean;
+  /** Any other custom fields */
+  [key: string]: unknown;
+}
+
 interface TerminalInfo {
   id: string;
   name: string;
@@ -19,6 +30,8 @@ interface TerminalInfo {
   created_at: number;
   alive: boolean;
   pid: number;
+  /** Flexible metadata for client use */
+  metadata?: TerminalMetadata;
 }
 
 interface PTYMessage {
@@ -675,11 +688,11 @@ class CmuxTerminalManager {
   private _createTerminalForPty(info: TerminalInfo, shouldFocus: boolean, isRestore = false): void {
     const config = getConfig();
 
-    // Determine if this terminal should open in editor pane
-    // The "cmux" session (main agent terminal) should be in editor pane
-    const shouldOpenInEditor = info.name === 'cmux';
+    // Use metadata.location to determine where to open the terminal
+    // "editor" -> Editor pane, anything else (including undefined) -> Panel
+    const shouldOpenInEditor = info.metadata?.location === 'editor';
 
-    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}`);
+    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}, metadata: ${JSON.stringify(info.metadata)}`);
 
     // Skip initial resize for restored sessions to avoid shell prompt redraw
     const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore);
@@ -687,7 +700,6 @@ class CmuxTerminalManager {
     const terminal = vscode.window.createTerminal({
       name: info.name,
       pty,
-      // Open "cmux" session in editor pane, others in panel
       location: shouldOpenInEditor ? vscode.TerminalLocation.Editor : vscode.TerminalLocation.Panel,
     });
 
@@ -939,6 +951,11 @@ class CmuxTerminalManager {
     };
     this._terminals.set(pending.id, managed);
 
+    // Show and focus terminals with editor location
+    if (pending.info.metadata?.location === 'editor') {
+      terminal.show(false); // false = take focus
+    }
+
     // Set up close listener
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
       if (closedTerminal === terminal) {
@@ -1035,10 +1052,12 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
         // Track this terminal with its pty
         terminalManager.trackPendingTerminal(lastPty, pty);
 
+        // Use metadata.location to determine where to open the terminal
+        const shouldOpenInEditor = lastPty.metadata?.location === 'editor';
         return new vscode.TerminalProfile({
           name: lastPty.name,
           pty,
-          location: vscode.TerminalLocation.Editor,
+          ...(shouldOpenInEditor ? { location: vscode.TerminalLocation.Editor } : {}),
         });
       }
     }
@@ -1065,10 +1084,10 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       return undefined;
     }
 
+    // Use Panel location (normal terminal behavior)
     return new vscode.TerminalProfile({
       name: result.name,
       pty: result.pty,
-      location: vscode.TerminalLocation.Editor,
     });
   }
 }
@@ -1107,13 +1126,9 @@ export function activateTerminal(context: vscode.ExtensionContext) {
   // Handle cmux-managed terminals when they open
   context.subscriptions.push(
     vscode.window.onDidOpenTerminal((terminal) => {
-      // Check if this is a cmux-managed terminal (shell names like "zsh 1", "bash 1")
-      if (/^(zsh|bash|sh|fish|cmux)\s+\d+$/.test(terminal.name)) {
-        console.log(`[cmux] onDidOpenTerminal: ${terminal.name}`);
-        // Set up close listener for HTTP-created terminals
-        terminalManager.handleTerminalOpened(terminal);
-        terminal.show(false); // false = take focus
-      }
+      // Try to handle this terminal - handleTerminalOpened checks _pendingTerminalSetup
+      // and returns early if not a cmux-managed terminal. This works for renamed terminals too.
+      terminalManager.handleTerminalOpened(terminal);
     })
   );
 
@@ -1241,4 +1256,24 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
   }
 
   return false;
+}
+
+/**
+ * Create all queued terminals from cmux-pty state_sync.
+ * This should be called after waitForCmuxPtyTerminal() confirms terminals exist.
+ * Directly creates the vscode terminals without going through provideTerminalProfile.
+ * Focuses the "cmux" terminal if found.
+ */
+export function createQueuedTerminals(): void {
+  if (!terminalManager) return;
+  console.log('[cmux] createQueuedTerminals called');
+  terminalManager.drainRestoreQueue();
+
+  // Focus the "cmux" terminal (main agent terminal) after creation
+  const terminals = terminalManager.getTerminals();
+  const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
+  if (cmuxTerminal) {
+    console.log('[cmux] Focusing cmux terminal');
+    cmuxTerminal.terminal.show(false); // false = take focus
+  }
 }

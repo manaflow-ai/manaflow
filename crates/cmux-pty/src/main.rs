@@ -189,6 +189,9 @@ struct CreateSessionRequest {
     env: Option<HashMap<String, String>>,
     name: Option<String>,
     client_id: Option<String>,
+    /// Flexible metadata - clients can store any JSON here.
+    /// Example: {"location": "editor", "type": "agent", "managed": true}
+    metadata: Option<serde_json::Value>,
 }
 
 fn default_shell() -> String {
@@ -214,6 +217,7 @@ impl Default for CreateSessionRequest {
             env: None,
             name: None,
             client_id: None,
+            metadata: None,
         }
     }
 }
@@ -222,6 +226,8 @@ impl Default for CreateSessionRequest {
 struct UpdateSessionRequest {
     name: Option<String>,
     index: Option<usize>,
+    /// Update metadata - merges with existing metadata (use null to remove keys)
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +242,9 @@ struct SessionInfo {
     created_at: f64,
     alive: bool,
     pid: u32,
+    /// Flexible metadata for client use (location, type, managed flag, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,6 +292,7 @@ enum ClientMessage {
         rows: Option<u16>,
         name: Option<String>,
         client_id: Option<String>,
+        metadata: Option<serde_json::Value>,
     },
 
     #[serde(rename = "rename_pty")]
@@ -318,6 +328,7 @@ struct PtySession {
     output_tx: broadcast::Sender<String>,
     input_tx: std::sync::mpsc::SyncSender<Vec<u8>>, // Bounded channel for backpressure
     pid: u32,
+    metadata: RwLock<Option<serde_json::Value>>,
 }
 
 impl PtySession {
@@ -338,6 +349,7 @@ impl PtySession {
             created_at: self.created_at,
             alive,
             pid: self.pid,
+            metadata: self.metadata.read().clone(),
         }
     }
 
@@ -411,6 +423,14 @@ impl PtySession {
 
     fn get_index(&self) -> usize {
         *self.index.read()
+    }
+
+    fn set_metadata(&self, metadata: Option<serde_json::Value>) {
+        *self.metadata.write() = metadata;
+    }
+
+    fn get_metadata(&self) -> Option<serde_json::Value> {
+        self.metadata.read().clone()
     }
 }
 
@@ -838,6 +858,7 @@ fn create_pty_session_inner(
         output_tx,
         input_tx,
         pid,
+        metadata: RwLock::new(request.metadata.clone()),
     });
 
     Ok((session, reader))
@@ -953,6 +974,11 @@ async fn update_session(
             session.set_index(new_index);
             changes.insert("index".to_string(), serde_json::json!(new_index));
         }
+    }
+
+    if let Some(new_metadata) = request.metadata {
+        session.set_metadata(Some(new_metadata.clone()));
+        changes.insert("metadata".to_string(), new_metadata);
     }
 
     state.reindex_sessions();
@@ -1182,6 +1208,7 @@ async fn handle_event_websocket(socket: WebSocket, state: Arc<AppState>) {
                 rows,
                 name,
                 client_id,
+                metadata,
             } => {
                 let request = CreateSessionRequest {
                     shell: shell.unwrap_or_else(default_shell),
@@ -1191,6 +1218,7 @@ async fn handle_event_websocket(socket: WebSocket, state: Arc<AppState>) {
                     env: None,
                     name,
                     client_id: client_id.clone(),
+                    metadata,
                 };
 
                 match create_pty_session_inner(&state, &request) {
