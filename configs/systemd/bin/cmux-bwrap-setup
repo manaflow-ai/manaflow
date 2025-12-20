@@ -1,0 +1,95 @@
+#!/bin/bash
+# cmux-bwrap-setup - One-time setup for bubblewrap sandboxing
+#
+# This script configures the host environment for running bwrap sandboxes:
+# - Enables IP forwarding
+# - Sets up NAT rules for sandbox network
+# - Creates required directories
+#
+# Run this once at boot time or when enabling bwrap mode.
+
+set -euo pipefail
+
+# Configuration
+SANDBOX_SUBNET="10.201.0.0/16"
+DOCKER_SUBNET="172.17.0.0/16"
+
+log() {
+    echo "[cmux-bwrap-setup] $*"
+}
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run as root" >&2
+    exit 1
+fi
+
+log "Setting up bubblewrap sandbox environment..."
+
+# Enable IP forwarding
+log "Enabling IP forwarding..."
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+
+# Find iptables
+IPTABLES=$(command -v iptables || echo "/sbin/iptables")
+if [[ ! -x "$IPTABLES" ]]; then
+    log "Warning: iptables not found, skipping NAT setup"
+    exit 0
+fi
+
+# Setup NAT for sandbox subnet
+setup_nat_rule() {
+    local subnet="$1"
+    local description="$2"
+
+    # Check if rule already exists
+    if $IPTABLES -t nat -C POSTROUTING -s "$subnet" ! -d "$subnet" -j MASQUERADE 2>/dev/null; then
+        log "NAT rule for $description already exists"
+        return 0
+    fi
+
+    # Add the rule
+    log "Adding NAT rule for $description ($subnet)"
+    $IPTABLES -t nat -A POSTROUTING -s "$subnet" ! -d "$subnet" -j MASQUERADE
+}
+
+# Setup FORWARD rules to allow traffic
+setup_forward_rules() {
+    local subnet="$1"
+    local description="$2"
+
+    # Allow forwarding from sandbox subnet
+    if ! $IPTABLES -C FORWARD -s "$subnet" -j ACCEPT 2>/dev/null; then
+        log "Adding FORWARD rule for $description outbound"
+        $IPTABLES -A FORWARD -s "$subnet" -j ACCEPT
+    fi
+
+    # Allow forwarding to sandbox subnet (for return traffic)
+    if ! $IPTABLES -C FORWARD -d "$subnet" -j ACCEPT 2>/dev/null; then
+        log "Adding FORWARD rule for $description inbound"
+        $IPTABLES -A FORWARD -d "$subnet" -j ACCEPT
+    fi
+}
+
+# Setup NAT and forwarding rules
+setup_nat_rule "$SANDBOX_SUBNET" "sandbox network"
+setup_nat_rule "$DOCKER_SUBNET" "docker network"
+setup_forward_rules "$SANDBOX_SUBNET" "sandbox network"
+
+# Create required directories
+log "Creating sandbox directories..."
+mkdir -p /var/lib/cmux-bwrap/ip-pool
+mkdir -p /var/log/cmux
+
+# Clean up any stale IP pool entries
+log "Cleaning up stale IP pool entries..."
+rm -f /var/lib/cmux-bwrap/ip-pool/block_* 2>/dev/null || true
+
+# Set environment marker
+log "Setting bwrap environment marker..."
+mkdir -p /etc/cmux
+touch /etc/cmux/bwrap.enabled
+echo "CMUX_USE_BWRAP=1" > /etc/cmux/bwrap.env 2>/dev/null || true
+
+log "Bubblewrap setup complete"

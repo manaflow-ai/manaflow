@@ -100,6 +100,19 @@ def set_ide_provider(provider: str) -> None:
 def get_ide_provider() -> str:
     return _ide_provider
 
+
+# Module-level bwrap mode setting (set from args before task graph runs)
+_enable_bwrap: bool = False
+
+
+def set_enable_bwrap(enabled: bool) -> None:
+    global _enable_bwrap
+    _enable_bwrap = enabled
+
+
+def get_enable_bwrap() -> bool:
+    return _enable_bwrap
+
 # ---------------------------------------------------------------------------
 # Manifest types and helpers
 # ---------------------------------------------------------------------------
@@ -1706,6 +1719,44 @@ async def task_install_service_scripts(ctx: TaskContext) -> None:
 
 
 @registry.task(
+    name="install-bwrap-scripts",
+    deps=("upload-repo", "install-base-packages"),
+    description="Install bubblewrap sandbox scripts (optional)",
+)
+async def task_install_bwrap_scripts(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
+    enable_bwrap = get_enable_bwrap()
+
+    cmd = textwrap.dedent(
+        f"""
+        set -euo pipefail
+        install -d /usr/local/bin
+        install -d /usr/local/sbin
+        install -d /etc/cmux
+        install -d /var/lib/cmux-bwrap
+        install -m 0755 {repo}/configs/systemd/bin/cmux-bwrap-sandbox /usr/local/bin/cmux-bwrap-sandbox
+        install -m 0755 {repo}/configs/systemd/bin/cmux-bwrap-setup /usr/local/sbin/cmux-bwrap-setup
+        """
+    )
+    await ctx.run("install-bwrap-scripts", cmd)
+
+    if enable_bwrap:
+        ctx.console.info("Enabling bubblewrap mode...")
+        enable_cmd = textwrap.dedent(
+            """
+            set -euo pipefail
+            # Create marker file to enable bwrap service
+            touch /etc/cmux/bwrap.enabled
+            # Set environment variable for worker
+            echo 'CMUX_USE_BWRAP=1' >> /etc/cmux/ide.env
+            # Run setup script to configure networking
+            /usr/local/sbin/cmux-bwrap-setup
+            """
+        )
+        await ctx.run("enable-bwrap-mode", enable_cmd)
+
+
+@registry.task(
     name="build-cdp-proxy",
     deps=("install-service-scripts", "install-go-toolchain"),
     description="Build and install Chrome DevTools and VNC proxy binaries",
@@ -1740,6 +1791,7 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
         "upload-repo",
         "install-ide-extensions",
         "install-service-scripts",
+        "install-bwrap-scripts",
         "build-worker",
         "build-cdp-proxy",
         "link-rust-binaries",
@@ -1784,6 +1836,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+        install -Dm0644 {repo}/configs/systemd/cmux-bwrap-setup.service /usr/lib/systemd/system/cmux-bwrap-setup.service
         install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
         install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
         install -Dm0755 {repo}/configs/systemd/bin/code /usr/local/bin/code
@@ -2644,6 +2697,8 @@ async def provision_and_snapshot_for_preset(
 async def provision_and_snapshot(args: argparse.Namespace) -> None:
     # Set the IDE provider before running tasks
     set_ide_provider(args.ide_provider)
+    # Set bubblewrap mode before running tasks
+    set_enable_bwrap(getattr(args, "enable_bwrap", False))
 
     console = Console()
     client = MorphCloudClient()
@@ -2836,6 +2891,13 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Update configs/ide-deps.json to latest versions before snapshotting",
+    )
+    parser.add_argument(
+        "--enable-bwrap",
+        dest="enable_bwrap",
+        action="store_true",
+        default=False,
+        help="Enable bubblewrap sandboxing mode (sets CMUX_USE_BWRAP=1 and enables bwrap service)",
     )
     return parser.parse_args()
 

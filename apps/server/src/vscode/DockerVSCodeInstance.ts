@@ -253,7 +253,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       // Container doesn't exist, which is fine
     }
 
-    const envVars = ["NODE_ENV=production", "WORKER_PORT=39377"];
+    const envVars = [
+      "NODE_ENV=production",
+      "WORKER_PORT=39377",
+      "CMUX_USE_BWRAP=1", // Enable bubblewrap sandboxing for agent isolation
+    ];
 
     // Add theme environment variable if provided
     if (this.config.theme) {

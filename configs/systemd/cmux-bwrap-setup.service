@@ -1,0 +1,16 @@
+[Unit]
+Description=CMUX Bubblewrap Network Setup
+Documentation=https://github.com/manaflow-ai/cmux
+# Run before other cmux services
+Before=cmux.target cmux-worker.service
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cmux-bwrap-setup
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

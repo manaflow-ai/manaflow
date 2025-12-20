@@ -617,7 +617,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   libxshmfence1 \
   libxss1 \
   libxtst6 \
-  zram-tools
+  zram-tools \
+  bubblewrap \
+  iproute2 \
+  netcat-openbsd
 
 ENV RUSTUP_HOME=/usr/local/rustup \
   CARGO_HOME=/usr/local/cargo \
@@ -1048,6 +1051,7 @@ COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-pro
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
 COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+COPY configs/systemd/cmux-bwrap-setup.service /usr/lib/systemd/system/cmux-bwrap-setup.service
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
 COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
@@ -1056,6 +1060,9 @@ COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
 COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
+COPY configs/systemd/bin/cmux-bwrap-sandbox /usr/local/bin/cmux-bwrap-sandbox
+COPY configs/systemd/bin/cmux-bwrap-setup /usr/local/sbin/cmux-bwrap-setup
+COPY configs/systemd/bin/test-bwrap-network-isolation /usr/local/bin/test-bwrap-network-isolation
 COPY configs/systemd/ide.env.coder /etc/cmux/ide.env.coder
 COPY configs/systemd/ide.env.openvscode /etc/cmux/ide.env.openvscode
 COPY configs/systemd/ide.env.cmux-code /etc/cmux/ide.env.cmux-code
@@ -1069,6 +1076,10 @@ chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-
 chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 chmod +x /usr/local/sbin/cmux-configure-memory
 chmod +x /usr/local/bin/code
+chmod +x /usr/local/bin/cmux-bwrap-sandbox
+chmod +x /usr/local/sbin/cmux-bwrap-setup
+chmod +x /usr/local/bin/test-bwrap-network-isolation
+mkdir -p /var/lib/cmux-bwrap/ip-pool
 touch /usr/local/lib/cmux/dockerd.flag
 mkdir -p /var/log/cmux
 mkdir -p /etc/systemd/system/multi-user.target.wants
@@ -1101,6 +1112,7 @@ ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.t
 ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
+ln -sf /usr/lib/systemd/system/cmux-bwrap-setup.service /etc/systemd/system/multi-user.target.wants/cmux-bwrap-setup.service
 mkdir -p /opt/app/overlay/upper /opt/app/overlay/work
 printf 'CMUX_ROOTFS=/\nCMUX_RUNTIME_ROOT=/\nCMUX_OVERLAY_UPPER=/opt/app/overlay/upper\nCMUX_OVERLAY_WORK=/opt/app/overlay/work\n' > /opt/app/app.env
 EOF

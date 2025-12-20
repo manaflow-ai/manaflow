@@ -1,0 +1,302 @@
+#!/bin/bash
+# cmux-bwrap-sandbox - Spawn an isolated sandbox using bubblewrap with network isolation
+#
+# Usage: cmux-bwrap-sandbox [OPTIONS] -- COMMAND [ARGS...]
+#
+# Options:
+#   --workspace DIR     Workspace directory to bind mount (default: /workspace)
+#   --name NAME         Sandbox name for identification
+#   --docker            Bind mount Docker socket for DinD access
+#   --help              Show this help message
+#
+# Environment:
+#   CMUX_USE_BWRAP=1       Enable bubblewrap mode (required)
+#   CMUX_DOCKER_SOCKET     Docker socket path (default: /var/run/docker.sock)
+#
+# Network:
+#   Each sandbox gets a unique IP from 10.201.0.0/16 subnet via veth pair
+
+set -euo pipefail
+
+# Configuration
+WORKSPACE="/workspace"
+SANDBOX_NAME="sandbox-$$"
+ENABLE_DOCKER=1
+IP_POOL_DIR="/var/lib/cmux-bwrap/ip-pool"
+IP_BASE="10.201"
+LOCK_FILE="/var/lib/cmux-bwrap/ip-pool.lock"
+
+# Check if bwrap mode is enabled
+if [[ "${CMUX_USE_BWRAP:-0}" != "1" ]]; then
+    # Passthrough mode - just exec the command directly
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --) shift; break ;;
+            *) shift ;;
+        esac
+    done
+    exec "$@"
+fi
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --workspace)
+            WORKSPACE="$2"
+            shift 2
+            ;;
+        --name)
+            SANDBOX_NAME="$2"
+            shift 2
+            ;;
+        --docker)
+            ENABLE_DOCKER=1
+            shift
+            ;;
+        --help)
+            head -20 "$0" | tail -18
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ $# -eq 0 ]]; then
+    echo "Error: No command specified" >&2
+    echo "Usage: cmux-bwrap-sandbox [OPTIONS] -- COMMAND [ARGS...]" >&2
+    exit 1
+fi
+
+# Find required binaries
+BWRAP=$(command -v bwrap || echo "/usr/bin/bwrap")
+IP_CMD=$(command -v ip || echo "/sbin/ip")
+NSENTER=$(command -v nsenter || echo "/usr/bin/nsenter")
+
+if [[ ! -x "$BWRAP" ]]; then
+    echo "Error: bubblewrap (bwrap) not found" >&2
+    exit 1
+fi
+
+# Docker socket configuration
+DOCKER_SOCKET="${CMUX_DOCKER_SOCKET:-/var/run/docker.sock}"
+CONTAINER_DOCKER_SOCKET="/run/docker.sock"
+
+# Ensure IP pool directory exists
+mkdir -p "$IP_POOL_DIR"
+
+# Allocate unique IP block (with file locking for concurrency safety)
+allocate_ip() {
+    local block_num
+    exec 200>"$LOCK_FILE"
+    flock -x 200
+
+    # Find next available block
+    block_num=0
+    while [[ -f "$IP_POOL_DIR/block_$block_num" ]]; do
+        block_num=$((block_num + 1))
+        if [[ $block_num -gt 16000 ]]; then
+            echo "Error: IP pool exhausted" >&2
+            exit 1
+        fi
+    done
+
+    # Reserve this block
+    echo "$SANDBOX_NAME" > "$IP_POOL_DIR/block_$block_num"
+
+    flock -u 200
+    exec 200>&-
+
+    echo "$block_num"
+}
+
+# Release IP block
+release_ip() {
+    local block_num="$1"
+    rm -f "$IP_POOL_DIR/block_$block_num"
+}
+
+# Calculate IPs from block number
+# Block N: host=10.201.X.Y+1, sandbox=10.201.X.Y+2 where X.Y = N*4
+get_ips() {
+    local block_num="$1"
+    local offset=$((block_num * 4))
+    local third_octet=$((offset / 256))
+    local fourth_octet=$((offset % 256))
+
+    HOST_IP="${IP_BASE}.${third_octet}.$((fourth_octet + 1))"
+    SANDBOX_IP="${IP_BASE}.${third_octet}.$((fourth_octet + 2))"
+    HOST_IF="vethh${block_num}"
+    NS_IF="vethn${block_num}"
+}
+
+# Cleanup function
+cleanup() {
+    local exit_code=$?
+
+    # Cleanup network interface
+    if [[ -n "${HOST_IF:-}" ]]; then
+        $IP_CMD link del "$HOST_IF" 2>/dev/null || true
+    fi
+
+    # Release IP block
+    if [[ -n "${BLOCK_NUM:-}" ]]; then
+        release_ip "$BLOCK_NUM"
+    fi
+
+    exit $exit_code
+}
+
+trap cleanup EXIT
+
+# Allocate IP and setup network
+BLOCK_NUM=$(allocate_ip)
+get_ips "$BLOCK_NUM"
+
+# Create veth pair and configure host side
+$IP_CMD link add "$HOST_IF" type veth peer name "$NS_IF"
+$IP_CMD addr add "${HOST_IP}/30" dev "$HOST_IF"
+$IP_CMD link set "$HOST_IF" up
+
+# Build bwrap arguments
+BWRAP_ARGS=(
+    "--die-with-parent"
+    "--unshare-pid"
+    "--unshare-uts"
+    "--unshare-ipc"
+    "--unshare-net"  # Network isolation enabled
+    "--dev" "/dev"
+    "--proc" "/proc"
+    "--tmpfs" "/tmp"
+    "--tmpfs" "/run"
+)
+
+# Bind mount standard directories read-only
+for dir in /bin /sbin /lib /lib64 /usr /etc; do
+    if [[ -d "$dir" ]]; then
+        BWRAP_ARGS+=("--ro-bind" "$dir" "$dir")
+    fi
+done
+
+# Bind mount /opt read-only (contains various tools)
+if [[ -d /opt ]]; then
+    BWRAP_ARGS+=("--ro-bind" "/opt" "/opt")
+fi
+
+# Bind mount /var/lib/cmux-bwrap for shared state (IP pool, test output, etc.)
+if [[ -d /var/lib/cmux-bwrap ]]; then
+    BWRAP_ARGS+=("--bind" "/var/lib/cmux-bwrap" "/var/lib/cmux-bwrap")
+fi
+
+# Bind home directory
+if [[ -d /root ]]; then
+    BWRAP_ARGS+=("--bind" "/root" "/root")
+fi
+
+# Bind workspace read-write
+if [[ -d "$WORKSPACE" ]]; then
+    BWRAP_ARGS+=("--bind" "$WORKSPACE" "$WORKSPACE")
+fi
+
+# Docker socket binding
+if [[ "$ENABLE_DOCKER" == "1" ]] && [[ -S "$DOCKER_SOCKET" ]]; then
+    BWRAP_ARGS+=("--bind" "$DOCKER_SOCKET" "$CONTAINER_DOCKER_SOCKET")
+fi
+
+# Set hostname
+BWRAP_ARGS+=("--hostname" "$SANDBOX_NAME")
+
+# Set working directory
+BWRAP_ARGS+=("--chdir" "$WORKSPACE")
+
+# Use JSON status FD to get child PID
+BWRAP_ARGS+=("--json-status-fd" "3")
+
+# Create a temp file for the JSON status
+STATUS_FILE=$(mktemp)
+
+# Start bwrap in background, capturing the child PID
+exec 3>"$STATUS_FILE"
+
+# Set environment variables for the child
+export DOCKER_HOST="unix://${CONTAINER_DOCKER_SOCKET}"
+export HOME="/root"
+export SANDBOX_NAME="$SANDBOX_NAME"
+export SANDBOX_IP="$SANDBOX_IP"
+
+# Start bwrap with the command, but first we need to configure network
+# We use a wrapper script that waits for network config then execs the real command
+WRAPPER_SCRIPT=$(mktemp)
+cat > "$WRAPPER_SCRIPT" << 'INNEREOF'
+#!/bin/bash
+# Wait for network interface to be configured (up to 5 seconds)
+for i in {1..50}; do
+    if ip link show vethn* 2>/dev/null | grep -q "state UP"; then
+        break
+    fi
+    sleep 0.1
+done
+# Ensure loopback is up
+ip link set lo up 2>/dev/null || true
+# Execute the actual command
+exec "$@"
+INNEREOF
+chmod +x "$WRAPPER_SCRIPT"
+
+# Bind mount the wrapper script
+BWRAP_ARGS+=("--ro-bind" "$WRAPPER_SCRIPT" "/tmp/network-wait.sh")
+
+# Run bwrap in background
+"$BWRAP" "${BWRAP_ARGS[@]}" -- /tmp/network-wait.sh "$@" &
+BWRAP_PID=$!
+
+# Poll for JSON status file (up to 2 seconds)
+CHILD_PID=""
+for _i in {1..40}; do
+    if [[ -s "$STATUS_FILE" ]]; then
+        # JSON format: {"child-pid": 12345}
+        CHILD_PID=$(grep -o '"child-pid":[0-9]*' "$STATUS_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
+        [[ -n "$CHILD_PID" ]] && break
+    fi
+    # Check if bwrap is still running
+    kill -0 "$BWRAP_PID" 2>/dev/null || break
+    sleep 0.05
+done
+exec 3>&-
+rm -f "$STATUS_FILE" "$WRAPPER_SCRIPT"
+
+# Fallback: poll for child PID via /proc (up to 1 second)
+if [[ -z "$CHILD_PID" ]]; then
+    for _i in {1..20}; do
+        CHILD_PID=$(pgrep -P "$BWRAP_PID" 2>/dev/null | head -1 || true)
+        [[ -n "$CHILD_PID" ]] && break
+        kill -0 "$BWRAP_PID" 2>/dev/null || break
+        sleep 0.05
+    done
+fi
+
+if [[ -z "$CHILD_PID" ]]; then
+    echo "Error: Could not determine sandbox PID" >&2
+    kill "$BWRAP_PID" 2>/dev/null || true
+    exit 1
+fi
+
+# Move network interface to sandbox namespace and configure
+$IP_CMD link set "$NS_IF" netns "$CHILD_PID"
+
+# Configure network inside sandbox
+$NSENTER --target "$CHILD_PID" --net -- /bin/sh -c "
+    ip addr add ${SANDBOX_IP}/30 dev $NS_IF
+    ip link set $NS_IF up
+    ip link set lo up
+    ip route replace default via $HOST_IP
+"
+
+# Wait for bwrap to finish
+wait "$BWRAP_PID"

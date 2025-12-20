@@ -1284,6 +1284,32 @@ async function createTerminal(
     });
   }
 
+  // Optionally wrap command in bubblewrap sandbox for process isolation
+  // This is enabled when CMUX_USE_BWRAP=1 is set in the environment
+  if (process.env.CMUX_USE_BWRAP === "1") {
+    log("INFO", "[createTerminal] Wrapping command in bubblewrap sandbox");
+    const originalCommand = spawnCommand;
+    const originalArgs = [...spawnArgs];
+
+    // Wrap with cmux-bwrap-sandbox
+    spawnCommand = "cmux-bwrap-sandbox";
+    spawnArgs = [
+      "--workspace",
+      cwd || "/root/workspace",
+      "--name",
+      `sandbox-${terminalId}`,
+      "--docker", // Enable Docker socket binding
+      "--",
+      originalCommand,
+      ...originalArgs,
+    ];
+
+    log("INFO", "[createTerminal] Bwrap-wrapped command:", {
+      spawnCommand,
+      spawnArgs: spawnArgs.slice(0, 10), // Log first 10 args
+    });
+  }
+
   const inheritedEnvEntries = Object.entries(process.env).filter(
     (entry): entry is [string, string] => typeof entry[1] === "string"
   );

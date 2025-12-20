@@ -1,0 +1,165 @@
+#!/bin/bash
+# test-bwrap-network-isolation - Test that multiple sandboxes get unique IPs
+#
+# This test verifies that:
+# 1. Multiple sandboxes can be spawned concurrently
+# 2. Each sandbox gets a unique IP address
+# 3. Multiple sandboxes can bind to the same port (e.g., 8080)
+# 4. Servers in each sandbox are reachable via their unique IPs
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_PORT=8080
+NUM_SANDBOXES=3
+PIDS=()
+SANDBOX_IPS=()
+TEST_PASSED=true
+
+log() {
+    echo "[test] $*"
+}
+
+# Directory for test output (must be shared between host and sandboxes)
+TEST_OUTPUT_DIR="/var/lib/cmux-bwrap/test-output"
+
+cleanup() {
+    log "Cleaning up..."
+    for pid in "${PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    # Clean up IP pool
+    rm -f /var/lib/cmux-bwrap/ip-pool/block_* 2>/dev/null || true
+    # Clean up test output
+    rm -rf "$TEST_OUTPUT_DIR" 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+# Check prerequisites
+if [[ "${CMUX_USE_BWRAP:-0}" != "1" ]]; then
+    log "Error: CMUX_USE_BWRAP=1 must be set"
+    exit 1
+fi
+
+if [[ $EUID -ne 0 ]]; then
+    log "Error: This test must be run as root"
+    exit 1
+fi
+
+# Run setup if not already done
+if [[ ! -f /etc/cmux/bwrap.enabled ]]; then
+    log "Running cmux-bwrap-setup..."
+    "$SCRIPT_DIR/cmux-bwrap-setup"
+fi
+
+log "Starting network isolation test with $NUM_SANDBOXES sandboxes..."
+
+# Create test output directory
+mkdir -p "$TEST_OUTPUT_DIR"
+chmod 777 "$TEST_OUTPUT_DIR"
+
+# Spawn multiple sandboxes, each running a simple HTTP server on the same port
+for i in $(seq 1 $NUM_SANDBOXES); do
+    log "Spawning sandbox $i..."
+
+    # Create a simple server script in the shared directory (not /tmp, since sandbox has its own tmpfs)
+    SERVER_SCRIPT="$TEST_OUTPUT_DIR/server_${i}.sh"
+    cat > "$SERVER_SCRIPT" << EOF
+#!/bin/bash
+# Get our sandbox IP
+MY_IP=\${SANDBOX_IP:-unknown}
+echo "Sandbox $i started with IP: \$MY_IP"
+# Write IP to a file so parent can read it (using shared directory)
+echo "\$MY_IP" > /var/lib/cmux-bwrap/test-output/sandbox_${i}_ip
+
+# Start a simple HTTP server using bash
+while true; do
+    echo -e "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello from sandbox $i at \$MY_IP" | nc -l -p $TEST_PORT -q 1 2>/dev/null || sleep 0.1
+done
+EOF
+    chmod +x "$SERVER_SCRIPT"
+
+    # Start sandbox in background
+    "$SCRIPT_DIR/cmux-bwrap-sandbox" \
+        --name "test-sandbox-$i" \
+        --workspace /tmp \
+        -- bash "$SERVER_SCRIPT" &
+
+    PIDS+=($!)
+    log "Sandbox $i started with PID ${PIDS[-1]}"
+
+    # Give it time to start
+    sleep 0.5
+done
+
+# Wait for sandboxes to initialize and collect their IPs (poll up to 30 seconds)
+log "Waiting for sandboxes to initialize..."
+TIMEOUT=60  # 30 seconds (60 * 0.5s)
+for i in $(seq 1 $NUM_SANDBOXES); do
+    IP_FILE="$TEST_OUTPUT_DIR/sandbox_${i}_ip"
+    FOUND=false
+    for attempt in $(seq 1 $TIMEOUT); do
+        if [[ -s "$IP_FILE" ]]; then
+            IP=$(cat "$IP_FILE")
+            SANDBOX_IPS+=("$IP")
+            log "Sandbox $i has IP: $IP"
+            FOUND=true
+            break
+        fi
+        sleep 0.5
+    done
+    if [[ "$FOUND" != "true" ]]; then
+        log "Error: Could not get IP for sandbox $i (timeout)"
+        TEST_PASSED=false
+    fi
+done
+
+# Verify all IPs are unique
+log "Verifying IP uniqueness..."
+UNIQUE_IPS=$(printf '%s\n' "${SANDBOX_IPS[@]}" | sort -u | wc -l)
+if [[ "$UNIQUE_IPS" -ne "$NUM_SANDBOXES" ]]; then
+    log "Error: Not all IPs are unique! Got $UNIQUE_IPS unique IPs for $NUM_SANDBOXES sandboxes"
+    TEST_PASSED=false
+else
+    log "✓ All $NUM_SANDBOXES sandboxes have unique IPs"
+fi
+
+# Verify each server is reachable
+log "Testing server connectivity..."
+for i in $(seq 0 $((NUM_SANDBOXES - 1))); do
+    IP="${SANDBOX_IPS[$i]}"
+    SANDBOX_NUM=$((i + 1))
+
+    log "Testing connection to sandbox $SANDBOX_NUM at $IP:$TEST_PORT..."
+
+    # Try to connect to the server
+    RESPONSE=$(curl -s --connect-timeout 2 "http://$IP:$TEST_PORT/" 2>/dev/null || echo "FAILED")
+
+    if [[ "$RESPONSE" == *"Hello from sandbox"* ]]; then
+        log "✓ Sandbox $SANDBOX_NUM responding correctly: $RESPONSE"
+    else
+        log "✗ Sandbox $SANDBOX_NUM not responding (response: $RESPONSE)"
+        TEST_PASSED=false
+    fi
+done
+
+# Final result
+echo ""
+if [[ "$TEST_PASSED" == "true" ]]; then
+    log "=========================================="
+    log "✓ ALL TESTS PASSED"
+    log "=========================================="
+    log "Successfully verified:"
+    log "  - $NUM_SANDBOXES sandboxes spawned concurrently"
+    log "  - Each sandbox got a unique IP"
+    log "  - All sandboxes bound to port $TEST_PORT"
+    log "  - All servers reachable via their unique IPs"
+    exit 0
+else
+    log "=========================================="
+    log "✗ SOME TESTS FAILED"
+    log "=========================================="
+    exit 1
+fi
