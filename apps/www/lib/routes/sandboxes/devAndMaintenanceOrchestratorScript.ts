@@ -100,34 +100,25 @@ async function createPtySession(options: {
 }
 
 async function sendPtyInput(sessionId: string, data: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const wsUrl = PTY_SERVER_URL.replace(/^http/, "ws");
-    const ws = new WebSocket(`${wsUrl}/sessions/${sessionId}/ws`);
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "input", data }));
-      // Give it a moment to process the input
-      setTimeout(() => {
-        ws.close();
-      }, 100);
-    };
-
-    ws.onclose = () => {
-      resolve();
-    };
-
-    ws.onerror = (error) => {
-      reject(new Error(`WebSocket error: ${error}`));
-    };
+  const response = await fetch(`${PTY_SERVER_URL}/sessions/${sessionId}/input`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data }),
   });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to send input to PTY session: ${error}`);
+  }
 }
 
 async function checkPtySessionAlive(sessionId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${PTY_SERVER_URL}/sessions/${sessionId}`);
+    const response = await fetch(`${PTY_SERVER_URL}/sessions`);
     if (!response.ok) return false;
-    const session = await response.json() as PtySessionInfo;
-    return session.alive;
+    const sessions = await response.json() as PtySessionInfo[];
+    const session = sessions.find((s) => s.id === sessionId);
+    return session?.alive ?? false;
   } catch {
     return false;
   }

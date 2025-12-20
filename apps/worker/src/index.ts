@@ -22,6 +22,7 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import type { Id } from "@cmux/convex/dataModel";
 
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
+import { CmuxPtyClient } from "@cmux/shared/node/cmux-pty-client";
 import { startAmpProxy } from "@cmux/shared/src/providers/amp/start-amp-proxy.ts";
 import { handleWorkerTaskCompletion } from "./crown/workflow";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -1196,101 +1197,7 @@ vscodeIO.on("connection", (socket) => {
 // =============================================================================
 
 const PTY_SERVER_URL = process.env.PTY_SERVER_URL || "http://localhost:39383";
-
-/**
- * Check if cmux-pty server is available
- */
-async function isPtyServerAvailable(): Promise<boolean> {
-  try {
-    const response = await fetch(`${PTY_SERVER_URL}/health`, {
-      method: "GET",
-      signal: AbortSignal.timeout(2000), // 2 second timeout
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-interface PtySessionInfo {
-  id: string;
-  name: string;
-  index: number;
-  shell: string;
-  cwd: string;
-  cols: number;
-  rows: number;
-  created_at: number;
-  alive: boolean;
-  pid: number;
-}
-
-/**
- * Create a new PTY session via cmux-pty server
- */
-async function createPtySession(options: {
-  shell?: string;
-  cwd?: string;
-  cols?: number;
-  rows?: number;
-  env?: Record<string, string>;
-  name?: string;
-  metadata?: {
-    location?: "editor" | "panel";
-    type?: "agent" | "dev" | "maintenance" | "shell";
-    managed?: boolean;
-  };
-}): Promise<PtySessionInfo> {
-  const response = await fetch(`${PTY_SERVER_URL}/sessions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      shell: options.shell || "/bin/zsh",
-      cwd: options.cwd || "/root/workspace",
-      cols: options.cols || 80,
-      rows: options.rows || 24,
-      env: options.env,
-      name: options.name,
-      metadata: options.metadata,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to create PTY session: ${error}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Send input to a PTY session via WebSocket
- */
-async function sendPtyInput(sessionId: string, data: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const wsUrl = PTY_SERVER_URL.replace(/^http/, "ws");
-    const ws = new WebSocket(`${wsUrl}/sessions/${sessionId}/ws`);
-
-    ws.onopen = () => {
-      ws.send(data);
-      // Give the PTY time to process the input before closing
-      setTimeout(() => {
-        ws.close();
-        resolve();
-      }, 100);
-    };
-
-    ws.onerror = (error) => {
-      reject(new Error(`WebSocket error: ${error}`));
-    };
-
-    // Timeout after 5 seconds
-    setTimeout(() => {
-      ws.close();
-      reject(new Error("WebSocket connection timeout"));
-    }, 5000);
-  });
-}
+const ptyClient = new CmuxPtyClient(PTY_SERVER_URL);
 
 // Create terminal helper function
 async function createTerminal(
@@ -1361,7 +1268,7 @@ async function createTerminal(
   // ==========================================================================
   if (backend === "cmux-pty") {
     // Check if cmux-pty server is available, fall back to tmux if not
-    const ptyAvailable = await isPtyServerAvailable();
+    const ptyAvailable = await ptyClient.health();
     if (!ptyAvailable) {
       log("INFO", `[createTerminal] cmux-pty server not available, falling back to tmux for ${terminalId}`);
       // Fall through to tmux backend below
@@ -1394,7 +1301,7 @@ async function createTerminal(
         };
 
         // 2. Create PTY session (spawns shell)
-        const session = await createPtySession({
+        const session = await ptyClient.createSession({
           shell: "/bin/bash",
           cwd: cwd || "/root/workspace",
           cols,
@@ -1413,13 +1320,13 @@ async function createTerminal(
         // 3. Send startup commands as input
         for (const cmd of startupCommands) {
           log("INFO", `[createTerminal] Sending startup command: ${cmd}`);
-          await sendPtyInput(session.id, cmd + "\n");
+          await ptyClient.sendInput(session.id, cmd + "\n");
         }
 
         // 4. Send the agent command (uses ptyCommand which is the clean command for cmux-pty)
         if (ptyCommand) {
           log("INFO", `[createTerminal] Sending agent command: ${ptyCommand}`);
-          await sendPtyInput(session.id, ptyCommand + "\n");
+          await ptyClient.sendInput(session.id, ptyCommand + "\n");
         }
 
         // 5. Send post-start commands after a delay
@@ -1428,7 +1335,7 @@ async function createTerminal(
             for (const cmd of postStartCommands) {
               log("INFO", `[createTerminal] Sending post-start command: ${cmd.description}`);
               try {
-                await sendPtyInput(session.id, cmd.command + "\n");
+                await ptyClient.sendInput(session.id, cmd.command + "\n");
               } catch (error) {
                 log("ERROR", `[createTerminal] Failed to send post-start command: ${cmd.description}`, error);
                 if (!cmd.continueOnError) {
