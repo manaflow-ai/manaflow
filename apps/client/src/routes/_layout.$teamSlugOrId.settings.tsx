@@ -377,6 +377,7 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      const actions: string[] = [];
 
       // Save worktree path / auto PR / heatmap settings if changed
       const workspaceSettingsChanged =
@@ -403,20 +404,23 @@ function SettingsComponent() {
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
         setOriginalHeatmapColors(heatmapColors);
+        actions.push("updated workspace settings");
       }
 
       // Save container settings if changed
-      if (
+      const containerSettingsChanged =
         containerSettingsData &&
         originalContainerSettingsData &&
         JSON.stringify(containerSettingsData) !==
-          JSON.stringify(originalContainerSettingsData)
-      ) {
+          JSON.stringify(originalContainerSettingsData);
+
+      if (containerSettingsChanged) {
         await convex.mutation(api.containerSettings.update, {
           teamSlugOrId,
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+        actions.push("updated container settings");
       }
 
       for (const key of apiKeys) {
@@ -451,16 +455,16 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
-        const actions = [];
-        if (savedCount > 0) {
-          actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
-        }
-        if (deletedCount > 0) {
-          actions.push(
-            `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
-          );
-        }
+      if (savedCount > 0) {
+        actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
+      }
+      if (deletedCount > 0) {
+        actions.push(
+          `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
+        );
+      }
+
+      if (actions.length > 0) {
         toast.success(`Successfully ${actions.join(" and ")}`);
       } else {
         toast.info("No changes to save");

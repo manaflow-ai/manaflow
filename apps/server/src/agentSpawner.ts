@@ -179,6 +179,11 @@ export async function spawnAgent(
         `[AgentSpawner] Original task description: ${options.taskDescription}`
       );
 
+      const escapeRegExp = (value: string) =>
+        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const promptImagePathPrefix = "/root/prompt/";
+      const escapedPromptImagePathPrefix = escapeRegExp(promptImagePathPrefix);
+
       // Create image files and update prompt
       imagesToProcess.forEach((image, index) => {
         // Sanitize filename to remove special characters
@@ -199,12 +204,12 @@ export async function spawnAgent(
         if (image.fileName) {
           const beforeReplace = processedTaskDescription;
           // Escape special regex characters in the filename
-          const escapedFileName = image.fileName.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
+          const escapedFileName = escapeRegExp(image.fileName);
           processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedFileName, "g"),
+            new RegExp(
+              `(?<!${escapedPromptImagePathPrefix})${escapedFileName}`,
+              "g"
+            ),
             imagePath
           );
           if (beforeReplace !== processedTaskDescription) {
@@ -225,12 +230,12 @@ export async function spawnAgent(
           processedTaskDescription.includes(nameWithoutExt)
         ) {
           const beforeReplace = processedTaskDescription;
-          const escapedName = nameWithoutExt.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
+          const escapedName = escapeRegExp(nameWithoutExt);
           processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedName, "g"),
+            new RegExp(
+              `(?<!${escapedPromptImagePathPrefix})${escapedName}(?!\\.)`,
+              "g"
+            ),
             imagePath
           );
           if (beforeReplace !== processedTaskDescription) {
