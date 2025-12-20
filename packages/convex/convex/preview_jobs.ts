@@ -122,21 +122,33 @@ export const requestDispatch = internalAction({
       status: payload.run.status,
     });
 
-    // Check if there's already an active preview run for this PR
-    // Skip dispatch if another run is already running (prevents duplicate jobs)
+    // Check if there's already an active preview run for this PR + commit
+    // Skip dispatch if another run is already running for the same commit
     const activeRun = await ctx.runQuery(internal.previewRuns.getActiveByConfigAndPr, {
       previewConfigId: payload.config._id,
       prNumber: payload.run.prNumber,
     });
 
     if (activeRun && activeRun._id !== args.previewRunId) {
-      console.log("[preview-jobs] Another preview run is already active for this PR; skipping dispatch", {
+      if (activeRun.headSha === payload.run.headSha) {
+        console.log("[preview-jobs] Another preview run is already active for this PR + commit; skipping dispatch", {
+          previewRunId: args.previewRunId,
+          activeRunId: activeRun._id,
+          activeStatus: activeRun.status,
+          prNumber: payload.run.prNumber,
+          headSha: payload.run.headSha?.slice(0, 7),
+        });
+        return;
+      }
+
+      console.log("[preview-jobs] Active preview run is for a different commit; continuing dispatch", {
         previewRunId: args.previewRunId,
         activeRunId: activeRun._id,
         activeStatus: activeRun.status,
         prNumber: payload.run.prNumber,
+        activeHeadSha: activeRun.headSha?.slice(0, 7),
+        runHeadSha: payload.run.headSha?.slice(0, 7),
       });
-      return;
     }
 
     // Also skip if this specific run is not pending (e.g., already running or completed)

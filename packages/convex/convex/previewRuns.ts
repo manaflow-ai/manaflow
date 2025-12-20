@@ -31,9 +31,9 @@ export const enqueueFromWebhook = internalMutation({
       ? normalizeRepoFullName(args.headRepoFullName)
       : undefined;
 
-    // Check if there's already a pending/running preview run for this PR
+    // Check if there's already a pending/running preview run for this PR + commit
     // This prevents duplicate preview jobs when:
-    // 1. Multiple webhooks fire for the same PR (e.g., synchronize events)
+    // 1. Multiple webhooks fire for the same commit (e.g., synchronize events)
     // 2. Crown worker tries to create a preview run while one already exists
     const existingByPr = await ctx.db
       .query("previewRuns")
@@ -43,8 +43,11 @@ export const enqueueFromWebhook = internalMutation({
       .order("desc")
       .first();
 
-    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
-      console.log("[previewRuns] Returning existing pending/running preview run for PR", {
+    const isExistingActive =
+      existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running");
+
+    if (isExistingActive && existingByPr.headSha === args.headSha) {
+      console.log("[previewRuns] Returning existing pending/running preview run for PR + commit", {
         existingRunId: existingByPr._id,
         prNumber: args.prNumber,
         existingHeadSha: existingByPr.headSha,
@@ -52,6 +55,16 @@ export const enqueueFromWebhook = internalMutation({
         status: existingByPr.status,
       });
       return existingByPr._id;
+    }
+
+    if (isExistingActive) {
+      console.log("[previewRuns] Active preview run has different commit; creating new run", {
+        existingRunId: existingByPr._id,
+        prNumber: args.prNumber,
+        existingHeadSha: existingByPr.headSha,
+        newHeadSha: args.headSha,
+        status: existingByPr.status,
+      });
     }
 
     const now = Date.now();
@@ -191,7 +204,25 @@ export const enqueueFromTaskRun = internalMutation({
       return { created: false, reason: `Preview config is ${previewConfig.status}` };
     }
 
-    // Check for existing pending/running preview run for this PR
+    // Try to get PR title from pullRequests table or task
+    let prTitle: string | undefined;
+    const prRecord = await ctx.db
+      .query("pullRequests")
+      .withIndex("by_team_repo_number", (q) =>
+        q.eq("teamId", taskRun.teamId).eq("repoFullName", repoFullName).eq("number", prNumber),
+      )
+      .first();
+    if (prRecord?.title) {
+      prTitle = prRecord.title;
+    } else if (task.pullRequestTitle) {
+      prTitle = task.pullRequestTitle;
+    }
+
+    const headSha = prRecord?.headSha ?? taskRun.newBranch ?? `taskrun-${args.taskRunId}`;
+    const headRef = prRecord?.headRef ?? taskRun.newBranch ?? undefined;
+    const baseSha = prRecord?.baseSha ?? undefined;
+
+    // Check for existing pending/running preview run for this PR + commit
     const existingByPr = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_pr", (q) =>
@@ -200,8 +231,11 @@ export const enqueueFromTaskRun = internalMutation({
       .order("desc")
       .first();
 
-    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
-      console.log("[previewRuns] Found existing active preview run for PR, linking taskRun", {
+    const isExistingActive =
+      existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running");
+
+    if (isExistingActive && existingByPr.headSha === headSha) {
+      console.log("[previewRuns] Found existing active preview run for PR + commit, linking taskRun", {
         taskRunId: args.taskRunId,
         existingRunId: existingByPr._id,
         prNumber,
@@ -219,22 +253,15 @@ export const enqueueFromTaskRun = internalMutation({
       return { created: true, previewRunId: existingByPr._id, isNew: false };
     }
 
-    // Extract headSha from newBranch or use a placeholder
-    // In crown worker flow, we may not have the exact commit SHA
-    const headSha = taskRun.newBranch ?? `taskrun-${args.taskRunId}`;
-
-    // Try to get PR title from pullRequests table or task
-    let prTitle: string | undefined;
-    const prRecord = await ctx.db
-      .query("pullRequests")
-      .withIndex("by_team_repo_number", (q) =>
-        q.eq("teamId", taskRun.teamId).eq("repoFullName", repoFullName).eq("number", prNumber),
-      )
-      .first();
-    if (prRecord?.title) {
-      prTitle = prRecord.title;
-    } else if (task.pullRequestTitle) {
-      prTitle = task.pullRequestTitle;
+    if (isExistingActive) {
+      console.log("[previewRuns] Active preview run has different commit; creating new run", {
+        taskRunId: args.taskRunId,
+        existingRunId: existingByPr._id,
+        prNumber,
+        existingHeadSha: existingByPr.headSha,
+        newHeadSha: headSha,
+        status: existingByPr.status,
+      });
     }
 
     // Get PR description from task if available
@@ -251,8 +278,8 @@ export const enqueueFromTaskRun = internalMutation({
       prTitle,
       prDescription,
       headSha,
-      baseSha: undefined,
-      headRef: taskRun.newBranch ?? undefined,
+      baseSha,
+      headRef,
       headRepoFullName: undefined,
       headRepoCloneUrl: undefined,
       taskRunId: args.taskRunId,
@@ -551,7 +578,7 @@ export const createManual = authMutation({
       );
     }
 
-    // Check for existing pending/running run for this PR (similar to webhook flow)
+    // Check for existing pending/running run for this PR + commit (similar to webhook flow)
     const existingByPr = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_pr", (q) =>
@@ -563,7 +590,8 @@ export const createManual = authMutation({
     if (
       existingByPr &&
       existingByPr.taskRunId &&
-      (existingByPr.status === "pending" || existingByPr.status === "running")
+      (existingByPr.status === "pending" || existingByPr.status === "running") &&
+      existingByPr.headSha === args.headSha
     ) {
       // Return existing run only if it has a taskRun linked
       return { previewRunId: existingByPr._id, reused: true };
