@@ -1,6 +1,6 @@
-import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
+import { useWebMode } from "@/components/web-mode";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
@@ -30,6 +30,7 @@ import {
   ClipboardCopy,
   Cloud,
   GitPullRequest,
+  Globe,
   Home,
   LogOut,
   Monitor,
@@ -318,6 +319,7 @@ export function CommandBar({
   const navigate = useNavigate();
   const router = useRouter();
   const { setTheme, theme } = useTheme();
+  const { isWebMode, webModeOverride, setWebModeOverride } = useWebMode();
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
@@ -1449,6 +1451,18 @@ export function CommandBar({
         });
       } else if (value === "dev:webcontents") {
         navigate({ to: "/debug-webcontents" });
+      } else if (value === "dev:toggle-web-mode") {
+        const newValue = !webModeOverride;
+        setWebModeOverride(newValue);
+        // Notify server of the web mode override change
+        if (socket) {
+          socket.emit("set-web-mode-override", { enabled: newValue });
+        }
+        toast.success(
+          webModeOverride
+            ? "Web mode override disabled"
+            : "Web mode override enabled"
+        );
       } else if (value.startsWith("team:")) {
         const [teamId, slugPart] = value.slice(5).split(":");
         const targetTeamSlugOrId = slugPart || teamId;
@@ -1542,6 +1556,9 @@ export function CommandBar({
       stackUser,
       stackTeams,
       closeCommand,
+      webModeOverride,
+      setWebModeOverride,
+      socket,
     ]
   );
 
@@ -1565,7 +1582,7 @@ export function CommandBar({
           </>
         ),
       },
-      ...(!env.NEXT_PUBLIC_WEB_MODE
+      ...(!isWebMode
         ? [
             {
               value: "local-workspaces",
@@ -1640,6 +1657,37 @@ export function CommandBar({
                 <>
                   <Bug className="h-4 w-4 text-neutral-500" />
                   <span className="text-sm">Debug WebContents</span>
+                </>
+              ),
+            },
+            {
+              value: "dev:toggle-web-mode",
+              label: webModeOverride
+                ? "Disable Web Mode Override"
+                : "Enable Web Mode Override",
+              keywords: ["web", "mode", "toggle", "dev", "cloud"],
+              searchText: buildSearchText(
+                webModeOverride
+                  ? "Disable Web Mode Override"
+                  : "Enable Web Mode Override",
+                ["web", "mode", "toggle", "dev"],
+                ["dev:toggle-web-mode"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("dev:toggle-web-mode"),
+              renderContent: () => (
+                <>
+                  <Globe className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">
+                    {webModeOverride
+                      ? "Disable Web Mode Override"
+                      : "Enable Web Mode Override"}
+                  </span>
+                  {webModeOverride && (
+                    <span className="ml-auto text-xs text-green-600 dark:text-green-400">
+                      Active
+                    </span>
+                  )}
                 </>
               ),
             },
@@ -1957,7 +2005,7 @@ export function CommandBar({
       : [];
 
     return [...baseEntries, ...taskEntries, ...electronEntries];
-  }, [allTasks, handleSelect, stackUser]);
+  }, [allTasks, handleSelect, stackUser, webModeOverride, isWebMode]);
 
   const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return localWorkspaceOptions.map((option) => {

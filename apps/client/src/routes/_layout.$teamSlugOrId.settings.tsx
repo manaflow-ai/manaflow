@@ -1,9 +1,9 @@
-import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { useWebMode } from "@/components/web-mode";
 import { ChevronDown } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -80,6 +80,7 @@ const PROVIDER_INFO: Record<string, ProviderInfo> = {
 function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
+  const { isWebMode } = useWebMode();
   const convex = useConvex();
   const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
   const [originalApiKeyValues, setOriginalApiKeyValues] = useState<
@@ -1092,7 +1093,7 @@ function SettingsComponent() {
             </div>
 
             {/* Worktree Path - hidden in web mode */}
-            {!env.NEXT_PUBLIC_WEB_MODE && (
+            {!isWebMode && (
               <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
                 <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
                   <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -1457,7 +1458,7 @@ function SettingsComponent() {
             </div>
 
             {/* Provider Status - hidden in web mode */}
-            {!env.NEXT_PUBLIC_WEB_MODE && (
+            {!isWebMode && (
               <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
                 <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
                   <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -1471,7 +1472,7 @@ function SettingsComponent() {
             )}
 
             {/* Container Settings - hidden in web mode */}
-            {!env.NEXT_PUBLIC_WEB_MODE && (
+            {!isWebMode && (
               <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
                 <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
                   <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">

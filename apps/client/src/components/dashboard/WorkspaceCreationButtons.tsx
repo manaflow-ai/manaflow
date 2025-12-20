@@ -1,9 +1,9 @@
-import { env } from "@/client-env";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useWebMode } from "@/components/web-mode";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
@@ -30,6 +30,7 @@ export function WorkspaceCreationButtons({
   isEnvSelected,
 }: WorkspaceCreationButtonsProps) {
   const { socket } = useSocket();
+  const { isWebMode } = useWebMode();
   const { addTaskToExpand } = useExpandTasks();
   const { theme } = useTheme();
   const [isCreatingLocal, setIsCreatingLocal] = useState(false);
@@ -204,7 +205,7 @@ export function WorkspaceCreationButtons({
 
   return (
     <div className="flex items-center gap-2 mb-3">
-      {!env.NEXT_PUBLIC_WEB_MODE && (
+      {!isWebMode && (
         <Tooltip>
           <TooltipTrigger asChild>
             <button

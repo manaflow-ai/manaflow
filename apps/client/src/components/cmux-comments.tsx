@@ -1,5 +1,5 @@
-import { env } from "@/client-env";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { useWebMode } from "@/components/web-mode";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import type { SpawnFromComment } from "@cmux/shared";
@@ -465,6 +465,7 @@ function CommentMarker({ comment, onClick, teamSlugOrId }: CommentMarkerProps) {
 
 export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
   const { socket } = useSocket();
+  const { isWebMode } = useWebMode();
   const [isOpen, setIsOpen] = useState(false);
   const [isCommenting, setIsCommenting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -727,7 +728,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
   // Only render if NOT on localhost:5173 OR if force shown with Option+C
   const shouldRender = () => {
     // Hide comments in web mode
-    if (env.NEXT_PUBLIC_WEB_MODE) {
+    if (isWebMode) {
       return false;
     }
     const hostname = window.location.hostname;

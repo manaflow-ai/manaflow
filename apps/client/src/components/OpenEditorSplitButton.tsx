@@ -1,6 +1,6 @@
-import { env } from "@/client-env";
 import { editorIcons } from "@/components/ui/dropdown-types";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { useWebMode } from "@/components/web-mode";
 import { Menu } from "@base-ui-components/react/menu";
 import clsx from "clsx";
 import { Check, ChevronDown } from "lucide-react";
@@ -31,6 +31,7 @@ export function OpenEditorSplitButton({
   classNameRight,
 }: OpenEditorSplitButtonProps) {
   const { socket, availableEditors } = useSocket();
+  const { isWebMode } = useWebMode();
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -207,7 +208,7 @@ export function OpenEditorSplitButton({
   }, [openEditor, selected]);
 
   // In web mode, opening local editors is not available
-  if (env.NEXT_PUBLIC_WEB_MODE) {
+  if (isWebMode) {
     return null;
   }
 

@@ -1,5 +1,5 @@
-import { env } from "@/client-env";
 import { Dropdown } from "@/components/ui/dropdown";
+import { useWebMode } from "@/components/web-mode";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
 import { Cloud, Monitor, Plus } from "lucide-react";
@@ -18,6 +18,8 @@ function openCommandBarWithPage(page: string) {
 export function SidebarWorkspacesSection({
   teamSlugOrId,
 }: SidebarWorkspacesSectionProps) {
+  const { isWebMode } = useWebMode();
+
   const handleLocalWorkspace = useCallback(() => {
     openCommandBarWithPage("local-workspaces");
   }, []);
@@ -58,7 +60,7 @@ export function SidebarWorkspacesSection({
         <Dropdown.Portal>
           <Dropdown.Positioner sideOffset={4} side="bottom" align="end">
             <Dropdown.Popup className="min-w-[180px]">
-              {!env.NEXT_PUBLIC_WEB_MODE && (
+              {!isWebMode && (
                 <Dropdown.Item
                   onClick={handleLocalWorkspace}
                   className="flex items-center gap-2"

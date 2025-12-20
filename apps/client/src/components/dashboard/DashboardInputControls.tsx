@@ -45,6 +45,7 @@ interface DashboardInputControlsProps {
   cloudToggleDisabled?: boolean;
   branchDisabled?: boolean;
   providerStatus?: ProviderStatusResponse | null;
+  isWebMode?: boolean;
 }
 
 type AgentOption = SelectOptionObject & { displayLabel: string };
@@ -74,6 +75,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   cloudToggleDisabled = false,
   branchDisabled = false,
   providerStatus = null,
+  isWebMode = false,
 }: DashboardInputControlsProps) {
   const router = useRouter();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
@@ -127,7 +129,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   Setup required
                 </p>
                 <p className="text-xs text-neutral-300">
-                  {env.NEXT_PUBLIC_WEB_MODE
+                  {isWebMode
                     ? "Add your API key for this agent in Settings."
                     : "Add credentials for this agent in Settings."}
                 </p>
@@ -698,7 +700,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
         {/* Cloud/Local Mode Toggle - hidden in web mode (always cloud) */}
-        {!env.NEXT_PUBLIC_WEB_MODE && (
+        {!isWebMode && (
           <ModeToggleTooltip
             isCloudMode={isCloudMode}
             onToggle={onCloudModeToggle}

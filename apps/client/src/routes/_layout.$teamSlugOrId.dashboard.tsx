@@ -13,6 +13,7 @@ import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { useWebMode } from "@/components/web-mode";
 import type { SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip,
@@ -102,6 +103,7 @@ function DashboardComponent() {
   const searchParams = Route.useSearch() as { environmentId?: string };
   const { socket } = useSocket();
   const { theme } = useTheme();
+  const { isWebMode } = useWebMode();
   const { addTaskToExpand } = useExpandTasks();
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
@@ -185,6 +187,13 @@ function DashboardComponent() {
       localStorage.setItem("isCloudMode", JSON.stringify(true));
     }
   }, [searchParams?.environmentId, teamSlugOrId]);
+
+  // Force cloud mode when web mode is enabled (dev toggle or env var)
+  useEffect(() => {
+    if (isWebMode && !isCloudMode) {
+      setIsCloudMode(true);
+    }
+  }, [isWebMode, isCloudMode]);
 
   // Callback for task description changes
   const handleTaskDescriptionChange = useCallback((value: string) => {
@@ -358,7 +367,7 @@ function DashboardComponent() {
           const label = uniqueMissing.length === 1 ? "model" : "models";
           const verb = uniqueMissing.length === 1 ? "is" : "are";
           const thisThese = uniqueMissing.length === 1 ? "this" : "these";
-          const actionMessage = env.NEXT_PUBLIC_WEB_MODE
+          const actionMessage = isWebMode
             ? `Add your API keys in Settings to use ${thisThese} ${label}.`
             : `Update credentials in Settings to use ${thisThese} ${label}.`;
           toast.warning(
@@ -788,12 +797,12 @@ function DashboardComponent() {
   // Cloud mode toggle handler
   const handleCloudModeToggle = useCallback(() => {
     // In web mode, always stay in cloud mode
-    if (env.NEXT_PUBLIC_WEB_MODE) return;
+    if (isWebMode) return;
     if (isEnvSelected) return; // environment forces cloud mode
     const newMode = !isCloudMode;
     setIsCloudMode(newMode);
     localStorage.setItem("isCloudMode", JSON.stringify(newMode));
-  }, [isCloudMode, isEnvSelected]);
+  }, [isCloudMode, isEnvSelected, isWebMode]);
 
   // Handle paste of GitHub repo URL in the project search field
   const handleProjectSearchPaste = useCallback(
@@ -1039,6 +1048,7 @@ function DashboardComponent() {
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
+              isWebMode={isWebMode}
             />
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel
@@ -1119,6 +1129,7 @@ type DashboardMainCardProps = {
   canSubmit: boolean;
   onStartTask: () => void;
   isStartingTask: boolean;
+  isWebMode: boolean;
 };
 
 function DashboardMainCard({
@@ -1150,6 +1161,7 @@ function DashboardMainCard({
   canSubmit,
   onStartTask,
   isStartingTask,
+  isWebMode,
 }: DashboardMainCardProps) {
   return (
     <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
@@ -1185,6 +1197,7 @@ function DashboardMainCard({
           cloudToggleDisabled={cloudToggleDisabled}
           branchDisabled={branchDisabled}
           providerStatus={providerStatus}
+          isWebMode={isWebMode}
         />
         <DashboardStartTaskButton
           canSubmit={canSubmit}

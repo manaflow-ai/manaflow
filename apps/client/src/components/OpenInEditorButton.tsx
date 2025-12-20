@@ -1,5 +1,5 @@
-import { env } from "@/client-env";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { useWebMode } from "@/components/web-mode";
 import { ChevronDown, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState, useMemo } from "react";
 
@@ -23,6 +23,7 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { socket, availableEditors } = useSocket();
+  const { isWebMode } = useWebMode();
 
   const editors = useMemo(() => {
     const items: Array<{ id: EditorType; name: string }> = [];
@@ -102,7 +103,7 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
   };
 
   // In web mode, opening local editors is not available
-  if (env.NEXT_PUBLIC_WEB_MODE) {
+  if (isWebMode) {
     return null;
   }
 

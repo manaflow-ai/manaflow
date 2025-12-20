@@ -150,7 +150,10 @@ export function toMorphVncWebsocketUrl(sourceUrl: string): string | null {
   return wsUrl.toString();
 }
 
-export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
+export function toMorphXtermBaseUrl(
+  sourceUrl: string,
+  options?: { isWebMode?: boolean }
+): string | null {
   const components = parseMorphUrl(sourceUrl);
 
   if (!components) {
@@ -158,7 +161,9 @@ export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
   }
 
   // In web mode, use the Morph URLs directly without proxy rewriting
-  if (env.NEXT_PUBLIC_WEB_MODE) {
+  // Allow override via options for dynamic web mode toggle support
+  const isWebMode = options?.isWebMode ?? env.NEXT_PUBLIC_WEB_MODE;
+  if (isWebMode) {
     const morphUrl = createMorphPortUrl(components, 39383);
     morphUrl.pathname = "/";
     morphUrl.search = "";
