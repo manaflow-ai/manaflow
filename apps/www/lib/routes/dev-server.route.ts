@@ -213,14 +213,20 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
 
     let terminalCreated = false;
 
+    // Helper to clean up socket listeners and disconnect
+    const cleanupSocket = () => {
+      clientSocket.removeAllListeners();
+      clientSocket.disconnect();
+    };
+
     // Set up socket connection and create terminal
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        clientSocket.disconnect();
+        cleanupSocket();
         reject(new Error("Connection timeout"));
       }, 15000);
 
-      clientSocket.on("connect", () => {
+      clientSocket.once("connect", () => {
         console.log("Connected to worker");
 
         // Build the command based on selected agents
@@ -264,18 +270,19 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
             console.log("Terminal created with command:", command);
             terminalCreated = true;
             clearTimeout(timeout);
-            clientSocket.disconnect();
+            cleanupSocket();
             resolve();
           }
         );
       });
 
-      clientSocket.on("disconnect", () => {
+      clientSocket.once("disconnect", () => {
         console.log("Disconnected from worker");
       });
 
-      clientSocket.on("connect_error", (error: Error) => {
+      clientSocket.once("connect_error", (error: Error) => {
         clearTimeout(timeout);
+        cleanupSocket();
         reject(error);
       });
     });
