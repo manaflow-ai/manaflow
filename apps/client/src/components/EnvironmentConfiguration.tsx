@@ -6,7 +6,7 @@ import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
 import { RenderPanel } from "@/components/TaskPanelFactory";
 import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
-import { parseEnvBlock } from "@/lib/parseEnvBlock";
+import { parseEnvBlock } from "@cmux/shared/environment-config";
 import type { PanelPosition, PanelType } from "@/lib/panel-config";
 import {
   TASK_RUN_IFRAME_ALLOW,

@@ -34,20 +34,16 @@ import {
   VncViewer,
   type VncConnectionStatus,
 } from "@cmux/shared/components/vnc-viewer";
+import {
+  type EnvVar,
+  type SandboxInstance,
+  ensureInitialEnvVars,
+  parseEnvBlock,
+} from "@cmux/shared/environment-config";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 
 export type { FrameworkPreset };
-
-type SandboxInstance = {
-  instanceId: string;
-  vscodeUrl: string;
-  workerUrl: string;
-  vncUrl?: string;
-  provider: string;
-};
-
-type EnvVar = { name: string; value: string; isSecret: boolean };
 
 // All configuration steps in order (shown in workspace config sidebar)
 const ALL_CONFIG_STEPS = [
@@ -168,59 +164,6 @@ function deriveVncWebsocketUrl(
 
   const hostname = `port-39380-${morphHostId}.http.cloud.morph.so`;
   return `wss://${hostname}/websockify`;
-}
-
-const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
-  const base = (initial ?? []).map((item) => ({
-    name: item.name,
-    value: item.value,
-    isSecret: item.isSecret ?? true,
-  }));
-  if (base.length === 0) {
-    return [{ name: "", value: "", isSecret: true }];
-  }
-  const last = base[base.length - 1];
-  if (!last || last.name.trim().length > 0 || last.value.trim().length > 0) {
-    base.push({ name: "", value: "", isSecret: true });
-  }
-  return base;
-};
-
-function parseEnvBlock(text: string): Array<{ name: string; value: string }> {
-  const normalized = text.replace(/\r\n?/g, "\n");
-  const lines = normalized.split("\n");
-  const results: Array<{ name: string; value: string }> = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (
-      trimmed.length === 0 ||
-      trimmed.startsWith("#") ||
-      trimmed.startsWith("//")
-    )
-      continue;
-
-    const cleanLine = trimmed.replace(/^export\s+/, "").replace(/^set\s+/, "");
-    const eqIdx = cleanLine.indexOf("=");
-
-    if (eqIdx === -1) continue;
-
-    const key = cleanLine.slice(0, eqIdx).trim();
-    let value = cleanLine.slice(eqIdx + 1).trim();
-
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (key && !/\s/.test(key)) {
-      results.push({ name: key, value });
-    }
-  }
-
-  return results;
 }
 
 // Persistent iframe manager for Next.js

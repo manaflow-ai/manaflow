@@ -105,6 +105,14 @@
     "./components/vnc-viewer": {
       "import": "./src/components/vnc-viewer.tsx",
       "types": "./src/components/vnc-viewer.tsx"
+    },
+    "./environment-config": {
+      "import": "./src/environment-config/index.ts",
+      "types": "./src/environment-config/index.ts"
+    },
+    "./components/environment-config": {
+      "import": "./src/components/environment-config/index.ts",
+      "types": "./src/components/environment-config/index.ts"
     }
   },
   "peerDependencies": {
