@@ -31,30 +31,54 @@ export const enqueueFromWebhook = internalMutation({
       ? normalizeRepoFullName(args.headRepoFullName)
       : undefined;
 
-    // Check if there's already a pending/running preview run for this PR
-    // This prevents duplicate preview jobs when:
-    // 1. Multiple webhooks fire for the same PR (e.g., synchronize events)
-    // 2. Crown worker tries to create a preview run while one already exists
-    const existingByPr = await ctx.db
+    // Check if there's already a pending/running preview run for this EXACT commit
+    // This prevents duplicate jobs when multiple webhooks fire for the same commit
+    const existingByCommit = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_head", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("headSha", args.headSha),
+      )
+      .first();
+
+    if (existingByCommit && (existingByCommit.status === "pending" || existingByCommit.status === "running")) {
+      console.log("[previewRuns] Returning existing pending/running preview run for same commit", {
+        existingRunId: existingByCommit._id,
+        prNumber: args.prNumber,
+        headSha: args.headSha,
+        status: existingByCommit.status,
+      });
+      return existingByCommit._id;
+    }
+
+    // Supersede any PENDING runs for this PR that are for older commits
+    // This prevents wasted resources on outdated commits
+    // Note: We do NOT cancel RUNNING jobs - let them complete gracefully
+    const pendingRuns = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_pr", (q) =>
         q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
       )
-      .order("desc")
-      .first();
-
-    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
-      console.log("[previewRuns] Returning existing pending/running preview run for PR", {
-        existingRunId: existingByPr._id,
-        prNumber: args.prNumber,
-        existingHeadSha: existingByPr.headSha,
-        newHeadSha: args.headSha,
-        status: existingByPr.status,
-      });
-      return existingByPr._id;
-    }
+      .filter((q) => q.eq(q.field("status"), "pending"))
+      .collect();
 
     const now = Date.now();
+    for (const pendingRun of pendingRuns) {
+      if (pendingRun.headSha !== args.headSha) {
+        console.log("[previewRuns] Superseding pending preview run for older commit", {
+          supersededRunId: pendingRun._id,
+          supersededHeadSha: pendingRun.headSha,
+          newHeadSha: args.headSha,
+          prNumber: args.prNumber,
+        });
+        await ctx.db.patch(pendingRun._id, {
+          status: "superseded",
+          stateReason: `Superseded by newer commit ${args.headSha.slice(0, 7)}`,
+          completedAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: args.previewConfigId,
       teamId: args.teamId,
@@ -82,6 +106,13 @@ export const enqueueFromWebhook = internalMutation({
     await ctx.db.patch(args.previewConfigId, {
       lastRunAt: now,
       updatedAt: now,
+    });
+
+    console.log("[previewRuns] Created new preview run for commit", {
+      runId,
+      prNumber: args.prNumber,
+      headSha: args.headSha,
+      supersededCount: pendingRuns.filter((r) => r.headSha !== args.headSha).length,
     });
 
     return runId;
@@ -191,37 +222,63 @@ export const enqueueFromTaskRun = internalMutation({
       return { created: false, reason: `Preview config is ${previewConfig.status}` };
     }
 
-    // Check for existing pending/running preview run for this PR
-    const existingByPr = await ctx.db
+    // Extract headSha - prefer explicit headSha field, fallback to newBranch or placeholder
+    const headSha = taskRun.newBranch ?? `taskrun-${args.taskRunId}`;
+
+    // Check for existing pending/running preview run for the same commit
+    const existingByCommit = await ctx.db
       .query("previewRuns")
-      .withIndex("by_config_pr", (q) =>
-        q.eq("previewConfigId", previewConfig._id).eq("prNumber", prNumber),
+      .withIndex("by_config_head", (q) =>
+        q.eq("previewConfigId", previewConfig._id).eq("headSha", headSha),
       )
-      .order("desc")
       .first();
 
-    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
-      console.log("[previewRuns] Found existing active preview run for PR, linking taskRun", {
+    if (existingByCommit && (existingByCommit.status === "pending" || existingByCommit.status === "running")) {
+      console.log("[previewRuns] Found existing active preview run for same commit, linking taskRun", {
         taskRunId: args.taskRunId,
-        existingRunId: existingByPr._id,
+        existingRunId: existingByCommit._id,
+        headSha,
         prNumber,
-        status: existingByPr.status,
+        status: existingByCommit.status,
       });
 
       // Link this taskRun to the existing preview run if it doesn't have one
-      if (!existingByPr.taskRunId) {
-        await ctx.db.patch(existingByPr._id, {
+      if (!existingByCommit.taskRunId) {
+        await ctx.db.patch(existingByCommit._id, {
           taskRunId: args.taskRunId,
           updatedAt: Date.now(),
         });
       }
 
-      return { created: true, previewRunId: existingByPr._id, isNew: false };
+      return { created: true, previewRunId: existingByCommit._id, isNew: false };
     }
 
-    // Extract headSha from newBranch or use a placeholder
-    // In crown worker flow, we may not have the exact commit SHA
-    const headSha = taskRun.newBranch ?? `taskrun-${args.taskRunId}`;
+    // Supersede any pending runs for older commits on this PR
+    const pendingRuns = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", previewConfig._id).eq("prNumber", prNumber),
+      )
+      .filter((q) => q.eq(q.field("status"), "pending"))
+      .collect();
+
+    const now = Date.now();
+    for (const pendingRun of pendingRuns) {
+      if (pendingRun.headSha !== headSha) {
+        console.log("[previewRuns] Superseding pending preview run for older commit (from taskRun)", {
+          supersededRunId: pendingRun._id,
+          supersededHeadSha: pendingRun.headSha,
+          newHeadSha: headSha,
+          prNumber,
+        });
+        await ctx.db.patch(pendingRun._id, {
+          status: "superseded",
+          stateReason: `Superseded by newer commit ${headSha.slice(0, 7)}`,
+          completedAt: now,
+          updatedAt: now,
+        });
+      }
+    }
 
     // Try to get PR title from pullRequests table or task
     let prTitle: string | undefined;
@@ -240,7 +297,6 @@ export const enqueueFromTaskRun = internalMutation({
     // Get PR description from task if available
     const prDescription = task.pullRequestDescription ?? undefined;
 
-    const now = Date.now();
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: previewConfig._id,
       teamId: taskRun.teamId,
@@ -308,7 +364,9 @@ export const updateStatus = internalMutation({
       v.literal("completed"),
       v.literal("failed"),
       v.literal("skipped"),
+      v.literal("superseded"),
     ),
+    stateReason: v.optional(v.string()),
     screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
     githubCommentId: v.optional(v.number()),
@@ -321,12 +379,13 @@ export const updateStatus = internalMutation({
     const now = Date.now();
     const patch: Record<string, unknown> = {
       status: args.status,
+      stateReason: args.stateReason ?? run.stateReason,
       screenshotSetId: args.screenshotSetId,
       githubCommentUrl: args.githubCommentUrl ?? run.githubCommentUrl,
       githubCommentId: args.githubCommentId ?? run.githubCommentId,
       updatedAt: now,
     };
-    if (args.status === "completed" || args.status === "failed" || args.status === "skipped") {
+    if (args.status === "completed" || args.status === "failed" || args.status === "skipped" || args.status === "superseded") {
       patch.completedAt = now;
     } else if (args.status === "running" && !run.startedAt) {
       patch.startedAt = now;
@@ -392,6 +451,25 @@ export const getActiveByConfigAndPr = internalQuery({
       return run;
     }
     return null;
+  },
+});
+
+export const getRunningByConfigAndPr = internalQuery({
+  args: {
+    previewConfigId: v.id("previewConfigs"),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Find if there's any currently running preview job for this PR
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      )
+      .filter((q) => q.eq(q.field("status"), "running"))
+      .first();
+
+    return runs ?? null;
   },
 });
 
@@ -551,25 +629,43 @@ export const createManual = authMutation({
       );
     }
 
-    // Check for existing pending/running run for this PR (similar to webhook flow)
-    const existingByPr = await ctx.db
+    // Check for existing pending/running run for this EXACT commit
+    const existingByCommit = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_head", (q) =>
+        q.eq("previewConfigId", config._id).eq("headSha", args.headSha),
+      )
+      .first();
+
+    if (
+      existingByCommit &&
+      existingByCommit.taskRunId &&
+      (existingByCommit.status === "pending" || existingByCommit.status === "running")
+    ) {
+      // Return existing run for this commit only if it has a taskRun linked
+      return { previewRunId: existingByCommit._id, reused: true };
+    }
+
+    // Supersede any pending runs for older commits on this PR
+    const pendingRuns = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_pr", (q) =>
         q.eq("previewConfigId", config._id).eq("prNumber", args.prNumber),
       )
-      .order("desc")
-      .first();
-
-    if (
-      existingByPr &&
-      existingByPr.taskRunId &&
-      (existingByPr.status === "pending" || existingByPr.status === "running")
-    ) {
-      // Return existing run only if it has a taskRun linked
-      return { previewRunId: existingByPr._id, reused: true };
-    }
+      .filter((q) => q.eq(q.field("status"), "pending"))
+      .collect();
 
     const now = Date.now();
+    for (const pendingRun of pendingRuns) {
+      if (pendingRun.headSha !== args.headSha) {
+        await ctx.db.patch(pendingRun._id, {
+          status: "superseded",
+          stateReason: `Superseded by manual preview for commit ${args.headSha.slice(0, 7)}`,
+          completedAt: now,
+          updatedAt: now,
+        });
+      }
+    }
 
     // Step 1: Create preview run (following enqueueFromWebhook pattern)
     const runId = await ctx.db.insert("previewRuns", {

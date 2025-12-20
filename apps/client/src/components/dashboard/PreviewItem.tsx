@@ -35,9 +35,10 @@ export const PreviewItem = memo(function PreviewItem({
   const { archive } = useArchiveTask(teamSlugOrId);
 
   // Determine if this is a "completed" status (filled green circle) or "in progress" (empty circle)
-  // "completed" and "skipped" show as green (done), "failed" shows as red
+  // "completed" and "skipped" show as green (done), "failed" shows as red, "superseded" shows as neutral (gray)
   const isCompleted = previewRun.status === "completed" || previewRun.status === "skipped";
   const isFailed = previewRun.status === "failed";
+  const isSuperseded = previewRun.status === "superseded";
 
   // Generate a display title from PR info
   const displayTitle = `PR #${previewRun.prNumber}`;
@@ -102,7 +103,9 @@ export const PreviewItem = memo(function PreviewItem({
               ? "w-[8px] h-[8px] border border-transparent bg-green-500"
               : isFailed
                 ? "w-[8px] h-[8px] border border-transparent bg-red-500"
-                : "w-[9.5px] h-[9.5px] border border-neutral-400 dark:border-neutral-500 bg-transparent"
+                : isSuperseded
+                  ? "w-[8px] h-[8px] border border-transparent bg-neutral-400 dark:bg-neutral-500"
+                  : "w-[9.5px] h-[9.5px] border border-neutral-400 dark:border-neutral-500 bg-transparent"
           )}
         />
       </div>
