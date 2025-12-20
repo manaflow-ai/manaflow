@@ -701,7 +701,9 @@ export function setupSocketHandlers(
                   ""
                 ),
                 workspaceUrl: primaryAgent.vscodeUrl,
-                provider: taskData.isCloudMode ? "morph" : "docker",
+                provider:
+                  primaryAgent.vscodeProvider ??
+                  (taskData.isCloudMode ? "morph" : "docker"),
               });
             }
 

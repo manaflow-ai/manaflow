@@ -32,9 +32,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  clang \
   gcc \
   g++ \
   libc6-dev \
+  libssl-dev \
+  pkg-config \
   gcc-x86-64-linux-gnu \
   g++-x86-64-linux-gnu \
   libc6-dev-amd64-cross
@@ -59,6 +62,8 @@ WORKDIR /cmux
 
 # Copy only Rust crates
 COPY crates ./crates
+COPY packages/sandbox/Cargo.toml packages/sandbox/Cargo.lock ./packages/sandbox/
+COPY packages/sandbox/src ./packages/sandbox/src
 
 # Build Rust binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -77,6 +82,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
   cargo install --path crates/cmux-env --locked --force && \
   cargo install --path crates/cmux-proxy --locked --force && \
   cargo install --path crates/cmux-xterm --locked --force; \
+  fi
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/packages/sandbox/target \
+  if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
+  export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
+  export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
+  cargo install --path packages/sandbox --target x86_64-unknown-linux-gnu --locked --force --bins; \
+  else \
+  cargo install --path packages/sandbox --locked --force --bins; \
   fi
 
 # Stage 2: Build base stage (runs natively on ARM64, cross-compiles to x86_64)
@@ -573,6 +590,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   net-tools \
   lsof \
   sudo \
+  bubblewrap \
+  fuse-overlayfs \
+  iproute2 \
   iptables \
   openssl \
   pigz \
@@ -594,6 +614,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   xauth \
   xdg-utils \
   socat \
+  uidmap \
   fonts-liberation \
   libasound2t64 \
   libatk-bridge2.0-0 \
@@ -1011,10 +1032,13 @@ RUN chmod +x /usr/local/bin/cmux-collect-relevant-diff.sh \
 COPY --from=rust-builder /usr/local/cargo/bin/envctl /usr/local/bin/envctl
 COPY --from=rust-builder /usr/local/cargo/bin/envd /usr/local/bin/envd
 COPY --from=rust-builder /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
+COPY --from=rust-builder /usr/local/cargo/bin/cmux-sandboxd /usr/local/bin/cmux-sandboxd
+COPY --from=rust-builder /usr/local/cargo/bin/cmux-bridge /usr/local/bin/cmux-bridge
+COPY --from=rust-builder /usr/local/cargo/bin/cmux /usr/local/bin/cmux
 COPY --from=rust-builder /usr/local/cargo/bin/cmux-xterm-server /usr/local/bin/cmux-xterm-server
 
 # Configure envctl/envd runtime defaults
-RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-xterm-server && \
+RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-sandboxd /usr/local/bin/cmux-bridge /usr/local/bin/cmux /usr/local/bin/cmux-xterm-server && \
   envctl --version && \
   envctl install-hook bash && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.profile && \
@@ -1053,6 +1077,7 @@ COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
 COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
 COPY configs/systemd/bin/code /usr/local/bin/code
 COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
+COPY configs/systemd/bin/cmux-start-sandbox-services /usr/local/lib/cmux/cmux-start-sandbox-services
 COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
@@ -1061,14 +1086,17 @@ COPY configs/systemd/ide.env.openvscode /etc/cmux/ide.env.openvscode
 COPY configs/systemd/ide.env.cmux-code /etc/cmux/ide.env.cmux-code
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
 COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+COPY packages/sandbox/agent-config /usr/share/cmux/agent-config
+COPY packages/sandbox/scripts/bootstrap-dind.sh /usr/local/bin/bootstrap-dind.sh
 
 # Configure IDE service based on IDE_PROVIDER
 RUN <<'EOF'
 set -eux
-chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/configure-cmux-code /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/configure-cmux-code /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-start-sandbox-services /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
 chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 chmod +x /usr/local/sbin/cmux-configure-memory
 chmod +x /usr/local/bin/code
+chmod +x /usr/local/bin/bootstrap-dind.sh
 touch /usr/local/lib/cmux/dockerd.flag
 mkdir -p /var/log/cmux
 mkdir -p /etc/systemd/system/multi-user.target.wants

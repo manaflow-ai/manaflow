@@ -5,6 +5,7 @@ import { dockerLogger } from "../utils/fileLogger";
 
 export interface VSCodeInstanceConfig {
   workspacePath?: string;
+  workspaceRoot?: string;
   initialCommand?: string;
   agentName?: string;
   taskRunId: Id<"taskRuns">;
@@ -26,7 +27,7 @@ export interface VSCodeInstanceInfo {
   workspaceUrl: string;
   instanceId: string;
   taskRunId: Id<"taskRuns">;
-  provider: "docker" | "morph" | "daytona";
+  provider: "docker" | "morph" | "daytona" | "sandbox";
   /** If true, VSCode URLs were already persisted to Convex by www */
   vscodePersisted?: boolean;
 }
@@ -76,6 +77,15 @@ export abstract class VSCodeInstance extends EventEmitter {
     running: boolean;
     info?: VSCodeInstanceInfo;
   }>;
+  getPorts(): {
+    vscode?: string;
+    worker?: string;
+    extension?: string;
+    proxy?: string;
+    vnc?: string;
+  } | null {
+    return null;
+  }
 
   async connectToWorker(workerUrl: string): Promise<void> {
     dockerLogger.info(

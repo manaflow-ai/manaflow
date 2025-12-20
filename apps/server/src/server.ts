@@ -10,6 +10,7 @@ import { getConvex } from "./utils/convexClient";
 import { dockerLogger, serverLogger } from "./utils/fileLogger";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
+import { LocalSandboxHost } from "./sandbox/localSandboxHost";
 import {
   ensureVSCodeServeWeb,
   getVSCodeServeWebBaseUrl,
@@ -144,6 +145,13 @@ export async function startServer({
 
     // Stop Docker container state sync
     DockerVSCodeInstance.stopContainerStateSync();
+
+    try {
+      await LocalSandboxHost.stopContainer();
+    } catch (error) {
+      console.error("Failed to stop sandbox host container:", error);
+      serverLogger.warn("Failed to stop sandbox host container:", error);
+    }
 
     stopVSCodeServeWeb(vscodeServeHandle, serverLogger);
     vscodeServeHandle = null;
