@@ -1,6 +1,7 @@
 import Docker from "dockerode";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-docker";
 import { dockerLogger } from "../utils/fileLogger";
 import { LocalSandboxClient } from "./localSandboxClient";
@@ -210,6 +211,17 @@ export class LocalSandboxHost {
       envVars.push("SSH_AUTH_SOCK=/ssh-agent.sock");
     }
 
+    const bootstrapScript = LocalSandboxHost.resolveBootstrapScript();
+    if (bootstrapScript) {
+      binds.push(
+        `${bootstrapScript}:/usr/local/bin/bootstrap-dind.sh:ro`
+      );
+    } else {
+      dockerLogger.warn(
+        "[LocalSandboxHost] bootstrap-dind.sh not found on host; relying on image copy"
+      );
+    }
+
     const hostConfig: HostConfigWithCgroupns = {
       AutoRemove: true,
       Privileged: true,
@@ -226,6 +238,18 @@ export class LocalSandboxHost {
       },
     };
 
+    const sandboxCommand = [
+      "/usr/local/bin/cmux-sandboxd",
+      "--bind",
+      "0.0.0.0",
+      "--port",
+      `${sandboxPort}`,
+      "--data-dir",
+      sandboxDataDir,
+      "--log-dir",
+      sandboxLogDir,
+    ];
+
     const createOptions: Docker.ContainerCreateOptions = {
       name: LocalSandboxHost.getContainerName(),
       Image: imageName,
@@ -234,18 +258,12 @@ export class LocalSandboxHost {
       ExposedPorts: {
         [`${sandboxPort}/tcp`]: {},
       },
-      Entrypoint: ["/usr/local/bin/bootstrap-dind.sh"],
-      Cmd: [
-        "/usr/local/bin/cmux-sandboxd",
-        "--bind",
-        "0.0.0.0",
-        "--port",
-        `${sandboxPort}`,
-        "--data-dir",
-        sandboxDataDir,
-        "--log-dir",
-        sandboxLogDir,
-      ],
+      Entrypoint: bootstrapScript
+        ? ["/bin/bash"]
+        : ["/usr/local/bin/bootstrap-dind.sh"],
+      Cmd: bootstrapScript
+        ? ["/usr/local/bin/bootstrap-dind.sh", ...sandboxCommand]
+        : sandboxCommand,
     };
 
     dockerLogger.info(
@@ -354,6 +372,35 @@ export class LocalSandboxHost {
       return DEFAULT_SANDBOX_PORT;
     }
     return parsed;
+  }
+
+  private static resolveBootstrapScript(): string | null {
+    const envPath = process.env.CMUX_BOOTSTRAP_DIND_PATH?.trim();
+    const candidates: Array<string | undefined> = [
+      envPath && envPath.length > 0 ? envPath : undefined,
+      path.resolve(process.cwd(), "packages/sandbox/scripts/bootstrap-dind.sh"),
+      path.resolve(process.cwd(), "../packages/sandbox/scripts/bootstrap-dind.sh"),
+    ];
+
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    candidates.push(
+      path.resolve(
+        moduleDir,
+        "../../../..",
+        "packages/sandbox/scripts/bootstrap-dind.sh"
+      )
+    );
+
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
   }
 
   private static async ensureImageExists(
