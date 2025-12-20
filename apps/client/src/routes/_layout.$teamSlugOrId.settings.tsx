@@ -901,7 +901,7 @@ function SettingsComponent() {
                                   ) : (
                                     <div
                                       onClick={() => toggleShowKey(key.envVar)}
-                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer min-h-[6rem]"
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
                                     >
                                       {apiKeyValues[key.envVar] ? "••••••••••••••••••••••••••••••••" : <span className="text-neutral-400">{"Click to edit"}</span>}
                                     </div>
