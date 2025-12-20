@@ -1459,6 +1459,7 @@ function TaskRunTreeInner({
     () => (hasActiveVSCode && run.vscode?.url) || null,
     [hasActiveVSCode, run]
   );
+  const vscodeProvider = run.vscode?.provider;
 
   // Collect running preview ports and custom previews
   const previewServices = useMemo(() => {
@@ -1474,6 +1475,7 @@ function TaskRunTreeInner({
     executePortAction,
   } = useOpenWithActions({
     vscodeUrl,
+    vscodeProvider,
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
