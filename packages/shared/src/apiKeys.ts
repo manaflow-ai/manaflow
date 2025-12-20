@@ -54,3 +54,10 @@ export const CLAUDE_CODE_OAUTH_TOKEN: AgentConfigApiKey = {
   description:
     "OAuth token from Claude Code CLI. Run `claude setup-token` and paste the output here. Preferred over Anthropic API key when set.",
 };
+
+export const CODEX_AUTH_JSON: AgentConfigApiKey = {
+  envVar: "CODEX_AUTH_JSON",
+  displayName: "Codex Auth JSON",
+  description:
+    "Contents of ~/.codex/auth.json. Copy and paste the full JSON contents here.",
+};

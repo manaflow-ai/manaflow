@@ -25,6 +25,7 @@ import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
+import { SidebarWorkspacesSection } from "./sidebar/SidebarWorkspacesSection";
 
 interface SidebarProps {
   tasks: Doc<"tasks">[] | undefined;
@@ -274,13 +275,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           </div>
 
           <div className="mt-2 flex flex-col gap-0.5">
-            <SidebarSectionLink
-              to="/$teamSlugOrId/workspaces"
-              params={{ teamSlugOrId }}
-              exact
-            >
-              Workspaces
-            </SidebarSectionLink>
+            <SidebarWorkspacesSection teamSlugOrId={teamSlugOrId} />
           </div>
 
           <div className="ml-2 pt-px">

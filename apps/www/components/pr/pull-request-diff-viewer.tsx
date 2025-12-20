@@ -10,7 +10,6 @@ import {
   useState,
   useId,
   useDeferredValue,
-  useTransition,
 } from "react";
 import { useClipboard, useLocalStorage } from "@mantine/hooks";
 import type {
@@ -325,6 +324,7 @@ type FileDiffViewModel = {
   review: FileOutput | null;
   reviewHeatmap: ReviewHeatmapLine[];
   diffHeatmapArtifacts: DiffHeatmapArtifacts | null;
+  diffHeatmap: DiffHeatmap | null;
   changeKeyByLine: Map<string, string>;
   streamState: StreamFileState | null;
 };
@@ -1191,16 +1191,13 @@ export function PullRequestDiffViewer({
   const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
     DEFAULT_HEATMAP_COLORS
   );
-  const [, startHeatmapColorTransition] = useTransition();
   const deferredHeatmapColors = useDeferredValue(heatmapColors);
   const clipboard = useClipboard({ timeout: 2000 });
   const handleHeatmapColorsChange = useCallback(
     (next: HeatmapColorSettings) => {
-      startHeatmapColorTransition(() => {
-        setHeatmapColors(next);
-      });
+      setHeatmapColors(next);
     },
-    [startHeatmapColorTransition]
+    []
   );
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1214,9 +1211,7 @@ export function PullRequestDiffViewer({
       const parsed = JSON.parse(raw);
       const normalized = normalizeHeatmapColorSettings(parsed);
       if (normalized) {
-        startHeatmapColorTransition(() => {
-          setHeatmapColors(normalized);
-        });
+        setHeatmapColors(normalized);
       }
     } catch (error) {
       console.error("[heatmap-colors] Failed to load settings", error);
@@ -1511,30 +1506,19 @@ export function PullRequestDiffViewer({
         review,
         reviewHeatmap,
         diffHeatmapArtifacts,
+        diffHeatmap: diffHeatmapArtifacts
+          ? renderDiffHeatmapFromArtifacts(diffHeatmapArtifacts, heatmapThreshold)
+          : null,
         changeKeyByLine: buildChangeKeyIndex(entry.diff),
         streamState,
       };
     });
-  }, [parsedDiffs, fileOutputIndex, streamStateByFile]);
-
-  const thresholdedFileEntries = useMemo(
-    () =>
-      fileEntries.map((fileEntry) => ({
-        ...fileEntry,
-        diffHeatmap: fileEntry.diffHeatmapArtifacts
-          ? renderDiffHeatmapFromArtifacts(
-              fileEntry.diffHeatmapArtifacts,
-              heatmapThreshold
-            )
-          : null,
-      })),
-    [fileEntries, heatmapThreshold]
-  );
+  }, [parsedDiffs, fileOutputIndex, streamStateByFile, heatmapThreshold]);
 
   const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
     const targets: ReviewErrorTarget[] = [];
 
-    for (const fileEntry of thresholdedFileEntries) {
+    for (const fileEntry of fileEntries) {
       const { entry, diffHeatmap, changeKeyByLine } = fileEntry;
       if (!diffHeatmap || diffHeatmap.totalEntries === 0) {
         continue;
@@ -1572,7 +1556,7 @@ export function PullRequestDiffViewer({
     }
 
     return targets;
-  }, [thresholdedFileEntries]);
+  }, [fileEntries]);
 
   const targetCount = errorTargets.length;
 
@@ -2237,7 +2221,7 @@ export function PullRequestDiffViewer({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
           <aside
             id={sidebarPanelId}
-            className="relative w-full lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:flex-none lg:overflow-y-auto lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem]"
+            className="relative w-full lg:sticky lg:top-2 lg:h-[calc(100vh-0.5rem)] lg:flex-none lg:overflow-y-auto lg:overscroll-contain lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem]"
             style={
               {
                 "--pr-diff-sidebar-width": `${sidebarWidth}px`,
@@ -2331,7 +2315,7 @@ export function PullRequestDiffViewer({
           </div>
 
           <div className="flex-1 min-w-0 space-y-3">
-            {thresholdedFileEntries.map(
+            {fileEntries.map(
               ({ entry, review, diffHeatmap, streamState }) => {
                 const isFocusedFile =
                   focusedError?.filePath === entry.file.filename;
@@ -2553,7 +2537,7 @@ const COLOR_SECTION_METADATA: Record<
   { title: string; helper: string }
 > = {
   line: {
-    title: "Line highlight gradient",
+    title: "Line background gradient",
     helper: "",
   },
   token: {
@@ -2641,12 +2625,15 @@ function HeatmapThresholdControl({
   );
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor={sliderId} className="font-medium text-neutral-700">
+    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700 dark:border-neutral-200 dark:bg-white dark:text-neutral-700">
+      <div className="flex items-center justify-between gap-2">
+        <label
+          htmlFor={sliderId}
+          className="text-xs font-medium text-neutral-700 dark:text-neutral-700"
+        >
           &ldquo;Should review&rdquo; threshold
         </label>
-        <span className="text-xs font-semibold text-neutral-600">
+        <span className="flex-shrink-0 text-xs font-semibold text-neutral-600 dark:text-neutral-600">
           ≥ <span className="tabular-nums">{percent}%</span>
         </span>
       </div>
@@ -2655,7 +2642,7 @@ function HeatmapThresholdControl({
         type="range"
         min={0}
         max={100}
-        step={5}
+        step={1}
         value={percent}
         onChange={handleSliderChange}
         className="mt-3 w-full accent-sky-500"
@@ -2665,7 +2652,10 @@ function HeatmapThresholdControl({
         aria-valuetext={`"Should review" threshold ${percent} percent`}
         aria-describedby={descriptionId}
       />
-      <p id={descriptionId} className="mt-2 text-xs text-neutral-500">
+      <p
+        id={descriptionId}
+        className="mt-2 text-xs text-neutral-500 dark:text-neutral-500"
+      >
         Only show heatmap highlights with a score at or above this value.
       </p>
       <div className="mt-4 space-y-5">
@@ -2677,27 +2667,27 @@ function HeatmapThresholdControl({
           const meta = COLOR_SECTION_METADATA[section];
           return (
             <div key={section} className="space-y-2">
-              <p className="text-xs font-semibold text-neutral-700">
+              <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-700">
                 {meta.title}
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700">
+                <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700 dark:text-neutral-700">
                   <span className="flex-1 text-left">Low score</span>
                   <input
                     type="color"
                     value={colors[section].start}
                     onChange={handleColorChange(section, "start")}
-                    className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0"
+                    className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0 dark:border-neutral-300"
                     aria-label={`${meta.title} low score color`}
                   />
                 </label>
-                <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700">
+                <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700 dark:text-neutral-700">
                   <span className="flex-1 text-left">High score</span>
                   <input
                     type="color"
                     value={colors[section].end}
                     onChange={handleColorChange(section, "end")}
-                    className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0"
+                    className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0 dark:border-neutral-300"
                     aria-label={`${meta.title} high score color`}
                   />
                 </label>
@@ -2709,14 +2699,14 @@ function HeatmapThresholdControl({
           <button
             type="button"
             onClick={onCopyStyles}
-            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-neutral-200 dark:text-neutral-700 dark:hover:bg-neutral-100"
           >
             {copyStatus ? "Copied!" : "Copy config"}
           </button>
           <button
             type="button"
             onClick={onLoadConfig}
-            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-neutral-200 dark:text-neutral-700 dark:hover:bg-neutral-100"
           >
             Load config
           </button>
@@ -2724,13 +2714,15 @@ function HeatmapThresholdControl({
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4">
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-neutral-700">Model</p>
+          <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-700">
+            Model
+          </p>
           <div className="relative">
             <select
               value={selectedModel}
               onChange={handleModelSelectChange}
               aria-label="Heatmap model preference"
-              className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:border-neutral-300 dark:bg-white dark:text-neutral-800"
             >
               {HEATMAP_MODEL_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -2745,7 +2737,7 @@ function HeatmapThresholdControl({
           </div>
         </div>
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-neutral-700">
+          <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-700">
             Tooltip Language
           </p>
           <div className="relative">
@@ -2753,7 +2745,7 @@ function HeatmapThresholdControl({
               value={selectedLanguage}
               onChange={handleLanguageSelectChange}
               aria-label="Tooltip language preference"
-              className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-full appearance-none border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:border-neutral-300 dark:bg-white dark:text-neutral-800"
             >
               {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -2797,7 +2789,7 @@ function ErrorNavigator({
 
   return (
     <TooltipProvider delayDuration={120} skipDelayDuration={120}>
-      <div className="flex items-center gap-3 border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200">
+      <div className="flex items-center gap-3 border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-200 dark:bg-white/95 dark:text-neutral-700">
         <span aria-live="polite" className="flex items-center gap-1">
           {hasSelection && displayIndex !== null ? (
             <>
@@ -2819,7 +2811,7 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onPrevious()}
-                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-200 dark:bg-white dark:text-neutral-600 dark:hover:bg-neutral-100"
                 aria-label="Go to previous highlight (Shift+K)"
                 disabled={totalCount === 0}
               >
@@ -2829,10 +2821,10 @@ function ErrorNavigator({
             <TooltipContent
               side="bottom"
               align="center"
-              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-200 dark:bg-white dark:text-neutral-700"
             >
               <span>Previous highlight</span>
-              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-200 dark:bg-neutral-50 dark:text-neutral-500">
                 ⇧ K
               </span>
             </TooltipContent>
@@ -2842,7 +2834,7 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onNext()}
-                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-200 dark:bg-white dark:text-neutral-600 dark:hover:bg-neutral-100"
                 aria-label="Go to next highlight (Shift+J)"
                 disabled={totalCount === 0}
               >
@@ -2852,10 +2844,10 @@ function ErrorNavigator({
             <TooltipContent
               side="bottom"
               align="center"
-              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-200 dark:bg-white dark:text-neutral-700"
             >
               <span>Next highlight</span>
-              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-200 dark:bg-neutral-50 dark:text-neutral-500">
                 ⇧ J
               </span>
             </TooltipContent>

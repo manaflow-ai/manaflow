@@ -84,10 +84,10 @@ export const DropdownItem: React.FC<DropdownItemProps> = ({
       className={clsx(
         "flex cursor-default py-2 pr-8 pl-4 text-sm leading-4 outline-none select-none",
         "data-[highlighted]:relative data-[highlighted]:z-0",
-        "data-[highlighted]:text-neutral-50 dark:data-[highlighted]:text-neutral-900",
+        "data-[highlighted]:text-neutral-900 dark:data-[highlighted]:text-neutral-100",
         "data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0",
         "data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm",
-        "data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-100",
+        "data-[highlighted]:before:bg-neutral-100 dark:data-[highlighted]:before:bg-neutral-800",
         "data-[disabled]:text-neutral-400 dark:data-[disabled]:text-neutral-600 data-[disabled]:cursor-not-allowed",
         className
       )}

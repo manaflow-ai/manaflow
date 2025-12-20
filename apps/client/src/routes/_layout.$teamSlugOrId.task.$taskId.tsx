@@ -11,7 +11,8 @@ import {
 import clsx from "clsx";
 import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { useQuery } from "convex/react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -43,14 +44,18 @@ type GetByTaskResultItem = (typeof api.taskRuns.getByTask._returnType)[number];
 
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
-  const task = useQuery(api.tasks.getById, {
-    teamSlugOrId,
-    id: taskId,
+  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
+  // that cause excessive re-renders cascading to all child components.
+  const taskQuery = useRQ({
+    ...convexQuery(api.tasks.getById, { teamSlugOrId, id: taskId }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
-    teamSlugOrId,
-    taskId,
+  const task = taskQuery.data;
+  const taskRunsQuery = useRQ({
+    ...convexQuery(api.taskRuns.getByTask, { teamSlugOrId, taskId }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
+  const taskRuns = taskRunsQuery.data;
   const clipboard = useClipboard({ timeout: 2000 });
 
   // Get the deepest matched child to extract runId if present
@@ -126,12 +131,12 @@ function TaskDetailPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [flatRuns, taskId, navigate, teamSlugOrId]);
 
-  // Distinguish between loading (undefined) and not found (null)
-  if (task === undefined || taskRuns === undefined) {
+  // Distinguish between loading and not found
+  if (taskQuery.isLoading || taskRunsQuery.isLoading) {
     return <div className="p-8">Loading...</div>;
   }
 
-  if (task === null) {
+  if (task === null || task === undefined) {
     return (
       <div className="p-8 text-neutral-500 dark:text-neutral-400">
         Task not found or you don't have access to it.

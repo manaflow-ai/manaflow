@@ -18,7 +18,6 @@ import {
   FolderOpen,
   Loader2,
 } from "lucide-react";
-import { useClipboard } from "@mantine/hooks";
 import {
   computeNewLineNumber,
   computeOldLineNumber,
@@ -38,6 +37,7 @@ import {
   type ReviewHeatmapLine,
 } from "@/lib/heatmap";
 import { HeatmapDiffViewer } from "./heatmap-diff-viewer";
+import { kitties } from "../kitties";
 import type { HeatmapColorSettings } from "./heatmap-gradient";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -123,6 +123,15 @@ type HeatmapFileOutput = {
   codexReviewOutput: unknown;
 };
 
+export type StreamFileStatus = "pending" | "success" | "skipped" | "error";
+
+export type StreamFileState = {
+  lines: ReviewHeatmapLine[];
+  status: StreamFileStatus;
+  skipReason?: string | null;
+  summary?: string | null;
+};
+
 type DiffViewerControls = {
   expandAll: () => void;
   collapseAll: () => void;
@@ -133,6 +142,7 @@ type DiffViewerControls = {
 type GitDiffHeatmapReviewViewerProps = {
   diffs: ReplaceDiffEntry[];
   fileOutputs?: HeatmapFileOutput[];
+  streamStateByFile?: Map<string, StreamFileState>;
   primaryRepoFullName?: string | null;
   shouldPrefixDiffs?: boolean;
   heatmapThreshold?: number;
@@ -173,6 +183,46 @@ function mapStatusToHeatmapStatus(
     default:
       return "changed";
   }
+}
+
+function mergeHeatmapLines(
+  primary: ReviewHeatmapLine[],
+  fallback: ReviewHeatmapLine[]
+): ReviewHeatmapLine[] {
+  if (fallback.length === 0) {
+    return primary;
+  }
+
+  const lineMap = new Map<string, ReviewHeatmapLine>();
+
+  for (const entry of primary) {
+    const normalized =
+      typeof entry.lineText === "string"
+        ? entry.lineText.replace(/\s+/g, " ").trim()
+        : "";
+    const key = `${entry.lineNumber ?? "unknown"}:${normalized}`;
+    lineMap.set(key, entry);
+  }
+
+  for (const entry of fallback) {
+    const normalized =
+      typeof entry.lineText === "string"
+        ? entry.lineText.replace(/\s+/g, " ").trim()
+        : "";
+    const key = `${entry.lineNumber ?? "unknown"}:${normalized}`;
+    if (!lineMap.has(key)) {
+      lineMap.set(key, entry);
+    }
+  }
+
+  return Array.from(lineMap.values()).sort((a, b) => {
+    const aLine = a.lineNumber ?? -1;
+    const bLine = b.lineNumber ?? -1;
+    if (aLine !== bLine) {
+      return aLine - bLine;
+    }
+    return (a.lineText ?? "").localeCompare(b.lineText ?? "");
+  });
 }
 
 /**
@@ -425,11 +475,67 @@ function buildLineKey(side: DiffLineSide, lineNumber: number): string {
   return `${side}:${lineNumber}`;
 }
 
+function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  if (typeof window === "undefined" || !element) {
+    return null;
+  }
+
+  let current: HTMLElement | null = element.parentElement;
+  while (current) {
+    if (current === document.body || current === document.documentElement) {
+      return null;
+    }
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY;
+    const overflow = style.overflow;
+    if (
+      overflowY === "auto" ||
+      overflowY === "scroll" ||
+      overflowY === "overlay" ||
+      overflow === "auto" ||
+      overflow === "scroll" ||
+      overflow === "overlay"
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
 function scrollElementToViewportCenter(
   element: HTMLElement,
-  { behavior = "auto" }: { behavior?: ScrollBehavior } = {}
+  {
+    behavior = "auto",
+    scrollContainer,
+  }: { behavior?: ScrollBehavior; scrollContainer?: HTMLElement | null } = {}
 ): void {
   if (typeof window === "undefined") {
+    return;
+  }
+
+  if (scrollContainer) {
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const viewportHeight = scrollContainer.clientHeight;
+    if (viewportHeight === 0) {
+      return;
+    }
+    const currentScrollTop = scrollContainer.scrollTop;
+    const currentScrollLeft = scrollContainer.scrollLeft;
+    const scrollHeight = scrollContainer.scrollHeight;
+
+    const elementTop = elementRect.top - containerRect.top + currentScrollTop;
+    const halfViewport = Math.max((viewportHeight - elementRect.height) / 2, 0);
+    const rawTargetTop = elementTop - halfViewport;
+    const maxScrollTop = Math.max(scrollHeight - viewportHeight, 0);
+    const targetTop = Math.max(0, Math.min(rawTargetTop, maxScrollTop));
+
+    scrollContainer.scrollTo({
+      top: targetTop,
+      left: currentScrollLeft,
+      behavior,
+    });
     return;
   }
 
@@ -525,6 +631,24 @@ function getParentPaths(path: string): string[] {
   return parents;
 }
 
+const COLOR_SECTION_METADATA: Record<
+  keyof HeatmapColorSettings,
+  { title: string; helper: string }
+> = {
+  line: {
+    title: "Line background gradient",
+    helper: "",
+  },
+  token: {
+    title: "Token highlight gradient",
+    helper: "",
+  },
+};
+
+function isValidHexColor(value: string): boolean {
+  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value);
+}
+
 const ReviewProgressIndicator = memo(function ReviewProgressIndicator({
   totalFileCount,
   processedFileCount,
@@ -598,9 +722,6 @@ function HeatmapThresholdControl({
   onChange,
   colors,
   onColorsChange,
-  onCopyStyles,
-  onLoadConfig,
-  copyStatus,
   selectedModel,
   onModelChange,
   selectedLanguage,
@@ -610,9 +731,6 @@ function HeatmapThresholdControl({
   onChange: (next: number) => void;
   colors: HeatmapColorSettings;
   onColorsChange: (next: HeatmapColorSettings) => void;
-  onCopyStyles: () => void;
-  onLoadConfig: () => void;
-  copyStatus: boolean;
   selectedModel: HeatmapModelOptionValue;
   onModelChange: (next: HeatmapModelOptionValue) => void;
   selectedLanguage: TooltipLanguageValue;
@@ -620,25 +738,50 @@ function HeatmapThresholdControl({
 }) {
   const sliderId = useId();
   const descriptionId = `${sliderId}-description`;
-  const percent = Math.round(Math.min(Math.max(value, 0), 1) * 100);
 
+  // Local state for immediate visual feedback during drag
+  const [localPercent, setLocalPercent] = useState<number | null>(null);
+  const isDragging = localPercent !== null;
+  const displayPercent = isDragging
+    ? localPercent
+    : Math.round(Math.min(Math.max(value, 0), 1) * 100);
+
+  // Sync local state when external value changes (and not dragging)
+  useEffect(() => {
+    if (!isDragging) {
+      setLocalPercent(null);
+    }
+  }, [value, isDragging]);
+
+  // Update local state during drag for visual feedback
   const handleSliderChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const numeric = Number.parseInt(event.target.value, 10);
       if (Number.isNaN(numeric)) {
         return;
       }
-      const normalized = Math.min(Math.max(numeric / 100, 0), 1);
-      onChange(normalized);
+      setLocalPercent(Math.min(Math.max(numeric, 0), 100));
     },
-    [onChange]
+    []
   );
+
+  // Commit value to parent only on release
+  const handleSliderCommit = useCallback(() => {
+    if (localPercent !== null) {
+      const normalized = Math.min(Math.max(localPercent / 100, 0), 1);
+      onChange(normalized);
+      setLocalPercent(null);
+    }
+  }, [localPercent, onChange]);
 
   const handleColorChange = useCallback(
     (section: keyof HeatmapColorSettings, stop: keyof HeatmapColorSettings["line"]) =>
       (event: ChangeEvent<HTMLInputElement>) => {
         const nextValue = event.target.value;
-        if (nextValue === colors[section][stop]) {
+        if (
+          !isValidHexColor(nextValue) ||
+          nextValue === colors[section][stop]
+        ) {
           return;
         }
         onColorsChange({
@@ -669,13 +812,13 @@ function HeatmapThresholdControl({
   );
 
   return (
-    <div className="border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor={sliderId} className="font-medium text-neutral-700 dark:text-neutral-200">
+    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={sliderId} className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
           &ldquo;Should review&rdquo; threshold
         </label>
-        <span className="text-xs font-semibold text-neutral-600 dark:text-neutral-300">
-          ≥ <span className="tabular-nums">{percent}%</span>
+        <span className="flex-shrink-0 text-xs font-semibold text-neutral-600 dark:text-neutral-300">
+          ≥ <span className="tabular-nums">{displayPercent}%</span>
         </span>
       </div>
       <input
@@ -683,14 +826,16 @@ function HeatmapThresholdControl({
         type="range"
         min={0}
         max={100}
-        step={5}
-        value={percent}
+        step={1}
+        value={displayPercent}
         onChange={handleSliderChange}
+        onMouseUp={handleSliderCommit}
+        onTouchEnd={handleSliderCommit}
         className="mt-3 w-full accent-sky-500"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={percent}
-        aria-valuetext={`"Should review" threshold ${percent} percent`}
+        aria-valuenow={displayPercent}
+        aria-valuetext={`"Should review" threshold ${displayPercent} percent`}
         aria-describedby={descriptionId}
       />
       <p id={descriptionId} className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
@@ -698,16 +843,13 @@ function HeatmapThresholdControl({
       </p>
       <div className="mt-4 space-y-5">
         {(
-          Object.keys(colors) as Array<keyof HeatmapColorSettings>
+          Object.keys(COLOR_SECTION_METADATA) as Array<keyof HeatmapColorSettings>
         ).map((section) => {
-          const title =
-            section === "line"
-              ? "Line background gradient"
-              : "Token highlight gradient";
+          const meta = COLOR_SECTION_METADATA[section];
           return (
             <div key={section} className="space-y-2">
               <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
-                {title}
+                {meta.title}
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700 dark:text-neutral-200">
@@ -717,7 +859,7 @@ function HeatmapThresholdControl({
                     value={colors[section].start}
                     onChange={handleColorChange(section, "start")}
                     className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0 dark:border-neutral-600"
-                    aria-label={`${title} low score color`}
+                    aria-label={`${meta.title} low score color`}
                   />
                 </label>
                 <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700 dark:text-neutral-200">
@@ -727,29 +869,13 @@ function HeatmapThresholdControl({
                     value={colors[section].end}
                     onChange={handleColorChange(section, "end")}
                     className="h-8 w-16 cursor-pointer rounded border border-neutral-300 bg-transparent p-0 dark:border-neutral-600"
-                    aria-label={`${title} high score color`}
+                    aria-label={`${meta.title} high score color`}
                   />
                 </label>
               </div>
             </div>
           );
         })}
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onCopyStyles}
-            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
-            {copyStatus ? "Copied!" : "Copy config"}
-          </button>
-          <button
-            type="button"
-            onClick={onLoadConfig}
-            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
-            Load config
-          </button>
-        </div>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4">
         <div className="space-y-2">
@@ -1013,39 +1139,104 @@ type FileDiffCardProps = {
   entry: ParsedFileDiff;
   status: HeatmapFileStatus;
   reviewHeatmap: ReviewHeatmapLine[];
+  diffHeatmap: DiffHeatmap | null;
+  scrollContainer: HTMLElement | null;
   focusedLine: DiffLineLocation | null;
   focusedChangeKey: string | null;
   autoTooltipLine: DiffLineLocation | null;
   isLoading: boolean;
   isCollapsed: boolean;
-  onCollapseChange: (collapsed: boolean) => void;
+  filePath: string;
+  onFileCollapseChange: (filePath: string, collapsed: boolean) => void;
   heatmapThreshold: number;
   heatmapColors: HeatmapColorSettings;
 };
+
+function areDiffLineLocationsEqual(
+  a: DiffLineLocation | null,
+  b: DiffLineLocation | null
+): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return a.side === b.side && a.lineNumber === b.lineNumber;
+}
+
+function areReviewHeatmapLinesEqual(
+  a: ReviewHeatmapLine[],
+  b: ReviewHeatmapLine[]
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const lineA = a[i];
+    const lineB = b[i];
+    if (!lineA || !lineB) return false;
+    if (
+      lineA.lineNumber !== lineB.lineNumber ||
+      lineA.lineText !== lineB.lineText ||
+      lineA.score !== lineB.score ||
+      lineA.reason !== lineB.reason
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areFileDiffCardPropsEqual(
+  prev: FileDiffCardProps,
+  next: FileDiffCardProps
+): boolean {
+  return (
+    prev.entry === next.entry &&
+    prev.status === next.status &&
+    prev.focusedChangeKey === next.focusedChangeKey &&
+    prev.isLoading === next.isLoading &&
+    prev.isCollapsed === next.isCollapsed &&
+    prev.filePath === next.filePath &&
+    prev.onFileCollapseChange === next.onFileCollapseChange &&
+    prev.heatmapThreshold === next.heatmapThreshold &&
+    prev.heatmapColors === next.heatmapColors &&
+    prev.scrollContainer === next.scrollContainer &&
+    areDiffLineLocationsEqual(prev.focusedLine, next.focusedLine) &&
+    areDiffLineLocationsEqual(prev.autoTooltipLine, next.autoTooltipLine) &&
+    prev.diffHeatmap === next.diffHeatmap &&
+    areReviewHeatmapLinesEqual(prev.reviewHeatmap, next.reviewHeatmap)
+  );
+}
 
 const FileDiffCard = memo(function FileDiffCardComponent({
   entry,
   status,
   reviewHeatmap,
+  diffHeatmap,
+  scrollContainer,
   focusedLine,
   focusedChangeKey,
   autoTooltipLine,
   isLoading,
   isCollapsed,
-  onCollapseChange,
+  filePath,
+  onFileCollapseChange,
   heatmapThreshold,
   heatmapColors,
 }: FileDiffCardProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const onCollapseChangeRef = useRef(onCollapseChange);
-  onCollapseChangeRef.current = onCollapseChange;
+
+  // Memoize the collapse handler for this specific file
+  const handleCollapseChange = useCallback(
+    (collapsed: boolean) => {
+      onFileCollapseChange(filePath, collapsed);
+    },
+    [filePath, onFileCollapseChange]
+  );
 
   useEffect(() => {
     if (!focusedChangeKey) {
       return;
     }
-    onCollapseChangeRef.current(false);
-  }, [focusedChangeKey]);
+    onFileCollapseChange(filePath, false);
+  }, [focusedChangeKey, filePath, onFileCollapseChange]);
 
   useEffect(() => {
     if (!focusedChangeKey) {
@@ -1067,36 +1258,39 @@ const FileDiffCard = memo(function FileDiffCardComponent({
     const scrollTarget =
       targetRow instanceof HTMLElement ? targetRow : targetCell;
     window.requestAnimationFrame(() => {
-      scrollElementToViewportCenter(scrollTarget);
+      scrollElementToViewportCenter(scrollTarget, { scrollContainer });
     });
-  }, [focusedChangeKey]);
+  }, [focusedChangeKey, scrollContainer]);
 
   return (
     <div id={entry.anchorId} ref={cardRef}>
       <HeatmapDiffViewer
         diffText={entry.diffText}
+        parsedDiff={entry.diff}
         filename={entry.entry.filePath}
         status={status}
         additions={entry.entry.additions ?? 0}
         deletions={entry.entry.deletions ?? 0}
         reviewHeatmap={reviewHeatmap}
         heatmapThreshold={heatmapThreshold}
+        diffHeatmap={diffHeatmap}
         heatmapColors={heatmapColors}
         focusedLine={focusedLine}
         autoTooltipLine={autoTooltipLine}
         isLoading={isLoading}
         errorMessage={entry.error ?? null}
         defaultCollapsed={isCollapsed}
-        onCollapseChange={onCollapseChange}
-        className="border border-neutral-200 dark:border-neutral-700"
+        onCollapseChange={handleCollapseChange}
+        className="border-x border-b border-neutral-200 dark:border-neutral-700"
       />
     </div>
   );
-});
+}, areFileDiffCardPropsEqual);
 
 export function GitDiffHeatmapReviewViewer({
   diffs,
   fileOutputs,
+  streamStateByFile,
   primaryRepoFullName,
   shouldPrefixDiffs = false,
   heatmapThreshold = 0,
@@ -1109,10 +1303,18 @@ export function GitDiffHeatmapReviewViewer({
   onHeatmapTooltipLanguageChange,
   onControlsChange,
 }: GitDiffHeatmapReviewViewerProps) {
-  const effectiveHeatmapColors = useMemo(
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
+  const kitty = useMemo(() => {
+    return kitties[Math.floor(Math.random() * kitties.length)];
+  }, []);
+  // Use useDeferredValue to defer color changes and prevent blocking renders
+  // when color pickers are being used. This matches the 0github implementation.
+  const normalizedHeatmapColors = useMemo(
     () => normalizeHeatmapColors(heatmapColors),
     [heatmapColors]
   );
+  const effectiveHeatmapColors = useDeferredValue(normalizedHeatmapColors);
   const effectiveHeatmapModel = normalizeHeatmapModel(
     heatmapModel ?? DEFAULT_HEATMAP_MODEL
   );
@@ -1121,7 +1323,18 @@ export function GitDiffHeatmapReviewViewer({
   );
 
   const deferredHeatmapThreshold = useDeferredValue(heatmapThreshold);
-  const clipboard = useClipboard({ timeout: 2000 });
+  const emptyStreamStateMap = useMemo(
+    () => new Map<string, StreamFileState>(),
+    []
+  );
+  const streamStateMap = streamStateByFile ?? emptyStreamStateMap;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setScrollContainer(findScrollContainer(rootRef.current));
+  }, []);
 
   const fileOutputIndex = useMemo(() => {
     const map = new Map<string, HeatmapFileOutput>();
@@ -1226,9 +1439,15 @@ export function GitDiffHeatmapReviewViewer({
   const fileEntries = useMemo<FileDiffViewModel[]>(() => {
     return parsedDiffs.map((entry) => {
       const review = fileOutputIndex.get(entry.entry.filePath) ?? null;
-      const reviewHeatmap = review
+      const streamState = streamStateMap.get(entry.entry.filePath) ?? null;
+      const streamedHeatmap = streamState?.lines ?? [];
+      const reviewHeatmapFromCodex = review
         ? parseReviewHeatmap(review.codexReviewOutput)
         : [];
+      const reviewHeatmap = mergeHeatmapLines(
+        streamedHeatmap,
+        reviewHeatmapFromCodex
+      );
       const diffHeatmapArtifacts =
         entry.diff && reviewHeatmap.length > 0
           ? prepareDiffHeatmapArtifacts(entry.diff, reviewHeatmap)
@@ -1247,7 +1466,12 @@ export function GitDiffHeatmapReviewViewer({
         changeKeyByLine: buildChangeKeyIndex(entry.diff),
       };
     });
-  }, [deferredHeatmapThreshold, fileOutputIndex, parsedDiffs]);
+  }, [
+    deferredHeatmapThreshold,
+    fileOutputIndex,
+    parsedDiffs,
+    streamStateMap,
+  ]);
 
   const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
     const targets: ReviewErrorTarget[] = [];
@@ -1397,7 +1621,10 @@ export function GitDiffHeatmapReviewViewer({
     const addLoadingState = (nodes: FileTreeNode[]): FileTreeNode[] => {
       return nodes.map((node) => {
         if (node.file) {
-          const isLoading = !fileOutputIndex.has(node.file.filePath);
+          const streamState = streamStateMap.get(node.file.filePath);
+          const isLoading =
+            !fileOutputIndex.has(node.file.filePath) &&
+            (!streamState || streamState.status === "pending");
           return {
             ...node,
             isLoading,
@@ -1411,7 +1638,7 @@ export function GitDiffHeatmapReviewViewer({
       });
     };
     return addLoadingState(tree);
-  }, [sortedFiles, fileOutputIndex]);
+  }, [sortedFiles, fileOutputIndex, streamStateMap]);
 
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
@@ -1518,9 +1745,70 @@ export function GitDiffHeatmapReviewViewer({
     }
     window.localStorage.setItem(
       SIDEBAR_WIDTH_STORAGE_KEY,
-      String(sidebarWidth)
+      String(Math.round(sidebarWidth))
     );
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (!isResizingSidebar) {
+      return;
+    }
+    const previousCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
+    return () => {
+      document.body.style.cursor = previousCursor;
+    };
+  }, [isResizingSidebar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    return () => {
+      if (sidebarPointerMoveHandlerRef.current) {
+        window.removeEventListener(
+          "pointermove",
+          sidebarPointerMoveHandlerRef.current
+        );
+        sidebarPointerMoveHandlerRef.current = null;
+      }
+      if (sidebarPointerUpHandlerRef.current) {
+        window.removeEventListener(
+          "pointerup",
+          sidebarPointerUpHandlerRef.current
+        );
+        window.removeEventListener(
+          "pointercancel",
+          sidebarPointerUpHandlerRef.current
+        );
+        sidebarPointerUpHandlerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setExpandedPaths(() => {
+      const defaults = new Set<string>(directoryPaths);
+      for (const parent of getParentPaths(activePath)) {
+        defaults.add(parent);
+      }
+      return defaults;
+    });
+  }, [directoryPaths, activePath]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    if (hash && sortedFiles.some((file) => file.filePath === hash)) {
+      setActivePath(hash);
+      setActiveAnchor(hash);
+    }
+  }, [sortedFiles]);
 
   useEffect(() => {
     if (!activePath) {
@@ -1536,86 +1824,184 @@ export function GitDiffHeatmapReviewViewer({
     });
   }, [activePath]);
 
-  const handleSidebarResizePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      setIsResizingSidebar(true);
-      pointerStartXRef.current = event.clientX;
-      pointerStartWidthRef.current = sidebarWidth;
-
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        const delta = moveEvent.clientX - pointerStartXRef.current;
-        const nextWidth = clampSidebarWidth(pointerStartWidthRef.current + delta);
-        setSidebarWidth(nextWidth);
-      };
-
-      const handlePointerUp = () => {
-        setIsResizingSidebar(false);
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-        sidebarPointerMoveHandlerRef.current = null;
-        sidebarPointerUpHandlerRef.current = null;
-      };
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
-      sidebarPointerMoveHandlerRef.current = handlePointerMove;
-      sidebarPointerUpHandlerRef.current = handlePointerUp;
-    },
-    [sidebarWidth]
-  );
-
-  const handleSidebarResizeKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      const delta =
-        event.key === "ArrowLeft"
-          ? -10
-          : event.key === "ArrowRight"
-            ? 10
-            : 0;
-
-      if (delta !== 0) {
-        event.preventDefault();
-        setSidebarWidth((previous) => clampSidebarWidth(previous + delta));
-      }
-
-      if (event.key === "Home") {
-        event.preventDefault();
-        setSidebarWidth(SIDEBAR_MIN_WIDTH);
-      }
-      if (event.key === "End") {
-        event.preventDefault();
-        setSidebarWidth(SIDEBAR_MAX_WIDTH);
-      }
-      if (event.key === "Enter") {
-        event.preventDefault();
-        setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
-      }
-    },
-    []
-  );
-
-  const handleSidebarResizeDoubleClick = useCallback(() => {
-    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
-  }, []);
-
-  const handleNavigate = useCallback((path: string, options?: NavigateOptions) => {
-    setActivePath(path);
-
-    const shouldUpdateAnchor = options?.updateAnchor ?? true;
-    if (shouldUpdateAnchor) {
-      setActiveAnchor(path);
+  useEffect(() => {
+    if (parsedDiffs.length === 0) {
+      return;
     }
-
     if (typeof window === "undefined") {
       return;
     }
 
-    const shouldUpdateHash = options?.updateHash ?? true;
-    if (shouldUpdateHash) {
-      window.location.hash = encodeURIComponent(path);
-    }
-  }, []);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .map((entry) => ({
+            id: entry.target.id,
+            top: entry.target.getBoundingClientRect().top,
+          }))
+          .sort((a, b) => a.top - b.top);
+
+        if (visible.length > 0 && visible[0]?.id) {
+          setActiveAnchor(visible[0].id);
+        }
+      },
+      {
+        root: scrollContainer ?? null,
+        rootMargin: "0px 0px -60% 0px",
+        threshold: 0,
+      }
+    );
+
+    const elements = parsedDiffs
+      .map((entry) => document.getElementById(entry.anchorId))
+      .filter((element): element is HTMLElement => Boolean(element));
+
+    elements.forEach((element) => observer.observe(element));
+
+    return () => {
+      elements.forEach((element) => observer.unobserve(element));
+      observer.disconnect();
+    };
+  }, [parsedDiffs, scrollContainer]);
+
+  const handleSidebarResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      if (typeof window === "undefined") {
+        return;
+      }
+      event.preventDefault();
+      const handleElement = event.currentTarget;
+      const pointerId = event.pointerId;
+      pointerStartXRef.current = event.clientX;
+      pointerStartWidthRef.current = sidebarWidth;
+      setIsResizingSidebar(true);
+
+      try {
+        handleElement.focus({ preventScroll: true });
+      } catch {
+        handleElement.focus();
+      }
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const delta = moveEvent.clientX - pointerStartXRef.current;
+        const nextWidth = clampSidebarWidth(
+          pointerStartWidthRef.current + delta
+        );
+        setSidebarWidth((previous) =>
+          previous === nextWidth ? previous : nextWidth
+        );
+      };
+
+      const handlePointerTerminate = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+        if (handleElement.hasPointerCapture?.(pointerId)) {
+          try {
+            handleElement.releasePointerCapture(pointerId);
+          } catch {
+            // Ignore release failures.
+          }
+        }
+        setIsResizingSidebar(false);
+        if (sidebarPointerMoveHandlerRef.current) {
+          window.removeEventListener(
+            "pointermove",
+            sidebarPointerMoveHandlerRef.current
+          );
+          sidebarPointerMoveHandlerRef.current = null;
+        }
+        if (sidebarPointerUpHandlerRef.current) {
+          window.removeEventListener(
+            "pointerup",
+            sidebarPointerUpHandlerRef.current
+          );
+          window.removeEventListener(
+            "pointercancel",
+            sidebarPointerUpHandlerRef.current
+          );
+          sidebarPointerUpHandlerRef.current = null;
+        }
+      };
+
+      sidebarPointerMoveHandlerRef.current = handlePointerMove;
+      sidebarPointerUpHandlerRef.current = handlePointerTerminate;
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerTerminate);
+      window.addEventListener("pointercancel", handlePointerTerminate);
+
+      try {
+        handleElement.setPointerCapture(pointerId);
+      } catch {
+        // Ignore pointer capture failures (e.g., Safari).
+      }
+    },
+    [sidebarWidth, setIsResizingSidebar, setSidebarWidth]
+  );
+
+  const handleSidebarResizeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const key = event.key;
+      if (key === "ArrowLeft" || key === "ArrowRight") {
+        event.preventDefault();
+        const delta = key === "ArrowLeft" ? -16 : 16;
+        setSidebarWidth((previous) => clampSidebarWidth(previous + delta));
+        return;
+      }
+      if (key === "Home") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MIN_WIDTH);
+        return;
+      }
+      if (key === "End") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MAX_WIDTH);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "0") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+      }
+    },
+    [setSidebarWidth]
+  );
+
+  const handleSidebarResizeDoubleClick = useCallback(() => {
+    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }, [setSidebarWidth]);
+
+  const handleNavigate = useCallback(
+    (path: string, options?: NavigateOptions) => {
+      setActivePath(path);
+
+      const shouldUpdateAnchor = options?.updateAnchor ?? true;
+      if (shouldUpdateAnchor) {
+        setActiveAnchor(path);
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const shouldUpdateHash = options?.updateHash ?? true;
+      if (shouldUpdateHash) {
+        window.location.hash = encodeURIComponent(path);
+      }
+
+      if (scrollContainer) {
+        const target = document.getElementById(path);
+        if (target) {
+          target.scrollIntoView({ behavior: "auto", block: "start" });
+        }
+      }
+    },
+    [scrollContainer]
+  );
 
   const handleFocusPrevious = useCallback(
     (options?: FocusNavigateOptions) => {
@@ -1689,6 +2075,18 @@ export function GitDiffHeatmapReviewViewer({
       return next;
     });
   }, []);
+
+  // Stable callback for file collapse changes - avoids breaking FileDiffCard memoization
+  const handleFileCollapseChange = useCallback(
+    (filePath: string, collapsed: boolean) => {
+      setCollapsedState((prev) => {
+        const next = new Map(prev);
+        next.set(filePath, collapsed);
+        return next;
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1779,57 +2177,40 @@ export function GitDiffHeatmapReviewViewer({
     const frame = window.requestAnimationFrame(() => {
       const article = document.getElementById(focusedError.anchorId);
       if (article) {
-        scrollElementToViewportCenter(article);
+        scrollElementToViewportCenter(article, { scrollContainer });
       }
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [focusedError, handleNavigate]);
+  }, [focusedError, handleNavigate, scrollContainer]);
 
   const totalFileCount = sortedFiles.length;
   const processedFileCount = useMemo(() => {
-    if (fileOutputs === undefined) {
+    if (fileOutputs === undefined && streamStateMap.size === 0) {
       return null;
     }
     let count = 0;
     for (const file of sortedFiles) {
-      if (fileOutputIndex.has(file.filePath)) {
+      const streamState = streamStateMap.get(file.filePath);
+      const isStreamComplete =
+        streamState !== undefined && streamState.status !== "pending";
+      const isProcessed =
+        fileOutputIndex.has(file.filePath) || isStreamComplete;
+      if (isProcessed) {
         count += 1;
       }
     }
     return count;
-  }, [fileOutputs, fileOutputIndex, sortedFiles]);
+  }, [fileOutputs, fileOutputIndex, sortedFiles, streamStateMap]);
 
-  const isLoadingFileOutputs = fileOutputs === undefined;
-
-  const handleCopyHeatmapConfig = useCallback(() => {
-    const compact = JSON.stringify(effectiveHeatmapColors);
-    clipboard.copy(compact);
-  }, [clipboard, effectiveHeatmapColors]);
-
-  const handlePromptLoadColors = useCallback(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const existing = JSON.stringify(effectiveHeatmapColors, null, 2);
-    const input = window.prompt(
-      "Paste heatmap color configuration JSON",
-      existing
-    );
-    if (input === null) {
-      return;
-    }
-    try {
-      const parsed = JSON.parse(input);
-      const normalized = normalizeHeatmapColors(parsed);
-      onHeatmapColorsChange?.(normalized);
-    } catch (error) {
-      console.error("[heatmap-colors] Invalid configuration", error);
-      window.alert?.("Invalid configuration. Please verify the JSON content.");
-    }
-  }, [effectiveHeatmapColors, onHeatmapColorsChange]);
+  const isLoadingFileOutputs =
+    fileOutputs === undefined &&
+    (streamStateMap.size === 0 ||
+      Array.from(streamStateMap.values()).some(
+        (state) => state.status === "pending"
+      ));
 
   if (totalFileCount === 0) {
     return (
@@ -1840,33 +2221,29 @@ export function GitDiffHeatmapReviewViewer({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={rootRef} className="flex flex-col gap-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
         <aside
           id={sidebarPanelId}
-          className="relative w-full lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:flex-none lg:overflow-y-auto lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem] lg:pl-3"
+          className="relative w-full lg:sticky lg:top-[var(--cmux-diff-header-offset,0px)] lg:h-[calc(100vh-var(--cmux-diff-header-offset,0px))] lg:flex-none lg:flex lg:flex-col lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem] lg:pl-3"
           style={
             {
               "--pr-diff-sidebar-width": `${sidebarWidth}px`,
             } as CSSProperties
           }
         >
-          <div className="flex flex-col gap-3">
-            <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white dark:lg:bg-neutral-900">
-              <ReviewProgressIndicator
-                totalFileCount={totalFileCount}
-                processedFileCount={processedFileCount}
-                isLoading={isLoadingFileOutputs}
-              />
-            </div>
+          {/* Fixed at top - does not scroll */}
+          <div className="flex-shrink-0 flex flex-col gap-3">
+            <ReviewProgressIndicator
+              totalFileCount={totalFileCount}
+              processedFileCount={processedFileCount}
+              isLoading={isLoadingFileOutputs}
+            />
             <HeatmapThresholdControl
               value={heatmapThreshold}
               onChange={(next) => onHeatmapThresholdChange?.(next)}
               colors={effectiveHeatmapColors}
               onColorsChange={(next) => onHeatmapColorsChange?.(next)}
-              onCopyStyles={handleCopyHeatmapConfig}
-              onLoadConfig={handlePromptLoadColors}
-              copyStatus={clipboard.copied}
               selectedModel={effectiveHeatmapModel}
               onModelChange={(next) => onHeatmapModelChange?.(next)}
               selectedLanguage={effectiveTooltipLanguage}
@@ -1882,6 +2259,9 @@ export function GitDiffHeatmapReviewViewer({
                 />
               </div>
             ) : null}
+          </div>
+          {/* Scrollable content below - only the file tree */}
+          <div className="flex flex-col gap-3 lg:overflow-y-auto lg:overscroll-contain lg:flex-1 lg:mt-3">
             <div>
               <FileTreeNavigator
                 nodes={fileTree}
@@ -1891,8 +2271,8 @@ export function GitDiffHeatmapReviewViewer({
                 onSelectFile={handleNavigate}
               />
             </div>
+            <div className="h-[40px]" />
           </div>
-          <div className="h-[40px]" />
         </aside>
 
         <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize">
@@ -1956,9 +2336,12 @@ export function GitDiffHeatmapReviewViewer({
                     lineNumber: autoTooltipTarget.lineNumber,
                   }
                 : null;
-            const isLoading = !fileOutputIndex.has(
+            const streamState = streamStateMap.get(
               fileEntry.entry.entry.filePath
             );
+            const isLoading =
+              !fileOutputIndex.has(fileEntry.entry.entry.filePath) &&
+              (!streamState || streamState.status === "pending");
             const isCollapsed =
               collapsedState.get(fileEntry.entry.entry.filePath) ?? false;
 
@@ -1968,18 +2351,15 @@ export function GitDiffHeatmapReviewViewer({
                 entry={fileEntry.entry}
                 status={status}
                 reviewHeatmap={fileEntry.reviewHeatmap}
+                diffHeatmap={fileEntry.diffHeatmap}
+                scrollContainer={scrollContainer}
                 focusedLine={focusedLine}
                 focusedChangeKey={focusedChangeKey}
                 autoTooltipLine={autoTooltipLine}
                 isLoading={isLoading}
                 isCollapsed={isCollapsed}
-                onCollapseChange={(collapsed) => {
-                  setCollapsedState((prev) => {
-                    const next = new Map(prev);
-                    next.set(fileEntry.entry.entry.filePath, collapsed);
-                    return next;
-                  });
-                }}
+                filePath={fileEntry.entry.entry.filePath}
+                onFileCollapseChange={handleFileCollapseChange}
                 heatmapThreshold={heatmapThreshold}
                 heatmapColors={effectiveHeatmapColors}
               />
@@ -1990,6 +2370,11 @@ export function GitDiffHeatmapReviewViewer({
               <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
                 You&apos;ve reached the end of the diff!
               </span>
+              <div className="grid place-content-center">
+                <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                  {kitty}
+                </pre>
+              </div>
             </div>
           </div>
         </div>

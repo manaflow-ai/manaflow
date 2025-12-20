@@ -1,5 +1,6 @@
 import { api } from "@cmux/convex/api";
-import { useQuery as useConvexQuery } from "convex/react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import {
   ExternalLink,
   X,
@@ -22,52 +23,68 @@ type WorkflowRunsProps = {
 
 type CombinedRun = ReturnType<typeof useCombinedWorkflowData>["allRuns"][number];
 
+// Use React Query-wrapped Convex queries to avoid real-time subscriptions
+// that cause excessive re-renders on the diff page.
 function useCombinedWorkflowData({
   teamSlugOrId,
   repoFullName,
   prNumber,
   headSha,
 }: WorkflowRunsProps) {
-  const workflowRuns = useConvexQuery(api.github_workflows.getWorkflowRunsForPr, {
-    teamSlugOrId,
-    repoFullName,
-    prNumber,
-    headSha,
-    limit: 50,
-  });
-
-  const checkRuns = useConvexQuery(api.github_check_runs.getCheckRunsForPr, {
-    teamSlugOrId,
-    repoFullName,
-    prNumber,
-    headSha,
-    limit: 50,
-  });
-
-  const deployments = useConvexQuery(api.github_deployments.getDeploymentsForPr, {
-    teamSlugOrId,
-    repoFullName,
-    prNumber,
-    headSha,
-    limit: 50,
-  });
-
-  const commitStatuses = useConvexQuery(
-    api.github_commit_statuses.getCommitStatusesForPr,
-    {
+  const workflowRunsQuery = useRQ({
+    ...convexQuery(api.github_workflows.getWorkflowRunsForPr, {
       teamSlugOrId,
       repoFullName,
       prNumber,
       headSha,
       limit: 50,
-    },
-  );
+    }),
+    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
+  });
+
+  const checkRunsQuery = useRQ({
+    ...convexQuery(api.github_check_runs.getCheckRunsForPr, {
+      teamSlugOrId,
+      repoFullName,
+      prNumber,
+      headSha,
+      limit: 50,
+    }),
+    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
+  });
+
+  const deploymentsQuery = useRQ({
+    ...convexQuery(api.github_deployments.getDeploymentsForPr, {
+      teamSlugOrId,
+      repoFullName,
+      prNumber,
+      headSha,
+      limit: 50,
+    }),
+    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
+  });
+
+  const commitStatusesQuery = useRQ({
+    ...convexQuery(api.github_commit_statuses.getCommitStatusesForPr, {
+      teamSlugOrId,
+      repoFullName,
+      prNumber,
+      headSha,
+      limit: 50,
+    }),
+    enabled: Boolean(teamSlugOrId && repoFullName && prNumber),
+  });
+
+  const workflowRuns = workflowRunsQuery.data;
+  const checkRuns = checkRunsQuery.data;
+  const deployments = deploymentsQuery.data;
+  const commitStatuses = commitStatusesQuery.data;
 
   const isLoading =
-    workflowRuns === undefined ||
-    checkRuns === undefined ||
-    deployments === undefined ||
-    commitStatuses === undefined;
+    workflowRunsQuery.isLoading ||
+    checkRunsQuery.isLoading ||
+    deploymentsQuery.isLoading ||
+    commitStatusesQuery.isLoading;
 
   const allRuns = useMemo(
     () => [

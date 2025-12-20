@@ -689,6 +689,88 @@ pre,
   background-color: transparent !important;
 }
 
+/* Ensure deleted code text is always visible - Light mode */
+.diff-code-delete {
+  color: rgb(82 82 82) !important;
+}
+
+/* Ensure deleted code text is always visible - Dark mode */
+.dark .diff-code-delete {
+  color: rgb(212 212 212) !important;
+}
+
+/* Ensure inserted code text is always visible - Light mode */
+.diff-code-insert {
+  color: rgb(22 101 52) !important;
+}
+
+/* Ensure inserted code text is always visible - Dark mode */
+.dark .diff-code-insert {
+  color: rgb(187 247 208) !important;
+}
+
+/* Ensure diff gutter text is always visible */
+.diff-gutter-delete {
+  color: rgb(115 115 115) !important;
+}
+
+.dark .diff-gutter-delete {
+  color: rgb(163 163 163) !important;
+}
+
+.diff-gutter-insert {
+  color: rgb(21 128 61) !important;
+}
+
+.dark .diff-gutter-insert {
+  color: rgb(134 239 172) !important;
+}
+
+/* Ensure diff table rows don't have excessive height */
+.diff tr {
+  height: auto;
+  min-height: 0;
+}
+
+/* Prevent diff cells from being hidden or collapsed */
+.diff td {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Ensure diff table layout is consistent */
+.diff tbody {
+  display: table-row-group;
+}
+
+/* Ensure diff code cells always show their content */
+.diff-code {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Prevent diff content from being blocked by sticky headers when scrolling */
+.diff {
+  scroll-margin-top: 48px;
+  /* Ensure diff table renders below sticky headers */
+  position: relative;
+  z-index: 1;
+}
+
+.diff-hunk {
+  scroll-margin-top: 48px;
+}
+
+.diff-decoration {
+  scroll-margin-top: 48px;
+}
+
+/* Ensure hunk header decorations don't overlap with file headers */
+.diff-decoration-content {
+  position: relative;
+  z-index: 2;
+}
+
 /* Heatmap character highlight styles */
 .cmux-heatmap-char {
   display: inline-block;

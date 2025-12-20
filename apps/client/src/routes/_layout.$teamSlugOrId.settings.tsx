@@ -4,6 +4,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { ChevronDown } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -52,6 +53,10 @@ const PROVIDER_INFO: Record<string, ProviderInfo> = {
   OPENAI_API_KEY: {
     url: "https://platform.openai.com/api-keys",
   },
+  CODEX_AUTH_JSON: {
+    helpText:
+      "Paste the contents of ~/.codex/auth.json here. This allows Codex to use your OpenAI authentication.",
+  },
   OPENROUTER_API_KEY: {
     url: "https://openrouter.ai/keys",
   },
@@ -93,6 +98,11 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [crownModel, setCrownModel] = useState<string>("");
+  const [originalCrownModel, setOriginalCrownModel] = useState<string>("");
+  const [crownSystemPrompt, setCrownSystemPrompt] = useState<string>("");
+  const [originalCrownSystemPrompt, setOriginalCrownSystemPrompt] =
+    useState<string>("");
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -133,10 +143,10 @@ function SettingsComponent() {
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
-    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5 (Most Accurate)", description: "Best quality reviews, slower" },
-    { value: "anthropic", label: "Claude Opus 4.1", description: "High quality, balanced speed" },
-    { value: "cmux-heatmap-2", label: "cmux-heatmap-2 (GPT-4.1 Fine-tuned)", description: "Fast, cost-effective" },
-    { value: "cmux-heatmap-1", label: "cmux-heatmap-1 (GPT-4.1 Mini)", description: "Fastest, most cost-effective" },
+    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
+    { value: "anthropic", label: "Claude Opus 4.1" },
+    { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
+    { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
   ];
 
   // Tooltip language options
@@ -167,6 +177,16 @@ function SettingsComponent() {
 
   // Global mapping of envVar -> models (from shared)
   const apiKeyModelsByEnv = API_KEY_MODELS_BY_ENV;
+  const hasAnthropicKey =
+    (apiKeyValues["CLAUDE_CODE_OAUTH_TOKEN"] ?? "").trim().length > 0 ||
+    (apiKeyValues["ANTHROPIC_API_KEY"] ?? "").trim().length > 0;
+  const hasOpenAiKey =
+    (apiKeyValues["OPENAI_API_KEY"] ?? "").trim().length > 0;
+  const defaultCrownModelLabel = hasAnthropicKey
+    ? "Default (Claude 3.5 Sonnet)"
+    : hasOpenAiKey
+      ? "Default (GPT-5 Mini)"
+      : "Default (Claude 3.5 Sonnet)";
 
   // Query existing API keys
   const { data: existingKeys } = useQuery(
@@ -230,7 +250,7 @@ function SettingsComponent() {
     return "";
   };
 
-  // Initialize worktree path and heatmap settings when data loads
+  // Initialize worktree path, crown settings, and heatmap settings when data loads
   useEffect(() => {
     if (workspaceSettings === undefined) {
       return;
@@ -252,6 +272,21 @@ function SettingsComponent() {
       prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
     );
 
+    // Crown settings
+    const nextCrownModel = workspaceSettings?.crownModel ?? "";
+    setCrownModel((prev) => (prev === nextCrownModel ? prev : nextCrownModel));
+    setOriginalCrownModel((prev) =>
+      prev === nextCrownModel ? prev : nextCrownModel
+    );
+    const nextCrownSystemPrompt = workspaceSettings?.crownSystemPrompt ?? "";
+    setCrownSystemPrompt((prev) =>
+      prev === nextCrownSystemPrompt ? prev : nextCrownSystemPrompt
+    );
+    setOriginalCrownSystemPrompt((prev) =>
+      prev === nextCrownSystemPrompt ? prev : nextCrownSystemPrompt
+    );
+
+    // Heatmap settings
     if (workspaceSettings?.heatmapModel) {
       const nextModel = workspaceSettings.heatmapModel;
       setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
@@ -384,6 +419,11 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Crown settings changes
+    const crownModelChanged = crownModel !== originalCrownModel;
+    const crownSystemPromptChanged =
+      crownSystemPrompt !== originalCrownSystemPrompt;
+
     // Heatmap settings changes
     const heatmapModelChanged = heatmapModel !== originalHeatmapModel;
     const heatmapThresholdChanged = heatmapThreshold !== originalHeatmapThreshold;
@@ -396,6 +436,8 @@ function SettingsComponent() {
       autoPrChanged ||
       apiKeysChanged ||
       containerSettingsChanged ||
+      crownModelChanged ||
+      crownSystemPromptChanged ||
       heatmapModelChanged ||
       heatmapThresholdChanged ||
       heatmapTooltipLanguageChanged ||
@@ -409,11 +451,16 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      const crownModelValue = crownModel.trim();
+      const crownSystemPromptValue =
+        crownSystemPrompt.trim().length > 0 ? crownSystemPrompt : "";
 
-      // Save worktree path / auto PR / heatmap settings if changed
+      // Save worktree path / auto PR / crown / heatmap settings if changed
       const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
         autoPrEnabled !== originalAutoPrEnabled ||
+        crownModel !== originalCrownModel ||
+        crownSystemPrompt !== originalCrownSystemPrompt ||
         heatmapModel !== originalHeatmapModel ||
         heatmapThreshold !== originalHeatmapThreshold ||
         heatmapTooltipLanguage !== originalHeatmapTooltipLanguage ||
@@ -424,6 +471,8 @@ function SettingsComponent() {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          crownModel: crownModelValue,
+          crownSystemPrompt: crownSystemPromptValue,
           heatmapModel,
           heatmapThreshold,
           heatmapTooltipLanguage,
@@ -431,6 +480,10 @@ function SettingsComponent() {
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setCrownModel(crownModelValue);
+        setOriginalCrownModel(crownModelValue);
+        setCrownSystemPrompt(crownSystemPromptValue);
+        setOriginalCrownSystemPrompt(crownSystemPromptValue);
         setOriginalHeatmapModel(heatmapModel);
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
@@ -483,23 +536,21 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
-        const actions = [];
-        if (savedCount > 0) {
-          actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
-        }
-        if (deletedCount > 0) {
-          actions.push(
-            `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
-          );
-        }
-        toast.success(`Successfully ${actions.join(" and ")}`);
+      // Check if container settings were saved
+      const containerSettingsSaved =
+        containerSettingsData &&
+        originalContainerSettingsData &&
+        JSON.stringify(containerSettingsData) !==
+          JSON.stringify(originalContainerSettingsData);
+
+      if (savedCount > 0 || deletedCount > 0 || workspaceSettingsChanged || containerSettingsSaved) {
+        toast.success("Settings saved");
       } else {
         toast.info("No changes to save");
       }
     } catch (error) {
-      toast.error("Failed to save API keys. Please try again.");
-      console.error("Error saving API keys:", error);
+      toast.error("Failed to save settings. Please try again.");
+      console.error("Error saving settings:", error);
     } finally {
       setIsSaving(false);
     }
@@ -784,7 +835,7 @@ function SettingsComponent() {
                   Crown Evaluator
                 </h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 space-y-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -803,58 +854,72 @@ function SettingsComponent() {
                     onValueChange={setAutoPrEnabled}
                   />
                 </div>
+
+                {/* Crown Model Selection */}
+                <div>
+                  <label
+                    htmlFor="crownModel"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Evaluation Model
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Select which model to use for evaluating and comparing agent outputs.
+                    Leave empty to use the default model.
+                  </p>
+                  <select
+                    id="crownModel"
+                    value={crownModel}
+                    onChange={(e) => setCrownModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
+                  >
+                    <option value="">{defaultCrownModelLabel}</option>
+                    <optgroup label="OpenAI">
+                      <option value="gpt-5-mini">GPT-5 Mini</option>
+                      <option value="gpt-5">GPT-5</option>
+                      <option value="gpt-4.1">GPT-4.1</option>
+                      <option value="o3">O3</option>
+                      <option value="o4-mini">O4 Mini</option>
+                    </optgroup>
+                    <optgroup label="Anthropic">
+                      <option value="claude-opus-4">Claude Opus 4</option>
+                      <option value="claude-sonnet-4">Claude Sonnet 4</option>
+                      <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                      <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                    </optgroup>
+                  </select>
+                </div>
+
+                {/* Crown System Prompt */}
+                <div>
+                  <label
+                    htmlFor="crownSystemPrompt"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Custom System Prompt
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Customize the system prompt used when evaluating agent outputs.
+                    Leave empty to use the default evaluation criteria.
+                  </p>
+                  <textarea
+                    id="crownSystemPrompt"
+                    value={crownSystemPrompt}
+                    onChange={(e) => setCrownSystemPrompt(e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
+                    placeholder="You select the best implementation from structured diff inputs and explain briefly why."
+                  />
+                </div>
               </div>
             </div>
 
             {/* Heatmap Review Settings */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
                 <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
                   Diff Heatmap Review
                 </h2>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const config = {
-                        heatmapModel,
-                        heatmapThreshold,
-                        heatmapTooltipLanguage,
-                        heatmapColors,
-                      };
-                      navigator.clipboard.writeText(JSON.stringify(config, null, 2));
-                      toast.success("Config copied to clipboard");
-                    }}
-                    className="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-                  >
-                    Copy Config
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const text = await navigator.clipboard.readText();
-                        const config = JSON.parse(text) as {
-                          heatmapModel?: string;
-                          heatmapThreshold?: number;
-                          heatmapTooltipLanguage?: string;
-                          heatmapColors?: typeof heatmapColors;
-                        };
-                        if (config.heatmapModel) setHeatmapModel(config.heatmapModel);
-                        if (config.heatmapThreshold !== undefined) setHeatmapThreshold(config.heatmapThreshold);
-                        if (config.heatmapTooltipLanguage) setHeatmapTooltipLanguage(config.heatmapTooltipLanguage);
-                        if (config.heatmapColors) setHeatmapColors(config.heatmapColors);
-                        toast.success("Config loaded from clipboard");
-                      } catch (error) {
-                        console.error("Failed to load config:", error);
-                        toast.error("Failed to load config - make sure you copied a valid config");
-                      }
-                    }}
-                    className="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-                  >
-                    Load Config
-                  </button>
-                </div>
               </div>
               <div className="p-4 space-y-6">
                 {/* Model Selector */}
@@ -868,23 +933,24 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Select the AI model used to analyze diffs and highlight areas that need attention.
                   </p>
-                  <select
-                    id="heatmapModel"
-                    value={heatmapModel}
-                    onChange={(e) => setHeatmapModel(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
-                  >
-                    {HEATMAP_MODEL_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {HEATMAP_MODEL_OPTIONS.find((opt) => opt.value === heatmapModel)?.description && (
-                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                      {HEATMAP_MODEL_OPTIONS.find((opt) => opt.value === heatmapModel)?.description}
-                    </p>
-                  )}
+                  <div className="relative">
+                    <select
+                      id="heatmapModel"
+                      value={heatmapModel}
+                      onChange={(e) => setHeatmapModel(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {HEATMAP_MODEL_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
 
                 {/* Tooltip Language Selector */}
@@ -898,18 +964,24 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Language for the review comments shown in heatmap tooltips.
                   </p>
-                  <select
-                    id="heatmapTooltipLanguage"
-                    value={heatmapTooltipLanguage}
-                    onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
-                  >
-                    {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <select
+                      id="heatmapTooltipLanguage"
+                      value={heatmapTooltipLanguage}
+                      onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
 
                 {/* Threshold Slider */}
@@ -1218,6 +1290,73 @@ function SettingsComponent() {
                             </div>
 
                             <div className="md:w-[min(100%,480px)] md:flex-shrink-0 self-start">
+                              {key.envVar === "CODEX_AUTH_JSON" ? (
+                                <div className="relative">
+                                  {showKeys[key.envVar] ? (
+                                    <textarea
+                                      id={key.envVar}
+                                      value={apiKeyValues[key.envVar] || ""}
+                                      onChange={(e) =>
+                                        handleApiKeyChange(
+                                          key.envVar,
+                                          e.target.value
+                                        )
+                                      }
+                                      rows={4}
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                                      placeholder='{"tokens": {"id_token": "...", "access_token": "...", "refresh_token": "...", "account_id": "..."}, "last_refresh": "..."}'
+                                    />
+                                  ) : (
+                                    <div
+                                      onClick={() => toggleShowKey(key.envVar)}
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
+                                    >
+                                      {apiKeyValues[key.envVar] ? "••••••••••••••••••••••••••••••••" : <span className="text-neutral-400">{"Click to edit"}</span>}
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleShowKey(key.envVar)}
+                                    className="absolute top-2 right-2 p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                                  >
+                                    {showKeys[key.envVar] ? (
+                                      <svg
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <svg
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                        />
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                                        />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+                              ) : (
                               <div className="relative">
                                 <input
                                   type={
@@ -1286,6 +1425,7 @@ function SettingsComponent() {
                                   )}
                                 </button>
                               </div>
+                              )}
                               {originalApiKeyValues[key.envVar] && (
                                 <div className="flex items-center gap-1 mt-1">
                                   <svg

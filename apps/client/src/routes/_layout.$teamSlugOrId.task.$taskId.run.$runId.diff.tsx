@@ -1,21 +1,30 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
-import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
+import type {
+  DiffViewerControls,
+  StreamFileState,
+  StreamFileStatus,
+} from "@/components/heatmap-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import type { ReviewHeatmapLine } from "@/lib/heatmap";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useQuery as useRQ, useMutation as useRQMutation } from "@tanstack/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import {
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -35,18 +44,49 @@ import {
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { postApiCodeReviewStartMutation } from "@cmux/www-openapi-client/react-query";
 
-/** Convert ReplaceDiffEntry[] to the format expected by heatmap API */
+const DIFF_HEADER_PREFIXES = [
+  "diff --git ",
+  "index ",
+  "--- ",
+  "+++ ",
+  "new file mode ",
+  "deleted file mode ",
+  "similarity index ",
+  "rename from ",
+  "rename to ",
+  "old mode ",
+  "new mode ",
+  "copy from ",
+  "copy to ",
+];
+
+function stripDiffHeaders(diffText: string): string {
+  const lines = diffText.split("\n");
+  const filtered = lines.filter(
+    (line) =>
+      !DIFF_HEADER_PREFIXES.some((prefix) => line.startsWith(prefix))
+  );
+  return filtered.join("\n").trimEnd();
+}
+
+/** Convert ReplaceDiffEntry[] to the format expected by the simple review API */
 function convertDiffsToFileDiffs(
-  diffs: ReplaceDiffEntry[]
+  diffs: ReplaceDiffEntry[],
+  options?: { prefix?: string | null }
 ): Array<{ filePath: string; diffText: string }> {
+  const prefix =
+    typeof options?.prefix === "string" && options.prefix.trim().length > 0
+      ? options.prefix.trim()
+      : null;
   return diffs
     .filter((entry) => entry.patch && !entry.isBinary)
-    .map((entry) => ({
-      filePath: entry.filePath,
-      diffText: entry.patch!,
-    }));
+    .map((entry) => {
+      const filePath = prefix ? `${prefix}:${entry.filePath}` : entry.filePath;
+      const diffText = stripDiffHeaders(entry.patch ?? "");
+      return { filePath, diffText };
+    })
+    .filter((entry) => entry.diffText.length > 0);
 }
 
 const paramsSchema = z.object({
@@ -230,20 +270,30 @@ function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
   const { socket } = useSocket();
-  const task = useQuery(api.tasks.getById, {
-    teamSlugOrId,
-    id: taskId,
+  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
+  // that cause excessive re-renders. The data is prefetched in the loader.
+  const taskQuery = useRQ({
+    ...convexQuery(api.tasks.getById, { teamSlugOrId, id: taskId }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
-    teamSlugOrId,
-    taskId,
+  const task = taskQuery.data;
+  const taskRunsQuery = useRQ({
+    ...convexQuery(api.taskRuns.getByTask, { teamSlugOrId, taskId }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
+  const taskRuns = taskRunsQuery.data;
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
-
-  // Heatmap review state - automatically fetched via streaming Convex subscription
-  const [comparisonSlug, setComparisonSlug] = useState<string | null>(null);
+  const [streamStateByFile, setStreamStateByFile] = useState<
+    Map<string, StreamFileState>
+  >(() => new Map());
+  // Defer the stream state to batch rapid SSE updates and prevent render thrashing.
+  // This allows React to process multiple line events before triggering expensive
+  // re-computations in the diff viewer component.
+  const deferredStreamStateByFile = useDeferredValue(streamStateByFile);
+  const activeReviewControllerRef = useRef<AbortController | null>(null);
+  const activeReviewKeyRef = useRef<string | null>(null);
 
   // Query workspace settings for heatmap configuration
   const workspaceSettingsQuery = useRQ({
@@ -338,30 +388,6 @@ function RunDiffPage() {
     [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
   );
 
-  // Code review mutation to start the heatmap job
-  const codeReviewMutation = useRQMutation({
-    ...postApiCodeReviewStartMutation(),
-    onSuccess: (data) => {
-      console.log("[heatmap] Mutation success", {
-        jobId: data.job?.jobId,
-        state: data.job?.state,
-        comparisonSlug: data.job?.comparisonSlug,
-      });
-
-      // Store comparison slug for subscription (if not already set)
-      if (data.job?.comparisonSlug) {
-        setComparisonSlug(data.job.comparisonSlug);
-      }
-    },
-    onError: (error) => {
-      console.error("[heatmap] Mutation failed:", error);
-    },
-  });
-
-  // Use ref to avoid mutation object in dependency arrays (prevents infinite loops)
-  const codeReviewMutationRef = useRef(codeReviewMutation);
-  codeReviewMutationRef.current = codeReviewMutation;
-
   const runDiffContextQuery = useRQ({
     ...convexQuery(api.taskRuns.getRunDiffContext, {
       teamSlugOrId,
@@ -419,6 +445,7 @@ function RunDiffPage() {
   }, [task?.projectFullName, environmentRepos]);
 
   const [primaryRepo, ...additionalRepos] = repoFullNames;
+  const shouldPrefixDiffs = repoFullNames.length > 1;
 
   // NOTE: We intentionally do NOT pass lastKnownBaseSha or lastKnownMergeCommitSha for task run diffs.
   // These merge hints are designed for finding already-merged PRs, not for comparing open feature branches.
@@ -439,35 +466,426 @@ function RunDiffPage() {
     enabled: diffQueryEnabled,
   });
 
-  // Convert diffs to the format expected by the heatmap API
-  const fileDiffsForHeatmap = useMemo(() => {
-    if (!diffQuery.data) return undefined;
-    return convertDiffsToFileDiffs(diffQuery.data);
-  }, [diffQuery.data]);
+  // Convert diffs to the format expected by the simple review API
+  const fileDiffsForReview = useMemo(() => {
+    if (!diffQuery.data) {
+      return undefined;
+    }
+    const prefix = shouldPrefixDiffs && primaryRepo ? primaryRepo : null;
+    return convertDiffsToFileDiffs(diffQuery.data, { prefix });
+  }, [diffQuery.data, primaryRepo, shouldPrefixDiffs]);
 
-  // Subscribe to streaming file outputs from Convex
-  // IMPORTANT: Use useMemo for query args to prevent new object reference on every render
-  // (which would cause Convex to re-subscribe and trigger infinite loops)
-  const fileOutputsQueryArgs = useMemo(
-    () => {
-      if (!comparisonSlug || !primaryRepo) {
-        return "skip" as const;
+  const reviewLabel = useMemo(() => {
+    const baseBranch = task?.baseBranch || "main";
+    if (primaryRepo && selectedRun?.newBranch) {
+      return `${primaryRepo} ${baseBranch}...${selectedRun.newBranch}`;
+    }
+    return `task:${taskId} run:${runId}`;
+  }, [primaryRepo, runId, selectedRun?.newBranch, task?.baseBranch, taskId]);
+
+  const startSimpleReview = useCallback(
+    async ({
+      fileDiffs,
+      model,
+      language,
+      requestKey,
+      diffLabel,
+    }: {
+      fileDiffs: Array<{ filePath: string; diffText: string }>;
+      model: HeatmapModelOptionValue;
+      language: TooltipLanguageValue;
+      requestKey: string;
+      diffLabel: string;
+    }) => {
+      if (fileDiffs.length === 0) {
+        return;
       }
-      return {
-        teamSlugOrId,
-        repoFullName: primaryRepo,
-        comparisonSlug,
-        ...(heatmapTooltipLanguage
-          ? { tooltipLanguage: heatmapTooltipLanguage }
-          : {}),
-      };
+
+      const existingController = activeReviewControllerRef.current;
+      const hasActiveMatchingRequest =
+        existingController &&
+        activeReviewKeyRef.current === requestKey &&
+        !existingController.signal.aborted;
+      if (hasActiveMatchingRequest) {
+        return;
+      }
+
+      existingController?.abort();
+      const controller = new AbortController();
+      activeReviewControllerRef.current = controller;
+      activeReviewKeyRef.current = requestKey;
+
+      setStreamStateByFile(new Map());
+
+      const user = await cachedGetUser(stackClientApp);
+      const authHeaders = user ? await user.getAuthHeaders() : undefined;
+      const headers = new Headers(authHeaders);
+      headers.set("Content-Type", "application/json");
+
+      const url = new URL("/api/code-review/simple", WWW_ORIGIN);
+      url.searchParams.set("model", model);
+      url.searchParams.set("lang", language);
+
+      try {
+        const response = await fetch(url.toString(), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ fileDiffs, diffLabel }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          console.error(
+            "[simple-review][frontend] Failed to start stream",
+            response.status
+          );
+          return;
+        }
+
+        const body = response.body;
+        if (!body) {
+          console.error(
+            "[simple-review][frontend] Response body missing for stream"
+          );
+          return;
+        }
+
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        const shouldLog = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            separatorIndex = buffer.indexOf("\n\n");
+
+            const lines = rawEvent.split("\n");
+            for (const line of lines) {
+              if (!line.startsWith("data:")) {
+                continue;
+              }
+              const data = line.slice(5).trim();
+              if (data.length === 0) {
+                continue;
+              }
+              try {
+                const payload = JSON.parse(data) as Record<string, unknown>;
+                const type =
+                  typeof payload.type === "string" ? payload.type : "";
+                const filePath =
+                  typeof payload.filePath === "string"
+                    ? payload.filePath
+                    : null;
+
+                switch (type) {
+                  case "status":
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][status]",
+                        payload
+                      );
+                    }
+                    break;
+                  case "file":
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][file]",
+                        payload
+                      );
+                    }
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "skip":
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][skip]",
+                        payload
+                      );
+                    }
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        next.set(filePath, {
+                          ...current,
+                          skipReason:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : (current.skipReason ?? null),
+                          summary:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : (current.summary ?? null),
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "file-complete":
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][file-complete]",
+                        payload
+                      );
+                    }
+                    if (filePath) {
+                      const status =
+                        payload.status === "skipped" ||
+                        payload.status === "error" ||
+                        payload.status === "success"
+                          ? (payload.status as StreamFileStatus)
+                          : "success";
+                      const summary =
+                        typeof payload.summary === "string"
+                          ? payload.summary
+                          : undefined;
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        next.set(filePath, {
+                          ...current,
+                          status,
+                          summary: summary ?? current.summary ?? null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "hunk":
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][hunk]",
+                        payload
+                      );
+                    }
+                    break;
+                  case "line": {
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][line]",
+                        payload
+                      );
+                    }
+                    if (!filePath) {
+                      break;
+                    }
+                    const linePayload = payload.line as
+                      | Record<string, unknown>
+                      | undefined;
+                    if (!linePayload) {
+                      break;
+                    }
+                    const rawScore =
+                      typeof linePayload.scoreNormalized === "number"
+                        ? linePayload.scoreNormalized
+                        : typeof linePayload.score === "number"
+                          ? linePayload.score / 100
+                          : null;
+                    if (rawScore === null || rawScore <= 0) {
+                      break;
+                    }
+                    const normalizedScore = Math.max(
+                      0,
+                      Math.min(rawScore, 1)
+                    );
+                    const lineNumber =
+                      typeof linePayload.newLineNumber === "number"
+                        ? linePayload.newLineNumber
+                        : typeof linePayload.oldLineNumber === "number"
+                          ? linePayload.oldLineNumber
+                          : null;
+                    const lineText =
+                      typeof linePayload.diffLine === "string"
+                        ? linePayload.diffLine
+                        : typeof linePayload.codeLine === "string"
+                          ? linePayload.codeLine
+                          : null;
+                    const normalizedText =
+                      typeof lineText === "string"
+                        ? lineText.replace(/\s+/g, " ").trim()
+                        : null;
+                    if (!normalizedText) {
+                      break;
+                    }
+
+                    const reviewLine: ReviewHeatmapLine = {
+                      lineNumber,
+                      lineText,
+                      score: normalizedScore,
+                      reason:
+                        typeof linePayload.shouldReviewWhy === "string"
+                          ? linePayload.shouldReviewWhy
+                          : null,
+                      mostImportantWord:
+                        typeof linePayload.mostImportantWord === "string"
+                          ? linePayload.mostImportantWord
+                          : null,
+                    };
+
+                    setStreamStateByFile((previous) => {
+                      const next = new Map(previous);
+                      const current = next.get(filePath) ?? {
+                        lines: [],
+                        status: "pending",
+                        skipReason: null,
+                        summary: null,
+                      };
+                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
+                        reviewLine.lineText ?? ""
+                      }`;
+                      const filtered = current.lines.filter((line) => {
+                        const existingKey = `${line.lineNumber ?? "unknown"}:${
+                          line.lineText ?? ""
+                        }`;
+                        return existingKey !== lineKey;
+                      });
+                      const updated = [...filtered, reviewLine].sort((a, b) => {
+                        const aLine = a.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                        const bLine = b.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                        if (aLine !== bLine) {
+                          return aLine - bLine;
+                        }
+                        return (a.lineText ?? "").localeCompare(
+                          b.lineText ?? ""
+                        );
+                      });
+                      next.set(filePath, {
+                        ...current,
+                        lines: updated,
+                      });
+                      return next;
+                    });
+                    break;
+                  }
+                  case "complete":
+                    if (shouldLog) {
+                      console.info(
+                        "[simple-review][frontend][complete]",
+                        payload
+                      );
+                    }
+                    setStreamStateByFile((previous) => {
+                      let changed = false;
+                      const next = new Map(previous);
+                      for (const [path, state] of next.entries()) {
+                        if (state.status === "pending") {
+                          next.set(path, {
+                            ...state,
+                            status: "success",
+                          });
+                          changed = true;
+                        }
+                      }
+                      return changed ? next : previous;
+                    });
+                    break;
+                  case "error":
+                    console.error("[simple-review][frontend][error]", payload);
+                    break;
+                  default:
+                    console.info(
+                      "[simple-review][frontend][event]",
+                      payload
+                    );
+                }
+              } catch (error) {
+                console.warn(
+                  "[simple-review][frontend] Failed to parse SSE data",
+                  { data, error }
+                );
+              }
+            }
+          }
+        }
+
+        if (buffer.trim().length > 0) {
+          console.debug("[simple-review][frontend] Remaining buffer", buffer);
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.error("[simple-review][frontend] Stream failed", error);
+      }
     },
-    [teamSlugOrId, primaryRepo, comparisonSlug, heatmapTooltipLanguage]
+    [setStreamStateByFile]
   );
-  const fileOutputs = useQuery(
-    api.codeReview.listFileOutputsForComparison,
-    fileOutputsQueryArgs
-  );
+
+  // Auto-trigger the simple review when diff data and settings are ready.
+  useEffect(() => {
+    if (!primaryRepo || !selectedRun?.newBranch) {
+      return;
+    }
+    if (diffQuery.isLoading || workspaceSettingsQuery.isLoading) {
+      return;
+    }
+    if (!fileDiffsForReview || fileDiffsForReview.length === 0) {
+      return;
+    }
+
+    const diffKey = [
+      primaryRepo,
+      baseRefForHeatmap ?? "",
+      headRefForHeatmap ?? "",
+      String(diffQuery.dataUpdatedAt),
+      shouldPrefixDiffs ? "prefixed" : "plain",
+    ].join("|");
+    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
+    const requestKey = `${diffKey}|${settingsKey}`;
+
+    void startSimpleReview({
+      fileDiffs: fileDiffsForReview,
+      model: heatmapModel,
+      language: heatmapTooltipLanguage,
+      requestKey,
+      diffLabel: reviewLabel,
+    });
+  }, [
+    baseRefForHeatmap,
+    diffQuery.dataUpdatedAt,
+    diffQuery.isLoading,
+    fileDiffsForReview,
+    heatmapModel,
+    heatmapTooltipLanguage,
+    headRefForHeatmap,
+    primaryRepo,
+    reviewLabel,
+    selectedRun?.newBranch,
+    shouldPrefixDiffs,
+    startSimpleReview,
+    workspaceSettingsQuery.isLoading,
+  ]);
 
   const taskRunId = selectedRun?._id ?? runId;
 
@@ -526,135 +944,6 @@ function RunDiffPage() {
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
-  // Handler to trigger heatmap review
-  const triggerHeatmapReview = useCallback((
-    force = false,
-    diffs?: Array<{ filePath: string; diffText: string }>,
-    model?: string,
-    language?: string
-  ) => {
-    if (!primaryRepo || !selectedRun?.newBranch) {
-      console.warn("[heatmap] Cannot trigger: missing primaryRepo or newBranch", {
-        primaryRepo,
-        newBranch: selectedRun?.newBranch,
-      });
-      return;
-    }
-
-    // Get the repo owner for comparison context
-    const [repoOwner, repoName] = primaryRepo.split("/");
-    if (!repoOwner || !repoName) {
-      console.warn("[heatmap] Cannot trigger: invalid repo format", { primaryRepo });
-      return;
-    }
-
-    // Use task.baseBranch or default to "main"
-    const baseBranch = task?.baseBranch || "main";
-    const githubLink = `https://github.com/${primaryRepo}`;
-    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
-
-    console.log("[heatmap] Triggering heatmap review", {
-      primaryRepo,
-      baseBranch,
-      headBranch: selectedRun.newBranch,
-      comparisonSlug: comparisonSlugValue,
-      force,
-      fileDiffsCount: diffs?.length ?? 0,
-      heatmapModel: model,
-      tooltipLanguage: language,
-    });
-
-    // Set comparisonSlug immediately to start subscription
-    setComparisonSlug(comparisonSlugValue);
-
-    codeReviewMutationRef.current.mutate({
-      body: {
-        teamSlugOrId,
-        githubLink,
-        headCommitRef: selectedRun.newBranch,
-        baseCommitRef: baseBranch,
-        force,
-        comparison: {
-          slug: comparisonSlugValue,
-          base: {
-            owner: repoOwner,
-            repo: repoName,
-            ref: baseBranch,
-            label: `${repoOwner}:${baseBranch}`,
-          },
-          head: {
-            owner: repoOwner,
-            repo: repoName,
-            ref: selectedRun.newBranch,
-            label: `${repoOwner}:${selectedRun.newBranch}`,
-          },
-        },
-        // Pass pre-fetched diffs to avoid re-fetching from GitHub API
-        fileDiffs: diffs,
-        // Pass heatmap settings from workspace settings
-        heatmapModel: model,
-        tooltipLanguage: language,
-      },
-    });
-  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, teamSlugOrId]);
-
-  // Track if we've already auto-triggered the heatmap review
-  const hasAutoTriggeredRef = useRef(false);
-  // Track the last triggered comparison/settings to detect changes and re-trigger
-  const lastTriggeredComparisonRef = useRef<string | null>(null);
-  const lastTriggeredSettingsRef = useRef<string | null>(null);
-
-  // Auto-trigger heatmap review when all required data is available (including diffs and settings)
-  // Also re-triggers when the comparison or heatmap settings change
-  // The backend handles caching - if results already exist, it returns them immediately
-  useEffect(() => {
-    // Wait for all required data to be ready (including diffs)
-    if (!primaryRepo || !selectedRun?.newBranch) {
-      return;
-    }
-    // Wait for diff query to complete (or fail) before triggering
-    // This ensures we can pass the pre-fetched diffs to the backend
-    if (diffQuery.isLoading) {
-      return;
-    }
-    // Wait for workspace settings to load (to get model and language preferences)
-    if (workspaceSettingsQuery.isLoading) {
-      return;
-    }
-
-    // Build a key that represents the current state (branch + base)
-    const baseBranch = task?.baseBranch || "main";
-    const comparisonKey = `${primaryRepo}:${baseBranch}...${selectedRun.newBranch}`;
-    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
-
-    // Check if we need to re-trigger (first time, comparison change, or settings change)
-    const shouldTrigger =
-      !hasAutoTriggeredRef.current ||
-      lastTriggeredComparisonRef.current !== comparisonKey ||
-      lastTriggeredSettingsRef.current !== settingsKey;
-    if (!shouldTrigger) {
-      return;
-    }
-
-    const shouldForce =
-      hasAutoTriggeredRef.current &&
-      lastTriggeredComparisonRef.current === comparisonKey &&
-      lastTriggeredSettingsRef.current !== settingsKey;
-
-    // Mark as triggered and store the current key
-    hasAutoTriggeredRef.current = true;
-    lastTriggeredComparisonRef.current = comparisonKey;
-    lastTriggeredSettingsRef.current = settingsKey;
-
-    // Compute the comparison slug to start the subscription immediately
-    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
-    setComparisonSlug(comparisonSlugValue);
-
-    // Trigger the review with pre-fetched diffs and settings (backend will return cached results if available)
-    // Force re-run if the branch changed (lastTriggeredBranchRef was different)
-    triggerHeatmapReview(shouldForce, fileDiffsForHeatmap, heatmapModel, heatmapTooltipLanguage);
-  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, triggerHeatmapReview, diffQuery.isLoading, fileDiffsForHeatmap, workspaceSettingsQuery.isLoading, heatmapModel, heatmapTooltipLanguage]);
-
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -668,7 +957,6 @@ function RunDiffPage() {
   const headRef = normalizeGitRef(selectedRun.newBranch);
   const hasDiffSources =
     Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
-  const shouldPrefixDiffs = repoFullNames.length > 1;
 
   // Only show the "Open local workspace" button for regular tasks (not local/cloud workspaces)
   const isWorkspace = task?.isLocalWorkspace || task?.isCloudWorkspace;
@@ -746,7 +1034,7 @@ function RunDiffPage() {
                     ref1={baseRef}
                     ref2={headRef}
                     onControlsChange={setDiffControls}
-                    fileOutputs={fileOutputs}
+                    streamStateByFile={deferredStreamStateByFile}
                     heatmapThreshold={heatmapThreshold}
                     heatmapColors={heatmapColors}
                     heatmapModel={heatmapModel}
