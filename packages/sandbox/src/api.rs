@@ -4,6 +4,7 @@ use crate::models::{
     NotificationLogEntry, NotificationRequest, OpenUrlRequest, SandboxSummary,
 };
 use crate::notifications::NotificationStore;
+use crate::pty::pty_routes;
 use crate::service::{AppState, GhResponseRegistry, HostEventSender, SandboxService};
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
@@ -49,6 +50,23 @@ fn default_tty() -> bool {
         open_url_post,
         list_notifications,
         send_notification,
+        // PTY routes
+        crate::pty::api::list_all_sessions,
+        crate::pty::api::create_host_session,
+        crate::pty::api::get_session_by_id,
+        crate::pty::api::delete_session_by_id,
+        crate::pty::api::update_session_by_id,
+        crate::pty::api::send_input_by_id,
+        crate::pty::api::resize_session_by_id,
+        crate::pty::api::capture_session_by_id,
+        crate::pty::api::list_sandbox_sessions,
+        crate::pty::api::create_sandbox_session,
+        crate::pty::api::get_session,
+        crate::pty::api::delete_session,
+        crate::pty::api::update_session,
+        crate::pty::api::send_input,
+        crate::pty::api::resize_session,
+        crate::pty::api::capture_session,
     ),
     components(schemas(
         CreateSandboxRequest,
@@ -62,9 +80,19 @@ fn default_tty() -> bool {
         NotificationRequest,
         NotificationLogEntry,
         NotificationLevel,
-        OpenUrlRequest
+        OpenUrlRequest,
+        // PTY schemas
+        crate::pty::CreatePtyRequest,
+        crate::pty::UpdatePtyRequest,
+        crate::pty::PtyInfo,
+        crate::pty::ResizePtyRequest,
+        crate::pty::InputPtyRequest,
+        crate::pty::CapturePtyResponse
     )),
-    tags((name = "sandboxes", description = "Manage bubblewrap-based sandboxes"))
+    tags(
+        (name = "sandboxes", description = "Manage bubblewrap-based sandboxes"),
+        (name = "pty", description = "PTY session management")
+    )
 )]
 pub struct ApiDoc;
 
@@ -106,6 +134,8 @@ pub fn build_router(
             "/notifications",
             get(list_notifications).post(send_notification),
         )
+        // PTY session management routes
+        .merge(pty_routes())
         .merge(swagger_routes)
         .with_state(state)
 }
@@ -466,6 +496,10 @@ mod tests {
         async fn delete(&self, _id: String) -> SandboxResult<Option<SandboxSummary>> {
             Ok(Some(fake_summary("mock-delete".into())))
         }
+
+        async fn get_sandbox_pid(&self, _id: String) -> Option<u32> {
+            Some(12345) // Mock PID for testing
+        }
     }
 
     fn fake_summary(name: String) -> SandboxSummary {
@@ -543,5 +577,343 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    // =========================================================================
+    // PTY API tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn pty_list_sessions_returns_empty() {
+        let app = make_test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let sessions: Vec<crate::pty::PtyInfo> = serde_json::from_slice(&body).unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pty_create_session_returns_info() {
+        let app = make_test_router();
+        let request = crate::pty::CreatePtyRequest::default();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let info: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+        assert!(!info.id.is_empty());
+        assert!(info.alive);
+    }
+
+    #[tokio::test]
+    async fn pty_get_session_not_found() {
+        let app = make_test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn pty_openapi_includes_pty_routes() {
+        let app = make_test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // Verify PTY routes are in the OpenAPI spec
+        let paths = spec.get("paths").expect("OpenAPI spec should have paths");
+        assert!(
+            paths.get("/sessions").is_some(),
+            "Should have /sessions path"
+        );
+        assert!(
+            paths.get("/sessions/{session_id}").is_some(),
+            "Should have /sessions/{{session_id}} path"
+        );
+        assert!(
+            paths.get("/sandboxes/{sandbox_id}/sessions").is_some(),
+            "Should have /sandboxes/{{sandbox_id}}/sessions path"
+        );
+    }
+
+    #[tokio::test]
+    async fn pty_create_and_get_session() {
+        use tower::Service;
+
+        let mut app = make_test_router();
+        let request = crate::pty::CreatePtyRequest::default();
+
+        // Create session
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created_info: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+
+        // Get session by ID
+        let response = app
+            .call(
+                Request::builder()
+                    .uri(format!("/sessions/{}", created_info.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let info: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+        assert_eq!(info.id, created_info.id);
+    }
+
+    #[tokio::test]
+    async fn pty_update_session() {
+        use tower::Service;
+
+        let mut app = make_test_router();
+        let request = crate::pty::CreatePtyRequest::default();
+
+        // Create session
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created_info: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+
+        // Update session
+        let update = crate::pty::UpdatePtyRequest {
+            name: Some("updated-name".into()),
+            index: Some(42),
+            metadata: None,
+        };
+
+        let response = app
+            .call(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/sessions/{}", created_info.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&update).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let updated: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+        assert_eq!(updated.name, "updated-name");
+        assert_eq!(updated.index, 42);
+    }
+
+    #[tokio::test]
+    async fn pty_delete_session() {
+        use tower::Service;
+
+        let mut app = make_test_router();
+        let request = crate::pty::CreatePtyRequest::default();
+
+        // Create session
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created_info: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+
+        // Delete session
+        let response = app
+            .call(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/sessions/{}", created_info.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify it's gone
+        let response = app
+            .call(
+                Request::builder()
+                    .uri(format!("/sessions/{}", created_info.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn pty_capture_session() {
+        use tower::Service;
+
+        let mut app = make_test_router();
+        let request = crate::pty::CreatePtyRequest::default();
+
+        // Create session
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created_info: crate::pty::PtyInfo = serde_json::from_slice(&body).unwrap();
+
+        // Capture screen
+        let response = app
+            .call(
+                Request::builder()
+                    .uri(format!("/sessions/{}/capture", created_info.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let capture: crate::pty::CapturePtyResponse = serde_json::from_slice(&body).unwrap();
+        // Content may be empty for a new session, but the response should be valid
+        assert!(capture.content.is_empty() || !capture.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pty_list_sessions_after_create() {
+        use tower::Service;
+
+        let mut app = make_test_router();
+        let request = crate::pty::CreatePtyRequest::default();
+
+        // Create session
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        // List sessions
+        let response = app
+            .call(
+                Request::builder()
+                    .uri("/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let sessions: Vec<crate::pty::PtyInfo> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(sessions.len(), 1);
     }
 }

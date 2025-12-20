@@ -161,6 +161,10 @@ impl SandboxService for MockService {
         }
         Ok(None)
     }
+
+    async fn get_sandbox_pid(&self, _id: String) -> Option<u32> {
+        Some(12345) // Mock PID for testing
+    }
 }
 
 #[tokio::test]

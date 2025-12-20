@@ -3,6 +3,7 @@ use crate::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, GhResponse, HostEvent, SandboxSummary,
 };
 use crate::notifications::NotificationStore;
+use crate::pty::PtyState;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ws::WebSocket;
@@ -55,6 +56,8 @@ pub trait SandboxService: Send + Sync + 'static {
     async fn proxy(&self, id: String, port: u16, socket: WebSocket) -> SandboxResult<()>;
     async fn upload_archive(&self, id: String, archive: Body) -> SandboxResult<()>;
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
+    /// Get the inner PID of a sandbox (for nsenter). Returns None if sandbox not found.
+    async fn get_sandbox_pid(&self, id: String) -> Option<u32>;
 }
 
 #[derive(Clone)]
@@ -64,6 +67,7 @@ pub struct AppState {
     pub gh_responses: GhResponseRegistry,
     pub gh_auth_cache: GhAuthCache,
     pub notifications: NotificationStore,
+    pub pty_state: Arc<PtyState>,
 }
 
 impl AppState {
@@ -80,6 +84,7 @@ impl AppState {
             gh_responses,
             gh_auth_cache,
             notifications,
+            pty_state: Arc::new(PtyState::new()),
         }
     }
 }

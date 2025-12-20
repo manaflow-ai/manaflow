@@ -162,6 +162,83 @@ enum Command {
 
     /// Open sandbox in Zed via SSH Remote
     Zed(IdeArgs),
+
+    /// Manage PTY sessions
+    #[command(subcommand)]
+    Pty(PtyCommand),
+}
+
+/// PTY session management commands
+#[derive(Subcommand, Debug)]
+enum PtyCommand {
+    /// List PTY sessions
+    #[command(visible_alias = "ls")]
+    List {
+        /// Sandbox ID to filter by (optional)
+        #[arg(long, short = 's')]
+        sandbox: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Create a new PTY session
+    New {
+        /// Sandbox ID to create session in
+        sandbox: String,
+        /// Session name
+        #[arg(long, short = 'n')]
+        name: Option<String>,
+        /// Shell to use
+        #[arg(long, default_value = "/bin/zsh")]
+        shell: String,
+        /// Working directory
+        #[arg(long, short = 'c', default_value = "/workspace")]
+        cwd: String,
+        /// Create session but don't attach
+        #[arg(long, short = 'd')]
+        detached: bool,
+    },
+
+    /// Attach to a PTY session
+    Attach {
+        /// Session ID, name, or index
+        session: String,
+    },
+
+    /// Kill one or more PTY sessions
+    Kill {
+        /// Session IDs
+        sessions: Vec<String>,
+    },
+
+    /// Send keys to a PTY session
+    SendKeys {
+        /// Session ID
+        session: String,
+        /// Keys to send
+        keys: Vec<String>,
+    },
+
+    /// Capture PTY screen content
+    #[command(alias = "capture")]
+    CapturePane {
+        /// Session ID
+        session: String,
+        /// Print without trailing newline
+        #[arg(long, short = 'p')]
+        print: bool,
+    },
+
+    /// Resize a PTY session
+    Resize {
+        /// Session ID
+        session: String,
+        /// Number of columns
+        cols: u16,
+        /// Number of rows
+        rows: u16,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -1215,6 +1292,9 @@ async fn run() -> anyhow::Result<()> {
                     print_json(&summary)?;
                 }
             }
+        }
+        Command::Pty(cmd) => {
+            handle_pty_command(&client, &cli.base_url, cmd).await?;
         }
     }
 
@@ -4425,6 +4505,182 @@ async fn run_esctest_noninteractive(
 
     eprintln!("\x1b[90mLogs: /tmp/esctest2.log (in sandbox)\x1b[0m");
 
+    Ok(())
+}
+
+// =============================================================================
+// PTY Command Handlers
+// =============================================================================
+
+use cmux_sandbox::pty::{CreatePtyRequest, PtyInfo};
+
+async fn handle_pty_command(
+    client: &Client,
+    base_url: &str,
+    cmd: PtyCommand,
+) -> anyhow::Result<()> {
+    let base = base_url.trim_end_matches('/');
+
+    match cmd {
+        PtyCommand::List { sandbox, json } => {
+            let url = match &sandbox {
+                Some(id) => format!("{base}/sandboxes/{id}/sessions"),
+                None => format!("{base}/sessions"),
+            };
+            let response = client.get(&url).send().await?;
+            let sessions: Vec<PtyInfo> = parse_response(response).await?;
+
+            if json {
+                print_json(&sessions)?;
+            } else if sessions.is_empty() {
+                eprintln!("No PTY sessions");
+            } else {
+                eprintln!(
+                    "{:<4} {:<36} {:<20} {:<8} SANDBOX",
+                    "IDX", "ID", "NAME", "STATUS"
+                );
+                for s in &sessions {
+                    let status = if s.alive { "alive" } else { "dead" };
+                    let sandbox_id = s.sandbox_id.as_deref().unwrap_or("-");
+                    eprintln!(
+                        "{:<4} {:<36} {:<20} {:<8} {}",
+                        s.index, s.id, s.name, status, sandbox_id
+                    );
+                }
+            }
+        }
+        PtyCommand::New {
+            sandbox,
+            name,
+            shell,
+            cwd,
+            detached,
+        } => {
+            let url = format!("{base}/sandboxes/{sandbox}/sessions");
+            let request = CreatePtyRequest {
+                shell,
+                cwd,
+                name,
+                ..Default::default()
+            };
+            let response = client.post(&url).json(&request).send().await?;
+            let info: PtyInfo = parse_response(response).await?;
+            eprintln!("Created session: {} ({})", info.id, info.name);
+
+            if !detached {
+                // Attach to the session
+                handle_pty_attach(client, base_url, &info.id).await?;
+            }
+        }
+        PtyCommand::Attach { session } => {
+            handle_pty_attach(client, base_url, &session).await?;
+        }
+        PtyCommand::Kill { sessions } => {
+            for session_id in &sessions {
+                let url = format!("{base}/sessions/{session_id}");
+                let response = client.delete(&url).send().await?;
+                if response.status().is_success() {
+                    eprintln!("Killed session: {}", session_id);
+                } else {
+                    let error: serde_json::Value = response.json().await?;
+                    eprintln!("Failed to kill {}: {}", session_id, error);
+                }
+            }
+        }
+        PtyCommand::SendKeys { session, keys } => {
+            let url = format!("{base}/sessions/{session}/input");
+            let data = keys.join("");
+            let body = serde_json::json!({ "data": data });
+            let response = client.post(&url).json(&body).send().await?;
+            if !response.status().is_success() {
+                let error: serde_json::Value = response.json().await?;
+                anyhow::bail!("Failed to send keys: {}", error);
+            }
+        }
+        PtyCommand::CapturePane { session, print } => {
+            let url = format!("{base}/sessions/{session}/capture");
+            let response = client.get(&url).send().await?;
+            let result: serde_json::Value = parse_response(response).await?;
+            let content = result["content"].as_str().unwrap_or("");
+            if print {
+                print!("{}", content);
+            } else {
+                println!("{}", content);
+            }
+        }
+        PtyCommand::Resize {
+            session,
+            cols,
+            rows,
+        } => {
+            let url = format!("{base}/sessions/{session}/resize");
+            let body = serde_json::json!({ "cols": cols, "rows": rows });
+            let response = client.post(&url).json(&body).send().await?;
+            if !response.status().is_success() {
+                let error: serde_json::Value = response.json().await?;
+                anyhow::bail!("Failed to resize: {}", error);
+            }
+            eprintln!("Resized session {} to {}x{}", session, cols, rows);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_pty_attach(
+    _client: &Client,
+    base_url: &str,
+    session_id: &str,
+) -> anyhow::Result<()> {
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let url = format!("{}/sessions/{session_id}/ws", ws_url.trim_end_matches('/'));
+
+    eprintln!("Attaching to session {}...", session_id);
+    eprintln!("Press Ctrl+C to detach");
+
+    let (ws_stream, _) = connect_async(&url).await?;
+    let (mut write, mut read) = ws_stream.split();
+
+    // Enter raw mode for terminal
+    let _guard = RawModeGuard::new()?;
+
+    // Spawn task to read from PTY and write to stdout
+    let output_handle = tokio::spawn(async move {
+        let mut stdout = std::io::stdout();
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    use std::io::Write;
+                    let _ = stdout.write_all(text.as_bytes());
+                    let _ = stdout.flush();
+                }
+                Ok(Message::Binary(data)) => {
+                    use std::io::Write;
+                    let _ = stdout.write_all(&data);
+                    let _ = stdout.flush();
+                }
+                Ok(Message::Close(_)) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+    });
+
+    // Read from stdin and send to PTY
+    let mut stdin = tokio::io::stdin();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = stdin.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        let data = String::from_utf8_lossy(&buf[..n]).to_string();
+        write.send(Message::Text(data)).await?;
+    }
+
+    output_handle.abort();
     Ok(())
 }
 
