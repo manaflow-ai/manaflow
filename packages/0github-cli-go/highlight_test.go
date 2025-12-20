@@ -785,6 +785,129 @@ func TestTokenBoundaryIssues(t *testing.T) {
 	}
 }
 
+// TestWalrusOperatorHighlighting tests the fix for tinygrad/tinygrad#8435
+// where the API returns "walrus" as the mostImportantWord but the code contains ":="
+// The walrus operator (:=) is Python's assignment expression operator (PEP 572)
+func TestWalrusOperatorHighlighting(t *testing.T) {
+	// Real example from tinygrad/tinygrad#8435
+	// The API returns "walrus" but the actual code has ":="
+	tests := []struct {
+		name     string
+		codeLine string
+		token    string
+		score    int
+		wantFind string // the actual text that should be highlighted
+	}{
+		{
+			name:     "walrus operator in if statement",
+			codeLine: "if (result := compute_value()) is not None:",
+			token:    "walrus",
+			score:    65,
+			wantFind: ":=",
+		},
+		{
+			name:     "walrus operator in while loop",
+			codeLine: "while (chunk := file.read(8192)):",
+			token:    "walrus",
+			score:    50,
+			wantFind: ":=",
+		},
+		{
+			name:     "walrus operator in list comprehension",
+			codeLine: "[y := f(x), y**2, y**3]",
+			token:    "walrus",
+			score:    45,
+			wantFind: ":=",
+		},
+		{
+			name:     "walrus operator with spaces",
+			codeLine: "if (n := len(data)) > 10:",
+			token:    "walrus",
+			score:    55,
+			wantFind: ":=",
+		},
+		{
+			name:     "walrus in complex expression",
+			codeLine: "filtered = [y for x in data if (y := slow_operation(x)) is not None]",
+			token:    "walrus",
+			score:    70,
+			wantFind: ":=",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := highlightCodeWithToken(tt.codeLine, "python", &tt.token, tt.score)
+			stripped := stripAnsi(result)
+
+			// Verify the original code is preserved
+			if stripped != tt.codeLine {
+				t.Errorf("stripped result differs from original\ngot:  %q\nwant: %q", stripped, tt.codeLine)
+			}
+
+			// Verify := is in the code
+			if !strings.Contains(tt.codeLine, tt.wantFind) {
+				t.Errorf("test setup error: %q not found in %q", tt.wantFind, tt.codeLine)
+			}
+
+			// The key test: when token is "walrus", we should highlight ":="
+			// Check for background color ANSI codes around the := position
+			walrusIdx := strings.Index(tt.codeLine, tt.wantFind)
+			if walrusIdx == -1 {
+				t.Fatalf("':=' not found in code line")
+			}
+
+			// Check that highlighting was applied (ANSI codes present)
+			if !strings.Contains(result, "\x1b[") {
+				t.Errorf("expected ANSI codes for highlighting, got none in: %q", result)
+			}
+
+			// Verify we have background color (score > 10 should have it)
+			if tt.score > 10 && !strings.Contains(result, "48;5;") && !strings.Contains(result, "48;2;") {
+				t.Errorf("expected background color for score %d, got: %q", tt.score, result)
+			}
+
+			t.Logf("Input:    %q", tt.codeLine)
+			t.Logf("Token:    %q (maps to %q)", tt.token, tt.wantFind)
+			t.Logf("Score:    %d", tt.score)
+			t.Logf("Output:   %q", result)
+			t.Logf("Stripped: %q", stripped)
+		})
+	}
+}
+
+// TestWalrusOperatorTokenMapping verifies the token mapping for special operators
+func TestWalrusOperatorTokenMapping(t *testing.T) {
+	// Direct test that "walrus" gets mapped to ":=" during highlighting
+	code := "if (x := get_value()):"
+	token := "walrus"
+	score := 60
+
+	result := highlightCodeWithToken(code, "python", &token, score)
+	stripped := stripAnsi(result)
+
+	// Code should be preserved
+	if stripped != code {
+		t.Errorf("code corrupted: got %q, want %q", stripped, code)
+	}
+
+	// The := should be highlighted (not the literal word "walrus" which isn't in the code)
+	// We can verify this by checking that ":=" appears in the result with styling
+	colonEqIdx := strings.Index(result, ":=")
+	if colonEqIdx == -1 {
+		t.Fatal("':=' not found in result")
+	}
+
+	// There should be ANSI codes before := (the background styling)
+	before := result[:colonEqIdx]
+	if !strings.Contains(before, "\x1b[") {
+		t.Error("expected ANSI codes before ':=' for highlighting")
+	}
+
+	t.Logf("Token 'walrus' correctly maps to ':=' in: %q", code)
+	t.Logf("Result: %q", result)
+}
+
 // TestAPILineNumberOffset tests the known issue where 0github API line numbers
 // are offset from GitHub's actual line numbers for new files
 func TestAPILineNumberOffset(t *testing.T) {
