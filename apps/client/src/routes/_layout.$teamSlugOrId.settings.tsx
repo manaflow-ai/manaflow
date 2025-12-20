@@ -406,12 +406,13 @@ function SettingsComponent() {
       }
 
       // Save container settings if changed
-      if (
+      const containerSettingsChanged =
         containerSettingsData &&
         originalContainerSettingsData &&
         JSON.stringify(containerSettingsData) !==
-          JSON.stringify(originalContainerSettingsData)
-      ) {
+          JSON.stringify(originalContainerSettingsData);
+
+      if (containerSettingsChanged) {
         await convex.mutation(api.containerSettings.update, {
           teamSlugOrId,
           ...containerSettingsData,
@@ -451,7 +452,7 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
+      if (savedCount > 0 || deletedCount > 0 || workspaceSettingsChanged || containerSettingsChanged) {
         const actions = [];
         if (savedCount > 0) {
           actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
@@ -460,6 +461,9 @@ function SettingsComponent() {
           actions.push(
             `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
           );
+        }
+        if (workspaceSettingsChanged || containerSettingsChanged) {
+          actions.push("updated settings");
         }
         toast.success(`Successfully ${actions.join(" and ")}`);
       } else {
