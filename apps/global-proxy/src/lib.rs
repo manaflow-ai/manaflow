@@ -229,6 +229,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         add_cors: false,
                         strip_cors_headers,
                         workspace_header: None,
+                        sandbox_header: None,
                         port_header: None,
                         frame_ancestors,
                     },
@@ -272,6 +273,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         add_cors: !is_vscode_route,
                         strip_cors_headers: is_vscode_route,
                         workspace_header: route.workspace_header,
+                        sandbox_header: None,
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
                     },
@@ -303,6 +305,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         add_cors: false,
                         strip_cors_headers: false,
                         workspace_header: Some(route.workspace),
+                        sandbox_header: None,
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
                     },
@@ -332,6 +335,7 @@ struct ProxyBehavior {
     add_cors: bool,
     strip_cors_headers: bool,
     workspace_header: Option<String>,
+    sandbox_header: Option<String>,
     port_header: Option<String>,
     frame_ancestors: Option<&'static str>,
 }
@@ -424,6 +428,14 @@ async fn forward_request(
         }
     } else {
         req.headers_mut().remove("X-Cmux-Workspace-Internal");
+    }
+
+    if let Some(value) = behavior.sandbox_header.as_ref() {
+        if let Ok(value) = HeaderValue::from_str(value) {
+            req.headers_mut().insert("X-Cmux-Sandbox-Internal", value);
+        }
+    } else {
+        req.headers_mut().remove("X-Cmux-Sandbox-Internal");
     }
 
     let original_method = req.method().clone();
@@ -673,6 +685,11 @@ fn collect_forward_headers(
         && let Ok(value) = HeaderValue::from_str(&workspace)
     {
         headers.insert("X-Cmux-Workspace-Internal", value);
+    }
+    if let Some(sandbox) = behavior.sandbox_header.as_ref() {
+        if let Ok(value) = HeaderValue::from_str(sandbox) {
+            headers.insert("X-Cmux-Sandbox-Internal", value);
+        }
     }
     headers.insert("X-Cmux-Proxied", HeaderValue::from_static("true"));
 

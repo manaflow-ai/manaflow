@@ -48,6 +48,7 @@ import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
 import { convexRequest } from "./crown/convex";
 import type { WorkerTaskRunResponse } from "@cmux/shared/convex-safe";
 import { verifyTaskRunToken } from "@cmux/shared/convex-safe";
+import { sandboxRouter } from "./sandbox";
 
 const execAsync = promisify(exec);
 
@@ -286,6 +287,13 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
 
 // HTTP endpoint for running task screenshots (replaces Socket.IO)
 app.use(express.json());
+
+// Mount sandbox API routes (for bwrap sandbox management)
+if (process.env.CMUX_USE_BWRAP === "1") {
+  app.use("/sandbox", sandboxRouter);
+  log("INFO", "[Sandbox] Mounted sandbox API at /sandbox");
+}
+
 app.post("/api/run-task-screenshots", async (req, res) => {
   try {
     const data = req.body;

@@ -551,6 +551,17 @@ fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<BoxBody>> {
     ))
 }
 
+/// Compute a sandbox IP address from the sandbox index.
+/// Each sandbox gets a /30 block from 10.201.0.0/16:
+///   sandbox_index N -> 10.201.X.Y+2 where X.Y = N*4
+pub fn sandbox_ip_from_index(index: u32) -> std::net::Ipv4Addr {
+    use std::net::Ipv4Addr;
+    let offset = index * 4;
+    let third_octet = (offset / 256) as u8;
+    let fourth_octet = ((offset % 256) + 2) as u8;
+    Ipv4Addr::new(10, 201, third_octet, fourth_octet)
+}
+
 /// Public helper: compute a per-workspace IPv4 address in 127/8 based on a workspace name
 /// of the form `workspace-N` (N >= 1). If input contains path separators, the last component
 /// is used. Returns None if no trailing digits are found.
@@ -591,7 +602,28 @@ fn upstream_host_from_headers(
     default_host: &str,
     allow_default_without_workspace: bool,
 ) -> Result<String, Response<BoxBody>> {
+    const HDR_SANDBOX: &str = "X-Cmux-Sandbox-Internal";
     const HDR_WS: &str = "X-Cmux-Workspace-Internal";
+
+    // Check for sandbox header first (bwrap sandboxes with unique IPs)
+    if let Some(val) = headers.get(HDR_SANDBOX) {
+        let v = val.to_str().map_err(|_| {
+            response_with(
+                StatusCode::BAD_REQUEST,
+                format!("invalid header value (not UTF-8): {}", HDR_SANDBOX),
+            )
+        })?;
+        let sandbox_index: u32 = v.trim().parse().map_err(|_| {
+            response_with(
+                StatusCode::BAD_REQUEST,
+                format!("invalid sandbox index in {}", HDR_SANDBOX),
+            )
+        })?;
+        let ip = sandbox_ip_from_index(sandbox_index);
+        return Ok(ip.to_string());
+    }
+
+    // Check for workspace header
     if let Some(val) = headers.get(HDR_WS) {
         let v = val.to_str().map_err(|_| {
             response_with(
