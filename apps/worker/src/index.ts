@@ -17,7 +17,7 @@ import {
   type WorkerToServerEventNames,
   type WorkerToServerEvents,
 } from "@cmux/shared";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import { resolveAgentConfig } from "@cmux/shared/providerTemplates";
 import type { Id } from "@cmux/convex/dataModel";
 
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
@@ -1525,16 +1525,23 @@ async function createTerminal(
   const INITIAL_ERROR_CAPTURE_WINDOW_MS = 30000; // capture up to first 30s
   const stopErrorCaptureAt = Date.now() + INITIAL_ERROR_CAPTURE_WINDOW_MS;
 
-  // Config-driven completion detector
-  const agentConfig = options.agentModel
-    ? AGENT_CONFIGS.find((c) => c.name === options.agentModel)
-    : undefined;
+  // Config-driven completion detector - use dynamic resolution
+  let agentConfig: Awaited<ReturnType<typeof resolveAgentConfig>> = null;
 
-  if (!agentConfig && options.agentModel) {
-    log("WARN", `Agent config not found for ${options.agentModel}`, {
-      agentModel: options.agentModel,
-      availableConfigs: AGENT_CONFIGS.map((c) => c.name),
-    });
+  if (options.agentModel) {
+    try {
+      agentConfig = await resolveAgentConfig(options.agentModel);
+      if (!agentConfig) {
+        log("WARN", `Agent config not found for ${options.agentModel}`, {
+          agentModel: options.agentModel,
+        });
+      }
+    } catch (error) {
+      log("ERROR", `Failed to resolve agent config for ${options.agentModel}`, {
+        agentModel: options.agentModel,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   if (options.taskRunId && agentConfig?.completionDetector) {
