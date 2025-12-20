@@ -13,6 +13,7 @@ import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { TopBarSearch } from "@/components/TopBarSearch";
 import type { SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip,
@@ -998,7 +999,7 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
+    <FloatingPane header={<TitleBar title="cmux" center={<TopBarSearch />} />}>
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">

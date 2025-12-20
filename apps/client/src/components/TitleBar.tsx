@@ -3,9 +3,11 @@ import type { CSSProperties, ReactNode } from "react";
 export function TitleBar({
   title,
   actions,
+  center,
 }: {
   title: string;
   actions?: ReactNode;
+  center?: ReactNode;
 }) {
   return (
     <div
@@ -22,6 +24,16 @@ export function TitleBar({
       <div className="flex items-center text-xs font-medium text-neutral-900 dark:text-neutral-100">
         <span>{title}</span>
       </div>
+
+      {/* Center element (e.g., search bar) */}
+      {center ? (
+        <div
+          className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex items-center"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          {center}
+        </div>
+      ) : null}
 
       {actions ? (
         <div
