@@ -22,7 +22,7 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import type { Id } from "@cmux/convex/dataModel";
 
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
-import { CmuxPtyClient } from "@cmux/shared/node/cmux-pty-client";
+import { CmuxPtyClient } from "@cmux/shared/cmux-pty-client";
 import { startAmpProxy } from "@cmux/shared/src/providers/amp/start-amp-proxy.ts";
 import { handleWorkerTaskCompletion } from "./crown/workflow";
 import { SerializeAddon } from "@xterm/addon-serialize";

@@ -5,7 +5,7 @@
  * Use this instead of defining PTY functions in each service.
  */
 
-import type { PtyMetadata } from "../worker-schemas";
+import type { PtyMetadata } from "./worker-schemas";
 
 // =============================================================================
 // Types
