@@ -407,12 +407,12 @@ async function runMaintenanceScript(): Promise<MaintenanceResult> {
 
     if (useCmuxPty && maintenancePtyId) {
       // cmux-pty backend: send command to PTY session
-      const command = `zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo $\{pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh\n`;
+      const command = `set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo $\{pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh\n`;
       await sendPtyInput(maintenancePtyId, command);
     } else {
       // tmux backend: send command via tmux send-keys
       await runCommand(
-        `tmux send-keys -t cmux:${config.maintenanceWindowName} "zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh" C-m`,
+        `tmux send-keys -t cmux:${config.maintenanceWindowName} "set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh" C-m`,
       );
     }
 
@@ -482,7 +482,7 @@ async function startDevScript(): Promise<DevResult> {
 
     if (useCmuxPty && devPtyId) {
       // cmux-pty backend: send command to PTY session
-      const command = `zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo $\{pipestatus[1]} > '${config.devExitCodePath}'\n`;
+      const command = `set +x; zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo $\{pipestatus[1]} > '${config.devExitCodePath}'\n`;
       await sendPtyInput(devPtyId, command);
 
       await delay(2000);
@@ -497,7 +497,7 @@ async function startDevScript(): Promise<DevResult> {
     } else {
       // tmux backend: send command via tmux send-keys
       await runCommand(
-        `tmux send-keys -t cmux:${config.devWindowName} "zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.devExitCodePath}'" C-m`,
+        `tmux send-keys -t cmux:${config.devWindowName} "set +x; zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.devExitCodePath}'" C-m`,
       );
 
       await delay(2000);
