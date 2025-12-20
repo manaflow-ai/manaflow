@@ -1,11 +1,14 @@
 import type { CSSProperties, ReactNode } from "react";
+import { TopBarSearch } from "./TopBarSearch";
 
 export function TitleBar({
   title,
   actions,
+  showSearch = false,
 }: {
   title: string;
   actions?: ReactNode;
+  showSearch?: boolean;
 }) {
   return (
     <div
@@ -18,9 +21,10 @@ export function TitleBar({
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       />
 
-      {/* Title */}
-      <div className="flex items-center text-xs font-medium text-neutral-900 dark:text-neutral-100">
+      {/* Title and optional search bar */}
+      <div className="flex items-center gap-3 text-xs font-medium text-neutral-900 dark:text-neutral-100">
         <span>{title}</span>
+        {showSearch ? <TopBarSearch /> : null}
       </div>
 
       {actions ? (
