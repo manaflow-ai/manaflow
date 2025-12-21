@@ -583,6 +583,15 @@ mod tests {
     // PTY API tests
     // =========================================================================
 
+    /// Create a test PTY request with /bin/sh (available in CI)
+    fn test_pty_request() -> crate::pty::CreatePtyRequest {
+        crate::pty::CreatePtyRequest {
+            shell: "/bin/sh".to_string(),
+            cwd: "/tmp".to_string(),
+            ..Default::default()
+        }
+    }
+
     #[tokio::test]
     async fn pty_list_sessions_returns_empty() {
         let app = make_test_router();
@@ -607,7 +616,7 @@ mod tests {
     #[tokio::test]
     async fn pty_create_session_returns_info() {
         let app = make_test_router();
-        let request = crate::pty::CreatePtyRequest::default();
+        let request = test_pty_request();
 
         let response = app
             .oneshot(
@@ -686,7 +695,7 @@ mod tests {
         use tower::Service;
 
         let mut app = make_test_router();
-        let request = crate::pty::CreatePtyRequest::default();
+        let request = test_pty_request();
 
         // Create session
         let response = app
@@ -731,7 +740,7 @@ mod tests {
         use tower::Service;
 
         let mut app = make_test_router();
-        let request = crate::pty::CreatePtyRequest::default();
+        let request = test_pty_request();
 
         // Create session
         let response = app
@@ -784,7 +793,7 @@ mod tests {
         use tower::Service;
 
         let mut app = make_test_router();
-        let request = crate::pty::CreatePtyRequest::default();
+        let request = test_pty_request();
 
         // Create session
         let response = app
@@ -837,7 +846,7 @@ mod tests {
         use tower::Service;
 
         let mut app = make_test_router();
-        let request = crate::pty::CreatePtyRequest::default();
+        let request = test_pty_request();
 
         // Create session
         let response = app
@@ -882,7 +891,7 @@ mod tests {
         use tower::Service;
 
         let mut app = make_test_router();
-        let request = crate::pty::CreatePtyRequest::default();
+        let request = test_pty_request();
 
         // Create session
         let response = app
