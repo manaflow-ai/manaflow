@@ -1,12 +1,12 @@
-import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
 import { Dropdown } from "@/components/ui/dropdown";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
-import { useQuery as useConvexQuery } from "convex/react";
+import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
 import clsx from "clsx";
@@ -14,11 +14,81 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import type { StreamFileState, StreamFileStatus, DiffViewerControls } from "@/components/heatmap-diff-viewer";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
+import type { ReviewHeatmapLine } from "@/lib/heatmap";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  normalizeHeatmapColors,
+  normalizeHeatmapModel,
+  normalizeTooltipLanguage,
+  type HeatmapModelOptionValue,
+  type TooltipLanguageValue,
+} from "@/lib/heatmap-settings";
+import { convexQuery } from "@convex-dev/react-query";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
+import type { ReplaceDiffEntry } from "@cmux/shared";
+import z from "zod";
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 const PR_SYNC_GRACE_MS = 1500;
 const PR_FINAL_NOT_FOUND_DELAY_MS = 10000;
+
+const DIFF_HEADER_PREFIXES = [
+  "diff --git ",
+  "index ",
+  "--- ",
+  "+++ ",
+  "new file mode ",
+  "deleted file mode ",
+  "similarity index ",
+  "rename from ",
+  "rename to ",
+  "old mode ",
+  "new mode ",
+  "copy from ",
+  "copy to ",
+];
+
+const workspaceSettingsSchema = z
+  .object({
+    heatmapThreshold: z.number().optional(),
+    heatmapModel: z.string().optional(),
+    heatmapTooltipLanguage: z.string().optional(),
+    heatmapColors: z
+      .object({
+        line: z.object({ start: z.string(), end: z.string() }),
+        token: z.object({ start: z.string(), end: z.string() }),
+      })
+      .optional(),
+  })
+  .nullish();
+
+function stripDiffHeaders(diffText: string): string {
+  const lines = diffText.split("\n");
+  const filtered = lines.filter(
+    (line) =>
+      !DIFF_HEADER_PREFIXES.some((prefix) => line.startsWith(prefix))
+  );
+  return filtered.join("\n").trimEnd();
+}
+
+/** Convert ReplaceDiffEntry[] to the format expected by the simple review API */
+function convertDiffsToFileDiffs(
+  diffs: ReplaceDiffEntry[]
+): Array<{ filePath: string; diffText: string }> {
+  return diffs
+    .filter((entry) => entry.patch && !entry.isBinary)
+    .map((entry) => {
+      const diffText = stripDiffHeaders(entry.patch ?? "");
+      return { filePath: entry.filePath, diffText };
+    })
+    .filter((entry) => entry.diffText.length > 0);
+}
 
 type PullRequestDetailViewProps = {
   teamSlugOrId: string;
@@ -27,11 +97,7 @@ type PullRequestDetailViewProps = {
   number: string;
 };
 
-type DiffControls = {
-  expandAll: () => void;
-  collapseAll: () => void;
-  totalAdditions: number;
-  totalDeletions: number;
+type DiffControls = DiffViewerControls & {
   expandChecks?: () => void;
   collapseChecks?: () => void;
 };
@@ -327,6 +393,482 @@ export function PullRequestDetailView({
     });
   };
 
+  // Heatmap streaming state
+  const [streamStateByFile, setStreamStateByFile] = useState<
+    Map<string, StreamFileState>
+  >(() => new Map());
+  const deferredStreamStateByFile = useDeferredValue(streamStateByFile);
+  const activeReviewControllerRef = useRef<AbortController | null>(null);
+  const activeReviewKeyRef = useRef<string | null>(null);
+
+  // Query workspace settings for heatmap configuration
+  const workspaceSettingsQuery = useRQ({
+    ...convexQuery(api.workspaceSettings.get, { teamSlugOrId }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const workspaceSettings = useMemo(() => {
+    const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsQuery.data);
+    return parsed.success ? parsed.data ?? null : null;
+  }, [workspaceSettingsQuery.data]);
+  const updateWorkspaceSettings = useConvexMutation(api.workspaceSettings.update);
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
+    normalizeHeatmapColors(undefined)
+  );
+  const [heatmapModel, setHeatmapModel] = useState<HeatmapModelOptionValue>(
+    DEFAULT_HEATMAP_MODEL
+  );
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<TooltipLanguageValue>(DEFAULT_TOOLTIP_LANGUAGE);
+
+  useEffect(() => {
+    if (!workspaceSettings) {
+      return;
+    }
+    setHeatmapThreshold(workspaceSettings.heatmapThreshold ?? 0);
+    setHeatmapColors(normalizeHeatmapColors(workspaceSettings.heatmapColors));
+    setHeatmapModel(normalizeHeatmapModel(workspaceSettings.heatmapModel ?? null));
+    setHeatmapTooltipLanguage(
+      normalizeTooltipLanguage(workspaceSettings.heatmapTooltipLanguage ?? null)
+    );
+  }, [workspaceSettings]);
+
+  const handleHeatmapThresholdChange = useCallback(
+    (next: number) => {
+      if (next === heatmapThreshold) {
+        return;
+      }
+      setHeatmapThreshold(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapThreshold: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap threshold:", error);
+      });
+    },
+    [heatmapThreshold, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapColorsChange = useCallback(
+    (next: HeatmapColorSettings) => {
+      setHeatmapColors(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapColors: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap colors:", error);
+      });
+    },
+    [teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapModelChange = useCallback(
+    (next: HeatmapModelOptionValue) => {
+      if (next === heatmapModel) {
+        return;
+      }
+      setHeatmapModel(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapModel: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap model:", error);
+      });
+    },
+    [heatmapModel, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapTooltipLanguageChange = useCallback(
+    (next: TooltipLanguageValue) => {
+      if (next === heatmapTooltipLanguage) {
+        return;
+      }
+      setHeatmapTooltipLanguage(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapTooltipLanguage: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap tooltip language:", error);
+      });
+    },
+    [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  // Fetch diffs for heatmap review
+  const baseRefForHeatmap = normalizeGitRef(currentPR?.baseRef || "main");
+  const headRefForHeatmap = normalizeGitRef(currentPR?.headRef);
+  const repoFullName = `${owner}/${repo}`;
+  const diffQueryEnabled = Boolean(currentPR) && Boolean(baseRefForHeatmap) && Boolean(headRefForHeatmap);
+  const diffQuery = useRQ({
+    ...gitDiffQueryOptions({
+      repoFullName,
+      baseRef: baseRefForHeatmap,
+      headRef: headRefForHeatmap ?? "",
+    }),
+    enabled: diffQueryEnabled,
+  });
+
+  // Convert diffs to the format expected by the simple review API
+  const fileDiffsForReview = useMemo(() => {
+    if (!diffQuery.data) {
+      return undefined;
+    }
+    return convertDiffsToFileDiffs(diffQuery.data);
+  }, [diffQuery.data]);
+
+  const reviewLabel = useMemo(() => {
+    if (currentPR) {
+      return `${repoFullName} ${currentPR.baseRef}...${currentPR.headRef}`;
+    }
+    return `${repoFullName} #${number}`;
+  }, [currentPR, repoFullName, number]);
+
+  const startSimpleReview = useCallback(
+    async ({
+      fileDiffs,
+      model,
+      language,
+      requestKey,
+      diffLabel,
+    }: {
+      fileDiffs: Array<{ filePath: string; diffText: string }>;
+      model: HeatmapModelOptionValue;
+      language: TooltipLanguageValue;
+      requestKey: string;
+      diffLabel: string;
+    }) => {
+      if (fileDiffs.length === 0) {
+        return;
+      }
+
+      const existingController = activeReviewControllerRef.current;
+      const hasActiveMatchingRequest =
+        existingController &&
+        activeReviewKeyRef.current === requestKey &&
+        !existingController.signal.aborted;
+      if (hasActiveMatchingRequest) {
+        return;
+      }
+
+      existingController?.abort();
+      const controller = new AbortController();
+      activeReviewControllerRef.current = controller;
+      activeReviewKeyRef.current = requestKey;
+
+      setStreamStateByFile(new Map());
+
+      const user = await cachedGetUser(stackClientApp);
+      const authHeaders = user ? await user.getAuthHeaders() : undefined;
+      const headers = new Headers(authHeaders);
+      headers.set("Content-Type", "application/json");
+
+      const url = new URL("/api/code-review/simple", WWW_ORIGIN);
+      url.searchParams.set("model", model);
+      url.searchParams.set("lang", language);
+
+      try {
+        const response = await fetch(url.toString(), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ fileDiffs, diffLabel }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          console.error(
+            "[simple-review][frontend] Failed to start stream",
+            response.status
+          );
+          return;
+        }
+
+        const body = response.body;
+        if (!body) {
+          console.error(
+            "[simple-review][frontend] Response body missing for stream"
+          );
+          return;
+        }
+
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            separatorIndex = buffer.indexOf("\n\n");
+
+            const lines = rawEvent.split("\n");
+            for (const line of lines) {
+              if (!line.startsWith("data:")) {
+                continue;
+              }
+              const data = line.slice(5).trim();
+              if (data.length === 0) {
+                continue;
+              }
+              try {
+                const payload = JSON.parse(data) as Record<string, unknown>;
+                const type =
+                  typeof payload.type === "string" ? payload.type : "";
+                const filePath =
+                  typeof payload.filePath === "string"
+                    ? payload.filePath
+                    : null;
+
+                switch (type) {
+                  case "file":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "skip":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        next.set(filePath, {
+                          ...current,
+                          skipReason:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : (current.skipReason ?? null),
+                          summary:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : (current.summary ?? null),
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "file-complete":
+                    if (filePath) {
+                      const status =
+                        payload.status === "skipped" ||
+                        payload.status === "error" ||
+                        payload.status === "success"
+                          ? (payload.status as StreamFileStatus)
+                          : "success";
+                      const summary =
+                        typeof payload.summary === "string"
+                          ? payload.summary
+                          : undefined;
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        next.set(filePath, {
+                          ...current,
+                          status,
+                          summary: summary ?? current.summary ?? null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "line": {
+                    if (!filePath) {
+                      break;
+                    }
+                    const linePayload = payload.line as
+                      | Record<string, unknown>
+                      | undefined;
+                    if (!linePayload) {
+                      break;
+                    }
+                    const rawScore =
+                      typeof linePayload.scoreNormalized === "number"
+                        ? linePayload.scoreNormalized
+                        : typeof linePayload.score === "number"
+                          ? linePayload.score / 100
+                          : null;
+                    if (rawScore === null || rawScore <= 0) {
+                      break;
+                    }
+                    const normalizedScore = Math.max(
+                      0,
+                      Math.min(rawScore, 1)
+                    );
+                    const lineNumber =
+                      typeof linePayload.newLineNumber === "number"
+                        ? linePayload.newLineNumber
+                        : typeof linePayload.oldLineNumber === "number"
+                          ? linePayload.oldLineNumber
+                          : null;
+                    const lineText =
+                      typeof linePayload.diffLine === "string"
+                        ? linePayload.diffLine
+                        : typeof linePayload.codeLine === "string"
+                          ? linePayload.codeLine
+                          : null;
+                    const normalizedText =
+                      typeof lineText === "string"
+                        ? lineText.replace(/\s+/g, " ").trim()
+                        : null;
+                    if (!normalizedText) {
+                      break;
+                    }
+
+                    const reviewLine: ReviewHeatmapLine = {
+                      lineNumber,
+                      lineText,
+                      score: normalizedScore,
+                      reason:
+                        typeof linePayload.shouldReviewWhy === "string"
+                          ? linePayload.shouldReviewWhy
+                          : null,
+                      mostImportantWord:
+                        typeof linePayload.mostImportantWord === "string"
+                          ? linePayload.mostImportantWord
+                          : null,
+                    };
+
+                    setStreamStateByFile((previous) => {
+                      const next = new Map(previous);
+                      const current = next.get(filePath) ?? {
+                        lines: [],
+                        status: "pending",
+                        skipReason: null,
+                        summary: null,
+                      };
+                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
+                        reviewLine.lineText ?? ""
+                      }`;
+                      const filtered = current.lines.filter((line) => {
+                        const existingKey = `${line.lineNumber ?? "unknown"}:${
+                          line.lineText ?? ""
+                        }`;
+                        return existingKey !== lineKey;
+                      });
+                      const updated = [...filtered, reviewLine].sort((a, b) => {
+                        const aLine = a.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                        const bLine = b.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                        if (aLine !== bLine) {
+                          return aLine - bLine;
+                        }
+                        return (a.lineText ?? "").localeCompare(
+                          b.lineText ?? ""
+                        );
+                      });
+                      next.set(filePath, {
+                        ...current,
+                        lines: updated,
+                      });
+                      return next;
+                    });
+                    break;
+                  }
+                  case "complete":
+                    setStreamStateByFile((previous) => {
+                      let changed = false;
+                      const next = new Map(previous);
+                      for (const [path, state] of next.entries()) {
+                        if (state.status === "pending") {
+                          next.set(path, {
+                            ...state,
+                            status: "success",
+                          });
+                          changed = true;
+                        }
+                      }
+                      return changed ? next : previous;
+                    });
+                    break;
+                  case "error":
+                    console.error("[simple-review][frontend][error]", payload);
+                    break;
+                }
+              } catch (error) {
+                console.warn(
+                  "[simple-review][frontend] Failed to parse SSE data",
+                  { data, error }
+                );
+              }
+            }
+          }
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.error("[simple-review][frontend] Stream failed", error);
+      }
+    },
+    [setStreamStateByFile]
+  );
+
+  // Auto-trigger the simple review when diff data and settings are ready.
+  useEffect(() => {
+    if (!currentPR || !headRefForHeatmap) {
+      return;
+    }
+    if (diffQuery.isLoading || workspaceSettingsQuery.isLoading) {
+      return;
+    }
+    if (!fileDiffsForReview || fileDiffsForReview.length === 0) {
+      return;
+    }
+
+    const diffKey = [
+      repoFullName,
+      baseRefForHeatmap ?? "",
+      headRefForHeatmap ?? "",
+      String(diffQuery.dataUpdatedAt),
+    ].join("|");
+    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
+    const requestKey = `${diffKey}|${settingsKey}`;
+
+    void startSimpleReview({
+      fileDiffs: fileDiffsForReview,
+      model: heatmapModel,
+      language: heatmapTooltipLanguage,
+      requestKey,
+      diffLabel: reviewLabel,
+    });
+  }, [
+    baseRefForHeatmap,
+    currentPR,
+    diffQuery.dataUpdatedAt,
+    diffQuery.isLoading,
+    fileDiffsForReview,
+    heatmapModel,
+    heatmapTooltipLanguage,
+    headRefForHeatmap,
+    repoFullName,
+    reviewLabel,
+    startSimpleReview,
+    workspaceSettingsQuery.isLoading,
+  ]);
+
   if (currentPR === undefined || (currentPR === null && !shouldShowPrMissingState)) {
     return <PullRequestLoadingState />;
   }
@@ -338,10 +880,6 @@ export function PullRequestDetailView({
       />
     );
   }
-
-  const gitDiffViewerClassNames = {
-    fileDiffRow: { button: "top-[56px]" },
-  };
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -500,32 +1038,44 @@ export function PullRequestDetailView({
                 onToggle={handleToggleChecks}
               />
             </Suspense>
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
-                    Loading diffs...
-                  </div>
-                </div>
-              }
+            <div
+              className="flex-1 min-h-0"
+              style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
             >
-              {currentPR?.repoFullName &&
-                currentPR.baseRef &&
-                currentPR.headRef ? (
-                <RunDiffSection
-                  repoFullName={currentPR.repoFullName}
-                  ref1={normalizeGitRef(currentPR.baseRef)}
-                  ref2={normalizeGitRef(currentPR.headRef)}
-                  onControlsChange={handleDiffControlsChange}
-                  classNames={gitDiffViewerClassNames}
-                  useHeatmapViewer={false}
-                />
-              ) : (
-                <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
-                  Missing repo or branches to show diff.
-                </div>
-              )}
-            </Suspense>
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
+                      Loading diffs...
+                    </div>
+                  </div>
+                }
+              >
+                {currentPR?.repoFullName &&
+                  currentPR.baseRef &&
+                  currentPR.headRef ? (
+                  <RunDiffHeatmapReviewSection
+                    repoFullName={currentPR.repoFullName}
+                    ref1={normalizeGitRef(currentPR.baseRef)}
+                    ref2={normalizeGitRef(currentPR.headRef)}
+                    onControlsChange={handleDiffControlsChange}
+                    streamStateByFile={deferredStreamStateByFile}
+                    heatmapThreshold={heatmapThreshold}
+                    heatmapColors={heatmapColors}
+                    heatmapModel={heatmapModel}
+                    heatmapTooltipLanguage={heatmapTooltipLanguage}
+                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                    onHeatmapColorsChange={handleHeatmapColorsChange}
+                    onHeatmapModelChange={handleHeatmapModelChange}
+                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                  />
+                ) : (
+                  <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
+                    Missing repo or branches to show diff.
+                  </div>
+                )}
+              </Suspense>
+            </div>
           </div>
         </div>
       </div>
