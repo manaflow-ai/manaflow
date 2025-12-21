@@ -82,6 +82,10 @@
       "import": "./src/node/convex-cache.ts",
       "types": "./src/node/convex-cache.ts"
     },
+    "./cmux-pty-client": {
+      "import": "./src/cmux-pty-client.ts",
+      "types": "./src/cmux-pty-client.ts"
+    },
     "./utils/format-env-vars-content": {
       "import": "./src/utils/format-env-vars-content.ts",
       "types": "./src/utils/format-env-vars-content.ts"

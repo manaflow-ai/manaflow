@@ -7,6 +7,7 @@ import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
 type NetworkingInfo = Doc<"taskRuns">["networking"];
+type VSCodeProvider = "docker" | "morph" | "daytona" | "other" | undefined;
 
 type OpenWithAction = {
   id: EditorType;
@@ -21,6 +22,7 @@ type PortAction = {
 
 type UseOpenWithActionsArgs = {
   vscodeUrl?: string | null;
+  vscodeProvider?: VSCodeProvider;
   worktreePath?: string | null;
   branch?: string | null;
   networking?: NetworkingInfo;
@@ -28,6 +30,7 @@ type UseOpenWithActionsArgs = {
 
 export function useOpenWithActions({
   vscodeUrl,
+  vscodeProvider,
   worktreePath,
   branch,
   networking,
@@ -35,6 +38,11 @@ export function useOpenWithActions({
   const { socket, availableEditors } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+
+  // Only use local serve-web for truly local workspaces (provider === "other")
+  // Docker and Morph workspaces should use their URLs directly
+  const shouldUseLocalServeWeb = vscodeProvider === "other";
+  const preferredOrigin = shouldUseLocalServeWeb ? localServeWebOrigin : null;
 
   useEffect(() => {
     if (!socket) return;
@@ -56,9 +64,13 @@ export function useOpenWithActions({
         if (editor === "vscode-remote" && vscodeUrl) {
           const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
             vscodeUrl,
-            localServeWebOrigin,
+            preferredOrigin,
           );
-          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
+          // Only append folder parameter if not already in the URL
+          const hasFolder = normalizedUrl.includes("folder=");
+          const vscodeUrlWithWorkspace = hasFolder
+            ? normalizedUrl
+            : `${normalizedUrl}${normalizedUrl.includes("?") ? "&" : "?"}folder=/root/workspace`;
           window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
           resolve();
         } else if (
@@ -104,7 +116,7 @@ export function useOpenWithActions({
         }
       });
     },
-    [socket, worktreePath, vscodeUrl, localServeWebOrigin]
+    [socket, worktreePath, vscodeUrl, preferredOrigin]
   );
 
   const handleCopyBranch = useCallback(() => {

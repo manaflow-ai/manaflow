@@ -23,10 +23,131 @@ type DevResult = {
   error: string | null;
 };
 
+// cmux-pty API types
+type PtySessionInfo = {
+  id: string;
+  name: string;
+  index: number;
+  shell: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  created_at: number;
+  alive: boolean;
+  pid: number;
+};
+
+// cmux-pty server configuration
+const PTY_SERVER_URL = process.env.PTY_SERVER_URL || "http://localhost:39383";
+
+// Track which backend we're using
+let useCmuxPty = false;
+
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+
+// =============================================================================
+// cmux-pty API helpers
+// =============================================================================
+
+async function checkPtyServerHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${PTY_SERVER_URL}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function createPtySession(options: {
+  shell?: string;
+  cwd?: string;
+  cols?: number;
+  rows?: number;
+  env?: Record<string, string>;
+  name?: string;
+  metadata?: {
+    location?: "editor" | "panel";
+    type?: "agent" | "dev" | "maintenance" | "shell";
+    managed?: boolean;
+  };
+}): Promise<PtySessionInfo> {
+  const response = await fetch(`${PTY_SERVER_URL}/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      shell: options.shell || "/bin/zsh",
+      cwd: options.cwd || "/root/workspace",
+      cols: options.cols || 80,
+      rows: options.rows || 24,
+      env: options.env,
+      name: options.name,
+      metadata: options.metadata,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to create PTY session: ${error}`);
+  }
+
+  return response.json();
+}
+
+async function sendPtyInput(sessionId: string, data: string): Promise<void> {
+  const response = await fetch(`${PTY_SERVER_URL}/sessions/${sessionId}/input`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to send input to PTY session: ${error}`);
+  }
+}
+
+async function checkPtySessionAlive(
+  sessionId: string,
+  retries = 3,
+  retryDelayMs = 500,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await fetch(`${PTY_SERVER_URL}/sessions`);
+      if (!response.ok) {
+        if (attempt < retries - 1) {
+          await delay(retryDelayMs);
+          continue;
+        }
+        return false;
+      }
+      const result = (await response.json()) as { sessions: PtySessionInfo[] };
+      const session = result.sessions.find((s) => s.id === sessionId);
+      if (session) {
+        return session.alive;
+      }
+      // Session not found - retry in case of timing issue
+      if (attempt < retries - 1) {
+        await delay(retryDelayMs);
+        continue;
+      }
+      return false;
+    } catch {
+      if (attempt < retries - 1) {
+        await delay(retryDelayMs);
+        continue;
+      }
+      return false;
+    }
+  }
+  return false;
+}
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -143,6 +264,20 @@ const config = {
   isCloudWorkspace: envBoolean("CMUX_ORCH_IS_CLOUD_WORKSPACE"),
 };
 
+async function detectBackend(): Promise<"cmux-pty" | "tmux"> {
+  // Check if cmux-pty server is available
+  console.log("[ORCHESTRATOR] Checking if cmux-pty server is available...");
+  const ptyAvailable = await checkPtyServerHealth();
+
+  if (ptyAvailable) {
+    console.log("[ORCHESTRATOR] cmux-pty server is available, using cmux-pty backend");
+    return "cmux-pty";
+  }
+
+  console.log("[ORCHESTRATOR] cmux-pty server not available, using tmux backend");
+  return "tmux";
+}
+
 async function ensureTmuxSession(): Promise<void> {
   // Check if session already exists
   const checkResult = await runCommand("tmux has-session -t cmux 2>/dev/null", {
@@ -197,21 +332,53 @@ async function ensureTmuxSession(): Promise<void> {
   }
 }
 
+// Track PTY session IDs for cmux-pty backend
+let maintenancePtyId: string | null = null;
+let devPtyId: string | null = null;
+
 async function createWindows(): Promise<void> {
-  await ensureTmuxSession();
+  if (useCmuxPty) {
+    // cmux-pty backend: create PTY sessions for each script
+    if (config.hasMaintenanceScript) {
+      console.log(`[ORCHESTRATOR] Creating PTY session for ${config.maintenanceWindowName}...`);
+      const session = await createPtySession({
+        name: config.maintenanceWindowName,
+        cwd: config.workspaceRoot,
+        shell: "/bin/zsh",
+        metadata: { location: "panel", type: "maintenance", managed: true },
+      });
+      maintenancePtyId = session.id;
+      console.log(`[ORCHESTRATOR] ${config.maintenanceWindowName} PTY created: ${session.id}`);
+    }
 
-  if (config.hasMaintenanceScript) {
-    console.log(`[ORCHESTRATOR] Creating ${config.maintenanceWindowName} window...`);
-    await runCommand(
-      `tmux new-window -t cmux: -n ${config.maintenanceWindowName} -d`,
-    );
-    console.log(`[ORCHESTRATOR] ${config.maintenanceWindowName} window created`);
-  }
+    if (config.hasDevScript) {
+      console.log(`[ORCHESTRATOR] Creating PTY session for ${config.devWindowName}...`);
+      const session = await createPtySession({
+        name: config.devWindowName,
+        cwd: config.workspaceRoot,
+        shell: "/bin/zsh",
+        metadata: { location: "panel", type: "dev", managed: true },
+      });
+      devPtyId = session.id;
+      console.log(`[ORCHESTRATOR] ${config.devWindowName} PTY created: ${session.id}`);
+    }
+  } else {
+    // tmux backend: create windows in the cmux session
+    await ensureTmuxSession();
 
-  if (config.hasDevScript) {
-    console.log(`[ORCHESTRATOR] Creating ${config.devWindowName} window...`);
-    await runCommand(`tmux new-window -t cmux: -n ${config.devWindowName} -d`);
-    console.log(`[ORCHESTRATOR] ${config.devWindowName} window created`);
+    if (config.hasMaintenanceScript) {
+      console.log(`[ORCHESTRATOR] Creating ${config.maintenanceWindowName} window...`);
+      await runCommand(
+        `tmux new-window -t cmux: -n ${config.maintenanceWindowName} -d`,
+      );
+      console.log(`[ORCHESTRATOR] ${config.maintenanceWindowName} window created`);
+    }
+
+    if (config.hasDevScript) {
+      console.log(`[ORCHESTRATOR] Creating ${config.devWindowName} window...`);
+      await runCommand(`tmux new-window -t cmux: -n ${config.devWindowName} -d`);
+      console.log(`[ORCHESTRATOR] ${config.devWindowName} window created`);
+    }
   }
 }
 
@@ -238,9 +405,16 @@ async function runMaintenanceScript(): Promise<MaintenanceResult> {
   try {
     console.log("[MAINTENANCE] Starting maintenance script...");
 
-    await runCommand(
-      `tmux send-keys -t cmux:${config.maintenanceWindowName} "zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh" C-m`,
-    );
+    if (useCmuxPty && maintenancePtyId) {
+      // cmux-pty backend: send command to PTY session
+      const command = `set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo $\{pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh\n`;
+      await sendPtyInput(maintenancePtyId, command);
+    } else {
+      // tmux backend: send command via tmux send-keys
+      await runCommand(
+        `tmux send-keys -t cmux:${config.maintenanceWindowName} "set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh" C-m`,
+      );
+    }
 
     await delay(2000);
 
@@ -306,17 +480,34 @@ async function startDevScript(): Promise<DevResult> {
   try {
     console.log("[DEV] Starting dev script...");
 
-    await runCommand(
-      `tmux send-keys -t cmux:${config.devWindowName} "zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.devExitCodePath}'" C-m`,
-    );
+    if (useCmuxPty && devPtyId) {
+      // cmux-pty backend: send command to PTY session
+      const command = `set +x; zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo $\{pipestatus[1]} > '${config.devExitCodePath}'\n`;
+      await sendPtyInput(devPtyId, command);
 
-    await delay(2000);
+      await delay(2000);
 
-    const { stdout: windowListing } = await runCommand("tmux list-windows -t cmux");
-    if (!windowListing.includes(config.devWindowName)) {
-      const error = "Dev window not found after starting script";
-      console.error(`[DEV] ERROR: ${error}`);
-      return { error };
+      // Check PTY session status (non-fatal - the exit code check below is authoritative)
+      const isAlive = await checkPtySessionAlive(devPtyId);
+      if (!isAlive) {
+        // This can be a false positive if the shell exited after running the command
+        // but the dev server is still running. The exit code check below is the real test.
+        console.warn(`[DEV] WARN: PTY session check failed, but dev server may still be running`);
+      }
+    } else {
+      // tmux backend: send command via tmux send-keys
+      await runCommand(
+        `tmux send-keys -t cmux:${config.devWindowName} "set +x; zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.devExitCodePath}'" C-m`,
+      );
+
+      await delay(2000);
+
+      const { stdout: windowListing } = await runCommand("tmux list-windows -t cmux");
+      if (!windowListing.includes(config.devWindowName)) {
+        const error = "Dev window not found after starting script";
+        console.error(`[DEV] ERROR: ${error}`);
+        return { error };
+      }
     }
 
     console.log("[DEV] Checking for early exit...");
@@ -416,6 +607,11 @@ async function reportErrorToConvex(
     console.log(`[ORCHESTRATOR] CONVEX_URL: ${config.convexUrl}`);
     console.log(`[ORCHESTRATOR] TASK_RUN_JWT present: ${Boolean(config.taskRunJwt)}`);
 
+    // Detect which backend to use (cmux-pty or tmux)
+    const backend = await detectBackend();
+    useCmuxPty = backend === "cmux-pty";
+    console.log(`[ORCHESTRATOR] Using backend: ${backend}`);
+
     await createWindows();
 
     const maintenanceResult = await runMaintenanceScript();
@@ -434,7 +630,8 @@ async function reportErrorToConvex(
       console.log("[ORCHESTRATOR] Dev script started successfully");
 
       // Focus on the dev window for cloud environment workspaces
-      if (config.hasDevScript && config.isCloudWorkspace) {
+      // For cmux-pty, the VSCode extension handles terminal focus
+      if (config.hasDevScript && config.isCloudWorkspace && !useCmuxPty) {
         console.log(`[ORCHESTRATOR] Focusing on ${config.devWindowName} window...`);
         await runCommand(
           `tmux select-window -t cmux:${config.devWindowName}`,

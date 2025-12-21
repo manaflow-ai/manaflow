@@ -46,6 +46,7 @@ clientSocket.on("connect", () => {
       rows: 24,
       cwd: "/root/workspace",
       command: "bun x opencode-ai 'whats the time'",
+      backend: "tmux",
       taskRunContext: {
         taskRunToken: "morph-start-snapshot-token",
         prompt: "what's the time",

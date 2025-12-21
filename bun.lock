@@ -37,7 +37,7 @@
     },
     "apps/client": {
       "name": "@cmux/client",
-      "version": "1.0.202",
+      "version": "1.0.203",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-beta.2",
         "@cmux/convex": "workspace:*",
@@ -297,12 +297,14 @@
         "multer": "^1.4.5-lts.1",
         "socket.io": "^4.8.0",
         "undici": "^6.21.3",
+        "ws": "^8.18.0",
         "zod": "^4.1.12",
       },
       "devDependencies": {
         "@types/express": "^4.17.21",
         "@types/multer": "^1.4.11",
         "@types/node": "^24.9.1",
+        "@types/ws": "^8.5.13",
         "socket.io-client": "^4.8.0",
         "tsx": "^4.7.1",
         "vitest": "3.2.4",
