@@ -391,15 +391,40 @@ export class LocalSandboxHost {
       )
     );
 
+    // When running from electron, the bundled code is in apps/client/out/main/
+    // We need to go up to the repo root to find packages/sandbox/scripts/
+    candidates.push(
+      path.resolve(
+        moduleDir,
+        "../../../../../..",
+        "packages/sandbox/scripts/bootstrap-dind.sh"
+      )
+    );
+
+    // Also check from the electron app directory (apps/client -> repo root)
+    candidates.push(
+      path.resolve(
+        moduleDir,
+        "../../../../../../..",
+        "packages/sandbox/scripts/bootstrap-dind.sh"
+      )
+    );
+
     for (const candidate of candidates) {
       if (!candidate) {
         continue;
       }
       if (fs.existsSync(candidate)) {
+        dockerLogger.info(
+          `[LocalSandboxHost] Found bootstrap-dind.sh at ${candidate}`
+        );
         return candidate;
       }
     }
 
+    dockerLogger.warn(
+      `[LocalSandboxHost] bootstrap-dind.sh not found in any candidate paths, moduleDir=${moduleDir}, cwd=${process.cwd()}`
+    );
     return null;
   }
 
