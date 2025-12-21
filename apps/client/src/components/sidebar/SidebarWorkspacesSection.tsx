@@ -26,11 +26,6 @@ export function SidebarWorkspacesSection({
     openCommandBarWithPage("cloud-workspaces");
   }, []);
 
-  // Hide entire workspaces section in web mode
-  if (env.NEXT_PUBLIC_WEB_MODE) {
-    return null;
-  }
-
   return (
     <div className="flex items-center justify-between ml-2">
       <Link

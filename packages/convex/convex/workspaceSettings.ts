@@ -23,8 +23,6 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
-    crownModel: v.optional(v.string()),
-    crownSystemPrompt: v.optional(v.string()),
     heatmapModel: v.optional(v.string()),
     heatmapThreshold: v.optional(v.number()),
     heatmapTooltipLanguage: v.optional(v.string()),
@@ -50,8 +48,6 @@ export const update = authMutation({
       const updates: {
         worktreePath?: string;
         autoPrEnabled?: boolean;
-        crownModel?: string;
-        crownSystemPrompt?: string;
         heatmapModel?: string;
         heatmapThreshold?: number;
         heatmapTooltipLanguage?: string;
@@ -67,12 +63,6 @@ export const update = authMutation({
       }
       if (args.autoPrEnabled !== undefined) {
         updates.autoPrEnabled = args.autoPrEnabled;
-      }
-      if (args.crownModel !== undefined) {
-        updates.crownModel = args.crownModel;
-      }
-      if (args.crownSystemPrompt !== undefined) {
-        updates.crownSystemPrompt = args.crownSystemPrompt;
       }
       if (args.heatmapModel !== undefined) {
         updates.heatmapModel = args.heatmapModel;
@@ -92,8 +82,6 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
-        crownModel: args.crownModel,
-        crownSystemPrompt: args.crownSystemPrompt,
         heatmapModel: args.heatmapModel,
         heatmapThreshold: args.heatmapThreshold,
         heatmapTooltipLanguage: args.heatmapTooltipLanguage,

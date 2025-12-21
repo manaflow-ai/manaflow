@@ -65,6 +65,7 @@ async function main() {
       cols: 80,
       rows: 24,
       env: {},
+      backend: "tmux" as const,
       taskRunContext: {
         taskRunToken: "test-socket-connection-token",
         prompt: "Echo Hello World",

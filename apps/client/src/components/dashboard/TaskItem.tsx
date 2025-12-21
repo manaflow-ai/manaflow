@@ -162,13 +162,14 @@ export const TaskItem = memo(function TaskItem({
   );
   const hasActiveVSCode = runWithVSCode?.vscode?.status === "running";
 
-  // Generate the VSCode URL if available
+  // Generate the VSCode URL if available (use base URL, not workspaceUrl)
   const vscodeUrl = useMemo(() => {
-    if (hasActiveVSCode && runWithVSCode?.vscode?.workspaceUrl) {
-      return runWithVSCode.vscode.workspaceUrl;
+    if (hasActiveVSCode && runWithVSCode?.vscode?.url) {
+      return runWithVSCode.vscode.url;
     }
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
+  const vscodeProvider = runWithVSCode?.vscode?.provider;
 
   // For local workspaces, find the run with VSCode to navigate to VSCode view directly
   const localWorkspaceRunWithVscode = useMemo(() => {
@@ -500,6 +501,7 @@ export const TaskItem = memo(function TaskItem({
           {/* Open with dropdown - always appears on hover */}
           <OpenWithDropdown
             vscodeUrl={vscodeUrl}
+            vscodeProvider={vscodeProvider}
             worktreePath={runWithVSCode?.worktreePath || task.worktreePath}
             branch={task.baseBranch}
             className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0"

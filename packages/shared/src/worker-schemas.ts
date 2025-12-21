@@ -17,6 +17,17 @@ export const PostStartCommandSchema = z.object({
   continueOnError: z.boolean().optional(),
 });
 
+// PTY session metadata for cmux-pty terminals
+// Used to control terminal location and type in VSCode extension
+export const PtyMetadataSchema = z.object({
+  // Where the terminal should open: 'editor' (editor pane) or 'panel' (normal terminal panel)
+  location: z.enum(["editor", "panel"]).optional(),
+  // Type of terminal for identification
+  type: z.enum(["agent", "dev", "maintenance", "shell"]).optional(),
+  // Whether this terminal is managed by cmux (for cleanup on close)
+  managed: z.boolean().optional(),
+});
+
 // Worker Registration
 export const WorkerRegisterSchema = z.object({
   workerId: z.string(),
@@ -85,6 +96,11 @@ export const WorkerCreateTerminalSchema = z.object({
   startupCommands: z.array(z.string()).optional(),
   // Commands to run AFTER the TUI/agent process has started
   postStartCommands: z.array(PostStartCommandSchema).optional(),
+  // Terminal backend: "tmux" (default) or "cmux-pty" (cmux-pty server)
+  backend: z.enum(["tmux", "cmux-pty"]).optional().default("tmux"),
+  // cmux-pty specific: command to run in the PTY (used when backend is "cmux-pty")
+  ptyCommand: z.string().optional(),
+  ptyArgs: z.array(z.string()).optional(),
 });
 
 export const WorkerTerminalInputSchema = z.object({
@@ -221,6 +237,7 @@ export const ServerToWorkerCommandSchema = z.object({
 // Type exports
 export type AuthFile = z.infer<typeof AuthFileSchema>;
 export type PostStartCommand = z.infer<typeof PostStartCommandSchema>;
+export type PtyMetadata = z.infer<typeof PtyMetadataSchema>;
 export type WorkerRegister = z.infer<typeof WorkerRegisterSchema>;
 export type WorkerHeartbeat = z.infer<typeof WorkerHeartbeatSchema>;
 export type TerminalAssignment = z.infer<typeof TerminalAssignmentSchema>;

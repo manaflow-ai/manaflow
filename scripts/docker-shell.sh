@@ -59,7 +59,7 @@ echo "  - cmux-proxy: http://localhost:39379"
 echo "  - noVNC: http://localhost:39380/vnc.html"
 echo "  - DevTools: http://localhost:39381/json/version"
 echo "  - DevTools target: http://localhost:39382/json/version"
-echo "  - cmux-xterm: http://localhost:39383/"
+echo "  - cmux-pty: http://localhost:39383/"
 echo "========================================="
 echo ""
 

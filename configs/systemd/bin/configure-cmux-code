@@ -25,15 +25,8 @@ SETTINGS=$(jq -n \
     "terminal.integrated.shellIntegration.enabled": false,
     "terminal.integrated.showTerminalConfigPrompt": false,
     "terminal.integrated.macOptionClickForcesSelection": true,
-    "terminal.integrated.shell.linux": "/usr/bin/zsh",
-    "terminal.integrated.shellArgs.linux": ["-l"],
-    "terminal.integrated.defaultProfile.linux": "zsh",
-    "terminal.integrated.profiles.linux": {
-      "zsh": {
-        "path": "/usr/bin/zsh",
-        "args": ["-l"]
-      }
-    },
+    "terminal.integrated.defaultProfile.linux": "cmux",
+    "terminal.integrated.scrollback": 100000,
     "python.languageServer": "Pylance",
     "python.defaultInterpreterPath": "/usr/bin/python3",
     "git.openDiffOnClick": true,
