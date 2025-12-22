@@ -70,6 +70,65 @@ function stripDiffHeaders(diffText: string): string {
   return filtered.join("\n").trimEnd();
 }
 
+/**
+ * Build a unified diff patch from oldContent/newContent when no patch is available.
+ * This handles cases like untracked (newly added) files where the git-diff socket
+ * returns content but not a patch.
+ */
+function buildPatchFromContent(entry: ReplaceDiffEntry): string {
+  const oldContent = entry.oldContent ?? "";
+  const newContent = entry.newContent ?? "";
+
+  // If both are empty, nothing to diff
+  if (!oldContent && !newContent) {
+    return "";
+  }
+
+  const oldLines = oldContent ? oldContent.split(/\r?\n/) : [];
+  const newLines = newContent ? newContent.split(/\r?\n/) : [];
+
+  // Handle empty content edge cases (single empty string from split)
+  if (oldLines.length === 1 && oldLines[0] === "") {
+    oldLines.length = 0;
+  }
+  if (newLines.length === 1 && newLines[0] === "") {
+    newLines.length = 0;
+  }
+
+  const hunks: string[] = [];
+
+  if (entry.status === "added" || oldLines.length === 0) {
+    // Purely added file
+    if (newLines.length > 0) {
+      hunks.push(`@@ -0,0 +1,${newLines.length} @@`);
+      for (const line of newLines) {
+        hunks.push(`+${line}`);
+      }
+    }
+  } else if (entry.status === "deleted" || newLines.length === 0) {
+    // Purely deleted file
+    if (oldLines.length > 0) {
+      hunks.push(`@@ -1,${oldLines.length} +0,0 @@`);
+      for (const line of oldLines) {
+        hunks.push(`-${line}`);
+      }
+    }
+  } else {
+    // Modified file - generate a simple diff showing all old lines as removed and all new as added
+    // This is a simplified approach; for complex diffs, proper LCS would be better but this
+    // ensures heatmap review can process the file.
+    hunks.push(`@@ -1,${oldLines.length} +1,${newLines.length} @@`);
+    for (const line of oldLines) {
+      hunks.push(`-${line}`);
+    }
+    for (const line of newLines) {
+      hunks.push(`+${line}`);
+    }
+  }
+
+  return hunks.join("\n");
+}
+
 /** Convert ReplaceDiffEntry[] to the format expected by the simple review API */
 function convertDiffsToFileDiffs(
   diffs: ReplaceDiffEntry[],
@@ -80,10 +139,12 @@ function convertDiffsToFileDiffs(
       ? options.prefix.trim()
       : null;
   return diffs
-    .filter((entry) => entry.patch && !entry.isBinary)
+    .filter((entry) => !entry.isBinary)
     .map((entry) => {
       const filePath = prefix ? `${prefix}:${entry.filePath}` : entry.filePath;
-      const diffText = stripDiffHeaders(entry.patch ?? "");
+      // Use existing patch if available, otherwise build from content
+      const rawPatch = entry.patch ?? buildPatchFromContent(entry);
+      const diffText = stripDiffHeaders(rawPatch);
       return { filePath, diffText };
     })
     .filter((entry) => entry.diffText.length > 0);
