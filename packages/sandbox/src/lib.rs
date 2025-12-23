@@ -8,6 +8,7 @@ pub mod models;
 pub mod mux;
 pub mod notifications;
 pub mod palette;
+pub mod pty;
 pub mod sandbox_handle;
 pub mod service;
 pub mod settings;

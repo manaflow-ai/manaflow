@@ -661,4 +661,8 @@ impl SandboxService for UnavailableSandboxService {
     async fn delete(&self, _id: String) -> SandboxResult<Option<SandboxSummary>> {
         Err(self.error("delete sandbox"))
     }
+
+    async fn get_sandbox_pid(&self, _id: String) -> Option<u32> {
+        None
+    }
 }

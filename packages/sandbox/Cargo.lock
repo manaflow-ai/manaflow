@@ -568,6 +568,7 @@ dependencies = [
  "indicatif",
  "libc",
  "open",
+ "parking_lot",
  "portable-pty",
  "predicates",
  "pulldown-cmark 0.12.2",

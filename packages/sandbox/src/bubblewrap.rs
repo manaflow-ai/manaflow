@@ -2131,6 +2131,12 @@ impl SandboxService for BubblewrapService {
 
         Ok(None)
     }
+
+    async fn get_sandbox_pid(&self, id_str: String) -> Option<u32> {
+        let id = self.resolve_id(&id_str).await.ok()?;
+        let sandboxes = self.sandboxes.lock().await;
+        sandboxes.get(&id).map(|entry| entry.inner_pid)
+    }
 }
 
 impl SandboxHandle {

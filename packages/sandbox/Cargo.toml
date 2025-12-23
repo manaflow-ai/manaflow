@@ -35,6 +35,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
 ignore = "0.4.25"
 libc = "0.2"
+parking_lot = "0.12"
 portable-pty = "0.8"
 rcgen = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "http2", "stream"] }
