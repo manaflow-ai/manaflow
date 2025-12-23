@@ -29,9 +29,10 @@ import { getEditorSettingsUpload } from "./utils/editorSettings";
 import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
+import { BubblewrapVSCodeInstance } from "./vscode/BubblewrapVSCodeInstance";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
-import { VSCodeInstance } from "./vscode/VSCodeInstance";
+import { VSCodeInstance, type VSCodeInstanceInfo } from "./vscode/VSCodeInstance";
 import { getWorktreePath, setupProjectWorkspace } from "./workspace";
 import { workerExec } from "./utils/workerExec";
 import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
@@ -46,6 +47,7 @@ export interface AgentSpawnResult {
   taskRunId: string | Id<"taskRuns">;
   worktreePath: string;
   vscodeUrl?: string;
+  vscodeProvider?: VSCodeInstanceInfo["provider"];
   success: boolean;
   error?: string;
 }
@@ -413,7 +415,14 @@ export async function spawnAgent(
 
       worktreePath = "/root/workspace";
     } else {
-      // For Docker, set up worktree as before
+      const localSandboxProvider = (
+        process.env.CMUX_LOCAL_SANDBOX_PROVIDER || "sandbox"
+      ).toLowerCase();
+      const useBubblewrap =
+        localSandboxProvider === "sandbox" ||
+        localSandboxProvider === "bubblewrap";
+
+      // For local sandboxes, set up worktree as before
       const worktreeInfo = await getWorktreePath(
         {
           repoUrl: options.repoUrl!,
@@ -443,17 +452,32 @@ export async function spawnAgent(
 
       worktreePath = workspaceResult.worktreePath;
 
-      serverLogger.info(
-        `[AgentSpawner] Creating DockerVSCodeInstance for ${agent.name}`
-      );
-      vscodeInstance = new DockerVSCodeInstance({
-        workspacePath: worktreePath,
-        agentName: agent.name,
-        taskRunId,
-        taskId,
-        theme: options.theme,
-        teamSlugOrId,
-      });
+      if (useBubblewrap) {
+        serverLogger.info(
+          `[AgentSpawner] Creating BubblewrapVSCodeInstance for ${agent.name}`
+        );
+        vscodeInstance = new BubblewrapVSCodeInstance({
+          workspacePath: worktreePath,
+          workspaceRoot: worktreeInfo.projectsPath,
+          agentName: agent.name,
+          taskRunId,
+          taskId,
+          theme: options.theme,
+          teamSlugOrId,
+        });
+      } else {
+        serverLogger.info(
+          `[AgentSpawner] Creating DockerVSCodeInstance for ${agent.name}`
+        );
+        vscodeInstance = new DockerVSCodeInstance({
+          workspacePath: worktreePath,
+          agentName: agent.name,
+          taskRunId,
+          taskId,
+          theme: options.theme,
+          teamSlugOrId,
+        });
+      }
     }
 
     // Update the task run with the worktree path (retry on OCC)
@@ -473,6 +497,7 @@ export async function spawnAgent(
     // Start the VSCode instance
     const vscodeInfo = await vscodeInstance.start();
     const vscodeUrl = vscodeInfo.workspaceUrl;
+    const vscodeProvider = vscodeInfo.provider;
 
     serverLogger.info(
       `VSCode instance spawned for agent ${agent.name}: ${vscodeUrl}`
@@ -552,19 +577,17 @@ export async function spawnAgent(
           vnc?: string;
         }
       | undefined;
-    if (vscodeInstance instanceof DockerVSCodeInstance) {
-      const dockerPorts = vscodeInstance.getPorts();
-      if (dockerPorts && dockerPorts.vscode && dockerPorts.worker) {
-        ports = {
-          vscode: dockerPorts.vscode,
-          worker: dockerPorts.worker,
-          ...(dockerPorts.extension
-            ? { extension: dockerPorts.extension }
-            : {}),
-          ...(dockerPorts.proxy ? { proxy: dockerPorts.proxy } : {}),
-          ...(dockerPorts.vnc ? { vnc: dockerPorts.vnc } : {}),
-        };
-      }
+    const instancePorts = vscodeInstance.getPorts();
+    if (instancePorts && instancePorts.vscode && instancePorts.worker) {
+      ports = {
+        vscode: instancePorts.vscode,
+        worker: instancePorts.worker,
+        ...(instancePorts.extension
+          ? { extension: instancePorts.extension }
+          : {}),
+        ...(instancePorts.proxy ? { proxy: instancePorts.proxy } : {}),
+        ...(instancePorts.vnc ? { vnc: instancePorts.vnc } : {}),
+      };
     }
 
     // Update VSCode instance information in Convex (retry on OCC)
@@ -1025,10 +1048,7 @@ exit $EXIT_CODE
           formData.append("path", imageFile.path);
 
           // Get worker port from VSCode instance
-          const workerPort =
-            vscodeInstance instanceof DockerVSCodeInstance
-              ? (vscodeInstance as DockerVSCodeInstance).getPorts()?.worker
-              : "39377";
+          const workerPort = vscodeInstance.getPorts()?.worker ?? "39377";
 
           const uploadUrl = `http://localhost:${workerPort}/upload-image`;
 
@@ -1106,6 +1126,7 @@ exit $EXIT_CODE
       taskRunId,
       worktreePath,
       vscodeUrl,
+      vscodeProvider,
       success: true,
     };
   } catch (error) {

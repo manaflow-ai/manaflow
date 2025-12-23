@@ -32,9 +32,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  clang \
   gcc \
   g++ \
   libc6-dev \
+  libssl-dev \
+  pkg-config \
   gcc-x86-64-linux-gnu \
   g++-x86-64-linux-gnu \
   libc6-dev-amd64-cross
@@ -627,6 +630,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   net-tools \
   lsof \
   sudo \
+  bubblewrap \
+  fuse-overlayfs \
+  iproute2 \
   iptables \
   openssl \
   pigz \
@@ -648,6 +654,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   xauth \
   xdg-utils \
   socat \
+  uidmap \
   fonts-liberation \
   libasound2t64 \
   libatk-bridge2.0-0 \
@@ -1113,6 +1120,7 @@ COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
 COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
 COPY configs/systemd/bin/code /usr/local/bin/code
 COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
+COPY configs/systemd/bin/cmux-start-sandbox-services /usr/local/lib/cmux/cmux-start-sandbox-services
 COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
@@ -1121,14 +1129,17 @@ COPY configs/systemd/ide.env.openvscode /etc/cmux/ide.env.openvscode
 COPY configs/systemd/ide.env.cmux-code /etc/cmux/ide.env.cmux-code
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
 COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+COPY packages/sandbox/agent-config /usr/share/cmux/agent-config
+COPY packages/sandbox/scripts/bootstrap-dind.sh /usr/local/bin/bootstrap-dind.sh
 
 # Configure IDE service based on IDE_PROVIDER
 RUN <<'EOF'
 set -eux
-chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/configure-cmux-code /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/configure-cmux-code /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-start-sandbox-services /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
 chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 chmod +x /usr/local/sbin/cmux-configure-memory
 chmod +x /usr/local/bin/code
+chmod +x /usr/local/bin/bootstrap-dind.sh
 touch /usr/local/lib/cmux/dockerd.flag
 mkdir -p /var/log/cmux
 mkdir -p /etc/systemd/system/multi-user.target.wants

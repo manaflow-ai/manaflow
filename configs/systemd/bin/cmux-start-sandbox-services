@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOG_DIR="/var/log/cmux"
+RUN_DIR="/var/run/cmux"
+mkdir -p "${LOG_DIR}" "${RUN_DIR}"
+
+WORKSPACE_MOUNT="${CMUX_WORKSPACE_MOUNT:-/workspace}"
+WORKSPACE_HOST_PATH="${CMUX_WORKSPACE_HOST_PATH:-}"
+WORKSPACE_TARGET="${CMUX_WORKSPACE_PATH:-}"
+
+if [ -n "${WORKSPACE_HOST_PATH}" ]; then
+  mkdir -p "$(dirname "${WORKSPACE_HOST_PATH}")"
+  if [ ! -e "${WORKSPACE_HOST_PATH}" ]; then
+    ln -sfn "${WORKSPACE_MOUNT}" "${WORKSPACE_HOST_PATH}"
+  fi
+fi
+
+if [ -n "${WORKSPACE_TARGET}" ]; then
+  mkdir -p "$(dirname "${WORKSPACE_TARGET}")"
+  ln -sfn "${WORKSPACE_TARGET}" /root/workspace
+else
+  ln -sfn "${WORKSPACE_MOUNT}" /root/workspace
+fi
+
+log() {
+  printf '[cmux-sandbox] %s\n' "$*" | tee -a "${LOG_DIR}/sandbox-services.log"
+}
+
+read_ide_provider() {
+  local env_file="/etc/cmux/ide.env"
+  if [ -f "${env_file}" ]; then
+    grep -E '^IDE_PROVIDER=' "${env_file}" | tail -n 1 | cut -d= -f2- | tr -d '\r'
+    return 0
+  fi
+  echo "openvscode"
+}
+
+start_service() {
+  local name="$1"
+  local pid_file="${RUN_DIR}/${name}.pid"
+  local log_file="${LOG_DIR}/${name}.log"
+  shift
+
+  if [ -f "${pid_file}" ]; then
+    local pid
+    pid="$(cat "${pid_file}" 2>/dev/null || true)"
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  log "starting ${name}"
+  nohup "$@" >>"${log_file}" 2>&1 &
+  echo $! > "${pid_file}"
+}
+
+IDE_PROVIDER="$(read_ide_provider)"
+export HOME=/root
+
+case "${IDE_PROVIDER}" in
+  cmux-code)
+    if [ -x /usr/local/lib/cmux/configure-cmux-code ]; then
+      /usr/local/lib/cmux/configure-cmux-code || true
+    fi
+    start_service "cmux-code" /app/cmux-code/bin/code-server-oss \
+      --host 0.0.0.0 \
+      --port 39378 \
+      --without-connection-token \
+      --disable-workspace-trust \
+      --disable-telemetry \
+      --telemetry-level off \
+      --verbose \
+      /root/workspace
+    ;;
+  coder)
+    if [ -x /usr/local/lib/cmux/configure-coder ]; then
+      /usr/local/lib/cmux/configure-coder || true
+    fi
+    start_service "coder" /app/code-server/bin/code-server \
+      --user-data-dir /root/.code-server \
+      --disable-workspace-trust \
+      --bind-addr 0.0.0.0:39378 \
+      /root/workspace
+    ;;
+  openvscode|*)
+    if [ -x /usr/local/lib/cmux/configure-openvscode ]; then
+      /usr/local/lib/cmux/configure-openvscode || true
+    fi
+    start_service "openvscode" /app/openvscode-server/bin/openvscode-server \
+      --host 0.0.0.0 \
+      --port 39378 \
+      --without-connection-token \
+      --disable-workspace-trust \
+      --disable-telemetry \
+      --disable-updates \
+      --profile default-profile \
+      --verbose \
+      /root/workspace
+    ;;
+esac
+
+start_service "cmux-proxy" /usr/local/bin/cmux-proxy --listen 0.0.0.0:39379
+
+if command -v Xtigervnc >/dev/null 2>&1; then
+  start_service "tigervnc" /usr/bin/Xtigervnc :1 -geometry 1920x1080 -depth 24 \
+    -localhost -SecurityTypes None -rfbport 5901 -AlwaysShared -AcceptSetDesktopSize=1 -nolisten tcp
+fi
+
+if command -v openbox >/dev/null 2>&1; then
+  DISPLAY=:1 start_service "openbox" /usr/bin/openbox
+fi
+
+if [ -x /usr/local/lib/cmux/cmux-start-chrome ]; then
+  DISPLAY=:1 CDP_TARGET_HOST=127.0.0.1 CDP_TARGET_PORT=39382 \
+    CHROME_USER_DATA_DIR=/root/.config/chrome \
+    start_service "chrome" /usr/local/lib/cmux/cmux-start-chrome
+fi
+
+if [ -x /usr/local/lib/cmux/cmux-cdp-proxy ]; then
+  CMUX_CDP_PROXY_PORT=39381 CMUX_CDP_TARGET_HOST=127.0.0.1 CMUX_CDP_TARGET_PORT=39382 \
+    CMUX_CDP_TARGET_HOST_HEADER=localhost:39382 \
+    start_service "cdp-proxy" /usr/local/lib/cmux/cmux-cdp-proxy
+fi
+
+if [ -x /usr/local/lib/cmux/cmux-vnc-proxy ]; then
+  start_service "vnc-proxy" /usr/local/lib/cmux/cmux-vnc-proxy
+fi
+
+WORKER_ID="${WORKER_ID:-${CMUX_SANDBOX_ID:-worker-$(date +%s)}}"
+NODE_ENV="${NODE_ENV:-production}"
+NODE_PATH="${NODE_PATH:-/builtins/build/node_modules}"
+WORKER_PORT="${WORKER_PORT:-39377}"
+IS_SANDBOX="${IS_SANDBOX:-true}"
+export WORKER_ID NODE_ENV NODE_PATH WORKER_PORT IS_SANDBOX
+
+if command -v node >/dev/null 2>&1; then
+  start_service "worker" /usr/bin/node /builtins/build/index.js
+fi
+
+log "sandbox services ready (provider=${IDE_PROVIDER})"

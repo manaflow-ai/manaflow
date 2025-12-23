@@ -7,10 +7,12 @@ import { getConvex } from "./utils/convexClient";
 import { serverLogger } from "./utils/fileLogger";
 import { getAuthHeaderJson, getAuthToken } from "./utils/requestContext";
 import { getWwwBaseUrl } from "./utils/server-env";
+import { LocalSandboxClient } from "./sandbox/localSandboxClient";
+import { LocalSandboxHost } from "./sandbox/localSandboxHost";
 
 const execAsync = promisify(exec);
 
-export type VSCodeProvider = "docker" | "morph" | "daytona" | "other";
+export type VSCodeProvider = "docker" | "morph" | "daytona" | "other" | "sandbox";
 
 export interface StopResult {
   success: boolean;
@@ -24,6 +26,7 @@ async function stopDockerContainer(containerName: string): Promise<void> {
     await execAsync(`docker stop ${containerName}`, { timeout: 15_000 });
     return;
   } catch (err) {
+    console.error(`Failed to stop Docker container ${containerName}`, err);
     // If docker stop failed, check if it's already exited/stopped
     try {
       const { stdout } = await execAsync(
@@ -33,8 +36,11 @@ async function stopDockerContainer(containerName: string): Promise<void> {
         // Consider success if the container is already stopped
         return;
       }
-    } catch {
-      // ignore check errors and rethrow original
+    } catch (checkError) {
+      console.error(
+        `Failed to check Docker container status for ${containerName}`,
+        checkError
+      );
     }
     throw err;
   }
@@ -128,6 +134,12 @@ export function stopContainersForRunsFromTree(
       typeof runId === "string"
     ) {
       targets.push({ provider: "morph", containerName: name, runId });
+    } else if (
+      provider === "sandbox" &&
+      typeof name === "string" &&
+      typeof runId === "string"
+    ) {
+      targets.push({ provider: "sandbox", containerName: name, runId });
     }
   }
 
@@ -163,6 +175,31 @@ export function stopContainersForRunsFromTree(
             provider: t.provider,
           };
         }
+        if (t.provider === "sandbox") {
+          const baseUrl = await LocalSandboxHost.getRunningBaseUrl();
+          if (!baseUrl) {
+            serverLogger.warn(
+              `Sandbox host not running; assuming sandbox ${t.containerName} is already stopped`
+            );
+            return {
+              success: true,
+              containerName: t.containerName,
+              provider: t.provider,
+            };
+          }
+
+          const sandboxId = t.containerName.startsWith("sandbox-")
+            ? t.containerName.slice("sandbox-".length)
+            : t.containerName;
+          const client = new LocalSandboxClient(baseUrl);
+          await client.deleteSandbox(sandboxId);
+          serverLogger.info(`Successfully stopped sandbox ${sandboxId}`);
+          return {
+            success: true,
+            containerName: t.containerName,
+            provider: t.provider,
+          };
+        }
         serverLogger.warn(
           `Unsupported provider '${t.provider}' for container ${t.containerName}`
         );
@@ -173,6 +210,10 @@ export function stopContainersForRunsFromTree(
           error: new Error("Unsupported provider"),
         };
       } catch (error) {
+        console.error(
+          `Failed to stop ${t.provider} container ${t.containerName}:`,
+          error
+        );
         serverLogger.error(
           `Failed to stop ${t.provider} container ${t.containerName}:`,
           error

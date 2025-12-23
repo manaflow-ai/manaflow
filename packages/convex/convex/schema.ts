@@ -249,6 +249,7 @@ const convexSchema = defineSchema({
           v.literal("docker"),
           v.literal("morph"),
           v.literal("daytona"),
+          v.literal("sandbox"),
           v.literal("other")
         ), // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
