@@ -8,12 +8,12 @@
     {
       "publisher": "openai",
       "name": "chatgpt",
-      "version": "0.5.55"
+      "version": "0.5.56"
     },
     {
       "publisher": "ms-vscode",
       "name": "vscode-typescript-next",
-      "version": "6.0.20251219"
+      "version": "6.0.20251221"
     },
     {
       "publisher": "ms-python",
@@ -27,12 +27,12 @@
     }
   ],
   "packages": {
-    "@openai/codex": "0.76.0",
-    "@anthropic-ai/claude-code": "2.0.74",
-    "@google/gemini-cli": "0.21.3",
-    "opencode-ai": "1.0.174",
-    "codebuff": "1.0.552",
+    "@openai/codex": "0.77.0",
+    "@anthropic-ai/claude-code": "2.0.75",
+    "@google/gemini-cli": "0.22.1",
+    "opencode-ai": "1.0.186",
+    "codebuff": "1.0.555",
     "@devcontainers/cli": "0.80.3",
-    "@sourcegraph/amp": "0.0.1766217674-gf10025"
+    "@sourcegraph/amp": "0.0.1766422320-g3e0eea"
   }
 }
