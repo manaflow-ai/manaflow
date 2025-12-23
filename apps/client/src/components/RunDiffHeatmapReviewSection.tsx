@@ -2,12 +2,12 @@ import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { useQueries } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
-import { GitDiffHeatmapReviewViewer } from "@/components/heatmap-diff-viewer";
+import {
+  GitDiffHeatmapReviewViewer,
+  type StreamFileState,
+} from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
-import type {
-  HeatmapModelOptionValue,
-  TooltipLanguageValue,
-} from "@/lib/heatmap-settings";
+import type { HeatmapModelOptionValue, TooltipLanguageValue } from "@/lib/heatmap-settings";
 import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
 
 export interface RunDiffHeatmapReviewSectionProps {
@@ -26,8 +26,9 @@ export interface RunDiffHeatmapReviewSectionProps {
   >;
   heatmapThreshold: number;
   heatmapColors: HeatmapColorSettings;
-  heatmapModel?: string | null;
-  heatmapTooltipLanguage?: string | null;
+  heatmapModel: HeatmapModelOptionValue;
+  heatmapTooltipLanguage: TooltipLanguageValue;
+  streamStateByFile?: Map<string, StreamFileState>;
   fileOutputs?: Array<{
     filePath: string;
     codexReviewOutput: unknown;
@@ -70,6 +71,7 @@ export function RunDiffHeatmapReviewSection(
     heatmapColors,
     heatmapModel,
     heatmapTooltipLanguage,
+    streamStateByFile,
     fileOutputs,
     onHeatmapThresholdChange,
     onHeatmapColorsChange,
@@ -112,42 +114,6 @@ export function RunDiffHeatmapReviewSection(
     shouldPrefix: boolean;
   }>({ queryData: [], repoFullNames: [], shouldPrefix: false });
 
-  const isPending = queries.some(
-    (query) => query.isPending || query.isFetching,
-  );
-  const firstError = queries.find((query) => query.isError);
-
-  if (!canFetch) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          Missing repository or branch information for diff.
-        </div>
-      </div>
-    );
-  }
-
-  if (isPending) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          Loading diffs...
-        </div>
-      </div>
-    );
-  }
-
-  if (firstError) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-500 dark:text-red-400 text-sm select-none">
-          Failed to load diffs.
-          <pre>{JSON.stringify(firstError.error)}</pre>
-        </div>
-      </div>
-    );
-  }
-
   const shouldPrefix = withRepoPrefix ?? repoFullNames.length > 1;
 
   const currentQueryData = queries.map((q) => q.data);
@@ -187,6 +153,7 @@ export function RunDiffHeatmapReviewSection(
     <GitDiffHeatmapReviewViewer
       diffs={combinedDiffs}
       fileOutputs={fileOutputs}
+      streamStateByFile={streamStateByFile}
       primaryRepoFullName={repoFullName}
       shouldPrefixDiffs={shouldPrefix}
       heatmapThreshold={heatmapThreshold}

@@ -1,8 +1,10 @@
 [Unit]
 Description=Cmux Services Target
-Requires=cmux-ide.service cmux-worker.service cmux-devtools.service cmux-vnc-proxy.service cmux-tigervnc.service
-Wants=cmux-dockerd.service cmux-devtools.service cmux-vnc-proxy.service cmux-cdp-proxy.service cmux-tigervnc.service
-After=cmux-ide.service cmux-dockerd.service cmux-devtools.service cmux-vnc-proxy.service cmux-tigervnc.service
+# Core services required for operation
+Requires=cmux-ide.service cmux-worker.service cmux-vnc-proxy.service cmux-tigervnc.service
+# Optional services (cmux-devtools and cmux-cdp-proxy require X11/openbox, added via .wants/ symlinks in Morph only)
+Wants=cmux-dockerd.service cmux-vnc-proxy.service cmux-tigervnc.service cmux-pty.service
+After=cmux-ide.service cmux-dockerd.service cmux-vnc-proxy.service cmux-tigervnc.service
 
 [Install]
 WantedBy=multi-user.target

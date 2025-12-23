@@ -254,6 +254,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
             rows: 24,
             cwd: "/root/workspace",
             command,
+            backend: "tmux",
             taskRunContext: {
               taskRunToken: "dev-server-placeholder-token",
               prompt: body.taskDescription,

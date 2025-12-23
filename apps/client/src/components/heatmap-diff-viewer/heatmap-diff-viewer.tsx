@@ -69,6 +69,8 @@ import {
 export type HeatmapDiffViewerProps = {
   /** The raw git diff string */
   diffText: string;
+  /** Pre-parsed diff data (optional, avoids parsing on each render) */
+  parsedDiff?: FileData | null;
   /** The filename being displayed */
   filename: string;
   /** File status: added, removed, modified, renamed, etc. */
@@ -81,6 +83,8 @@ export type HeatmapDiffViewerProps = {
   reviewHeatmap?: ReviewHeatmapLine[];
   /** Threshold for filtering heatmap entries (0-1) */
   heatmapThreshold?: number;
+  /** Precomputed heatmap for this diff (optional, avoids recalculation) */
+  diffHeatmap?: DiffHeatmap | null;
   /** Custom heatmap colors */
   heatmapColors?: HeatmapColorSettings;
   /** Focused line for navigation */
@@ -509,12 +513,14 @@ function HeatmapGutterTooltip({
 
 export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
   diffText,
+  parsedDiff: providedParsedDiff,
   filename,
   status,
   additions = 0,
   deletions = 0,
   reviewHeatmap = [],
   heatmapThreshold = 0,
+  diffHeatmap: providedDiffHeatmap,
   heatmapColors = DEFAULT_HEATMAP_COLORS,
   focusedLine = null,
   autoTooltipLine = null,
@@ -529,6 +535,9 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
 
   // Parse the diff
   const parsedDiff = useMemo<FileData | null>(() => {
+    if (providedParsedDiff !== undefined) {
+      return providedParsedDiff;
+    }
     if (!diffText) {
       return null;
     }
@@ -542,23 +551,29 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
       console.error("Failed to parse diff:", error);
       return null;
     }
-  }, [diffText]);
+  }, [diffText, providedParsedDiff]);
 
   // Build heatmap artifacts
   const diffHeatmapArtifacts = useMemo(() => {
+    if (providedDiffHeatmap !== undefined) {
+      return null;
+    }
     if (!parsedDiff || reviewHeatmap.length === 0) {
       return null;
     }
     return prepareDiffHeatmapArtifacts(parsedDiff, reviewHeatmap);
-  }, [parsedDiff, reviewHeatmap]);
+  }, [parsedDiff, providedDiffHeatmap, reviewHeatmap]);
 
   // Render the heatmap with threshold
   const diffHeatmap = useMemo<DiffHeatmap | null>(() => {
+    if (providedDiffHeatmap !== undefined) {
+      return providedDiffHeatmap;
+    }
     if (!diffHeatmapArtifacts) {
       return null;
     }
     return renderDiffHeatmapFromArtifacts(diffHeatmapArtifacts, heatmapThreshold);
-  }, [diffHeatmapArtifacts, heatmapThreshold]);
+  }, [diffHeatmapArtifacts, heatmapThreshold, providedDiffHeatmap]);
 
   // Infer language for syntax highlighting
   const language = useMemo(() => inferLanguage(filename), [filename]);
@@ -842,7 +857,7 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
             onClick={handleToggleCollapse}
             className={cn(
               "sticky top-[var(--cmux-diff-header-offset,0px)] z-10 flex w-full items-center gap-0",
-              "border-neutral-200 dark:border-neutral-800",
+              "border-t border-neutral-200 dark:border-neutral-700",
               "bg-neutral-50 dark:bg-neutral-900/95",
               "px-3.5 py-2.5 text-left font-sans font-medium transition",
               "hover:bg-neutral-100 dark:hover:bg-neutral-800/80",
@@ -874,25 +889,24 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
               </span>
             </div>
 
-            {isLoading ? (
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center">
-                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="bottom"
-                  align="start"
-                  showArrow={false}
-                  className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                >
-                  AI review in progress...
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-
             <div className="flex items-center gap-2 text-[13px] font-medium">
+              {isLoading ? (
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center">
+                      <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="bottom"
+                    align="start"
+                    showArrow={false}
+                    className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                  >
+                    AI review in progress...
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
               <span className="text-emerald-600 dark:text-emerald-400">
                 +{additions}
               </span>

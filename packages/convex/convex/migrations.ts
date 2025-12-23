@@ -65,6 +65,19 @@ export const clearTaskRunsLog = migrations.define({
   },
 });
 
+// Remove deprecated crownModel and crownSystemPrompt fields from workspaceSettings
+export const dropWorkspaceSettingsCrownFields = migrations.define({
+  table: "workspaceSettings",
+  migrateOne: (_ctx, doc) => {
+    const d = doc as unknown as Record<string, unknown>;
+    if (d.crownModel !== undefined || d.crownSystemPrompt !== undefined) {
+      return { crownModel: undefined, crownSystemPrompt: undefined } as Partial<
+        typeof doc
+      >;
+    }
+  },
+});
+
 // Generic runner; choose migrations from CLI or dashboard when invoking
 export const run = migrations.runner();
 

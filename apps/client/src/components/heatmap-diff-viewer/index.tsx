@@ -8,5 +8,9 @@ export {
   type GitDiffViewerWithHeatmapProps,
   type DiffViewerControls,
 } from "./git-diff-viewer-with-heatmap";
-export { GitDiffHeatmapReviewViewer } from "./git-diff-review-viewer";
+export {
+  GitDiffHeatmapReviewViewer,
+  type StreamFileState,
+  type StreamFileStatus,
+} from "./git-diff-review-viewer";
 export { buildHeatmapGradientStyles, type HeatmapColorSettings } from "./heatmap-gradient";

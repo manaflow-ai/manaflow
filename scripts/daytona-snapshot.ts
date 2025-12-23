@@ -162,6 +162,7 @@ try {
         cols: 80,
         rows: 24,
         cwd: "/",
+        backend: "tmux",
         taskRunContext: {
           taskRunToken: "daytona-snapshot-token",
           prompt: prompt,

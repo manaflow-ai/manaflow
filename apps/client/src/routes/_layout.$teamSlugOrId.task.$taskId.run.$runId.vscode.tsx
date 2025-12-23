@@ -9,7 +9,7 @@ import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { getTaskRunPersistKey } from "@/lib/persistent-webview-keys";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
+import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
   preloadTaskRunIframes,
   TASK_RUN_IFRAME_ALLOW,
@@ -62,12 +62,14 @@ export const Route = createFileRoute(
         ),
       ]);
       if (result) {
-        const workspaceUrl = result.vscode?.workspaceUrl;
+        const workspaceUrl = getWorkspaceUrl(
+          result.vscode?.workspaceUrl,
+          result.vscode?.provider,
+          localServeWeb.baseUrl
+        );
         await preloadTaskRunIframes([
           {
-            url: workspaceUrl
-              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
-              : "",
+            url: workspaceUrl ?? "",
             taskRunId: opts.params.runId,
           },
         ]);
@@ -84,12 +86,11 @@ function VSCodeComponent() {
     id: taskRunId,
   });
 
-  const workspaceUrl = taskRun?.vscode?.workspaceUrl
-    ? toProxyWorkspaceUrl(
-        taskRun.vscode.workspaceUrl,
-        localServeWeb.data?.baseUrl
-      )
-    : null;
+  const workspaceUrl = getWorkspaceUrl(
+    taskRun?.vscode?.workspaceUrl,
+    taskRun?.vscode?.provider,
+    localServeWeb.data?.baseUrl
+  );
   const disablePreflight = taskRun?.vscode?.workspaceUrl
     ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
     : false;

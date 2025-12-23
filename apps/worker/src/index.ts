@@ -17,10 +17,12 @@ import {
   type WorkerToServerEventNames,
   type WorkerToServerEvents,
 } from "@cmux/shared";
+import WebSocket from "ws";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import type { Id } from "@cmux/convex/dataModel";
 
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
+import { CmuxPtyClient } from "@cmux/shared/cmux-pty-client";
 import { startAmpProxy } from "@cmux/shared/src/providers/amp/start-amp-proxy.ts";
 import { handleWorkerTaskCompletion } from "./crown/workflow";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -628,6 +630,9 @@ managementIO.on("connection", (socket) => {
         startupCommands: validated.startupCommands,
         postStartCommands: validated.postStartCommands,
         taskRunContext: validated.taskRunContext,
+        backend: validated.backend,
+        ptyCommand: validated.ptyCommand,
+        ptyArgs: validated.ptyArgs,
       });
 
       callback({
@@ -1187,6 +1192,13 @@ vscodeIO.on("connection", (socket) => {
   });
 });
 
+// =============================================================================
+// PTY Backend (cmux-pty server)
+// =============================================================================
+
+const PTY_SERVER_URL = process.env.PTY_SERVER_URL || "http://localhost:39383";
+const ptyClient = new CmuxPtyClient(PTY_SERVER_URL);
+
 // Create terminal helper function
 async function createTerminal(
   terminalId: string,
@@ -1203,6 +1215,10 @@ async function createTerminal(
     startupCommands?: string[];
     postStartCommands?: PostStartCommand[];
     taskRunContext: WorkerTaskRunContext;
+    backend?: "tmux" | "cmux-pty";
+    // cmux-pty specific: the command to run in the PTY shell
+    ptyCommand?: string;
+    ptyArgs?: string[];
   }
 ): Promise<void> {
   const {
@@ -1215,6 +1231,8 @@ async function createTerminal(
     startupCommands = [],
     postStartCommands = [],
     taskRunContext,
+    backend = "tmux",
+    ptyCommand,
   } = options;
 
   const taskRunToken = taskRunContext.taskRunToken;
@@ -1235,8 +1253,6 @@ async function createTerminal(
     });
   }
 
-  const shell = command || (platform() === "win32" ? "powershell.exe" : "bash");
-
   log("INFO", `[createTerminal] Creating terminal ${terminalId}:`, {
     cols,
     rows,
@@ -1244,8 +1260,186 @@ async function createTerminal(
     command,
     args,
     envKeys: Object.keys(env),
-    shell,
+    backend,
   });
+
+  // ==========================================================================
+  // cmux-pty backend: Use cmux-pty server instead of tmux
+  // ==========================================================================
+  if (backend === "cmux-pty") {
+    // Check if cmux-pty server is available, fall back to tmux if not
+    const ptyAvailable = await ptyClient.health();
+    if (!ptyAvailable) {
+      log("INFO", `[createTerminal] cmux-pty server not available, falling back to tmux for ${terminalId}`);
+      // Fall through to tmux backend below
+    } else {
+      log("INFO", `[createTerminal] Using cmux-pty backend for ${terminalId}`);
+
+      try {
+        // 1. Merge environment variables
+        const inheritedEnvEntries = Object.entries(process.env).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string"
+        );
+        const inheritedEnv: Record<string, string> =
+          Object.fromEntries(inheritedEnvEntries);
+
+        const ptyEnv: Record<string, string> = {
+          ...inheritedEnv,
+          ...env,
+          WORKER_ID,
+          TERM: "xterm-256color",
+          SHELL: "/bin/bash",
+          USER: process.env.USER || "root",
+          HOME: process.env.HOME || "/root",
+          PATH: `/root/.bun/bin:${process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}`,
+          ...(process.env.GIT_CONFIG_GLOBAL
+            ? { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
+            : {}),
+          ...(process.env.GIT_SSH_COMMAND
+            ? { GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND }
+            : {}),
+        };
+
+        // 2. Create PTY session (spawns shell)
+        const session = await ptyClient.createSession({
+          shell: "/bin/bash",
+          cwd: cwd || "/root/workspace",
+          cols,
+          rows,
+          env: ptyEnv,
+          name: terminalId,
+          metadata: { location: "editor", type: "agent", managed: true },
+        });
+
+        log("INFO", `[createTerminal] PTY session created: ${session.id}`, {
+          terminalId,
+          sessionId: session.id,
+          pid: session.pid,
+        });
+
+        // 3. Send startup commands as input
+        for (const cmd of startupCommands) {
+          log("INFO", `[createTerminal] Sending startup command: ${cmd}`);
+          await ptyClient.sendInput(session.id, cmd + "\n");
+        }
+
+        // 4. Send the agent command (uses ptyCommand which is the clean command for cmux-pty)
+        if (ptyCommand) {
+          log("INFO", `[createTerminal] Sending agent command: ${ptyCommand}`);
+          await ptyClient.sendInput(session.id, ptyCommand + "\n");
+        }
+
+        // 5. Send post-start commands after a delay
+        if (postStartCommands.length > 0) {
+          setTimeout(async () => {
+            for (const cmd of postStartCommands) {
+              log("INFO", `[createTerminal] Sending post-start command: ${cmd.description}`);
+              try {
+                await ptyClient.sendInput(session.id, cmd.command + "\n");
+              } catch (error) {
+                log("ERROR", `[createTerminal] Failed to send post-start command: ${cmd.description}`, error);
+                if (!cmd.continueOnError) {
+                  break;
+                }
+              }
+            }
+          }, 1000);
+        }
+
+        // 6. Set up completion detection (same as tmux backend)
+        const processStartTime = Date.now();
+        const agentConfig = options.agentModel
+          ? AGENT_CONFIGS.find((c) => c.name === options.agentModel)
+          : undefined;
+
+        if (!agentConfig && options.agentModel) {
+          log("WARN", `[cmux-pty] Agent config not found for ${options.agentModel}`, {
+            agentModel: options.agentModel,
+            availableConfigs: AGENT_CONFIGS.map((c) => c.name),
+          });
+        }
+
+        if (options.taskRunId && agentConfig?.completionDetector) {
+          log(
+            "INFO",
+            `[cmux-pty] Setting up completion detector for task ${options.taskRunId}`,
+            {
+              taskRunId: options.taskRunId,
+              agentModel: options.agentModel,
+              hasDetector: !!agentConfig.completionDetector,
+            }
+          );
+
+          agentConfig
+            .completionDetector(options.taskRunId)
+            .then(async () => {
+              log(
+                "INFO",
+                `[cmux-pty] Completion detector resolved for task ${options.taskRunId}`
+              );
+
+              if (!taskRunToken) {
+                log("ERROR", "[cmux-pty] Missing task run token for crown workflow", {
+                  taskRunId: options.taskRunId,
+                });
+                return;
+              }
+
+              if (!options.taskRunId) {
+                log("ERROR", "[cmux-pty] Missing task run ID for crown workflow", {
+                  taskRunId: options.taskRunId,
+                });
+                return;
+              }
+
+              try {
+                await handleWorkerTaskCompletion({
+                  taskRunId: options.taskRunId,
+                  token: taskRunToken,
+                  prompt: promptValue,
+                  convexUrl: convexUrl ?? undefined,
+                  agentModel: options.agentModel,
+                  elapsedMs: Date.now() - processStartTime,
+                });
+
+                log("INFO", `[cmux-pty] Crown workflow completed for ${options.taskRunId}`, {
+                  taskRunId: options.taskRunId,
+                  agentModel: options.agentModel,
+                });
+              } catch (error) {
+                log(
+                  "ERROR",
+                  `[cmux-pty] Failed to handle crown workflow for ${options.taskRunId}`,
+                  {
+                    taskRunId: options.taskRunId,
+                    agentModel: options.agentModel,
+                    error: error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined,
+                  }
+                );
+              }
+            })
+            .catch((e) => {
+              log(
+                "ERROR",
+                `[cmux-pty] Completion detector error for ${options.agentModel}: ${String(e)}`
+              );
+            });
+        }
+
+        log("INFO", `[createTerminal] cmux-pty terminal creation complete: ${terminalId}`);
+        return;
+      } catch (error) {
+        log("ERROR", `[createTerminal] Failed to create cmux-pty terminal: ${terminalId}`, error);
+        throw error;
+      }
+    }
+  }
+
+  // ==========================================================================
+  // tmux backend (default): Original behavior
+  // ==========================================================================
+  const shell = command || (platform() === "win32" ? "powershell.exe" : "bash");
 
   // Prepare the spawn command and args
   let spawnCommand: string;

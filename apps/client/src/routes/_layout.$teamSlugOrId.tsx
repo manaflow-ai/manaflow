@@ -9,7 +9,8 @@ import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
 import { api } from "@cmux/convex/api";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { Suspense, useEffect, useMemo } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
@@ -58,7 +59,13 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
 
 function LayoutComponent() {
   const { teamSlugOrId } = Route.useParams();
-  const tasks = useQuery(api.tasks.get, { teamSlugOrId });
+  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
+  // that cause excessive re-renders cascading to all child components.
+  const tasksQuery = useRQ({
+    ...convexQuery(api.tasks.get, { teamSlugOrId }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const tasks = tasksQuery.data;
 
   // Sort tasks by creation date (newest first) and take the latest 5
   const recentTasks = useMemo(() => {

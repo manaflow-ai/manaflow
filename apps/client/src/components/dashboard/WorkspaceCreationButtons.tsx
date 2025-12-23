@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import {
   Tooltip,
   TooltipContent,
@@ -13,7 +14,7 @@ import type {
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
 import { useMutation } from "convex/react";
-import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
+import { Cloud, Loader2, Monitor } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
@@ -203,29 +204,31 @@ export function WorkspaceCreationButtons({
 
   return (
     <div className="flex items-center gap-2 mb-3">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={handleCreateLocalWorkspace}
-            disabled={!canCreateLocal || isCreatingLocal}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isCreatingLocal ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <FolderOpen className="w-3.5 h-3.5" />
-            )}
-            <span>Create Local Workspace</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {!selectedProject.length
-            ? "Select a repository first"
-            : isEnvSelected
-              ? "Switch to repository mode (not environment)"
-              : "Create workspace from selected repository"}
-        </TooltipContent>
-      </Tooltip>
+      {!env.NEXT_PUBLIC_WEB_MODE && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={handleCreateLocalWorkspace}
+              disabled={!canCreateLocal || isCreatingLocal}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isCreatingLocal ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Monitor className="w-3.5 h-3.5" />
+              )}
+              <span>Create Local Workspace</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {!selectedProject.length
+              ? "Select a repository first"
+              : isEnvSelected
+                ? "Switch to repository mode (not environment)"
+                : "Create workspace from selected repository"}
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       <Tooltip>
         <TooltipTrigger asChild>
@@ -237,7 +240,7 @@ export function WorkspaceCreationButtons({
             {isCreatingCloud ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <ServerIcon className="w-3.5 h-3.5" />
+              <Cloud className="w-4 h-4" />
             )}
             <span>Create Cloud Workspace</span>
           </button>

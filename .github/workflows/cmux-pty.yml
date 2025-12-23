@@ -1,15 +1,15 @@
-name: cmux-xterm (Rust)
+name: cmux-pty (Rust)
 
 on:
   push:
     branches: [main]
     paths:
-      - crates/cmux-xterm/**
-      - .github/workflows/cmux-xterm.yml
+      - crates/cmux-pty/**
+      - .github/workflows/cmux-pty.yml
   pull_request:
     paths:
-      - crates/cmux-xterm/**
-      - .github/workflows/cmux-xterm.yml
+      - crates/cmux-pty/**
+      - .github/workflows/cmux-pty.yml
   workflow_dispatch:
 
 jobs:
@@ -30,16 +30,16 @@ jobs:
       - name: Cache cargo registry + build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/cmux-xterm
+          workspaces: crates/cmux-pty
 
       - name: Format
         run: cargo fmt --all -- --check
-        working-directory: crates/cmux-xterm
+        working-directory: crates/cmux-pty
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-        working-directory: crates/cmux-xterm
+        working-directory: crates/cmux-pty
 
       - name: Tests
         run: cargo test --all-features --locked
-        working-directory: crates/cmux-xterm
+        working-directory: crates/cmux-pty

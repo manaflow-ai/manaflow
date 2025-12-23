@@ -31,7 +31,7 @@ trap 'rm -f "$TMPFILE"' EXIT
 # Run codex with unbuffer to capture TTY output (script doesn't work without real TTY)
 unbuffer codex \
   --dangerously-bypass-approvals-and-sandbox \
-  --model gpt-5.2 \
+  --model gpt-5.2-codex \
   -c model_reasoning_effort="high" \
   review --base "Review compared to main, including including staged, unstaged, and untracked changes." > "$TMPFILE" 2>&1 || true
 
