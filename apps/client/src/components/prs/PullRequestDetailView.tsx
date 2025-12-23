@@ -22,7 +22,7 @@ import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
 import clsx from "clsx";
@@ -304,6 +304,25 @@ export function PullRequestDetailView({
       collapseChecks: collapseAllChecks,
     } : null);
   }, [expandAllChecks, collapseAllChecks]);
+
+  // Git diff query for heatmap streaming review
+  const baseRef = currentPR ? normalizeGitRef(currentPR.baseRef) : null;
+  const headRef = currentPR ? normalizeGitRef(currentPR.headRef) : null;
+  const diffQuery = useRQ({
+    ...gitDiffQueryOptions({
+      repoFullName: currentPR?.repoFullName ?? "",
+      baseRef: baseRef ?? "",
+      headRef: headRef ?? "",
+    }),
+    enabled: Boolean(currentPR?.repoFullName && baseRef && headRef),
+  });
+
+  const fileDiffsForReview = useMemo(() => {
+    if (!diffQuery.data) {
+      return null;
+    }
+    return convertDiffsToFileDiffs(diffQuery.data);
+  }, [diffQuery.data]);
 
   // Heatmap settings state
   const workspaceSettingsData = useConvexQuery(api.workspaceSettings.get, { teamSlugOrId });
@@ -643,6 +662,55 @@ export function PullRequestDetailView({
     };
   }, []);
 
+  // Auto-trigger the simple review when diff data and settings are ready
+  // Only trigger if there's no cached fileOutputs (KV cache hit)
+  const hasFileOutputs = fileOutputs && fileOutputs.length > 0;
+  useEffect(() => {
+    if (!currentPR?.repoFullName || !baseRef || !headRef) {
+      return;
+    }
+    if (diffQuery.isLoading || workspaceSettingsData === undefined) {
+      return;
+    }
+    if (!fileDiffsForReview || fileDiffsForReview.length === 0) {
+      return;
+    }
+    // Skip streaming if we already have cached results
+    if (hasFileOutputs) {
+      return;
+    }
+
+    const diffKey = [
+      currentPR.repoFullName,
+      baseRef,
+      headRef,
+      String(diffQuery.dataUpdatedAt),
+    ].join("|");
+    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
+    const requestKey = `${diffKey}|${settingsKey}`;
+
+    void startSimpleReview({
+      fileDiffs: fileDiffsForReview,
+      model: heatmapModel,
+      language: heatmapTooltipLanguage,
+      requestKey,
+      prDiffLabel: diffLabel,
+    });
+  }, [
+    baseRef,
+    currentPR?.repoFullName,
+    diffLabel,
+    diffQuery.dataUpdatedAt,
+    diffQuery.isLoading,
+    fileDiffsForReview,
+    hasFileOutputs,
+    headRef,
+    heatmapModel,
+    heatmapTooltipLanguage,
+    startSimpleReview,
+    workspaceSettingsData,
+  ]);
+
   const [shouldShowPrMissingState, setShouldShowPrMissingState] = useState(false);
   const [shouldShowDefinitiveMissingState, setShouldShowDefinitiveMissingState] = useState(false);
 
@@ -967,6 +1035,7 @@ export function PullRequestDetailView({
                   ref2={normalizeGitRef(currentPR.headRef)}
                   onControlsChange={handleDiffControlsChange}
                   fileOutputs={fileOutputs ?? undefined}
+                  streamStateByFile={streamStateByFile}
                   heatmapThreshold={heatmapThreshold}
                   heatmapColors={heatmapColors}
                   heatmapModel={heatmapModel}
