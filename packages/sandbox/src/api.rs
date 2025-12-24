@@ -1,11 +1,12 @@
 use crate::errors::{ErrorBody, SandboxError, SandboxResult};
 use crate::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, HealthResponse, HostEvent, NotificationLevel,
-    NotificationLogEntry, NotificationRequest, OpenUrlRequest, PruneRequest, PruneResponse,
-    PrunedItem, SandboxSummary,
+    AwaitReadyRequest, AwaitReadyResponse, CreateSandboxRequest, ExecRequest, ExecResponse,
+    HealthResponse, HostEvent, NotificationLevel, NotificationLogEntry, NotificationRequest,
+    OpenUrlRequest, PruneRequest, PruneResponse, PrunedItem, SandboxSummary, ServiceReadiness,
 };
 use crate::notifications::NotificationStore;
 use crate::service::{AppState, GhResponseRegistry, HostEventSender, SandboxService};
+use crate::vnc_proxy::proxy_vnc_websocket;
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -16,6 +17,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use utoipa::OpenApi as UtoipaOpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -53,6 +55,7 @@ fn default_tty() -> bool {
         list_notifications,
         send_notification,
         prune_orphaned,
+        await_ready,
     ),
     components(schemas(
         CreateSandboxRequest,
@@ -69,7 +72,10 @@ fn default_tty() -> bool {
         OpenUrlRequest,
         PruneRequest,
         PruneResponse,
-        PrunedItem
+        PrunedItem,
+        AwaitReadyRequest,
+        AwaitReadyResponse,
+        ServiceReadiness
     )),
     tags((name = "sandboxes", description = "Manage bubblewrap-based sandboxes"))
 )]
@@ -104,6 +110,7 @@ pub fn build_router(
         )
         .route("/sandboxes/{id}/attach", any(attach_sandbox))
         .route("/sandboxes/{id}/proxy", any(proxy_sandbox))
+        .route("/sandboxes/{id}/await-ready", post(await_ready))
         // Multiplexed WebSocket endpoint - single connection for all PTY sessions
         .route("/mux/attach", any(mux_attach))
         // Open URL on host - used by sandboxed processes to open links
@@ -296,6 +303,12 @@ async fn subdomain_proxy(
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     };
 
+    // NOTE: We intentionally allow access to any port inside the sandbox.
+    // This enables users to run dev servers (e.g., vite on :5173, next on :3000)
+    // and access them via subdomain routing (e.g., 0-5173.lvh.me:46833).
+    // Security is handled at the sandbox network level - each sandbox has its own
+    // isolated network namespace and can only be reached through this proxy.
+
     // Find sandbox by index
     let sandboxes = match state.service.list().await {
         Ok(s) => s,
@@ -319,15 +332,42 @@ async fn subdomain_proxy(
     };
 
     let sandbox_ip = sandbox.network.sandbox_ip.clone();
-    let path_and_query = req
-        .uri()
+
+    // Extract parts from request before consuming body
+    let (parts, body) = req.into_parts();
+    let path_and_query = parts
+        .uri
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/")
         .to_string();
+    let method = parts.method;
 
-    // Check if this is a WebSocket upgrade (for noVNC/websockify)
+    // Check if this is a WebSocket upgrade
     if let Ok(ws) = ws {
+        // For noVNC port (39380), use our native Rust VNC proxy with TCP_NODELAY
+        // The VNC server runs on port 5900 + display_number
+        if port == 39380 {
+            let vnc_port = sandbox.display.as_ref().map(|d| d.vnc_port).unwrap_or(5910); // Default to display :10
+
+            let vnc_addr: SocketAddr = format!("{}:{}", sandbox_ip, vnc_port)
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([10, 201, 0, 2], vnc_port)));
+
+            tracing::info!(
+                sandbox_index = index,
+                vnc_addr = %vnc_addr,
+                "VNC WebSocket proxy (native Rust, TCP_NODELAY)"
+            );
+
+            return ws.on_upgrade(move |client_socket| async move {
+                if let Err(e) = proxy_vnc_websocket(client_socket, vnc_addr).await {
+                    tracing::error!("VNC proxy error: {e}");
+                }
+            });
+        }
+
+        // For other ports, use generic WebSocket proxy
         tracing::info!(
             sandbox_index = index,
             port = port,
@@ -344,7 +384,68 @@ async fn subdomain_proxy(
         });
     }
 
-    // HTTP reverse proxy
+    // For noVNC port (39380), serve static files from /usr/share/novnc
+    if port == 39380 {
+        use std::path::Path;
+
+        let path = if path_and_query == "/" || path_and_query.is_empty() {
+            "/vnc.html"
+        } else {
+            path_and_query.split('?').next().unwrap_or(&path_and_query)
+        };
+
+        // Sanitize path to prevent directory traversal attacks
+        let base_dir = Path::new("/usr/share/novnc");
+        let requested = base_dir.join(path.trim_start_matches('/'));
+        let canonical = match requested.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                return (StatusCode::NOT_FOUND, "File not found").into_response();
+            }
+        };
+
+        // Verify the canonical path is still under the base directory
+        if !canonical.starts_with(base_dir) {
+            tracing::warn!(path = %path, "blocked directory traversal attempt");
+            return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+        }
+
+        let file_path = canonical.to_string_lossy().to_string();
+        tracing::debug!(file_path = %file_path, "serving noVNC static file");
+
+        match tokio::fs::read(&file_path).await {
+            Ok(contents) => {
+                let content_type = match file_path.rsplit('.').next() {
+                    Some("html") => "text/html; charset=utf-8",
+                    Some("js") => "application/javascript",
+                    Some("css") => "text/css",
+                    Some("png") => "image/png",
+                    Some("svg") => "image/svg+xml",
+                    Some("ico") => "image/x-icon",
+                    _ => "application/octet-stream",
+                };
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", content_type)
+                    .header("Cache-Control", "public, max-age=3600")
+                    .body(Body::from(contents))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+            Err(_) => {
+                return (StatusCode::NOT_FOUND, "File not found").into_response();
+            }
+        }
+    }
+
+    // HTTP reverse proxy - collect request body
+    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!("Failed to read request body: {e}");
+            return (StatusCode::BAD_REQUEST, "Failed to read request body").into_response();
+        }
+    };
+
     let target_url = format!("http://{}:{}{}", sandbox_ip, port, path_and_query);
 
     tracing::info!(
@@ -352,12 +453,18 @@ async fn subdomain_proxy(
         port = port,
         sandbox_ip = %sandbox_ip,
         target_url = %target_url,
+        body_len = body_bytes.len(),
         "subdomain HTTP proxy"
     );
 
     // Build the proxied request with matching method
-    let client = reqwest::Client::new();
-    let method = req.method().clone();
+    // Use HTTP/1.1 only for compatibility with all upstream servers
+    let client = reqwest::Client::builder()
+        .http1_only()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let proxy_req = client.request(
         reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET),
         &target_url,
@@ -377,14 +484,38 @@ async fn subdomain_proxy(
         }
     }
 
+    // Attach request body
+    let proxy_req = proxy_req.body(body_bytes);
+
+    tracing::debug!("sending proxy request to {}", target_url);
     match proxy_req.send().await {
         Ok(resp) => {
             let status = StatusCode::from_u16(resp.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-            let mut response = axum::response::Response::builder().status(status);
+            tracing::debug!("proxy response status: {}", status);
 
-            // Copy headers from upstream response
+            // Build response with filtered headers
+            let mut response = Response::builder().status(status);
+
+            // Copy headers from upstream, filtering out hop-by-hop headers
+            // that shouldn't be forwarded by proxies (RFC 2616 Section 13.5.1)
+            const HOP_BY_HOP: &[&str] = &[
+                "connection",
+                "keep-alive",
+                "proxy-authenticate",
+                "proxy-authorization",
+                "te",
+                "trailer",
+                "transfer-encoding",
+                "upgrade",
+                "content-length", // We'll set our own after buffering the body
+            ];
+
             for (key, value) in resp.headers() {
+                let key_lower = key.as_str().to_lowercase();
+                if HOP_BY_HOP.contains(&key_lower.as_str()) {
+                    continue;
+                }
                 if let Ok(name) = axum::http::header::HeaderName::try_from(key.as_str()) {
                     if let Ok(val) = axum::http::header::HeaderValue::from_bytes(value.as_bytes()) {
                         response = response.header(name, val);
@@ -392,11 +523,15 @@ async fn subdomain_proxy(
                 }
             }
 
-            // Stream the body
+            // Read the body
             match resp.bytes().await {
-                Ok(body) => response
-                    .body(Body::from(body))
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+                Ok(body) => {
+                    tracing::debug!("proxy response body size: {} bytes", body.len());
+                    response.body(Body::from(body)).unwrap_or_else(|e| {
+                        tracing::error!("Failed to build response: {e}");
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    })
+                }
                 Err(e) => {
                     tracing::error!("Failed to read proxy response body: {e}");
                     StatusCode::BAD_GATEWAY.into_response()
@@ -419,12 +554,19 @@ async fn proxy_websocket(
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use futures::{SinkExt, StreamExt};
+    use tokio::net::TcpStream;
     use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
-    let url = format!("ws://{}:{}{}", sandbox_ip, port, path);
+    let addr = format!("{}:{}", sandbox_ip, port);
+    let url = format!("ws://{}{}", addr, path);
     tracing::debug!("Connecting to upstream WebSocket: {}", url);
 
-    let (upstream_ws, _) = tokio_tungstenite::connect_async(&url).await?;
+    // Create TCP connection with TCP_NODELAY for low latency
+    let stream = TcpStream::connect(&addr).await?;
+    stream.set_nodelay(true)?;
+
+    // Upgrade to WebSocket
+    let (upstream_ws, _) = tokio_tungstenite::client_async(&url, stream).await?;
     let (mut upstream_sink, mut upstream_stream) = upstream_ws.split();
 
     let (mut client_sink, mut client_stream) = client_socket.split();
@@ -680,6 +822,27 @@ async fn prune_orphaned(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/sandboxes/{id}/await-ready",
+    request_body = AwaitReadyRequest,
+    params(
+        ("id" = String, Path, description = "Sandbox ID")
+    ),
+    responses(
+        (status = 200, description = "Service readiness status", body = AwaitReadyResponse),
+        (status = 404, description = "Sandbox not found", body = ErrorBody)
+    )
+)]
+async fn await_ready(
+    state: axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<AwaitReadyRequest>,
+) -> SandboxResult<Json<AwaitReadyResponse>> {
+    let response = state.service.await_services_ready(id, request).await?;
+    Ok(Json(response))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,6 +926,21 @@ mod tests {
                 items: vec![],
                 dry_run: request.dry_run,
                 bytes_freed: 0,
+            })
+        }
+
+        async fn await_services_ready(
+            &self,
+            _id: String,
+            _request: AwaitReadyRequest,
+        ) -> SandboxResult<AwaitReadyResponse> {
+            Ok(AwaitReadyResponse {
+                ready: true,
+                services: ServiceReadiness {
+                    vnc: true,
+                    vscode: false,
+                },
+                timed_out: vec![],
             })
         }
     }

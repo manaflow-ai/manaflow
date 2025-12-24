@@ -160,12 +160,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   openssh-server \
   jq \
   findutils \
-  xvfb \
-  x11vnc \
+  tigervnc-standalone-server \
   openbox \
   xterm \
   novnc \
-  websockify \
   x11-xserver-utils \
   libx11-6 \
   libxcomposite1 \
@@ -208,6 +206,29 @@ RUN arch="$(uname -m)"; \
   else \
     echo "Failed to download Chrome, skipping"; \
   fi
+
+# Install cmux-code (our VSCode fork with OpenVSIX marketplace)
+# This provides a web-based VS Code IDE inside each sandbox
+RUN arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64) ARCH="x64" ;; \
+    aarch64) ARCH="arm64" ;; \
+    *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+  esac; \
+  CMUX_CODE_RELEASE=$(curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+    | jq -r '.tag_name' \
+    | sed 's|^v||'); \
+  echo "Installing cmux-code v${CMUX_CODE_RELEASE}"; \
+  mkdir -p /app/cmux-code; \
+  curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 \
+    -o /tmp/cmux-code.tar.gz \
+    "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; \
+  tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1; \
+  rm -rf /tmp/cmux-code.tar.gz; \
+  # Create VS Code settings directory with default config
+  mkdir -p /root/.vscode-server-oss/data/User /root/.vscode-server-oss/extensions; \
+  echo '{"workbench.startupEditor":"none","security.workspace.trust.enabled":false,"extensions.verifySignature":false,"telemetry.telemetryLevel":"off"}' \
+    > /root/.vscode-server-oss/data/User/settings.json
 
 # Configure sshd for sandbox access
 RUN mkdir -p /run/sshd && \

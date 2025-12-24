@@ -176,6 +176,21 @@ impl SandboxService for MockService {
             bytes_freed: 0,
         })
     }
+
+    async fn await_services_ready(
+        &self,
+        _id: String,
+        _request: cmux_sandbox::models::AwaitReadyRequest,
+    ) -> cmux_sandbox::errors::SandboxResult<cmux_sandbox::models::AwaitReadyResponse> {
+        Ok(cmux_sandbox::models::AwaitReadyResponse {
+            ready: true,
+            services: cmux_sandbox::models::ServiceReadiness {
+                vnc: true,
+                vscode: false,
+            },
+            timed_out: vec![],
+        })
+    }
 }
 
 #[tokio::test]

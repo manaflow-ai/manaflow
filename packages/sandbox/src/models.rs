@@ -45,7 +45,7 @@ pub struct SandboxNetwork {
     pub cidr: u8,
 }
 
-/// Display configuration for a sandbox's isolated X11/VNC stack.
+/// Display configuration for a sandbox's isolated X11/VNC stack and VS Code server.
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct SandboxDisplay {
     /// X11 display number (e.g., 10 for :10)
@@ -56,6 +56,47 @@ pub struct SandboxDisplay {
     pub novnc_port: u16,
     /// Chrome DevTools Protocol port
     pub cdp_port: u16,
+    /// cmux-code (VS Code) port (always 39378 inside sandbox, accessed via subdomain routing)
+    pub vscode_port: u16,
+}
+
+/// Readiness status for sandbox services.
+/// Used by the await-ready endpoint to wait for services to become available.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, ToSchema)]
+pub struct ServiceReadiness {
+    /// VNC/X11 display is ready
+    #[serde(default)]
+    pub vnc: bool,
+    /// VS Code server is ready (future use)
+    #[serde(default)]
+    pub vscode: bool,
+}
+
+/// Request to await service readiness
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+pub struct AwaitReadyRequest {
+    /// Services to wait for (default: all configured services)
+    #[serde(default)]
+    pub services: Vec<String>,
+    /// Timeout in milliseconds (default: 10000)
+    #[serde(default = "default_await_timeout")]
+    pub timeout_ms: u64,
+}
+
+fn default_await_timeout() -> u64 {
+    10000
+}
+
+/// Response from await-ready endpoint
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct AwaitReadyResponse {
+    /// Whether all requested services are ready
+    pub ready: bool,
+    /// Current readiness status of each service
+    pub services: ServiceReadiness,
+    /// Services that timed out (if any)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timed_out: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
