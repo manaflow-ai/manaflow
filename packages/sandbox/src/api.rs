@@ -472,8 +472,17 @@ async fn subdomain_proxy(
 
     // Copy relevant request headers
     let mut proxy_req = proxy_req;
+
+    // Forward original Host header so upstream knows the external address.
+    // This is critical for VS Code which uses Host to set remoteAuthority for WebSocket connections.
+    proxy_req = proxy_req.header(reqwest::header::HOST, host);
+
+    // Add standard proxy headers
+    proxy_req = proxy_req.header("X-Forwarded-Host", host);
+    proxy_req = proxy_req.header("X-Forwarded-Proto", "http");
+
     for (key, value) in headers.iter() {
-        // Skip hop-by-hop headers
+        // Skip hop-by-hop headers (we handle Host specially above)
         if key == HOST || key == "connection" || key == "upgrade" {
             continue;
         }
