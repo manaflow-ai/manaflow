@@ -1408,6 +1408,8 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
 
     if sandboxes.is_empty() {
         eprintln!("No sandboxes found.");
+        // Still check for orphaned filesystem directories
+        prune_orphaned_fs(client, base_url, &args).await?;
         if args.docker {
             prune_docker(&args).await?;
         }
@@ -1447,6 +1449,8 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
             )
         };
         eprintln!("No sandboxes match the filter ({filter_desc}).");
+        // Still check for orphaned filesystem directories
+        prune_orphaned_fs(client, base_url, &args).await?;
         if args.docker {
             prune_docker(&args).await?;
         }
