@@ -44,6 +44,7 @@ interface SidebarNavItem {
 }
 interface SidebarNavItemWithBadge extends SidebarNavItem {
   showBadge?: boolean;
+  hidden?: boolean;
 }
 
 const navItems: SidebarNavItemWithBadge[] = [
@@ -59,6 +60,7 @@ const navItems: SidebarNavItemWithBadge[] = [
     exact: true,
     icon: Bell,
     showBadge: true,
+    hidden: true,
   },
   {
     label: "Environments",
@@ -266,7 +268,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       <nav className="grow flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto pb-8">
           <ul className="flex flex-col gap-px">
-            {navItems.map((item) => (
+            {navItems
+              .filter((item) => !item.hidden)
+              .map((item) => (
               <li key={item.label}>
                 <SidebarNavLink
                   to={item.to}
