@@ -257,8 +257,8 @@ impl PtyClient {
         let mut stdout = std::io::stdout();
         stdout.execute(EnterAlternateScreen)?;
 
-        // Get terminal size and send resize
-        let (cols, rows) = terminal::size()?;
+        // Get terminal size and send resize (use fallback if terminal size can't be read)
+        let (cols, rows) = terminal::size().unwrap_or((80, 24));
         let resize_msg = serde_json::json!({
             "type": "resize",
             "cols": cols,
