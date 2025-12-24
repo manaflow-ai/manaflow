@@ -2,11 +2,88 @@ import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import { useLocalStorage } from "@mantine/hooks";
 import { useQuery } from "convex/react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { TaskItem } from "./TaskItem";
 import { PreviewItem } from "./PreviewItem";
 import { ChevronRight } from "lucide-react";
+
+// Estimated height for each task/preview item (in pixels)
+const TASK_ITEM_HEIGHT = 40;
+// Only virtualize when we have more than this many items
+const VIRTUALIZATION_THRESHOLD = 30;
+
+interface VirtualizedArchivedTaskListProps {
+  tasks: Doc<"tasks">[];
+  teamSlugOrId: string;
+}
+
+function VirtualizedArchivedTaskList({
+  tasks,
+  teamSlugOrId,
+}: VirtualizedArchivedTaskListProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const shouldVirtualize = tasks.length > VIRTUALIZATION_THRESHOLD;
+
+  const virtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => TASK_ITEM_HEIGHT,
+    overscan: 10,
+    enabled: shouldVirtualize,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  // For small lists, render without virtualization
+  if (!shouldVirtualize) {
+    return (
+      <div className="flex flex-col w-full">
+        {tasks.map((task) => (
+          <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={parentRef}
+      className="w-full overflow-y-auto"
+      style={{ maxHeight: "min(calc(100vh - 200px), 600px)" }}
+    >
+      <div
+        style={{
+          height: virtualizer.getTotalSize(),
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {virtualItems.map((virtualItem) => {
+          const task = tasks[virtualItem.index];
+          if (!task) return null;
+          return (
+            <div
+              key={task._id}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <TaskItem task={task} teamSlugOrId={teamSlugOrId} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 type TaskCategoryKey =
   | "pinned"
@@ -316,13 +393,10 @@ export const TaskList = memo(function TaskList({
               No archived tasks
             </div>
           ) : (
-            archivedTasks.map((task) => (
-              <TaskItem
-                key={task._id}
-                task={task}
-                teamSlugOrId={teamSlugOrId}
-              />
-            ))
+            <VirtualizedArchivedTaskList
+              tasks={archivedTasks}
+              teamSlugOrId={teamSlugOrId}
+            />
           )
         ) : tab === "previews" ? (
           previewRuns === undefined ? (
@@ -390,6 +464,17 @@ function TaskCategorySection({
   onToggle: (key: TaskCategoryKey) => void;
 }) {
   const meta = CATEGORY_META[categoryKey];
+  const parentRef = useRef<HTMLDivElement>(null);
+  const shouldVirtualize = tasks.length > VIRTUALIZATION_THRESHOLD;
+
+  const virtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => TASK_ITEM_HEIGHT,
+    overscan: 10,
+    enabled: shouldVirtualize && !collapsed,
+  });
+
   const handleToggle = useCallback(
     () => onToggle(categoryKey),
     [categoryKey, onToggle]
@@ -398,6 +483,9 @@ function TaskCategorySection({
   const toggleLabel = collapsed
     ? `Expand ${meta.title}`
     : `Collapse ${meta.title}`;
+
+  const virtualItems = virtualizer.getVirtualItems();
+
   return (
     <div className="w-full">
       <div
@@ -430,11 +518,49 @@ function TaskCategorySection({
         </div>
       </div>
       {collapsed ? null : tasks.length > 0 ? (
-        <div id={contentId} className="flex flex-col w-full">
-          {tasks.map((task) => (
-            <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
-          ))}
-        </div>
+        shouldVirtualize ? (
+          <div
+            id={contentId}
+            ref={parentRef}
+            className="w-full overflow-y-auto"
+            style={{ maxHeight: "min(calc(100vh - 300px), 500px)" }}
+          >
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualItems.map((virtualItem) => {
+                const task = tasks[virtualItem.index];
+                if (!task) return null;
+                return (
+                  <div
+                    key={task._id}
+                    data-index={virtualItem.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <TaskItem task={task} teamSlugOrId={teamSlugOrId} />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div id={contentId} className="flex flex-col w-full">
+            {tasks.map((task) => (
+              <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
+            ))}
+          </div>
+        )
       ) : (
         <div className="flex w-full items-center px-4 py-3">
           <p className="pl-5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
@@ -460,6 +586,17 @@ function PreviewCategorySection({
   onToggle: (key: PreviewCategoryKey) => void;
 }) {
   const meta = PREVIEW_CATEGORY_META[categoryKey];
+  const parentRef = useRef<HTMLDivElement>(null);
+  const shouldVirtualize = previewRuns.length > VIRTUALIZATION_THRESHOLD;
+
+  const virtualizer = useVirtualizer({
+    count: previewRuns.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => TASK_ITEM_HEIGHT,
+    overscan: 10,
+    enabled: shouldVirtualize && !collapsed,
+  });
+
   const handleToggle = useCallback(
     () => onToggle(categoryKey),
     [categoryKey, onToggle]
@@ -468,6 +605,9 @@ function PreviewCategorySection({
   const toggleLabel = collapsed
     ? `Expand ${meta.title}`
     : `Collapse ${meta.title}`;
+
+  const virtualItems = virtualizer.getVirtualItems();
+
   return (
     <div className="w-full">
       <div
@@ -500,11 +640,49 @@ function PreviewCategorySection({
         </div>
       </div>
       {collapsed ? null : previewRuns.length > 0 ? (
-        <div id={contentId} className="flex flex-col w-full">
-          {previewRuns.map((run) => (
-            <PreviewItem key={run._id} previewRun={run} teamSlugOrId={teamSlugOrId} />
-          ))}
-        </div>
+        shouldVirtualize ? (
+          <div
+            id={contentId}
+            ref={parentRef}
+            className="w-full overflow-y-auto"
+            style={{ maxHeight: "min(calc(100vh - 300px), 500px)" }}
+          >
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualItems.map((virtualItem) => {
+                const run = previewRuns[virtualItem.index];
+                if (!run) return null;
+                return (
+                  <div
+                    key={run._id}
+                    data-index={virtualItem.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <PreviewItem previewRun={run} teamSlugOrId={teamSlugOrId} />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div id={contentId} className="flex flex-col w-full">
+            {previewRuns.map((run) => (
+              <PreviewItem key={run._id} previewRun={run} teamSlugOrId={teamSlugOrId} />
+            ))}
+          </div>
+        )
       ) : (
         <div className="flex w-full items-center px-4 py-3">
           <p className="pl-5 text-xs text-neutral-500 dark:text-neutral-400 select-none">

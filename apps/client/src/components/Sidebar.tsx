@@ -11,10 +11,12 @@ import { api } from "@cmux/convex/api";
 import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bell, Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -29,6 +31,106 @@ import { SidebarWorkspacesSection } from "./sidebar/SidebarWorkspacesSection";
 
 // Tasks with hasUnread indicator from the query
 type TaskWithUnread = Doc<"tasks"> & { hasUnread: boolean };
+
+// Estimated height for each task tree item (in pixels)
+const TASK_ITEM_HEIGHT = 28;
+// Only virtualize when we have more than this many tasks
+const VIRTUALIZATION_THRESHOLD = 50;
+
+interface VirtualizedTaskListProps {
+  tasks: TaskWithUnread[];
+  expandTaskIds: string[] | undefined;
+  teamSlugOrId: string;
+}
+
+function VirtualizedTaskList({
+  tasks,
+  expandTaskIds,
+  teamSlugOrId,
+}: VirtualizedTaskListProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // Filter out pinned tasks
+  const nonPinnedTasks = useMemo(
+    () => tasks.filter((task) => !task.pinned),
+    [tasks]
+  );
+
+  const shouldVirtualize = nonPinnedTasks.length > VIRTUALIZATION_THRESHOLD;
+
+  const virtualizer = useVirtualizer({
+    count: nonPinnedTasks.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => TASK_ITEM_HEIGHT,
+    overscan: 10,
+    enabled: shouldVirtualize,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  if (nonPinnedTasks.length === 0) {
+    return null;
+  }
+
+  // For small lists, render without virtualization
+  if (!shouldVirtualize) {
+    return (
+      <>
+        {nonPinnedTasks.map((task) => (
+          <TaskTree
+            key={task._id}
+            task={task}
+            defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+            teamSlugOrId={teamSlugOrId}
+            hasUnreadNotification={task.hasUnread}
+          />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <div
+      ref={parentRef}
+      className="overflow-y-auto"
+      style={{ maxHeight: "min(calc(100vh - 400px), 600px)" }}
+    >
+      <div
+        style={{
+          height: virtualizer.getTotalSize(),
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {virtualItems.map((virtualItem) => {
+          const task = nonPinnedTasks[virtualItem.index];
+          if (!task) return null;
+          return (
+            <div
+              key={task._id}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <TaskTree
+                task={task}
+                defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                teamSlugOrId={teamSlugOrId}
+                hasUnreadNotification={task.hasUnread}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 interface SidebarProps {
   tasks: TaskWithUnread[] | undefined;
@@ -326,23 +428,12 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                       <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
                     </>
                   )}
-                  {/* Regular (non-pinned) tasks */}
-                  {tasks
-                    .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
-                    })
-                    .map((task) => (
-                      <TaskTree
-                        key={task._id}
-                        task={task}
-                        defaultExpanded={
-                          expandTaskIds?.includes(task._id) ?? false
-                        }
-                        teamSlugOrId={teamSlugOrId}
-                        hasUnreadNotification={task.hasUnread}
-                      />
-                    ))}
+                  {/* Regular (non-pinned) tasks - virtualized */}
+                  <VirtualizedTaskList
+                    tasks={tasks}
+                    expandTaskIds={expandTaskIds}
+                    teamSlugOrId={teamSlugOrId}
+                  />
                 </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
