@@ -64,7 +64,7 @@ function TaskDetailPage() {
   // Called on every visit since new notifications may have arrived
   useEffect(() => {
     if (taskId) {
-      markTaskAsRead({ teamSlugOrId, taskId }).catch((err: Error) => {
+      markTaskAsRead({ teamSlugOrId, taskId }).catch((err) => {
         // Ignore errors - the API might not be available yet
         console.error("Failed to mark task notifications as read:", err);
       });

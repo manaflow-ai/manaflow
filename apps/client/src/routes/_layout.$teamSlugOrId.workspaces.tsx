@@ -39,7 +39,7 @@ function WorkspacesRoute() {
   // Create a Set for quick lookup of task IDs with unread notifications
   const tasksWithUnreadSet = useMemo(() => {
     if (!tasksWithUnread) return new Set<string>();
-    return new Set(tasksWithUnread.map((t: { taskId: string }) => t.taskId));
+    return new Set(tasksWithUnread.map((t) => t.taskId));
   }, [tasksWithUnread]);
 
   const taskRunQueries = useMemo(() => {

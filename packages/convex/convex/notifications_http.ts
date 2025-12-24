@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { z } from "zod";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
 import { httpAction, internalMutation } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
+import { typedZid } from "@cmux/shared/utils/typed-zid";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -14,7 +14,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const AgentStoppedRequestSchema = z.object({
-  taskRunId: z.string(),
+  taskRunId: typedZid("taskRuns"),
 });
 
 /**
@@ -40,7 +40,7 @@ export const agentStopped = httpAction(async (ctx, req) => {
   if (!contentType.toLowerCase().includes("application/json")) {
     return jsonResponse(
       { code: 415, message: "Content-Type must be application/json" },
-      415,
+      415
     );
   }
 
@@ -55,12 +55,12 @@ export const agentStopped = httpAction(async (ctx, req) => {
   if (!validation.success) {
     console.warn(
       "[convex.notifications] Invalid agent-stopped payload",
-      validation.error,
+      validation.error
     );
     return jsonResponse({ code: 400, message: "Invalid input" }, 400);
   }
 
-  const taskRunId = validation.data.taskRunId as Id<"taskRuns">;
+  const taskRunId = validation.data.taskRunId;
 
   // Verify the task run belongs to this worker
   const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
@@ -82,7 +82,7 @@ export const agentStopped = httpAction(async (ctx, req) => {
         taskRunId,
         workerTeamId: auth.payload.teamId,
         taskRunTeamId: taskRun.teamId,
-      },
+      }
     );
     return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
@@ -95,7 +95,7 @@ export const agentStopped = httpAction(async (ctx, req) => {
       taskId: taskRun.taskId,
       teamId: taskRun.teamId,
       userId: taskRun.userId,
-    },
+    }
   );
 
   console.log("[convex.notifications] Created agent-stopped notification", {
@@ -125,7 +125,7 @@ export const createAgentStoppedNotification = internalMutation({
     const existingNotifications = await ctx.db
       .query("taskNotifications")
       .withIndex("by_team_user_created", (q) =>
-        q.eq("teamId", args.teamId).eq("userId", args.userId),
+        q.eq("teamId", args.teamId).eq("userId", args.userId)
       )
       .filter((q) => q.eq(q.field("taskRunId"), args.taskRunId))
       .first();
@@ -154,7 +154,7 @@ export const createAgentStoppedNotification = internalMutation({
     const existing = await ctx.db
       .query("unreadTaskRuns")
       .withIndex("by_run_user", (q) =>
-        q.eq("taskRunId", args.taskRunId).eq("userId", args.userId),
+        q.eq("taskRunId", args.taskRunId).eq("userId", args.userId)
       )
       .first();
 

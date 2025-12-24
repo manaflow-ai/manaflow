@@ -173,10 +173,10 @@ export const markTaskRunAsUnread = authMutation({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Get the task run to find taskId
+    // Get the task run to find taskId and validate ownership
     const taskRun = await ctx.db.get(args.taskRunId);
-    if (!taskRun) {
-      throw new Error("Task run not found");
+    if (!taskRun || taskRun.teamId !== teamId || taskRun.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
     }
 
     // Check if unread row already exists

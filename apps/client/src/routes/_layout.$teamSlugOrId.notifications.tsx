@@ -37,7 +37,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/notifications")({
   loader: async ({ params }) => {
     const { teamSlugOrId } = params;
     void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.taskNotifications.list, { teamSlugOrId }),
+      convexQuery(api.taskNotifications.list, { teamSlugOrId })
     );
   },
 });
@@ -46,9 +46,13 @@ function NotificationsRoute() {
   const { teamSlugOrId } = Route.useParams();
   const notifications = useQuery(api.taskNotifications.list, {
     teamSlugOrId,
-  }) as NotificationData[] | undefined;
-  const markTaskRunAsRead = useMutation(api.taskNotifications.markTaskRunAsRead);
-  const markTaskRunAsUnread = useMutation(api.taskNotifications.markTaskRunAsUnread);
+  });
+  const markTaskRunAsRead = useMutation(
+    api.taskNotifications.markTaskRunAsRead
+  );
+  const markTaskRunAsUnread = useMutation(
+    api.taskNotifications.markTaskRunAsUnread
+  );
   const markAllAsRead = useMutation(api.taskNotifications.markAllAsRead);
 
   const handleMarkAsRead = useCallback(
@@ -57,7 +61,7 @@ function NotificationsRoute() {
         await markTaskRunAsRead({ teamSlugOrId, taskRunId });
       }
     },
-    [markTaskRunAsRead, teamSlugOrId],
+    [markTaskRunAsRead, teamSlugOrId]
   );
 
   const handleMarkAsUnread = useCallback(
@@ -66,7 +70,7 @@ function NotificationsRoute() {
         await markTaskRunAsUnread({ teamSlugOrId, taskRunId });
       }
     },
-    [markTaskRunAsUnread, teamSlugOrId],
+    [markTaskRunAsUnread, teamSlugOrId]
   );
 
   const handleMarkAllAsRead = useCallback(async () => {
