@@ -970,7 +970,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
 
     return (
       <div
-        className={clsx("overflow-hidden", className)}
+        className={clsx("relative overflow-hidden", className)}
         style={{ background, ...style }}
         onClick={handleContainerClick}
         onContextMenu={handleContextMenu}
