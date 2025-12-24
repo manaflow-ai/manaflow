@@ -61,7 +61,8 @@ const createEmptyCategoryBuckets = (): Record<
 });
 
 const getTaskCategory = (task: Doc<"tasks">): TaskCategoryKey => {
-  if (task.isCloudWorkspace || task.isLocalWorkspace) {
+  // Only cloud workspaces show in the workspaces category (local workspaces are gated)
+  if (task.isCloudWorkspace) {
     return "workspaces";
   }
   if (task.mergeStatus === "pr_merged") {
@@ -91,6 +92,10 @@ const categorizeTasks = (
   }
   const buckets = createEmptyCategoryBuckets();
   for (const task of tasks) {
+    // Filter out local workspaces completely (gated feature)
+    if (task.isLocalWorkspace) {
+      continue;
+    }
     const key = getTaskCategory(task);
     buckets[key].push(task);
   }
@@ -195,8 +200,10 @@ export const TaskList = memo(function TaskList({
   const categorizedTasks = useMemo(() => {
     const categorized = categorizeTasks(allTasks);
     if (categorized && pinnedData) {
+      // Filter out local workspaces from pinned (gated feature)
+      const filteredPinnedData = pinnedData.filter(t => !t.isLocalWorkspace);
       // Filter pinned tasks out from other categories
-      const pinnedTaskIds = new Set(pinnedData.map(t => t._id));
+      const pinnedTaskIds = new Set(filteredPinnedData.map(t => t._id));
 
       for (const key of CATEGORY_ORDER) {
         if (key !== 'pinned') {
@@ -205,7 +212,7 @@ export const TaskList = memo(function TaskList({
       }
 
       // Add pinned tasks to the pinned category (already sorted by the API)
-      categorized.pinned = pinnedData;
+      categorized.pinned = filteredPinnedData;
     }
     return categorized;
   }, [allTasks, pinnedData]);

@@ -31,8 +31,9 @@ function WorkspacesRoute() {
   const { expandTaskIds } = useExpandTasks();
 
   // Tasks are already sorted by the query (unread notifications first)
+  // Filter out local workspaces (gated feature)
   const orderedTasks = useMemo(
-    () => tasks ?? ([] as NonNullable<typeof tasks>),
+    () => (tasks ?? []).filter((t) => !t.isLocalWorkspace),
     [tasks]
   );
 
