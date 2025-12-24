@@ -109,6 +109,10 @@
     "./components/vnc-viewer": {
       "import": "./src/components/vnc-viewer.tsx",
       "types": "./src/components/vnc-viewer.tsx"
+    },
+    "./morph-snapshots": {
+      "import": "./src/morph-snapshots.ts",
+      "types": "./src/morph-snapshots.ts"
     }
   },
   "peerDependencies": {

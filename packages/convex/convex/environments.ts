@@ -240,3 +240,17 @@ export const getByDataVaultKey = authQuery({
       .first();
   },
 });
+
+/**
+ * List all unique morphSnapshotIds from environments table.
+ * Used by snapshot maintenance cron to preserve active snapshots.
+ */
+export const listAllSnapshotIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const environments = await ctx.db.query("environments").collect();
+    return environments.map((env) => ({
+      morphSnapshotId: env.morphSnapshotId,
+    }));
+  },
+});

@@ -14,4 +14,14 @@ crons.daily(
   internal.morphInstanceMaintenance.pauseOldMorphInstances
 );
 
+// Delete old Morph snapshots no longer needed
+// Runs daily at 5 AM Pacific Time (13:00 UTC)
+// Preserves: preset snapshots, active environment snapshots,
+// and environment version snapshots < 14 days old
+crons.daily(
+  "delete old morph snapshots",
+  { hourUTC: 13, minuteUTC: 0 },
+  internal.morphSnapshotMaintenance.deleteOldMorphSnapshots
+);
+
 export default crons;

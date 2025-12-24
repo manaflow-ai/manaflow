@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
+import { internalQuery } from "./_generated/server";
 
 export const list = authQuery({
   args: {
@@ -182,5 +183,21 @@ export const findBySnapshotId = authQuery({
         q.eq("teamId", teamId).eq("morphSnapshotId", args.snapshotId)
       )
       .first();
+  },
+});
+
+/**
+ * List all unique morphSnapshotIds from environmentSnapshotVersions.
+ * Used by snapshot maintenance cron to preserve all environment version snapshots.
+ */
+export const listAllSnapshotIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const versions = await ctx.db
+      .query("environmentSnapshotVersions")
+      .collect();
+    return versions.map((v) => ({
+      morphSnapshotId: v.morphSnapshotId,
+    }));
   },
 });
