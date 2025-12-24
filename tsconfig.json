@@ -1,0 +1,18 @@
+{
+  "files": [],
+  "references": [
+    { "path": "apps/client" },
+    { "path": "apps/client/electron" },
+    { "path": "apps/server" },
+    { "path": "apps/worker" },
+    { "path": "apps/www" },
+    { "path": "packages/cmux" },
+    { "path": "packages/convex" },
+    { "path": "packages/host-screenshot-collector" },
+    { "path": "packages/morphcloud-openapi-client" },
+    { "path": "packages/shared" },
+    { "path": "packages/vscode-extension" },
+    { "path": "packages/www-openapi-client" },
+    { "path": "scripts" }
+  ]
+}

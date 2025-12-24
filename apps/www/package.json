@@ -9,7 +9,7 @@
     "build": "./scripts/build.sh",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "test": "dotenv -e ../../.env -- vitest run",
     "generate-openapi-client": "bun run --env-file ../../.env scripts/watch-openapi.ts",
     "generate-openapi-client:watch": "bun run --watch --env-file ../../.env scripts/watch-openapi.ts",

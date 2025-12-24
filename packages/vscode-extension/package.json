@@ -91,7 +91,7 @@
     "lint": "eslint src",
     "test:todo": "echo 'TODO: enable VS Code tests later'",
     "package": "bunx @vscode/vsce package --allow-missing-repository --no-dependencies --allow-star-activation",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@cmux/shared": "workspace:*",

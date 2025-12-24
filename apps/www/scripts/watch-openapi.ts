@@ -5,14 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-console.time("watch-openapi");
+const quiet = !!process.env.CLAUDECODE;
+const log = quiet ? () => {} : console.log.bind(console);
+
+const startTime = performance.now();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-console.time("fetch /api/doc");
+const fetchStart = performance.now();
 const doc = await app.request("/api/doc", {
   method: "GET",
 });
-console.timeEnd("fetch /api/doc");
+log(`[${(performance.now() - fetchStart).toFixed(2)}ms] fetch /api/doc`);
 
 const outputPath = path.join(
   __dirname,
@@ -30,7 +33,7 @@ const tmpFile = path.join(
 );
 fs.writeFileSync(tmpFile, await doc.text());
 
-console.time("generate client");
+const genStart = performance.now();
 await createClient({
   input: tmpFile,
   output: {
@@ -42,8 +45,9 @@ await createClient({
     "@hey-api/typescript",
     "@tanstack/react-query",
   ],
+  logs: quiet ? { level: "silent" } : undefined,
 });
-console.timeEnd("generate client");
+log(`[${(performance.now() - genStart).toFixed(2)}ms] generate client`);
 
 try {
   fs.unlinkSync(tmpFile);
@@ -51,5 +55,4 @@ try {
   // ignore if already removed by concurrent runs
 }
 
-console.timeEnd("watch-openapi");
-console.log("[watch-openapi] initial client generation complete");
+log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
