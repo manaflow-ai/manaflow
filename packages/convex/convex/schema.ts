@@ -1120,6 +1120,13 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId"]) // Get all unread runs for a user
     .index("by_team_user", ["teamId", "userId"]) // Get unread runs for a user in a team
     .index("by_task_user", ["taskId", "userId"]), // Get unread runs for a task
+
+  // Track Morph instances that have been stopped by the cleanup cron
+  morphInstanceStops: defineTable({
+    instanceId: v.string(), // Morph instance ID (morphvm_xxx)
+    stoppedAt: v.number(), // Timestamp when the instance was stopped
+    ageHoursWhenStopped: v.number(), // Age of instance in hours when stopped
+  }).index("by_instanceId", ["instanceId"]),
 });
 
 export default convexSchema;

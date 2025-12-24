@@ -14,4 +14,12 @@ crons.daily(
   internal.morphInstanceMaintenance.pauseOldMorphInstances
 );
 
+// Stop (delete) Morph instances that have been paused for more than 2 weeks
+// Runs daily at 5 AM Pacific Time (13:00 UTC)
+crons.daily(
+  "stop old morph instances",
+  { hourUTC: 13, minuteUTC: 0 },
+  internal.morphInstanceMaintenance.stopOldMorphInstances
+);
+
 export default crons;
