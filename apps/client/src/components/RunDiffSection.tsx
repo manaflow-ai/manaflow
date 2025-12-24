@@ -1,8 +1,10 @@
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { useQueries } from "@tanstack/react-query";
-import { useMemo, type ComponentProps } from "react";
-import { GitDiffViewer } from "./git-diff-viewer";
+import { useMemo, useRef, type ComponentProps } from "react";
+import { GitDiffViewer, GitDiffViewerWithHeatmap } from "./git-diff-viewer";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+import type { ReviewHeatmapLine } from "@/lib/heatmap";
 
 export interface RunDiffSectionProps {
   repoFullName: string;
@@ -19,6 +21,14 @@ export interface RunDiffSectionProps {
       lastKnownMergeCommitSha?: string;
     }
   >;
+  /** Use the heatmap-enabled diff viewer (GitHub style) */
+  useHeatmapViewer?: boolean;
+  /** Heatmap data keyed by file path */
+  heatmapByFile?: Map<string, ReviewHeatmapLine[]>;
+  /** Heatmap threshold for filtering entries (0-1) */
+  heatmapThreshold?: number;
+  /** Custom heatmap colors */
+  heatmapColors?: HeatmapColorSettings;
 }
 
 function applyRepoPrefix(
@@ -48,6 +58,10 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     additionalRepoFullNames,
     withRepoPrefix,
     metadataByRepo,
+    useHeatmapViewer = true, // Default to heatmap viewer
+    heatmapByFile,
+    heatmapThreshold,
+    heatmapColors,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -77,6 +91,15 @@ export function RunDiffSection(props: RunDiffSectionProps) {
       enabled: canFetch,
     })),
   });
+
+  // IMPORTANT: Refs must be declared before any early returns (React hooks rule)
+  // These refs maintain stable combinedDiffs reference to prevent infinite loops
+  const combinedDiffsRef = useRef<ReplaceDiffEntry[]>([]);
+  const prevDepsRef = useRef<{
+    queryData: Array<ReplaceDiffEntry[] | undefined>;
+    repoFullNames: string[];
+    shouldPrefix: boolean;
+  }>({ queryData: [], repoFullNames: [], shouldPrefix: false });
 
   const isPending = queries.some(
     (query) => query.isPending || query.isFetching,
@@ -116,11 +139,29 @@ export function RunDiffSection(props: RunDiffSectionProps) {
 
   const shouldPrefix = withRepoPrefix ?? repoFullNames.length > 1;
 
-  const combinedDiffs = repoFullNames.flatMap((repo, index) => {
-    const data = queries[index]?.data ?? [];
-    const prefix = shouldPrefix ? `${repo}:` : null;
-    return data.map((entry) => applyRepoPrefix(entry, prefix));
-  });
+  // Check if any dependencies have actually changed
+  const currentQueryData = queries.map((q) => q.data);
+  const depsChanged =
+    currentQueryData.length !== prevDepsRef.current.queryData.length ||
+    currentQueryData.some((data, i) => data !== prevDepsRef.current.queryData[i]) ||
+    repoFullNames.length !== prevDepsRef.current.repoFullNames.length ||
+    repoFullNames.some((name, i) => name !== prevDepsRef.current.repoFullNames[i]) ||
+    shouldPrefix !== prevDepsRef.current.shouldPrefix;
+
+  if (depsChanged) {
+    prevDepsRef.current = {
+      queryData: currentQueryData,
+      repoFullNames: [...repoFullNames],
+      shouldPrefix,
+    };
+    combinedDiffsRef.current = repoFullNames.flatMap((repo, index) => {
+      const data = queries[index]?.data ?? [];
+      const prefix = shouldPrefix ? `${repo}:` : null;
+      return data.map((entry) => applyRepoPrefix(entry, prefix));
+    });
+  }
+
+  const combinedDiffs = combinedDiffsRef.current;
 
   if (combinedDiffs.length === 0) {
     return (
@@ -129,6 +170,20 @@ export function RunDiffSection(props: RunDiffSectionProps) {
           No changes to display
         </div>
       </div>
+    );
+  }
+
+  if (useHeatmapViewer) {
+    return (
+      <GitDiffViewerWithHeatmap
+        key={`heatmap:${repoFullNames.join("|")}:${ref1}:${ref2}`}
+        diffs={combinedDiffs}
+        heatmapByFile={heatmapByFile}
+        heatmapThreshold={heatmapThreshold}
+        heatmapColors={heatmapColors}
+        onControlsChange={onControlsChange}
+        classNames={classNames}
+      />
     );
   }
 

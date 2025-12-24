@@ -122,7 +122,7 @@ function RootComponent() {
   const location = useRouterState({
     select: (state) => state.location,
   });
-  const locationKey = `${location.pathname}${location.search}${location.hash}`;
+  const locationKey = `${location.pathname}${JSON.stringify(location.search)}${location.hash}`;
 
   useAutoUpdateNotifications();
 

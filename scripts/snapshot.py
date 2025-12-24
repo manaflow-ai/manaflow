@@ -1575,7 +1575,7 @@ async def task_configure_zsh(ctx: TaskContext) -> None:
         autosuggestions="/usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
         cat > /root/.zshrc <<EOF
 export SHELL="${zsh_path}"
-export PATH="/usr/local/bin:/usr/local/cargo/bin:\$HOME/.local/bin:\$PATH"
+export PATH="/usr/local/bin:/usr/local/cargo/bin:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH"
 export XDG_RUNTIME_DIR="/run/user/0"
 export NVM_DIR="\$HOME/.nvm"
 if [ -s /etc/profile.d/nvm.sh ]; then
@@ -1621,7 +1621,7 @@ EOF
         cat <<'EOF' > /etc/profile.d/cmux-paths.sh
 export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
-export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$PATH"
+export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 EOF
         if ! grep -q "alias g='git'" /root/.bashrc 2>/dev/null; then
           echo "alias g='git'" >> /root/.bashrc
@@ -1782,7 +1782,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-openbox.service /usr/lib/systemd/system/cmux-openbox.service
         install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
-        install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
+        install -Dm0644 {repo}/configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
         install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
         install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
@@ -1803,7 +1803,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-openbox.service /etc/systemd/system/cmux.target.wants/cmux-openbox.service
         ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
-        ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
+        ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
         {{ systemctl daemon-reload || true; }}
@@ -1944,74 +1944,41 @@ JSON
 
 
 @registry.task(
-    name="build-env-binaries",
+    name="build-rust-binaries",
     deps=("upload-repo", "install-rust-toolchain"),
-    description="Build envd/envctl binaries via cargo install",
+    description="Build Rust binaries with a shared target dir",
 )
-async def task_build_env_binaries(ctx: TaskContext) -> None:
+async def task_build_rust_binaries(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
         f"""
+        set -euo pipefail
         export RUSTUP_HOME=/usr/local/rustup
         export CARGO_HOME=/usr/local/cargo
+        export CARGO_TARGET_DIR={repo}/target
         export PATH="${{CARGO_HOME}}/bin:$PATH"
-        cd {repo}
-        cargo install --path crates/cmux-env --locked --force
+        export CARGO_BUILD_JOBS="$(nproc)"
+        cargo build --locked --release --manifest-path {repo}/crates/cmux-env/Cargo.toml
+        cargo build --locked --release --manifest-path {repo}/crates/cmux-proxy/Cargo.toml
+        cargo build --locked --release --manifest-path {repo}/crates/cmux-pty/Cargo.toml
         """
     )
-    await ctx.run("build-env-binaries", cmd, timeout=60 * 30)
-
-
-@registry.task(
-    name="build-cmux-proxy",
-    deps=("upload-repo", "install-rust-toolchain"),
-    description="Build cmux-proxy binary via cargo install",
-)
-async def task_build_cmux_proxy(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        export RUSTUP_HOME=/usr/local/rustup
-        export CARGO_HOME=/usr/local/cargo
-        export PATH="${{CARGO_HOME}}/bin:$PATH"
-        cd {repo}
-        cargo install --path crates/cmux-proxy --locked --force
-        """
-    )
-    await ctx.run("build-cmux-proxy", cmd, timeout=60 * 30)
-
-
-@registry.task(
-    name="build-cmux-xterm",
-    deps=("upload-repo", "install-rust-toolchain"),
-    description="Build cmux-xterm-server binary via cargo install",
-)
-async def task_build_cmux_xterm(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        export RUSTUP_HOME=/usr/local/rustup
-        export CARGO_HOME=/usr/local/cargo
-        export PATH="${{CARGO_HOME}}/bin:$PATH"
-        cd {repo}
-        cargo install --path crates/cmux-xterm --locked --force
-        """
-    )
-    await ctx.run("build-cmux-xterm", cmd, timeout=60 * 30)
+    await ctx.run("build-rust-binaries", cmd, timeout=60 * 30)
 
 
 @registry.task(
     name="link-rust-binaries",
-    deps=("build-env-binaries", "build-cmux-proxy", "build-cmux-xterm"),
+    deps=("build-rust-binaries",),
     description="Symlink built Rust binaries into /usr/local/bin",
 )
 async def task_link_rust_binaries(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
-        """
-        install -m 0755 /usr/local/cargo/bin/envd /usr/local/bin/envd
-        install -m 0755 /usr/local/cargo/bin/envctl /usr/local/bin/envctl
-        install -m 0755 /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
-        install -m 0755 /usr/local/cargo/bin/cmux-xterm-server /usr/local/bin/cmux-xterm-server
+        f"""
+        install -m 0755 {repo}/target/release/envd /usr/local/bin/envd
+        install -m 0755 {repo}/target/release/envctl /usr/local/bin/envctl
+        install -m 0755 {repo}/target/release/cmux-proxy /usr/local/bin/cmux-proxy
+        install -m 0755 {repo}/target/release/cmux-pty /usr/local/bin/cmux-pty
         """
     )
     await ctx.run("link-rust-binaries", cmd)
@@ -2230,27 +2197,27 @@ async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
 
 
 @registry.task(
-    name="check-xterm",
+    name="check-pty",
     deps=("install-systemd-units", "cleanup-build-artifacts"),
-    description="Verify cmux-xterm service is accessible",
+    description="Verify cmux-pty service is accessible",
 )
-async def task_check_xterm(ctx: TaskContext) -> None:
+async def task_check_pty(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         for attempt in $(seq 1 20); do
-          if curl -fsS -H 'Accept: application/json' http://127.0.0.1:39383/api/tabs >/dev/null; then
-            echo "cmux-xterm endpoint is reachable"
+          if curl -fsS -H 'Accept: application/json' http://127.0.0.1:39383/sessions >/dev/null; then
+            echo "cmux-pty endpoint is reachable"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: cmux-xterm endpoint not reachable after 40s" >&2
-        systemctl status cmux-xterm.service --no-pager || true
-        tail -n 80 /var/log/cmux/cmux-xterm.log || true
+        echo "ERROR: cmux-pty endpoint not reachable after 40s" >&2
+        systemctl status cmux-pty.service --no-pager || true
+        tail -n 80 /var/log/cmux/cmux-pty.log || true
         exit 1
         """
     )
-    await ctx.run("check-xterm", cmd)
+    await ctx.run("check-pty", cmd)
 
 
 @registry.task(

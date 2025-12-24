@@ -5,6 +5,7 @@ import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { ShellHistorySettings } from "@/components/ShellHistorySettings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { ChevronDown } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -26,6 +27,22 @@ interface ProviderInfo {
   helpText?: string;
 }
 
+type HeatmapColors = {
+  line: { start: string; end: string };
+  token: { start: string; end: string };
+};
+
+const createDefaultHeatmapColors = (): HeatmapColors => ({
+  line: { start: "#fefce8", end: "#f8e1c9" },
+  token: { start: "#fde047", end: "#ffa270" },
+});
+
+const areHeatmapColorsEqual = (a: HeatmapColors, b: HeatmapColors): boolean =>
+  a.line.start === b.line.start &&
+  a.line.end === b.line.end &&
+  a.token.start === b.token.start &&
+  a.token.end === b.token.end;
+
 const PROVIDER_INFO: Record<string, ProviderInfo> = {
   CLAUDE_CODE_OAUTH_TOKEN: {
     helpText:
@@ -36,6 +53,10 @@ const PROVIDER_INFO: Record<string, ProviderInfo> = {
   },
   OPENAI_API_KEY: {
     url: "https://platform.openai.com/api-keys",
+  },
+  CODEX_AUTH_JSON: {
+    helpText:
+      "Paste the contents of ~/.codex/auth.json here. This allows Codex to use your OpenAI authentication.",
   },
   OPENROUTER_API_KEY: {
     url: "https://openrouter.ai/keys",
@@ -97,6 +118,49 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+
+  // Heatmap settings state
+  const [heatmapModel, setHeatmapModel] =
+    useState<string>("anthropic-opus-4-5");
+  const [originalHeatmapModel, setOriginalHeatmapModel] =
+    useState<string>("anthropic-opus-4-5");
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [originalHeatmapThreshold, setOriginalHeatmapThreshold] =
+    useState<number>(0);
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<string>("en");
+  const [originalHeatmapTooltipLanguage, setOriginalHeatmapTooltipLanguage] =
+    useState<string>("en");
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColors>(
+    createDefaultHeatmapColors
+  );
+  const [originalHeatmapColors, setOriginalHeatmapColors] =
+    useState<HeatmapColors>(createDefaultHeatmapColors);
+
+  // Heatmap model options from model-config.ts
+  const HEATMAP_MODEL_OPTIONS = [
+    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
+    { value: "anthropic", label: "Claude Opus 4.1" },
+    { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
+    { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
+  ];
+
+  // Tooltip language options
+  const TOOLTIP_LANGUAGE_OPTIONS = [
+    { value: "en", label: "English" },
+    { value: "zh-Hant", label: "繁體中文" },
+    { value: "zh-Hans", label: "简体中文" },
+    { value: "ja", label: "日本語" },
+    { value: "ko", label: "한국어" },
+    { value: "es", label: "Español" },
+    { value: "fr", label: "Français" },
+    { value: "de", label: "Deutsch" },
+    { value: "pt", label: "Português" },
+    { value: "ru", label: "Русский" },
+    { value: "vi", label: "Tiếng Việt" },
+    { value: "th", label: "ไทย" },
+    { value: "id", label: "Bahasa Indonesia" },
+  ];
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -172,17 +236,61 @@ function SettingsComponent() {
     return "";
   };
 
-  // Initialize worktree path when data loads
+  // Initialize worktree path and heatmap settings when data loads
   useEffect(() => {
-    if (workspaceSettings !== undefined) {
-      setWorktreePath(workspaceSettings?.worktreePath || "");
-      setOriginalWorktreePath(workspaceSettings?.worktreePath || "");
-      const enabled = (
-        workspaceSettings as unknown as { autoPrEnabled?: boolean }
-      )?.autoPrEnabled;
-      const effective = enabled === undefined ? false : Boolean(enabled);
-      setAutoPrEnabled(effective);
-      setOriginalAutoPrEnabled(effective);
+    if (workspaceSettings === undefined) {
+      return;
+    }
+
+    const nextWorktreePath = workspaceSettings?.worktreePath ?? "";
+    setWorktreePath((prev) =>
+      prev === nextWorktreePath ? prev : nextWorktreePath
+    );
+    setOriginalWorktreePath((prev) =>
+      prev === nextWorktreePath ? prev : nextWorktreePath
+    );
+
+    const nextAutoPrEnabled = workspaceSettings?.autoPrEnabled ?? false;
+    setAutoPrEnabled((prev) =>
+      prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
+    );
+    setOriginalAutoPrEnabled((prev) =>
+      prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
+    );
+
+    if (workspaceSettings?.heatmapModel) {
+      const nextModel = workspaceSettings.heatmapModel;
+      setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
+      setOriginalHeatmapModel((prev) =>
+        prev === nextModel ? prev : nextModel
+      );
+    }
+    if (workspaceSettings?.heatmapThreshold !== undefined) {
+      const nextThreshold = workspaceSettings.heatmapThreshold;
+      setHeatmapThreshold((prev) =>
+        prev === nextThreshold ? prev : nextThreshold
+      );
+      setOriginalHeatmapThreshold((prev) =>
+        prev === nextThreshold ? prev : nextThreshold
+      );
+    }
+    if (workspaceSettings?.heatmapTooltipLanguage) {
+      const nextLanguage = workspaceSettings.heatmapTooltipLanguage;
+      setHeatmapTooltipLanguage((prev) =>
+        prev === nextLanguage ? prev : nextLanguage
+      );
+      setOriginalHeatmapTooltipLanguage((prev) =>
+        prev === nextLanguage ? prev : nextLanguage
+      );
+    }
+    if (workspaceSettings?.heatmapColors) {
+      const nextColors = workspaceSettings.heatmapColors;
+      setHeatmapColors((prev) =>
+        areHeatmapColorsEqual(prev, nextColors) ? prev : nextColors
+      );
+      setOriginalHeatmapColors((prev) =>
+        areHeatmapColorsEqual(prev, nextColors) ? prev : nextColors
+      );
     }
   }, [workspaceSettings]);
 
@@ -282,11 +390,22 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Heatmap settings changes
+    const heatmapModelChanged = heatmapModel !== originalHeatmapModel;
+    const heatmapThresholdChanged = heatmapThreshold !== originalHeatmapThreshold;
+    const heatmapTooltipLanguageChanged = heatmapTooltipLanguage !== originalHeatmapTooltipLanguage;
+    const heatmapColorsChanged =
+      JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      heatmapModelChanged ||
+      heatmapThresholdChanged ||
+      heatmapTooltipLanguageChanged ||
+      heatmapColorsChanged
     );
   };
 
@@ -297,18 +416,31 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
-      if (
+      // Save worktree path / auto PR / heatmap settings if changed
+      const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+        autoPrEnabled !== originalAutoPrEnabled ||
+        heatmapModel !== originalHeatmapModel ||
+        heatmapThreshold !== originalHeatmapThreshold ||
+        heatmapTooltipLanguage !== originalHeatmapTooltipLanguage ||
+        JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+
+      if (workspaceSettingsChanged) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          heatmapModel,
+          heatmapThreshold,
+          heatmapTooltipLanguage,
+          heatmapColors,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalHeatmapModel(heatmapModel);
+        setOriginalHeatmapThreshold(heatmapThreshold);
+        setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
+        setOriginalHeatmapColors(heatmapColors);
       }
 
       // Save container settings if changed
@@ -680,6 +812,183 @@ function SettingsComponent() {
               </div>
             </div>
 
+            {/* Heatmap Review Settings */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Diff Heatmap Review
+                </h2>
+              </div>
+              <div className="p-4 space-y-6">
+                {/* Model Selector */}
+                <div>
+                  <label
+                    htmlFor="heatmapModel"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Review Model
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Select the AI model used to analyze diffs and highlight areas that need attention.
+                  </p>
+                  <div className="relative">
+                    <select
+                      id="heatmapModel"
+                      value={heatmapModel}
+                      onChange={(e) => setHeatmapModel(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {HEATMAP_MODEL_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+
+                {/* Tooltip Language Selector */}
+                <div>
+                  <label
+                    htmlFor="heatmapTooltipLanguage"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Tooltip Language
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Language for the review comments shown in heatmap tooltips.
+                  </p>
+                  <div className="relative">
+                    <select
+                      id="heatmapTooltipLanguage"
+                      value={heatmapTooltipLanguage}
+                      onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+
+                {/* Threshold Slider */}
+                <div>
+                  <label
+                    htmlFor="heatmapThreshold"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Visibility Threshold: {Math.round(heatmapThreshold * 100)}%
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Only show highlights for lines with a review score above this threshold.
+                  </p>
+                  <input
+                    type="range"
+                    id="heatmapThreshold"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={heatmapThreshold}
+                    onChange={(e) => setHeatmapThreshold(Number.parseFloat(e.target.value))}
+                    className="w-full h-2 bg-neutral-200 dark:bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+
+                {/* Color Settings */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                    Heatmap Colors
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Customize the gradient colors for line and token highlighting.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Line Background Colors */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Line Background</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">Low</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.line.start}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            line: { ...prev.line, start: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.line.start}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">High</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.line.end}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            line: { ...prev.line, end: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.line.end}</span>
+                      </div>
+                    </div>
+                    {/* Token Highlight Colors */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Token Highlight</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">Low</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.token.start}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            token: { ...prev.token, start: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.token.start}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">High</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.token.end}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            token: { ...prev.token, end: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.token.end}</span>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Preview Gradient */}
+                  <div className="mt-4">
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Preview</span>
+                    <div
+                      className="mt-1 h-4 rounded"
+                      style={{
+                        background: `linear-gradient(to right, ${heatmapColors.line.start}, ${heatmapColors.line.end})`
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Worktree Path - hidden in web mode */}
             {!env.NEXT_PUBLIC_WEB_MODE && (
               <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -879,6 +1188,73 @@ function SettingsComponent() {
                             </div>
 
                             <div className="md:w-[min(100%,480px)] md:flex-shrink-0 self-start">
+                              {key.envVar === "CODEX_AUTH_JSON" ? (
+                                <div className="relative">
+                                  {showKeys[key.envVar] ? (
+                                    <textarea
+                                      id={key.envVar}
+                                      value={apiKeyValues[key.envVar] || ""}
+                                      onChange={(e) =>
+                                        handleApiKeyChange(
+                                          key.envVar,
+                                          e.target.value
+                                        )
+                                      }
+                                      rows={4}
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                                      placeholder='{"tokens": {"id_token": "...", "access_token": "...", "refresh_token": "...", "account_id": "..."}, "last_refresh": "..."}'
+                                    />
+                                  ) : (
+                                    <div
+                                      onClick={() => toggleShowKey(key.envVar)}
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer h-[82px]"
+                                    >
+                                      {apiKeyValues[key.envVar] ? "••••••••••••••••••••••••••••••••" : <span className="text-neutral-400">{"Click to edit"}</span>}
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleShowKey(key.envVar)}
+                                    className="absolute top-2 right-2 p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                                  >
+                                    {showKeys[key.envVar] ? (
+                                      <svg
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <svg
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                        />
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                                        />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+                              ) : (
                               <div className="relative">
                                 <input
                                   type={
@@ -947,6 +1323,7 @@ function SettingsComponent() {
                                   )}
                                 </button>
                               </div>
+                              )}
                               {originalApiKeyValues[key.envVar] && (
                                 <div className="flex items-center gap-1 mt-1">
                                   <svg

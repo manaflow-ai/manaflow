@@ -661,4 +661,11 @@ impl SandboxService for UnavailableSandboxService {
     async fn delete(&self, _id: String) -> SandboxResult<Option<SandboxSummary>> {
         Err(self.error("delete sandbox"))
     }
+
+    async fn prune_orphaned(
+        &self,
+        _request: cmux_sandbox::models::PruneRequest,
+    ) -> SandboxResult<cmux_sandbox::models::PruneResponse> {
+        Err(self.error("prune orphaned"))
+    }
 }

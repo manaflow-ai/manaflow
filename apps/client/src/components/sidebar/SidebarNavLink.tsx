@@ -15,6 +15,7 @@ interface SidebarNavLinkProps {
   icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   exact?: boolean;
   className?: string;
+  badgeCount?: number;
 }
 
 export function SidebarNavLink({
@@ -25,6 +26,7 @@ export function SidebarNavLink({
   icon: Icon,
   exact = true,
   className,
+  badgeCount,
 }: SidebarNavLinkProps) {
   return (
     <Link
@@ -33,7 +35,7 @@ export function SidebarNavLink({
       search={search}
       activeOptions={{ exact }}
       className={clsx(
-        "pointer-default cursor-default group mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45 data-[active=true]:hover:bg-neutral-200/75 dark:data-[active=true]:hover:bg-neutral-800/65",
+        "pointer-default cursor-default group flex items-center gap-2 rounded-sm pl-2 ml-2 py-1 text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45 data-[active=true]:hover:bg-neutral-200/75 dark:data-[active=true]:hover:bg-neutral-800/65 pr-2",
         className
       )}
       activeProps={{
@@ -51,6 +53,12 @@ export function SidebarNavLink({
         />
       ) : null}
       <span>{label}</span>
+      {badgeCount !== undefined && badgeCount > 0 && (
+        <span className="flex items-center justify-center min-w-[14px] h-[14px] px-1 text-[9px] font-medium text-white bg-blue-500 rounded-full ml-auto tabular-nums tracking-tighter">
+          {/* 12 */}
+          {badgeCount > 99 ? "99+" : badgeCount}
+        </span>
+      )}
     </Link>
   );
 }

@@ -154,6 +154,7 @@ async function createTerminalWithPrompt(
           cols: 80,
           rows: 24,
           env: {},
+          backend: "tmux",
           taskRunContext: {
             taskRunToken: "spawn-vscode-minimal-token",
             prompt,

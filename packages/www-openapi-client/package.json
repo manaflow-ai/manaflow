@@ -6,7 +6,7 @@
   "main": "./src/client/index.ts",
   "types": "./src/client/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "lint": "eslint ."
   },
   "exports": {

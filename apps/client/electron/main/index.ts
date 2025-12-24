@@ -99,6 +99,7 @@ let historyForwardMenuItem: MenuItem | null = null;
 const previewWebContentsIds = new Set<number>();
 const altGrActivePreviewContents = new Set<number>();
 let embeddedServerCleanup: (() => Promise<void>) | null = null;
+let autoUpdateIntervalId: ReturnType<typeof setInterval> | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -616,7 +617,8 @@ function setupAutoUpdates(): void {
     )
     .catch((e) => mainWarn("checkForUpdatesAndNotify failed", e));
   const CHECK_INTERVAL_MS = 30 * 60 * 1000;
-  setInterval(() => {
+  // Store interval ID for cleanup on app quit
+  autoUpdateIntervalId = setInterval(() => {
     mainLog("Starting scheduled auto-update check");
     autoUpdater
       .checkForUpdates()
@@ -792,6 +794,12 @@ app.whenReady().then(async () => {
       disposeContextMenu();
     } catch (error) {
       console.error("Failed to dispose context menu", error);
+    }
+
+    // Clear auto-update interval to prevent leaks
+    if (autoUpdateIntervalId !== null) {
+      clearInterval(autoUpdateIntervalId);
+      autoUpdateIntervalId = null;
     }
 
     if (embeddedServerCleanup) {

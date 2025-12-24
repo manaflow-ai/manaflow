@@ -168,6 +168,51 @@ pub struct GhResponse {
     pub stderr: String,
 }
 
+/// Request to prune orphaned sandbox filesystem directories.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct PruneRequest {
+    /// Only prune directories older than this many seconds.
+    /// If not specified, defaults to 86400 (24 hours).
+    #[serde(default)]
+    pub max_age_secs: Option<u64>,
+    /// If true, prune all orphaned directories regardless of age.
+    #[serde(default)]
+    pub all: bool,
+    /// If true, only report what would be deleted without actually deleting.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// Information about a pruned orphaned directory.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct PrunedItem {
+    /// The UUID of the orphaned sandbox directory.
+    pub id: String,
+    /// Path to the directory that was (or would be) deleted.
+    pub path: String,
+    /// Age of the directory in seconds.
+    pub age_secs: u64,
+    /// Size of the directory in bytes.
+    #[serde(default)]
+    pub size_bytes: u64,
+}
+
+/// Response from pruning orphaned sandbox directories.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct PruneResponse {
+    /// Number of orphaned directories that were deleted (or would be in dry_run mode).
+    pub deleted_count: usize,
+    /// Number of directories that failed to delete.
+    pub failed_count: usize,
+    /// Details about each pruned item.
+    pub items: Vec<PrunedItem>,
+    /// Whether this was a dry run.
+    pub dry_run: bool,
+    /// Total bytes freed (or would be freed in dry_run mode).
+    #[serde(default)]
+    pub bytes_freed: u64,
+}
+
 // ============================================================================
 // Unified Bridge Socket Protocol
 // ============================================================================

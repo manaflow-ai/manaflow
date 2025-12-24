@@ -16,20 +16,31 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/workspaces")({
   loader: async ({ params }) => {
     const { teamSlugOrId } = params;
     void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.tasks.get, { teamSlugOrId })
+      convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId })
     );
   },
 });
 
 function WorkspacesRoute() {
   const { teamSlugOrId } = Route.useParams();
-  const tasks = useQuery(api.tasks.get, { teamSlugOrId });
+  // Use notification-aware ordering: unread notifications first, then by createdAt
+  const tasks = useQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId });
+  const tasksWithUnread = useQuery(api.taskNotifications.getTasksWithUnread, {
+    teamSlugOrId,
+  });
   const { expandTaskIds } = useExpandTasks();
 
-  const orderedTasks = useMemo(() => {
-    if (!tasks) return [] as NonNullable<typeof tasks>;
-    return [...tasks].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  }, [tasks]);
+  // Tasks are already sorted by the query (unread notifications first)
+  const orderedTasks = useMemo(
+    () => tasks ?? ([] as NonNullable<typeof tasks>),
+    [tasks]
+  );
+
+  // Create a Set for quick lookup of task IDs with unread notifications
+  const tasksWithUnreadSet = useMemo(() => {
+    if (!tasksWithUnread) return new Set<string>();
+    return new Set(tasksWithUnread.map((t) => t.taskId));
+  }, [tasksWithUnread]);
 
   const taskRunQueries = useMemo(() => {
     return orderedTasks
@@ -93,6 +104,7 @@ function WorkspacesRoute() {
                   task={task}
                   defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
                   teamSlugOrId={teamSlugOrId}
+                  hasUnreadNotification={tasksWithUnreadSet.has(task._id)}
                 />
               ))}
             </div>

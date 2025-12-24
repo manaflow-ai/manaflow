@@ -2,7 +2,8 @@ use crate::errors::{SandboxError, SandboxResult};
 use crate::ip_pool::{IpLease, IpPool};
 use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
-    MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
+    MuxServerMessage, PruneRequest, PruneResponse, PrunedItem, PtySessionId, SandboxNetwork,
+    SandboxStatus, SandboxSummary,
 };
 use crate::mux::terminal::{DaFilter, VirtualTerminal};
 use crate::service::SandboxService;
@@ -2131,6 +2132,151 @@ impl SandboxService for BubblewrapService {
 
         Ok(None)
     }
+
+    async fn prune_orphaned(&self, request: PruneRequest) -> SandboxResult<PruneResponse> {
+        use std::time::SystemTime;
+
+        let max_age_secs = if request.all {
+            0
+        } else {
+            request.max_age_secs.unwrap_or(86400) // Default: 24 hours
+        };
+
+        let mut items = Vec::new();
+        let mut deleted_count = 0;
+        let mut failed_count = 0;
+
+        // Collect candidate directories first (without holding the lock)
+        let mut candidates: Vec<(Uuid, PathBuf, u64)> = Vec::new();
+
+        // Scan workspace_root for UUID-named directories
+        let mut entries = match fs::read_dir(&self.workspace_root).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                warn!(
+                    "failed to read workspace root {}: {e}",
+                    self.workspace_root.display()
+                );
+                return Ok(PruneResponse {
+                    deleted_count: 0,
+                    failed_count: 0,
+                    items: vec![],
+                    dry_run: request.dry_run,
+                    bytes_freed: 0,
+                });
+            }
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let file_name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(_) => continue, // Skip non-UTF8 names
+            };
+
+            // Try to parse as UUID
+            let id = match Uuid::parse_str(&file_name) {
+                Ok(id) => id,
+                Err(_) => continue, // Not a UUID-named directory, skip
+            };
+
+            // Use symlink_metadata to avoid following symlinks (security: prevents
+            // malicious symlinks from causing deletion of arbitrary host paths)
+            let metadata = match fs::symlink_metadata(&path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            // Skip symlinks to prevent arbitrary path deletion attacks
+            if metadata.file_type().is_symlink() {
+                warn!(
+                    "skipping symlink in workspace_root during prune: {}",
+                    path.display()
+                );
+                continue;
+            }
+
+            // Check if it's a directory
+            if !metadata.is_dir() {
+                continue;
+            }
+
+            // Get modification time and calculate age
+            let age_secs = match metadata.modified() {
+                Ok(mtime) => match SystemTime::now().duration_since(mtime) {
+                    Ok(duration) => duration.as_secs(),
+                    Err(_) => 0,
+                },
+                Err(_) => 0,
+            };
+
+            // Skip if not old enough (unless --all)
+            if !request.all && age_secs < max_age_secs {
+                continue;
+            }
+
+            candidates.push((id, path, age_secs));
+        }
+
+        let mut bytes_freed: u64 = 0;
+
+        // Now process candidates, re-checking the sandbox map before each deletion
+        // to avoid race conditions with concurrent sandbox creation
+        for (id, path, age_secs) in candidates {
+            // Re-check if this sandbox was created while we were scanning
+            // This prevents TOCTOU race conditions with sandbox creation
+            {
+                let sandboxes = self.sandboxes.lock().await;
+                if sandboxes.contains_key(&id) {
+                    continue; // Sandbox was created, skip deletion
+                }
+            }
+
+            // Calculate directory size
+            let size_bytes = calculate_dir_size(&path).await;
+
+            let item = PrunedItem {
+                id: id.to_string(),
+                path: path.to_string_lossy().to_string(),
+                age_secs,
+                size_bytes,
+            };
+
+            if request.dry_run {
+                bytes_freed += size_bytes;
+                items.push(item);
+                deleted_count += 1;
+            } else {
+                // Clean up any stale overlay mounts first
+                let system_dir = path.join("system");
+                if system_dir.exists() {
+                    cleanup_overlays(&system_dir).await;
+                }
+
+                // Remove the directory
+                match fs::remove_dir_all(&path).await {
+                    Ok(()) => {
+                        info!("pruned orphaned sandbox directory: {}", path.display());
+                        bytes_freed += size_bytes;
+                        items.push(item);
+                        deleted_count += 1;
+                    }
+                    Err(e) => {
+                        warn!("failed to prune {}: {e}", path.display());
+                        failed_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(PruneResponse {
+            deleted_count,
+            failed_count,
+            items,
+            dry_run: request.dry_run,
+            bytes_freed,
+        })
+    }
 }
 
 impl SandboxHandle {
@@ -2211,6 +2357,39 @@ async fn cleanup_overlays(system_dir: &Path) {
         &[system_dir.join("usr-merged").to_string_lossy().as_ref()],
     )
     .await;
+}
+
+/// Calculate the total size of a directory recursively.
+async fn calculate_dir_size(path: &Path) -> u64 {
+    let mut total: u64 = 0;
+
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        let mut entries = match fs::read_dir(&current).await {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let entry_path = entry.path();
+
+            // Use symlink_metadata to not follow symlinks
+            let metadata = match fs::symlink_metadata(&entry_path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            if metadata.is_file() {
+                total += metadata.len();
+            } else if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                stack.push(entry_path);
+            }
+            // Skip symlinks for size calculation
+        }
+    }
+
+    total
 }
 
 #[cfg(test)]

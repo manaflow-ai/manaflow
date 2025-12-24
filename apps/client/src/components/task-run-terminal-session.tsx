@@ -217,7 +217,7 @@ export function TaskRunTerminalSession({
 
     let cancelled = false;
     const base = new URL(baseUrl);
-    const wsUrl = new URL(`/ws/${terminalId}`, base);
+    const wsUrl = new URL(`/sessions/${terminalId}/ws`, base);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
 
     const socket = new WebSocket(wsUrl);

@@ -157,6 +157,10 @@ describe("electron.vite.config", () => {
 
     expect(resolved.renderer?.resolve?.alias).toMatchObject({
       "@": resolve("src"),
+      "@cmux/www-openapi-client/client.gen": resolve(
+        repoRoot,
+        "packages/www-openapi-client/src/client/client.gen.ts"
+      ),
     });
   });
 });

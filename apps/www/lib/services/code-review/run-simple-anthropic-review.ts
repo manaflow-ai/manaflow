@@ -130,6 +130,7 @@ export type SimpleReviewStreamOptions = {
   githubToken?: string | null;
   modelConfig?: ModelConfig;
   tooltipLanguage?: TooltipLanguageValue;
+  fileDiffs?: FileDiff[];
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -299,6 +300,7 @@ export async function runSimpleAnthropicReviewStream(
     githubToken: providedGithubToken = null,
     modelConfig,
     tooltipLanguage = DEFAULT_TOOLTIP_LANGUAGE,
+    fileDiffs: providedFileDiffs,
     onChunk,
     signal,
   } = options;
@@ -315,10 +317,19 @@ export async function runSimpleAnthropicReviewStream(
     throw new Error("Stream aborted before start");
   }
 
-  const { fileDiffs, metadata } = await collectDiffsWithFallback({
-    prIdentifier,
-    githubToken: providedGithubToken,
-  });
+  let fileDiffs: FileDiff[] = [];
+  let metadata: CollectPrDiffsResult["metadata"] | null = null;
+
+  if (providedFileDiffs && providedFileDiffs.length > 0) {
+    fileDiffs = providedFileDiffs;
+  } else {
+    const fetched = await collectDiffsWithFallback({
+      prIdentifier,
+      githubToken: providedGithubToken,
+    });
+    fileDiffs = fetched.fileDiffs;
+    metadata = fetched.metadata;
+  }
 
   const candidateFiles: FileDiff[] = [];
 
@@ -348,8 +359,10 @@ export async function runSimpleAnthropicReviewStream(
   }
 
   const prLabel =
-    metadata.prUrl ??
-    `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
+    metadata?.prUrl ??
+    (metadata
+      ? `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`
+      : prIdentifier);
 
   // Determine which model to use based on configuration
   const effectiveModelConfig: ModelConfig =

@@ -65,7 +65,7 @@ jobs:
           # Skip Docker E2E tests in CI for stability/speed
           CMUX_SKIP_DOCKER_TESTS: "1"
           # Skip cargo crates handled in dedicated workflows
-          CMUX_SKIP_CARGO_CRATES: "sandbox,cmux-env,cmux-xterm,cmux-proxy,global-proxy,server/native/core"
+          CMUX_SKIP_CARGO_CRATES: "sandbox,cmux-env,cmux-pty,cmux-proxy,global-proxy,server/native/core"
           # Stack Auth env vars
           STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
           STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}

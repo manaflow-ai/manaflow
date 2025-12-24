@@ -268,7 +268,106 @@ async function mapWithConcurrency<T, R>(
 }
 
 // Export helper functions and core functions for external use
-export { formatDuration, isBinaryFile, mapWithConcurrency, collectPrDiffsViaGhCli };
+export { formatDuration, isBinaryFile, mapWithConcurrency, collectPrDiffsViaGhCli, splitDiffIntoFiles };
+
+/**
+ * Options for collecting branch comparison diffs via GitHub Compare API.
+ */
+interface CollectComparisonDiffsOptions {
+  owner: string;
+  repo: string;
+  base: string;
+  head: string;
+  includePaths?: string[];
+  maxFiles?: number | null;
+  githubToken?: string | null;
+  githubApiBaseUrl?: string;
+}
+
+/**
+ * Metadata for a branch comparison (analogous to GhPrMetadata for PRs).
+ */
+export interface GhComparisonMetadata {
+  owner: string;
+  repo: string;
+  baseRef: string;
+  headRef: string;
+  compareUrl: string;
+  aheadBy: number;
+  behindBy: number;
+  status: string;
+  totalCommits: number;
+}
+
+/**
+ * Fetch branch comparison diff via GitHub's Compare API.
+ * This is used for branch-to-branch comparisons (not PRs).
+ *
+ * API: GET /repos/{owner}/{repo}/compare/{base}...{head}
+ */
+export async function collectComparisonDiffs({
+  owner,
+  repo,
+  base,
+  head,
+  includePaths = [],
+  maxFiles = null,
+  githubToken,
+  githubApiBaseUrl,
+}: CollectComparisonDiffsOptions): Promise<{
+  metadata: GhComparisonMetadata;
+  fileDiffs: FileDiff[];
+}> {
+  const token = resolveGithubToken(githubToken ?? null);
+  const baseUrl = normalizeGithubApiBaseUrl(githubApiBaseUrl);
+  const context: GithubApiContext = { token, baseUrl };
+
+  // Fetch comparison metadata first
+  const path = `repos/${owner}/${repo}/compare/${base}...${head}`;
+  const data = (await fetchGithubResponse(path, {
+    token: context.token,
+    baseUrl: context.baseUrl,
+    accept: "application/vnd.github+json",
+    responseType: "json",
+  })) as Record<string, unknown>;
+
+  const metadata: GhComparisonMetadata = {
+    owner,
+    repo,
+    baseRef: base,
+    headRef: head,
+    compareUrl:
+      (typeof data.html_url === "string" && data.html_url.length > 0
+        ? data.html_url
+        : `https://github.com/${owner}/${repo}/compare/${base}...${head}`),
+    aheadBy: typeof data.ahead_by === "number" ? data.ahead_by : 0,
+    behindBy: typeof data.behind_by === "number" ? data.behind_by : 0,
+    status: typeof data.status === "string" ? data.status : "unknown",
+    totalCommits: typeof data.total_commits === "number" ? data.total_commits : 0,
+  };
+
+  // Now fetch the diff
+  const diffText = (await fetchGithubResponse(path, {
+    token: context.token,
+    baseUrl: context.baseUrl,
+    accept: "application/vnd.github.v3.diff",
+    responseType: "text",
+  })) as string;
+
+  const allDiffs = splitDiffIntoFiles(diffText);
+
+  let filtered = filterFileDiffsByInclude(allDiffs, includePaths ?? []);
+  if (filtered.length === 0) {
+    filtered = allDiffs;
+  }
+
+  const limited =
+    typeof maxFiles === "number" && maxFiles > 0
+      ? filtered.slice(0, maxFiles)
+      : filtered;
+
+  return { metadata, fileDiffs: limited };
+}
 
 export async function runHeatmapJob(
   options: HeatmapJobOptions

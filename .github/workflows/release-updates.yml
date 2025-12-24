@@ -259,7 +259,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: aarch64-apple-darwin
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile
@@ -379,7 +378,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Install dependencies (bun)
@@ -567,7 +565,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: x86_64-pc-windows-msvc
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile
@@ -615,7 +612,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: x86_64-unknown-linux-gnu
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile

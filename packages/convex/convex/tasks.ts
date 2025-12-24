@@ -35,9 +35,95 @@ export const get = authQuery({
       );
     }
 
-    // Note: order by createdAt desc, fallback to insertion order if not present
-    const results = await q.collect();
-    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    const tasks = await q.collect();
+
+    // Get unread task runs for this user in this team
+    // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .collect();
+
+    // Build set of taskIds that have unread runs (direct access, no joins needed)
+    // Filter out undefined taskIds (pre-migration data)
+    const tasksWithUnread = new Set(
+      unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
+    );
+
+    // Sort by createdAt desc
+    const sorted = [...tasks].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+    // Return tasks with hasUnread indicator
+    return sorted.map((task) => ({
+      ...task,
+      hasUnread: tasksWithUnread.has(task._id),
+    }));
+  },
+});
+
+// Get tasks sorted by most recent activity (iMessage-style):
+// - Sorted by lastActivityAt desc (most recently active first)
+// - lastActivityAt is updated when a run is started OR notification is received
+// - Includes hasUnread for visual indicator (blue dot)
+export const getWithNotificationOrder = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    projectFullName: v.optional(v.string()),
+    archived: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Get all tasks
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      );
+
+    if (args.archived === true) {
+      q = q.filter((qq) => qq.eq(qq.field("isArchived"), true));
+    } else {
+      q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
+    }
+
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    if (args.projectFullName) {
+      q = q.filter((qq) =>
+        qq.eq(qq.field("projectFullName"), args.projectFullName),
+      );
+    }
+
+    const tasks = await q.collect();
+
+    // Get unread task runs for this user in this team
+    // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .collect();
+
+    // Build set of taskIds that have unread runs (direct access, no joins needed)
+    // Filter out undefined taskIds (pre-migration data)
+    const tasksWithUnread = new Set(
+      unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
+    );
+
+    // Sort by lastActivityAt desc (most recently active first)
+    // Fall back to createdAt for tasks without lastActivityAt (pre-migration)
+    const sorted = [...tasks].sort((a, b) => {
+      const aTime = a.lastActivityAt ?? a.createdAt ?? 0;
+      const bTime = b.lastActivityAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
+    });
+
+    // Return tasks with hasUnread indicator
+    return sorted.map((task) => ({
+      ...task,
+      hasUnread: tasksWithUnread.has(task._id),
+    }));
   },
 });
 
@@ -92,7 +178,25 @@ export const getPinned = authQuery({
       .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
-    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    // Get unread task runs for this user in this team
+    // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .collect();
+
+    // Build set of taskIds that have unread runs (direct access, no joins needed)
+    // Filter out undefined taskIds (pre-migration data)
+    const tasksWithUnread = new Set(
+      unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
+    );
+
+    const sorted = pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+
+    return sorted.map((task) => ({
+      ...task,
+      hasUnread: tasksWithUnread.has(task._id),
+    }));
   },
 });
 
@@ -204,6 +308,7 @@ export const create = authMutation({
       isCompleted: false,
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
       images: args.images,
       userId,
       teamId,
@@ -913,6 +1018,7 @@ export const createForPreview = internalMutation({
       isPreview: true,
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
       images: undefined,
       userId: args.userId,
       teamId: args.teamId,

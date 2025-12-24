@@ -130,10 +130,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
         try {
           const created = await createTerminalTab({
             baseUrl,
-            request: {
-              cmd: "tmux",
-              args: ["attach", "-t", "cmux"],
-            },
+            request: {},
           });
 
           queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
@@ -148,7 +145,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
 
           resetAutoCreate();
         } catch (error) {
-          console.error("Failed to auto-create tmux terminal", error);
+          console.error("Failed to auto-create terminal", error);
           inFlightRef.current = false;
 
           const shouldRetryAutomatically =
@@ -166,7 +163,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
           }
 
           const message =
-            error instanceof Error ? error.message : "Unable to connect to tmux session.";
+            error instanceof Error ? error.message : "Unable to connect to terminal session.";
           setAutoCreateError(message);
         }
       })();

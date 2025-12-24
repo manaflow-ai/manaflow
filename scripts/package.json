@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@cmux/morphcloud-openapi-client": "workspace:*",

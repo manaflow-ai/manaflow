@@ -6,7 +6,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
   "exports": {
@@ -81,6 +81,10 @@
     "./node/convex-cache": {
       "import": "./src/node/convex-cache.ts",
       "types": "./src/node/convex-cache.ts"
+    },
+    "./cmux-pty-client": {
+      "import": "./src/cmux-pty-client.ts",
+      "types": "./src/cmux-pty-client.ts"
     },
     "./utils/format-env-vars-content": {
       "import": "./src/utils/format-env-vars-content.ts",

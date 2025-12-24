@@ -26,8 +26,8 @@ import {
 import {
   toMorphVncUrl,
   toMorphXtermBaseUrl,
-  toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
+import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
@@ -134,12 +134,18 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
 
       // Preload both VSCode and browser iframes in parallel
       if (selectedRun && rawWorkspaceUrl) {
-        const workspaceUrl = toProxyWorkspaceUrl(rawWorkspaceUrl, undefined);
-        void preloadTaskRunIframes([
-          { url: workspaceUrl, taskRunId: selectedRun._id },
-        ]).catch((error) => {
-          console.error("Failed to preload VSCode iframe", error);
-        });
+        const workspaceUrl = getWorkspaceUrl(
+          rawWorkspaceUrl,
+          selectedRun.vscode?.provider,
+          undefined // localServeWeb not available in loader
+        );
+        if (workspaceUrl) {
+          void preloadTaskRunIframes([
+            { url: workspaceUrl, taskRunId: selectedRun._id },
+          ]).catch((error) => {
+            console.error("Failed to preload VSCode iframe", error);
+          });
+        }
       }
       if (selectedRun && rawBrowserUrl) {
         const vncUrl = toMorphVncUrl(rawBrowserUrl);
@@ -181,14 +187,11 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         try {
           const created = await createTerminalTab({
             baseUrl,
-            request: {
-              cmd: "tmux",
-              args: ["new-session", "-A", "cmux"],
-            },
+            request: {},
           });
           tabs = [created.id];
         } catch (error) {
-          console.error("Failed to create default tmux terminal", error);
+          console.error("Failed to create default terminal", error);
           return;
         }
       }
@@ -482,9 +485,11 @@ function TaskDetailPage() {
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-  const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
-    : null;
+  const workspaceUrl = getWorkspaceUrl(
+    rawWorkspaceUrl,
+    selectedRun?.vscode?.provider,
+    localServeWeb.data?.baseUrl
+  );
   const workspacePersistKey = selectedRunId
     ? getTaskRunPersistKey(selectedRunId)
     : null;
@@ -634,14 +639,34 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  const currentLayout = useMemo(
-    () => getCurrentLayoutPanels(panelConfig),
-    [panelConfig]
-  );
-  const availablePanels = useMemo(
-    () => getAvailablePanels(panelConfig),
-    [panelConfig]
-  );
+  // Determine if this is a workspace-only task (local or cloud workspace)
+  const isWorkspaceOnlyTask = task?.isLocalWorkspace || task?.isCloudWorkspace;
+
+  const currentLayout = useMemo(() => {
+    const layout = getCurrentLayoutPanels(panelConfig);
+
+    // For local/cloud workspaces, hide gitDiff and browser panels since they're not applicable
+    if (isWorkspaceOnlyTask) {
+      return {
+        topLeft: layout.topLeft === "gitDiff" || layout.topLeft === "browser" ? null : layout.topLeft,
+        topRight: layout.topRight === "gitDiff" || layout.topRight === "browser" ? null : layout.topRight,
+        bottomLeft: layout.bottomLeft === "gitDiff" || layout.bottomLeft === "browser" ? null : layout.bottomLeft,
+        bottomRight: layout.bottomRight === "gitDiff" || layout.bottomRight === "browser" ? null : layout.bottomRight,
+      };
+    }
+
+    return layout;
+  }, [panelConfig, isWorkspaceOnlyTask]);
+  const availablePanels = useMemo(() => {
+    const panels = getAvailablePanels(panelConfig);
+
+    // For local/cloud workspaces, exclude gitDiff and browser from available panels
+    if (isWorkspaceOnlyTask) {
+      return panels.filter((p) => p !== "gitDiff" && p !== "browser");
+    }
+
+    return panels;
+  }, [panelConfig, isWorkspaceOnlyTask]);
   const activePanelPositions = useMemo(
     () => getActivePanelPositions(panelConfig.layoutMode),
     [panelConfig.layoutMode]

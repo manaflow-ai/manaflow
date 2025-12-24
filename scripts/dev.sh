@@ -5,6 +5,7 @@
 # Usage: ./scripts/dev.sh [options]
 #
 # Options:
+#   --docker                Force build Docker image (alias for --force-docker-build)
 #   --force-docker-build    Force rebuild the Docker image (overrides --skip-docker)
 #   --skip-docker[=BOOL]    Skip Docker image build (default: true)
 #   --skip-convex[=BOOL]    Skip Convex backend (default: true)
@@ -18,7 +19,7 @@
 #
 # Examples:
 #   ./scripts/dev.sh                          # Start without Docker build
-#   ./scripts/dev.sh --force-docker-build     # Force Docker image rebuild
+#   ./scripts/dev.sh --docker                 # Force Docker image rebuild
 #   ./scripts/dev.sh --skip-docker=false      # Build Docker image
 #   ./scripts/dev.sh --skip-convex=false      # Run with Convex enabled
 #
@@ -65,6 +66,10 @@ CONVEX_AGENT_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --docker)
+            FORCE_DOCKER_BUILD=true
+            shift
+            ;;
         --force-docker-build)
             FORCE_DOCKER_BUILD=true
             shift
@@ -179,15 +184,19 @@ if [ -n "${EFFECTIVE_GITHUB_TOKEN}" ]; then
     DOCKER_BUILD_ARGS+=(--build-arg GITHUB_TOKEN --secret id=github_token,env=GITHUB_TOKEN)
 fi
 
+# Start Docker build (runs in background to parallelize with N-API build)
+DOCKER_BUILD_PID=""
 if [ "$IS_DEVCONTAINER" = "true" ]; then
     # In devcontainer, always build since we have access to docker socket
     echo "Building Docker image..."
-    docker build "${DOCKER_BUILD_ARGS[@]}" "$APP_DIR" || exit 1
+    docker build "${DOCKER_BUILD_ARGS[@]}" "$APP_DIR" &
+    DOCKER_BUILD_PID=$!
 else
     # On host, build by default unless explicitly skipped
     if [ "$SKIP_DOCKER_BUILD" != "true" ] || [ "$FORCE_DOCKER_BUILD" = "true" ]; then
         echo "Building Docker image..."
-        docker build "${DOCKER_BUILD_ARGS[@]}" . || exit 1
+        docker build "${DOCKER_BUILD_ARGS[@]}" . &
+        DOCKER_BUILD_PID=$!
     else
         echo "Skipping Docker build (SKIP_DOCKER_BUILD=true)"
     fi
@@ -244,9 +253,19 @@ if [ ! -d "node_modules" ] || [ "$FORCE_INSTALL" = "true" ]; then
     CI=1 bun install --frozen-lockfile || exit 1
 fi
 
-# Build Rust N-API addon (required)
+# Build Rust N-API addon (required) - runs in parallel with Docker build
 echo -e "${GREEN}Building native Rust addon...${NC}"
-(cd "$APP_DIR/apps/server/native/core" && bunx --bun @napi-rs/cli build --platform)
+(cd "$APP_DIR/apps/server/native/core" && bunx --bun @napi-rs/cli build --platform) || exit 1
+
+# Wait for Docker build to complete if it was started
+if [ -n "$DOCKER_BUILD_PID" ]; then
+    echo -e "${BLUE}Waiting for Docker build to complete...${NC}"
+    if ! wait $DOCKER_BUILD_PID; then
+        echo -e "${RED}Docker build failed${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Docker build completed${NC}"
+fi
 
 # Function to prefix output with colored labels
 prefix_output() {

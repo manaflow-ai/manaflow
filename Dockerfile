@@ -16,7 +16,7 @@ ARG GO_VERSION=1.25.2
 ARG GITHUB_TOKEN
 ARG IDE_PROVIDER=cmux-code
 
-FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-builder
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-base
 
 ARG RUST_VERSION
 ARG BUILDPLATFORM
@@ -55,29 +55,82 @@ rustup target add x86_64-unknown-linux-gnu --toolchain "${RUST_VERSION}"
 cargo --version
 EOF
 
-WORKDIR /cmux
-
-# Copy only Rust crates
-COPY crates ./crates
-
-# Build Rust binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
-  --mount=type=cache,target=/cmux/crates/target \
+  cargo install cargo-chef --locked
+
+WORKDIR /cmux
+
+FROM rust-base AS rust-chef
+WORKDIR /cmux
+COPY crates/cmux-env/Cargo.toml crates/cmux-env/Cargo.lock crates/cmux-env/
+COPY crates/cmux-proxy/Cargo.toml crates/cmux-proxy/Cargo.lock crates/cmux-proxy/
+COPY crates/cmux-pty/Cargo.toml crates/cmux-pty/Cargo.lock crates/cmux-pty/
+RUN mkdir -p crates/cmux-env/src/bin crates/cmux-proxy/src crates/cmux-pty/src && \
+  printf 'fn main() {}\n' > crates/cmux-env/src/bin/envd.rs && \
+  printf 'fn main() {}\n' > crates/cmux-env/src/bin/envctl.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-env/src/lib.rs && \
+  printf 'fn main() {}\n' > crates/cmux-proxy/src/main.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-proxy/src/lib.rs && \
+  printf 'fn main() {}\n' > crates/cmux-pty/src/main.rs
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-env && cargo chef prepare --recipe-path /cmux/recipe-env.json"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-proxy && cargo chef prepare --recipe-path /cmux/recipe-proxy.json"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-pty && cargo chef prepare --recipe-path /cmux/recipe-pty.json"
+
+FROM rust-base AS rust-builder
+ENV CARGO_TARGET_DIR=/cmux/target
+WORKDIR /cmux
+COPY --from=rust-chef /cmux/recipe-env.json /cmux/recipe-env.json
+COPY --from=rust-chef /cmux/recipe-proxy.json /cmux/recipe-proxy.json
+COPY --from=rust-chef /cmux/recipe-pty.json /cmux/recipe-pty.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/target \
+  export CARGO_BUILD_JOBS="$(nproc)" && \
   if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
   # Cross-compile to x86_64 when building on a non-amd64 builder
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
   export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
   export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
-  cargo install --path crates/cmux-env --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-proxy --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-xterm --target x86_64-unknown-linux-gnu --locked --force; \
+  cargo chef cook --recipe-path /cmux/recipe-env.json --release --locked --target x86_64-unknown-linux-gnu && \
+  cargo chef cook --recipe-path /cmux/recipe-proxy.json --release --locked --target x86_64-unknown-linux-gnu && \
+  cargo chef cook --recipe-path /cmux/recipe-pty.json --release --locked --target x86_64-unknown-linux-gnu; \
   else \
   # Build natively for the requested platform (e.g., arm64 on Apple Silicon)
-  cargo install --path crates/cmux-env --locked --force && \
-  cargo install --path crates/cmux-proxy --locked --force && \
-  cargo install --path crates/cmux-xterm --locked --force; \
+  cargo chef cook --recipe-path /cmux/recipe-env.json --release --locked && \
+  cargo chef cook --recipe-path /cmux/recipe-proxy.json --release --locked && \
+  cargo chef cook --recipe-path /cmux/recipe-pty.json --release --locked; \
   fi
+
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/target \
+  export CARGO_BUILD_JOBS="$(nproc)" && \
+  if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
+  export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
+  export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
+  cargo build --release --locked --manifest-path crates/cmux-env/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  cargo build --release --locked --manifest-path crates/cmux-proxy/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  cargo build --release --locked --manifest-path crates/cmux-pty/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  target_dir="/cmux/target/x86_64-unknown-linux-gnu/release"; \
+  else \
+  cargo build --release --locked --manifest-path crates/cmux-env/Cargo.toml && \
+  cargo build --release --locked --manifest-path crates/cmux-proxy/Cargo.toml && \
+  cargo build --release --locked --manifest-path crates/cmux-pty/Cargo.toml && \
+  target_dir="/cmux/target/release"; \
+  fi && \
+  install -m 0755 "${target_dir}/envd" /usr/local/cargo/bin/envd && \
+  install -m 0755 "${target_dir}/envctl" /usr/local/cargo/bin/envctl && \
+  install -m 0755 "${target_dir}/cmux-proxy" /usr/local/cargo/bin/cmux-proxy && \
+  install -m 0755 "${target_dir}/cmux-pty" /usr/local/cargo/bin/cmux-pty
 
 # Stage 2: Build base stage (runs natively on ARM64, cross-compiles to x86_64)
 FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS builder-base
@@ -569,6 +622,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   git \
   python3 \
   bash \
+  zsh \
   nano \
   net-tools \
   lsof \
@@ -1011,17 +1065,21 @@ RUN chmod +x /usr/local/bin/cmux-collect-relevant-diff.sh \
 COPY --from=rust-builder /usr/local/cargo/bin/envctl /usr/local/bin/envctl
 COPY --from=rust-builder /usr/local/cargo/bin/envd /usr/local/bin/envd
 COPY --from=rust-builder /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
-COPY --from=rust-builder /usr/local/cargo/bin/cmux-xterm-server /usr/local/bin/cmux-xterm-server
+COPY --from=rust-builder /usr/local/cargo/bin/cmux-pty /usr/local/bin/cmux-pty
 
 # Configure envctl/envd runtime defaults
-RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-xterm-server && \
+RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-pty && \
   envctl --version && \
   envctl install-hook bash && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.profile && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.bash_profile && \
   mkdir -p /run/user/0 && \
   chmod 700 /run/user/0 && \
-  echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc
+  echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc && \
+  echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.bashrc && \
+  echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.zshrc && \
+  printf 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"\n' > /etc/profile.d/local-bin.sh && \
+  chmod +x /etc/profile.d/local-bin.sh
 
 # Install tmux configuration for better mouse scrolling behavior
 COPY configs/tmux.conf /etc/tmux.conf
@@ -1046,8 +1104,10 @@ COPY configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
 COPY configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
 COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
-COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
+COPY configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+COPY configs/systemd/cmux-ide.service.template /usr/lib/systemd/system/cmux-ide.service.template
+COPY configs/systemd/cmux.target.docker.drop-in.conf /usr/lib/systemd/system/cmux.target.docker.drop-in.conf
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
 COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
@@ -1073,7 +1133,11 @@ touch /usr/local/lib/cmux/dockerd.flag
 mkdir -p /var/log/cmux
 mkdir -p /etc/systemd/system/multi-user.target.wants
 mkdir -p /etc/systemd/system/cmux.target.wants
+mkdir -p /etc/systemd/system/cmux.target.d
 mkdir -p /etc/systemd/system/swap.target.wants
+
+# Install Docker-specific drop-in for cmux.target (removes cmux-devtools.service from Requires)
+cp /usr/lib/systemd/system/cmux.target.docker.drop-in.conf /etc/systemd/system/cmux.target.d/10-docker.conf
 
 # Copy the correct IDE env file based on provider
 if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
@@ -1088,17 +1152,19 @@ else
 fi
 
 ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
-# Create cmux-ide.service alias so systemd can find the unit when cmux.target requires it
-ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/cmux-ide.service
-ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/cmux.target.wants/cmux-ide.service
+# Generate cmux-ide.service from template (proper systemd proxy unit instead of symlink)
+sed "s/@IDE_SERVICE@/${IDE_SERVICE}/g" /usr/lib/systemd/system/cmux-ide.service.template > /usr/lib/systemd/system/cmux-ide.service
+ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.wants/cmux-ide.service
 ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
 ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
 ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
-ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
+# Note: cmux-devtools.service not enabled in Docker (requires cmux-openbox.service which is not available)
 ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
 ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
+# Note: cmux-cdp-proxy.service not enabled in Docker (requires cmux-devtools.service)
+ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
+ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.target.wants/cmux-pty.service
+ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/multi-user.target.wants/${IDE_SERVICE}
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
 mkdir -p /opt/app/overlay/upper /opt/app/overlay/work
@@ -1112,23 +1178,23 @@ if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
   # cmux-code settings (includes workspace trust, secondary sidebar, and OpenVSIX compatibility settings)
   # extensions.verifySignature: false is required because OpenVSIX marketplace doesn't support extension signatures
   mkdir -p /root/.vscode-server-oss/data/User
-  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/settings.json
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/settings.json
   mkdir -p /root/.vscode-server-oss/data/User/profiles/default-profile
-  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/profiles/default-profile/settings.json
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/profiles/default-profile/settings.json
   mkdir -p /root/.vscode-server-oss/data/Machine
-  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/Machine/settings.json
 elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   mkdir -p /root/.openvscode-server/data/User
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/User/settings.json
   mkdir -p /root/.openvscode-server/data/User/profiles/default-profile
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/profiles/default-profile/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/User/profiles/default-profile/settings.json
   mkdir -p /root/.openvscode-server/data/Machine
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/Machine/settings.json
 else
   # Coder settings are already created during IDE installation
   mkdir -p /root/.code-server/User /root/.code-server/Machine
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.code-server/User/settings.json
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.code-server/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.code-server/User/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.code-server/Machine/settings.json
 fi
 EOF
 
@@ -1140,7 +1206,7 @@ EOF
 # 39380: VNC websocket proxy (noVNC)
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
-# 39383: cmux-xterm server
+# 39383: cmux-pty server
 EXPOSE 39375 39377 39378 39379 39380 39381 39382 39383
 
 ENV container=docker

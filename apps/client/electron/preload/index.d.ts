@@ -30,7 +30,7 @@ declare global {
         onEvent: (
           socketId: string,
           callback: (eventName: string, ...args: unknown[]) => void
-        ) => void;
+        ) => () => void;
       };
       autoUpdate: {
         check: () =>

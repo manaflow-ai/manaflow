@@ -132,26 +132,47 @@ export async function getClaudeEnvironment(
 # Claude Code stop hook for cmux task completion detection
 # This script is called when Claude Code finishes responding
 
-# Log to multiple places for debugging
 LOG_FILE="/root/lifecycle/claude-hook.log"
 
 echo "[CMUX Stop Hook] Script started at $(date)" >> "$LOG_FILE"
 echo "[CMUX Stop Hook] CMUX_TASK_RUN_ID=\${CMUX_TASK_RUN_ID}" >> "$LOG_FILE"
-echo "[CMUX Stop Hook] PWD=$(pwd)" >> "$LOG_FILE"
-echo "[CMUX Stop Hook] All env vars:" >> "$LOG_FILE"
-env | grep -E "(CMUX|CLAUDE|TASK)" >> "$LOG_FILE" 2>&1
+echo "[CMUX Stop Hook] CMUX_CALLBACK_URL=\${CMUX_CALLBACK_URL}" >> "$LOG_FILE"
 
-# Create a completion marker file that cmux can detect
-COMPLETION_MARKER="/root/lifecycle/claude-complete-\${CMUX_TASK_RUN_ID:-unknown}"
-echo "$(date +%s)" > "$COMPLETION_MARKER"
+if [ -n "\${CMUX_TASK_RUN_JWT}" ] && [ -n "\${CMUX_TASK_RUN_ID}" ] && [ -n "\${CMUX_CALLBACK_URL}" ]; then
+  (
+    # Call crown/complete for status updates
+    echo "[CMUX Stop Hook] Calling crown/complete..." >> "$LOG_FILE"
+    curl -s -X POST "\${CMUX_CALLBACK_URL}/api/crown/complete" \\
+      -H "Content-Type: application/json" \\
+      -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+      -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\", \\"exitCode\\": 0}" \\
+      >> "$LOG_FILE" 2>&1
+    echo "" >> "$LOG_FILE"
 
-# Log success
-echo "[CMUX Stop Hook] Created marker file: $COMPLETION_MARKER" >> "$LOG_FILE"
-ls -la "$COMPLETION_MARKER" >> "$LOG_FILE" 2>&1
+    # Call notifications endpoint for user notification
+    echo "[CMUX Stop Hook] Calling notifications/agent-stopped..." >> "$LOG_FILE"
+    curl -s -X POST "\${CMUX_CALLBACK_URL}/api/notifications/agent-stopped" \\
+      -H "Content-Type: application/json" \\
+      -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+      -d "{\\"taskRunId\\": \\"\${CMUX_TASK_RUN_ID}\\"}" \\
+      >> "$LOG_FILE" 2>&1
+    echo "" >> "$LOG_FILE"
+    echo "[CMUX Stop Hook] API calls completed at $(date)" >> "$LOG_FILE"
+  ) &
+else
+  echo "[CMUX Stop Hook] Missing required env vars, skipping API calls" >> "$LOG_FILE"
+fi
+
+# Write completion marker for backward compatibility
+if [ -n "\${CMUX_TASK_RUN_ID}" ]; then
+  COMPLETE_MARKER="/root/lifecycle/claude-complete-\${CMUX_TASK_RUN_ID}"
+  echo "[CMUX Stop Hook] Creating completion marker at \${COMPLETE_MARKER}" >> "$LOG_FILE"
+  mkdir -p "$(dirname "$COMPLETE_MARKER")"
+  touch "$COMPLETE_MARKER"
+fi
 
 # Also log to stderr for visibility
 echo "[CMUX Stop Hook] Task completed for task run ID: \${CMUX_TASK_RUN_ID:-unknown}" >&2
-echo "[CMUX Stop Hook] Created marker file: $COMPLETION_MARKER" >&2
 
 # Always allow Claude to stop (don't block)
 exit 0`;
@@ -201,6 +222,17 @@ exit 0`;
     hooks: {
       Stop: [
         {
+          hooks: [
+            {
+              type: "command",
+              command: `${claudeLifecycleDir}/stop-hook.sh`,
+            },
+          ],
+        },
+      ],
+      Notification: [
+        {
+          matcher: ".*",
           hooks: [
             {
               type: "command",

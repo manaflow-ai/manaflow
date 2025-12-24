@@ -1,6 +1,7 @@
 use crate::errors::SandboxResult;
 use crate::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, GhResponse, HostEvent, SandboxSummary,
+    CreateSandboxRequest, ExecRequest, ExecResponse, GhResponse, HostEvent, PruneRequest,
+    PruneResponse, SandboxSummary,
 };
 use crate::notifications::NotificationStore;
 use async_trait::async_trait;
@@ -55,6 +56,8 @@ pub trait SandboxService: Send + Sync + 'static {
     async fn proxy(&self, id: String, port: u16, socket: WebSocket) -> SandboxResult<()>;
     async fn upload_archive(&self, id: String, archive: Body) -> SandboxResult<()>;
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
+    /// Prune orphaned sandbox filesystem directories that don't correspond to running sandboxes.
+    async fn prune_orphaned(&self, request: PruneRequest) -> SandboxResult<PruneResponse>;
 }
 
 #[derive(Clone)]

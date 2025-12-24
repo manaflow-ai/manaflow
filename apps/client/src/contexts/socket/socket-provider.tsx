@@ -83,32 +83,45 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       // Signal that the provider has created the socket instance
       socketBoot.resolve();
 
-      newSocket.on("connect", () => {
+      // Define handlers as named functions so they can be removed
+      const handleConnect = () => {
         console.log("[Socket] connected");
         setIsConnected(true);
-      });
+      };
 
-      newSocket.on("disconnect", () => {
+      const handleDisconnect = () => {
         console.warn("[Socket] disconnected");
         setIsConnected(false);
-      });
+      };
 
-      newSocket.on("connect_error", (err) => {
+      const handleConnectError = (err: unknown) => {
         const errorMessage =
           err && typeof err === "object" && "message" in err
             ? (err as Error).message
             : String(err);
         console.error("[Socket] connect_error", errorMessage);
-      });
+      };
 
-      newSocket.on("available-editors", (data: AvailableEditors) => {
+      const handleAvailableEditors = (data: AvailableEditors) => {
         setAvailableEditors(data);
-      });
+      };
+
+      newSocket.on("connect", handleConnect);
+      newSocket.on("disconnect", handleDisconnect);
+      newSocket.on("connect_error", handleConnectError);
+      newSocket.on("available-editors", handleAvailableEditors);
     })();
 
     return () => {
       disposed = true;
-      if (createdSocket) createdSocket.disconnect();
+      if (createdSocket) {
+        // Remove all listeners before disconnecting to prevent memory leaks
+        createdSocket.off("connect");
+        createdSocket.off("disconnect");
+        createdSocket.off("connect_error");
+        createdSocket.off("available-editors");
+        createdSocket.disconnect();
+      }
       // Reset boot handle so future mounts can suspend appropriately
       setGlobalSocket(null);
       socketBoot.reset();
