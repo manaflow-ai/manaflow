@@ -1946,9 +1946,18 @@ async function createTerminal(
       detectTerminalIdle({
         sessionName: sessionName || terminalId,
         idleTimeoutMs: 15000,
-        onIdle: () => {
+        onIdle: async () => {
           const elapsedMs = Date.now() - processStartTime;
+          
+          // Stop session recording on idle (fallback path)
           if (options.taskRunId) {
+            try {
+              await stopSessionRecording(options.taskRunId);
+              log("INFO", `[tmux-idle] Session recording stopped for task ${options.taskRunId}`);
+            } catch (recordingError) {
+              log("ERROR", `[tmux-idle] Failed to stop session recording`, recordingError);
+            }
+            
             emitToMainServer("worker:terminal-idle", {
               workerId: WORKER_ID,
               terminalId,
@@ -1957,10 +1966,16 @@ async function createTerminal(
             });
           }
         },
-      }).catch((error) => {
+      }).catch(async (error) => {
         const errMsg =
           (initialStderrBuffer && initialStderrBuffer.trim()) ||
           (error instanceof Error ? error.message : String(error));
+        
+        // Fail session recording on idle detection error (fallback path)
+        if (options.taskRunId) {
+          await failSessionRecording(options.taskRunId, `Idle detection error: ${errMsg}`);
+        }
+        
         emitToMainServer("worker:terminal-failed", {
           workerId: WORKER_ID,
           terminalId,
