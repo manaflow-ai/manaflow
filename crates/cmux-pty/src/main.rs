@@ -185,6 +185,7 @@ impl IntoResponse for ServerError {
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct CreateSessionRequest {
     #[serde(default = "default_shell")]
     shell: String,
