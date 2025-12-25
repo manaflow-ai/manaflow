@@ -1,5 +1,7 @@
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import { v } from "convex/values";
+import { authMutation } from "./users/utils";
+import { getTeamId } from "../_shared/team";
 
 /**
  * Get the activity record for a Morph instance (public query).
@@ -32,13 +34,33 @@ export const getActivityInternal = internalQuery({
 });
 
 /**
- * Record that an instance was resumed via the UI (public mutation).
+ * Record that an instance was resumed via the UI.
+ * Requires auth and verifies the user belongs to the team that owns the instance.
  */
-export const recordResume = mutation({
+export const recordResume = authMutation({
   args: {
     instanceId: v.string(),
+    teamSlugOrId: v.string(),
   },
   handler: async (ctx, args) => {
+    // Verify user belongs to this team
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+
+    // Find the taskRun that uses this instance to verify ownership
+    const taskRun = await ctx.db
+      .query("taskRuns")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("teamId"), teamId),
+          q.eq(q.field("vscode.containerName"), args.instanceId)
+        )
+      )
+      .first();
+
+    if (!taskRun) {
+      throw new Error("Instance not found or not authorized");
+    }
+
     const existing = await ctx.db
       .query("morphInstanceActivity")
       .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))

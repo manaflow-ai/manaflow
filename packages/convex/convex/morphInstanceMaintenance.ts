@@ -8,7 +8,6 @@ import {
   listInstancesInstanceGet,
   pauseInstanceInstanceInstanceIdPausePost,
   stopInstanceInstanceInstanceIdDelete,
-  type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
 
 const PAUSE_HOURS_THRESHOLD = 20;
@@ -60,14 +59,15 @@ export const pauseOldMorphInstances = internalAction({
     const now = Date.now();
     const thresholdMs = PAUSE_HOURS_THRESHOLD * MILLISECONDS_PER_HOUR;
 
-    // Filter for ready instances older than the threshold
+    // Filter for cmux ready instances older than the threshold
     const staleActiveInstances = instances
-      .filter((instance: InstanceModel) => instance.status === "ready")
-      .filter((instance: InstanceModel) => {
+      .filter((instance) => instance.metadata?.app === "cmux-dev")
+      .filter((instance) => instance.status === "ready")
+      .filter((instance) => {
         const createdMs = instance.created * 1000;
         return now - createdMs > thresholdMs;
       })
-      .sort((a: InstanceModel, b: InstanceModel) => a.created - b.created);
+      .sort((a, b) => a.created - b.created);
 
     if (staleActiveInstances.length === 0) {
       console.log(
@@ -91,7 +91,7 @@ export const pauseOldMorphInstances = internalAction({
       );
 
       const results = await Promise.allSettled(
-        batch.map(async (instance: InstanceModel) => {
+        batch.map(async (instance) => {
           const ageHours = Math.floor(
             (now - instance.created * 1000) / MILLISECONDS_PER_HOUR
           );
@@ -188,10 +188,10 @@ export const stopOldMorphInstances = internalAction({
     const now = Date.now();
     const thresholdMs = STOP_DAYS_THRESHOLD * 24 * MILLISECONDS_PER_HOUR;
 
-    // Filter for paused instances only (we don't stop running instances)
-    const pausedInstances = instances.filter(
-      (instance: InstanceModel) => instance.status === "paused"
-    );
+    // Filter for cmux paused instances only (we don't stop running instances or non-cmux instances)
+    const pausedInstances = instances
+      .filter((instance) => instance.metadata?.app === "cmux-dev")
+      .filter((instance) => instance.status === "paused");
 
     if (pausedInstances.length === 0) {
       console.log("[morphInstanceMaintenance:stop] No paused instances found");
@@ -214,7 +214,7 @@ export const stopOldMorphInstances = internalAction({
       );
 
       const results = await Promise.allSettled(
-        batch.map(async (instance: InstanceModel) => {
+        batch.map(async (instance) => {
           // Get activity record to check last resume time
           const activity = await ctx.runQuery(
             internal.morphInstances.getActivityInternal,
