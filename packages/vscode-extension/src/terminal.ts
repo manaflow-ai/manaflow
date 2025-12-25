@@ -68,7 +68,6 @@ type _PTYEvent = StateSyncEvent | PTYCreatedEvent | PTYUpdatedEvent | PTYDeleted
 function getConfig() {
   const config = vscode.workspace.getConfiguration('cmux');
   return {
-    // Default to port 39383 which is where cmux-pty runs inside sandboxes
     serverUrl: config.get<string>('ptyServerUrl', 'http://localhost:39383'),
     defaultShell: config.get<string>('defaultShell', '/bin/zsh'),
   };
@@ -441,7 +440,7 @@ class CmuxTerminalManager {
 
   // Map of terminal name → {ptyId, pty} for terminals created via provideTerminalProfile
   // Used to set up tracking when VSCode creates the terminal
-  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo }>();
+  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo; isNewCreation?: boolean }>();
 
   // Queue of PTYs to restore - provideTerminalProfile consumes these
   // This allows VSCode to create terminals via profile provider while reusing existing PTYs
@@ -784,7 +783,8 @@ class CmuxTerminalManager {
       const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
 
       // Store for tracking when terminal opens
-      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data });
+      // Mark as new creation (not restore) so handleTerminalOpened focuses it
+      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data, isNewCreation: true });
 
       return { pty, name: data.name, id: data.id };
     } catch (err) {
@@ -952,8 +952,10 @@ class CmuxTerminalManager {
     };
     this._terminals.set(pending.id, managed);
 
-    // Show and focus terminals with editor location
-    if (pending.info.metadata?.location === 'editor') {
+    // Focus new terminals or terminals with editor location
+    // - New creations (user clicked +) should always be focused
+    // - Restored editor terminals should be focused
+    if (pending.isNewCreation || pending.info.metadata?.location === 'editor') {
       terminal.show(false); // false = take focus
     }
 
@@ -1283,74 +1285,5 @@ export function createQueuedTerminals(): void {
   if (cmuxTerminal) {
     console.log('[cmux] Focusing cmux terminal');
     cmuxTerminal.terminal.show(false); // false = take focus
-  }
-}
-
-/**
- * Wait for cmux-pty to be available (connected and synced).
- * Returns true if cmux-pty is available, false if connection failed or timed out.
- */
-export async function waitForCmuxPtyAvailable(timeoutMs: number = 5000): Promise<boolean> {
-  if (!terminalManager) return false;
-
-  try {
-    await Promise.race([
-      terminalManager.waitForInitialSync(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Initial sync timeout')), timeoutMs)
-      )
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Create a new terminal via cmux-pty.
- * Returns the created terminal or null if creation failed.
- */
-export async function createCmuxPtyTerminal(name: string, location: vscode.TerminalLocation = vscode.TerminalLocation.Editor): Promise<vscode.Terminal | null> {
-  if (!terminalManager) return null;
-
-  const config = getConfig();
-  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/root/workspace';
-
-  try {
-    // Create PTY via HTTP with the specified name
-    const response = await fetch(`${config.serverUrl}/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        shell: config.defaultShell,
-        cwd: cwd,
-        name: name,
-        metadata: { location: location === vscode.TerminalLocation.Editor ? 'editor' : 'panel', managed: true },
-      }),
-    });
-
-    if (!response.ok) {
-      console.error('[cmux] Failed to create PTY:', response.statusText);
-      return null;
-    }
-
-    const data = await response.json() as TerminalInfo;
-    console.log('[cmux] Created PTY:', data.id, data.name);
-
-    // Create pseudoterminal for this PTY
-    const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
-
-    // Create VS Code terminal with the PTY
-    const terminal = vscode.window.createTerminal({
-      name: data.name,
-      pty: pty,
-      location: location,
-    });
-
-    terminal.show();
-    return terminal;
-  } catch (err) {
-    console.error('[cmux] Error creating PTY terminal:', err);
-    return null;
   }
 }

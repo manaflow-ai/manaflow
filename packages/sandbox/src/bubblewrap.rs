@@ -1539,7 +1539,39 @@ impl SandboxService for BubblewrapService {
                     });
                 }
 
-                // Start cmux-code (VS Code server)
+                // Start cmux-pty FIRST (PTY server) - must be ready before VS Code extension activates
+                let pty_result =
+                    start_cmux_pty_background(&nsenter_path, inner_pid, pty_port).await;
+
+                let pty_ready = match pty_result {
+                    Ok(()) => {
+                        info!(
+                            sandbox_id = %sandbox_id,
+                            pty_port = pty_port,
+                            "cmux-pty ready (background)"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(
+                            sandbox_id = %sandbox_id,
+                            error = %e,
+                            "cmux-pty failed in background - PTY will be unavailable"
+                        );
+                        false
+                    }
+                };
+
+                // Update readiness with VNC and PTY status
+                if let Some(ref tx) = readiness {
+                    let _ = tx.send(ServiceReadiness {
+                        vnc: vnc_ready,
+                        vscode: false,
+                        pty: pty_ready,
+                    });
+                }
+
+                // Start cmux-code (VS Code server) AFTER cmux-pty is ready
                 let vscode_result =
                     start_vscode_background(&nsenter_path, inner_pid, vscode_port, &workspace_path)
                         .await;
@@ -1558,38 +1590,6 @@ impl SandboxService for BubblewrapService {
                             sandbox_id = %sandbox_id,
                             error = %e,
                             "cmux-code failed in background - VS Code will be unavailable"
-                        );
-                        false
-                    }
-                };
-
-                // Update readiness with VNC and VS Code status
-                if let Some(ref tx) = readiness {
-                    let _ = tx.send(ServiceReadiness {
-                        vnc: vnc_ready,
-                        vscode: vscode_ready,
-                        pty: false,
-                    });
-                }
-
-                // Start cmux-pty (PTY server)
-                let pty_result =
-                    start_cmux_pty_background(&nsenter_path, inner_pid, pty_port).await;
-
-                let pty_ready = match pty_result {
-                    Ok(()) => {
-                        info!(
-                            sandbox_id = %sandbox_id,
-                            pty_port = pty_port,
-                            "cmux-pty ready (background)"
-                        );
-                        true
-                    }
-                    Err(e) => {
-                        warn!(
-                            sandbox_id = %sandbox_id,
-                            error = %e,
-                            "cmux-pty failed in background - PTY will be unavailable"
                         );
                         false
                     }
