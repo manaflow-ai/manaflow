@@ -391,7 +391,7 @@ COPY --from=builder --link /workspace/target/release/cmux-sandboxd /usr/local/bi
 COPY --from=builder --link /workspace/target/release/cmux /usr/local/bin/cmux
 COPY --from=builder --link /workspace/target/release/cmux-bridge /usr/local/bin/cmux-bridge
 COPY --from=acp-builder --link /workspace/target/release/codex-acp /usr/local/bin/codex-acp
-COPY --from=pty-builder --link /workspace/target/release/cmux-pty /app/cmux-pty/cmux-pty
+COPY --from=pty-builder --link /workspace/target/release/cmux-pty /usr/local/bin/cmux-pty
 
 # Install cmux VS Code extension
 COPY --from=ext-builder /workspace/packages/vscode-extension/*.vsix /tmp/

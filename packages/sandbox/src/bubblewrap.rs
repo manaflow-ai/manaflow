@@ -383,7 +383,7 @@ async fn start_cmux_pty_background(
         "/bin/sh".to_string(),
         "-c".to_string(),
         format!(
-            "nohup /app/cmux-pty/cmux-pty server --host 0.0.0.0 --port {} > /tmp/cmux-pty.log 2>&1 &",
+            "nohup /usr/local/bin/cmux-pty server --host 0.0.0.0 --port {} > /tmp/cmux-pty.log 2>&1 &",
             pty_port
         ),
     ];
