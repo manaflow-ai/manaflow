@@ -1355,6 +1355,23 @@ sandboxesRouter.openapi(
       }
 
       await instance.resume();
+
+      // Record the resume for activity tracking (used by cleanup cron)
+      // Get teamSlugOrId from request or fall back to instance metadata
+      const instanceMetadata = instance.metadata as Record<string, unknown> | undefined;
+      const effectiveTeamSlugOrId = teamSlugOrId ?? (instanceMetadata?.teamId as string | undefined);
+      if (effectiveTeamSlugOrId && morphInstanceId) {
+        try {
+          await convex.mutation(api.morphInstances.recordResume, {
+            instanceId: morphInstanceId,
+            teamSlugOrId: effectiveTeamSlugOrId,
+          });
+        } catch (recordError) {
+          // Don't fail the resume if recording fails
+          console.error("[sandboxes.resume] Failed to record resume activity:", recordError);
+        }
+      }
+
       return c.json({ resumed: true });
     } catch (error) {
       if (error instanceof HTTPException) {
