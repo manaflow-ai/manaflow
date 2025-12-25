@@ -933,8 +933,21 @@ fi
         });
 
         // Writer thread: input channel -> PTY
+        // Also intercepts CSI 6n (cursor position query) and responds directly,
+        // since the shell won't echo these queries back through the PTY output.
         std::thread::spawn(move || {
             while let Some(data) = input_rx.blocking_recv() {
+                // Check for CSI 6n cursor position query and respond directly
+                // The query can be 7-bit (\x1b[6n) or 8-bit (\x9B6n)
+                if contains_cursor_position_query(&data) {
+                    // Send cursor position response back through output channel
+                    // Response format: ESC [ row ; col R (1-indexed, default to 1;1)
+                    let _ = output_tx.send(MuxServerMessage::Output {
+                        session_id: session_id.clone(),
+                        data: b"\x1b[1;1R".to_vec(),
+                    });
+                }
+
                 if writer.write_all(&data).is_err() {
                     break;
                 }
@@ -950,6 +963,32 @@ fi
             child_pid,
         })
     }
+}
+
+/// Check if the data contains a CSI 6n cursor position query.
+/// Matches both 7-bit form (\x1b[6n) and 8-bit form (\x9B6n).
+fn contains_cursor_position_query(data: &[u8]) -> bool {
+    // 7-bit CSI 6n: ESC [ 6 n (0x1b 0x5b 0x36 0x6e)
+    const CSI_6N_7BIT: &[u8] = b"\x1b[6n";
+    // 8-bit CSI 6n: CSI 6 n (0x9b 0x36 0x6e)
+    const CSI_6N_8BIT: &[u8] = b"\x9b6n";
+
+    // Use window search for both patterns
+    if data.len() >= 4 {
+        for window in data.windows(4) {
+            if window == CSI_6N_7BIT {
+                return true;
+            }
+        }
+    }
+    if data.len() >= 3 {
+        for window in data.windows(3) {
+            if window == CSI_6N_8BIT {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn find_binary(name: &str) -> SandboxResult<String> {
