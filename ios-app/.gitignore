@@ -38,3 +38,6 @@ fastlane/test_output
 *.swp
 *.swo
 *~
+
+# Dev docs (local reference)
+dev-docs/

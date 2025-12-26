@@ -32,7 +32,18 @@ enum Environment {
         }
     }
 
-    // MARK: - API URLs (if needed later)
+    // MARK: - Convex
+
+    var convexURL: String {
+        switch self {
+        case .development:
+            return "https://polite-canary-804.convex.cloud"
+        case .production:
+            return "https://adorable-wombat-701.convex.cloud"
+        }
+    }
+
+    // MARK: - API URLs
 
     var apiBaseURL: String {
         switch self {

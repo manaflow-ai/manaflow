@@ -17,6 +17,7 @@
 		E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0C333BDE07456C757877E2 /* ConvexMobile */; };
 		E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */; };
 		EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8732D7AB61D4190BACAAB03 /* Environment.swift */; };
+		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +25,7 @@
 		1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		2DEEADB25149C285A0422125 /* StackAuthClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthClient.swift; sourceTree = "<group>"; };
 		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6679E0C9833E77D4A4295D4C /* ConvexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexClient.swift; sourceTree = "<group>"; };
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		88ED9D7168B6FC097B490637 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
@@ -78,6 +80,14 @@
 			path = Config;
 			sourceTree = "<group>";
 		};
+		F58C4F0A497799570589D124 /* Convex */ = {
+			isa = PBXGroup;
+			children = (
+				6679E0C9833E77D4A4295D4C /* ConvexClient.swift */,
+			);
+			path = Convex;
+			sourceTree = "<group>";
+		};
 		F80B6A470B95146C17D0BE5A /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -88,6 +98,7 @@
 				D9BA577D046F9E3C331F4986 /* Models.swift */,
 				4C3A73493721EACC742CE8ED /* Auth */,
 				A13C99D002491553C349AD58 /* Config */,
+				F58C4F0A497799570589D124 /* Convex */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -155,6 +166,7 @@
 				0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */,
 				6ED3832765AAB169F7254054 /* ContentView.swift in Sources */,
 				E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */,
+				F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */,
 				EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */,
 				361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */,
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,
