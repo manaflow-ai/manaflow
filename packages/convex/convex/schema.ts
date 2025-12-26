@@ -347,6 +347,45 @@ const convexSchema = defineSchema({
   })
     .index("by_task_capturedAt", ["taskId", "capturedAt"])
     .index("by_run_capturedAt", ["runId", "capturedAt"]),
+
+  // Session recordings (video + trajectory) stored in R2
+  sessionRecordings: defineTable({
+    taskRunId: v.id("taskRuns"),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")), // If recorded during screenshot collection
+    teamId: v.string(),
+    userId: v.string(),
+    // Video recording (ffmpeg capture of VNC/X11)
+    videoUrl: v.optional(v.string()), // R2 public URL (cdn.cmux.sh/...)
+    videoR2Key: v.optional(v.string()), // R2 object key for deletion/management
+    videoDurationMs: v.optional(v.number()), // Duration in milliseconds
+    videoSizeBytes: v.optional(v.number()), // File size in bytes
+    videoFormat: v.optional(v.string()), // e.g., "mp4", "webm"
+    videoWidth: v.optional(v.number()),
+    videoHeight: v.optional(v.number()),
+    // Trajectory log (Claude Code message history as JSONL)
+    trajectoryUrl: v.optional(v.string()), // R2 public URL
+    trajectoryR2Key: v.optional(v.string()), // R2 object key
+    trajectorySizeBytes: v.optional(v.number()),
+    trajectoryMessageCount: v.optional(v.number()),
+    // Status tracking
+    status: v.union(
+      v.literal("recording"), // Currently recording
+      v.literal("uploading"), // Recording complete, uploading to R2
+      v.literal("completed"), // Successfully uploaded
+      v.literal("failed"), // Recording or upload failed
+    ),
+    errorMessage: v.optional(v.string()),
+    // Timestamps
+    recordingStartedAt: v.optional(v.number()),
+    recordingEndedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_taskRun", ["taskRunId"])
+    .index("by_screenshotSet", ["screenshotSetId"])
+    .index("by_team_user", ["teamId", "userId", "createdAt"])
+    .index("by_status", ["status", "updatedAt"]),
+
   taskVersions: defineTable({
     taskId: v.id("tasks"),
     version: v.number(),

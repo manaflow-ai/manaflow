@@ -26,6 +26,11 @@ import {
   syncRelease as syncHostScreenshotCollectorRelease,
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
+import {
+  startRecording,
+  completeRecording,
+  failRecording,
+} from "./sessionRecordings_http";
 
 const http = httpRouter();
 
@@ -147,6 +152,24 @@ http.route({
   path: "/api/host-screenshot-collector/latest",
   method: "GET",
   handler: getLatestHostScreenshotCollector,
+});
+
+http.route({
+  path: "/api/session-recordings/start",
+  method: "POST",
+  handler: startRecording,
+});
+
+http.route({
+  path: "/api/session-recordings/complete",
+  method: "POST",
+  handler: completeRecording,
+});
+
+http.route({
+  path: "/api/session-recordings/fail",
+  method: "POST",
+  handler: failRecording,
 });
 
 export default http;

@@ -100,6 +100,7 @@ def set_ide_provider(provider: str) -> None:
 def get_ide_provider() -> str:
     return _ide_provider
 
+
 # ---------------------------------------------------------------------------
 # Manifest types and helpers
 # ---------------------------------------------------------------------------
@@ -189,7 +190,9 @@ def _coalesce_int(value: t.Any, default: int) -> int:
     return parsed
 
 
-def _normalize_manifest(manifest: MorphSnapshotManifestEntry) -> MorphSnapshotManifestEntry:
+def _normalize_manifest(
+    manifest: MorphSnapshotManifestEntry,
+) -> MorphSnapshotManifestEntry:
     presets: list[MorphSnapshotPresetEntry] = []
     for preset in manifest.get("presets", []):
         if not isinstance(preset, dict):
@@ -201,7 +204,9 @@ def _normalize_manifest(manifest: MorphSnapshotManifestEntry) -> MorphSnapshotMa
             version_entry: MorphSnapshotVersionEntry = {
                 "version": _coalesce_int(version.get("version"), 0),
                 "snapshotId": _coalesce_str(version.get("snapshotId"), ""),
-                "capturedAt": _coalesce_str(version.get("capturedAt"), _iso_timestamp()),
+                "capturedAt": _coalesce_str(
+                    version.get("capturedAt"), _iso_timestamp()
+                ),
             }
             versions.append(version_entry)
         versions.sort(key=lambda entry: entry["version"])
@@ -746,11 +751,15 @@ async def build_exec_binary(ctx: TaskContext) -> None:
     repo_root = ctx.repo_root
     console = ctx.console
     ctx.console.info("Building exec binary...")
-    exec_binary_path = await asyncio.to_thread(_build_exec_binary_sync, repo_root, console)
+    exec_binary_path = await asyncio.to_thread(
+        _build_exec_binary_sync, repo_root, console
+    )
     ctx.console.info("Built exec binary")
 
     ctx.console.info(f"Setting up exec service at {ctx.exec_service_url}")
-    await setup_exec_service(ctx, binary_path=exec_binary_path, service_url=ctx.exec_service_url)
+    await setup_exec_service(
+        ctx, binary_path=exec_binary_path, service_url=ctx.exec_service_url
+    )
     ctx.console.info("Exec service setup complete")
 
 
@@ -919,7 +928,8 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             gh \
             zsh \
             zsh-autosuggestions \
-            ripgrep
+            ripgrep \
+            ffmpeg
 
 
         # Download and install Chrome
@@ -1342,7 +1352,12 @@ async def task_package_vscode_extension(ctx: TaskContext) -> None:
 
 @registry.task(
     name="install-ide-extensions",
-    deps=("install-openvscode", "install-coder", "install-cmux-code", "package-vscode-extension"),
+    deps=(
+        "install-openvscode",
+        "install-coder",
+        "install-cmux-code",
+        "package-vscode-extension",
+    ),
     description="Preinstall language extensions for the IDE",
 )
 async def task_install_ide_extensions(ctx: TaskContext) -> None:
@@ -1544,7 +1559,9 @@ async def task_setup_claude_oauth_wrappers(ctx: TaskContext) -> None:
     This allows cmux to inject CLAUDE_CODE_OAUTH_TOKEN at runtime without needing
     to set it as an environment variable (which doesn't work due to OAuth check timing).
     """
-    script_path = Path(__file__).parent.parent / "configs" / "setup-claude-oauth-wrappers.sh"
+    script_path = (
+        Path(__file__).parent.parent / "configs" / "setup-claude-oauth-wrappers.sh"
+    )
     script_content = script_path.read_text()
     await ctx.run("setup-claude-oauth-wrappers", script_content)
 
@@ -2510,9 +2527,7 @@ async def provision_and_snapshot_for_preset(
     require_verify: bool,
     show_dependency_graph: bool,
 ) -> SnapshotRunResult:
-    console.always(
-        f"\n=== Provisioning preset {preset.preset_id} ({preset.label}) ==="
-    )
+    console.always(f"\n=== Provisioning preset {preset.preset_id} ({preset.label}) ===")
     timings = TimingsCollector()
 
     instance = await client.instances.aboot(

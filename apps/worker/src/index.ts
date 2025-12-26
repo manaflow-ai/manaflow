@@ -50,6 +50,11 @@ import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
 import { convexRequest } from "./crown/convex";
 import type { WorkerTaskRunResponse } from "@cmux/shared/convex-safe";
 import { verifyTaskRunToken } from "@cmux/shared/convex-safe";
+import {
+  startSessionRecording,
+  stopSessionRecording,
+  failSessionRecording,
+} from "./sessionRecorder";
 
 const execAsync = promisify(exec);
 
@@ -1359,6 +1364,21 @@ async function createTerminal(
           });
         }
 
+        // 7. Start session recording if we have the required context
+        if (options.taskRunId && taskRunToken && convexUrl) {
+          startSessionRecording({
+            taskRunId: options.taskRunId,
+            taskRunToken,
+            convexUrl,
+          }).then((recorder) => {
+            if (recorder) {
+              log("INFO", `[cmux-pty] Session recording started for task ${options.taskRunId}`);
+            }
+          }).catch((error) => {
+            log("ERROR", `[cmux-pty] Failed to start session recording`, error);
+          });
+        }
+
         if (options.taskRunId && agentConfig?.completionDetector) {
           log(
             "INFO",
@@ -1377,6 +1397,16 @@ async function createTerminal(
                 "INFO",
                 `[cmux-pty] Completion detector resolved for task ${options.taskRunId}`
               );
+
+              // Stop session recording before crown workflow
+              if (options.taskRunId) {
+                try {
+                  await stopSessionRecording(options.taskRunId);
+                  log("INFO", `[cmux-pty] Session recording stopped for task ${options.taskRunId}`);
+                } catch (recordingError) {
+                  log("ERROR", `[cmux-pty] Failed to stop session recording`, recordingError);
+                }
+              }
 
               if (!taskRunToken) {
                 log("ERROR", "[cmux-pty] Missing task run token for crown workflow", {
@@ -1419,11 +1449,15 @@ async function createTerminal(
                 );
               }
             })
-            .catch((e) => {
+            .catch(async (e) => {
               log(
                 "ERROR",
                 `[cmux-pty] Completion detector error for ${options.agentModel}: ${String(e)}`
               );
+              // Fail session recording on completion detector error
+              if (options.taskRunId) {
+                await failSessionRecording(options.taskRunId, `Completion detector error: ${String(e)}`);
+              }
             });
         }
 
@@ -1731,6 +1765,21 @@ async function createTerminal(
     });
   }
 
+  // Start session recording for tmux backend
+  if (options.taskRunId && taskRunToken && convexUrl) {
+    startSessionRecording({
+      taskRunId: options.taskRunId,
+      taskRunToken,
+      convexUrl,
+    }).then((recorder) => {
+      if (recorder) {
+        log("INFO", `[tmux] Session recording started for task ${options.taskRunId}`);
+      }
+    }).catch((error) => {
+      log("ERROR", `[tmux] Failed to start session recording`, error);
+    });
+  }
+
   if (options.taskRunId && agentConfig?.completionDetector) {
     try {
       log(
@@ -1750,6 +1799,16 @@ async function createTerminal(
             "INFO",
             `Completion detector resolved for task ${options.taskRunId}`
           );
+
+          // Stop session recording before crown workflow
+          if (options.taskRunId) {
+            try {
+              await stopSessionRecording(options.taskRunId);
+              log("INFO", `[tmux] Session recording stopped for task ${options.taskRunId}`);
+            } catch (recordingError) {
+              log("ERROR", `[tmux] Failed to stop session recording`, recordingError);
+            }
+          }
 
           log(
             "INFO",
@@ -1775,7 +1834,6 @@ async function createTerminal(
             return;
           }
 
-          // Await the crown workflow directly
           try {
             await handleWorkerTaskCompletion({
               taskRunId: options.taskRunId,
@@ -1803,11 +1861,15 @@ async function createTerminal(
             );
           }
         })
-        .catch((e) => {
+        .catch(async (e) => {
           log(
             "ERROR",
             `Completion detector error for ${options.agentModel}: ${String(e)}`
           );
+          // Fail session recording on completion detector error
+          if (options.taskRunId) {
+            await failSessionRecording(options.taskRunId, `Completion detector error: ${String(e)}`);
+          }
         });
     } catch (e) {
       log(
@@ -1884,9 +1946,18 @@ async function createTerminal(
       detectTerminalIdle({
         sessionName: sessionName || terminalId,
         idleTimeoutMs: 15000,
-        onIdle: () => {
+        onIdle: async () => {
           const elapsedMs = Date.now() - processStartTime;
+          
+          // Stop session recording on idle (fallback path)
           if (options.taskRunId) {
+            try {
+              await stopSessionRecording(options.taskRunId);
+              log("INFO", `[tmux-idle] Session recording stopped for task ${options.taskRunId}`);
+            } catch (recordingError) {
+              log("ERROR", `[tmux-idle] Failed to stop session recording`, recordingError);
+            }
+            
             emitToMainServer("worker:terminal-idle", {
               workerId: WORKER_ID,
               terminalId,
@@ -1895,10 +1966,16 @@ async function createTerminal(
             });
           }
         },
-      }).catch((error) => {
+      }).catch(async (error) => {
         const errMsg =
           (initialStderrBuffer && initialStderrBuffer.trim()) ||
           (error instanceof Error ? error.message : String(error));
+        
+        // Fail session recording on idle detection error (fallback path)
+        if (options.taskRunId) {
+          await failSessionRecording(options.taskRunId, `Idle detection error: ${errMsg}`);
+        }
+        
         emitToMainServer("worker:terminal-failed", {
           workerId: WORKER_ID,
           terminalId,

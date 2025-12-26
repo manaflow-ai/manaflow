@@ -31,6 +31,8 @@
     "@ai-sdk/gateway": "^1.0.28",
     "@ai-sdk/openai": "^2.0.19",
     "@ai-sdk/provider-utils": "^3.0.9",
+    "@aws-sdk/client-s3": "^3.958.0",
+    "@aws-sdk/s3-request-presigner": "^3.958.0",
     "@cmux/morphcloud-openapi-client": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@convex-dev/migrations": "^0.2.9",
