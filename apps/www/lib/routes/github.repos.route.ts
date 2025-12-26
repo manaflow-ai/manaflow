@@ -99,28 +99,38 @@ githubReposRouter.openapi(
       },
     });
     try {
-      // Use Search API to get most recently updated repos within the owner
-      if (!target.accountLogin) {
-        throw new Error(
-          `No account login for installation ${target.installationId}`
+      // Use the Installation Repositories API to list repos the app has access to
+      // This is more reliable than the Search API and returns all accessible repos
+      const perPage = 30;
+      const installationRepos = await octokit.request(
+        "GET /installation/repositories",
+        {
+          per_page: perPage,
+          page,
+        }
+      );
+
+      let repos = installationRepos.data.repositories;
+
+      // Filter by search term if provided
+      if (search) {
+        const searchLower = search.toLowerCase();
+        repos = repos.filter(
+          (r) =>
+            r.name.toLowerCase().includes(searchLower) ||
+            r.full_name.toLowerCase().includes(searchLower)
         );
       }
-      const ownerQualifier =
-        target.accountType === "Organization"
-          ? `org:${target.accountLogin}`
-          : `user:${target.accountLogin}`;
-      const q = [ownerQualifier, "fork:true", search ? `${search} in:name` : null]
-        .filter(Boolean)
-        .join(" ");
-      const searchRes = await octokit.request("GET /search/repositories", {
-        q,
-        sort: "updated",
-        order: "desc",
-        per_page: 5,
-        page,
+
+      // Sort by most recently pushed/updated
+      repos.sort((a, b) => {
+        const aTime = Date.parse(a.pushed_at ?? a.updated_at ?? "") || 0;
+        const bTime = Date.parse(b.pushed_at ?? b.updated_at ?? "") || 0;
+        return bTime - aTime;
       });
+
       allRepos.push(
-        ...searchRes.data.items.map((r) => ({
+        ...repos.map((r) => ({
           name: r.name,
           full_name: r.full_name,
           private: !!r.private,

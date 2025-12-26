@@ -1,10 +1,10 @@
 import { MacDownloadLink } from "@/components/mac-download-link";
 import { SiteHeader } from "@/components/site-header";
+import { CmuxIcon } from "@/components/icons/cmux-icon";
 import {
   ArrowRight,
   Cloud,
   GitPullRequest,
-  Globe,
   Layers,
   Settings,
   Terminal,
@@ -196,21 +196,14 @@ export default async function LandingPage() {
                     >
                       vision
                     </a>
-                    ,
+                    {" "}
+                    or
                     {" "}
                     <a
                       className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
                       href="#nav-features"
                     >
                       how it works today
-                    </a>
-                    , or explore the
-                    {" "}
-                    <a
-                      className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
-                      href="#nav-roadmap"
-                    >
-                      roadmap
                     </a>
                     .
                   </p>
@@ -223,7 +216,7 @@ export default async function LandingPage() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <Globe className="h-4 w-4" aria-hidden />
+                  <CmuxIcon className="h-4 w-4" aria-hidden />
                   Try web version
                 </a>
                 <MacDownloadLink

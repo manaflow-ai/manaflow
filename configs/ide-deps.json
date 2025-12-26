@@ -13,7 +13,7 @@
     {
       "publisher": "ms-vscode",
       "name": "vscode-typescript-next",
-      "version": "6.0.20251223"
+      "version": "6.0.20251225"
     },
     {
       "publisher": "ms-python",
@@ -30,9 +30,9 @@
     "@openai/codex": "0.77.0",
     "@anthropic-ai/claude-code": "2.0.76",
     "@google/gemini-cli": "0.22.2",
-    "opencode-ai": "1.0.193",
+    "opencode-ai": "1.0.203",
     "codebuff": "1.0.561",
     "@devcontainers/cli": "0.80.3",
-    "@sourcegraph/amp": "0.0.1766549470-g10018e"
+    "@sourcegraph/amp": "0.0.1766722306-gc9e00b"
   }
 }

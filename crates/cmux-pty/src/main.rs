@@ -7,6 +7,9 @@
 
 mod cli;
 
+// Re-export terminal emulation library
+use cmux_terminal::{DaFilter, VirtualTerminal};
+
 use std::{
     collections::HashMap,
     env,
@@ -19,7 +22,7 @@ use anyhow::{Context, Result};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Path, State, WebSocketUpgrade,
+        Path, Query, State, WebSocketUpgrade,
     },
     http::StatusCode,
     response::{Html, IntoResponse, Json},
@@ -182,6 +185,7 @@ impl IntoResponse for ServerError {
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct CreateSessionRequest {
     #[serde(default = "default_shell")]
     shell: String,
@@ -334,6 +338,13 @@ struct PtySession {
     input_tx: std::sync::mpsc::SyncSender<Vec<u8>>, // Bounded channel for backpressure
     pid: u32,
     metadata: RwLock<Option<serde_json::Value>>,
+    /// DA (Device Attributes) filter to prevent feedback loops with nested terminals.
+    /// Filters DA1/DA2 queries and responses that can cause infinite loops when
+    /// running terminal emulators inside terminal emulators.
+    da_filter: Mutex<DaFilter>,
+    /// Virtual terminal emulator for tracking terminal state.
+    /// Provides server-side ANSI sequence parsing and grid-based storage.
+    terminal: Mutex<VirtualTerminal>,
 }
 
 impl PtySession {
@@ -381,6 +392,8 @@ impl PtySession {
     fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         *self.cols.write() = cols;
         *self.rows.write() = rows;
+
+        // Resize PTY
         let inner = self.inner.lock();
         inner
             .master
@@ -391,6 +404,11 @@ impl PtySession {
                 pixel_height: 0,
             })
             .context("Failed to resize PTY")?;
+        drop(inner);
+
+        // Resize virtual terminal emulator
+        self.resize_terminal(rows as usize, cols as usize);
+
         Ok(())
     }
 
@@ -432,6 +450,31 @@ impl PtySession {
 
     fn set_metadata(&self, metadata: Option<serde_json::Value>) {
         *self.metadata.write() = metadata;
+    }
+
+    /// Process bytes through the virtual terminal emulator.
+    /// Updates the terminal's internal grid state.
+    fn process_terminal(&self, data: &[u8]) {
+        let mut terminal = self.terminal.lock();
+        terminal.process(data);
+    }
+
+    /// Resize the virtual terminal emulator.
+    fn resize_terminal(&self, rows: usize, cols: usize) {
+        let mut terminal = self.terminal.lock();
+        terminal.resize(rows, cols);
+    }
+
+    /// Get the current terminal content as plain text lines.
+    fn get_terminal_content(&self) -> Vec<String> {
+        let terminal = self.terminal.lock();
+        terminal.get_lines()
+    }
+
+    /// Get the viewport content (visible area) as plain text lines.
+    fn get_terminal_viewport(&self) -> Vec<String> {
+        let terminal = self.terminal.lock();
+        terminal.viewport_lines()
     }
 }
 
@@ -668,7 +711,11 @@ async fn spawn_pty_reader(
 
         match result {
             Ok(0) => {
-                // EOF - flush any remaining buffer
+                // EOF - flush DaFilter and remaining buffer
+                {
+                    let mut filter = session.da_filter.lock();
+                    utf8_buffer.extend(filter.flush());
+                }
                 if !utf8_buffer.is_empty() {
                     let data = String::from_utf8_lossy(&utf8_buffer).to_string();
                     session.append_scrollback(&data);
@@ -684,8 +731,17 @@ async fn spawn_pty_reader(
                 read_count += 1;
                 total_bytes_read += n;
 
-                // Combine any leftover bytes from previous read with new data
-                utf8_buffer.extend_from_slice(&buf[..n]);
+                // Apply DaFilter to raw bytes to remove DA query/response sequences
+                let filtered_bytes = {
+                    let mut filter = session.da_filter.lock();
+                    filter.filter(&buf[..n])
+                };
+
+                // Process through virtual terminal emulator for state tracking
+                session.process_terminal(&filtered_bytes);
+
+                // Combine any leftover bytes from previous read with filtered data
+                utf8_buffer.extend_from_slice(&filtered_bytes);
 
                 // Find the last valid UTF-8 boundary
                 let valid_up_to = find_utf8_boundary(&utf8_buffer);
@@ -860,6 +916,11 @@ fn create_pty_session_inner(
         input_tx,
         pid,
         metadata: RwLock::new(request.metadata.clone()),
+        da_filter: Mutex::new(DaFilter::new()),
+        terminal: Mutex::new(VirtualTerminal::new(
+            request.rows as usize,
+            request.cols as usize,
+        )),
     });
 
     Ok((session, reader))
@@ -1034,18 +1095,42 @@ async fn delete_session(
 async fn capture_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ServerError> {
     let sessions = state.sessions.read();
     let session = sessions
         .get(&session_id)
         .ok_or_else(|| ServerError::SessionNotFound(session_id.clone()))?;
 
-    let content = session.get_scrollback();
+    // Check if client wants processed terminal content
+    let processed = params
+        .get("processed")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let viewport_only = params.get("viewport").map(|v| v == "true").unwrap_or(false);
 
-    Ok(Json(serde_json::json!({
-        "content": content,
-        "length": content.len()
-    })))
+    if processed {
+        // Return ANSI-processed terminal content (plain text)
+        let lines = if viewport_only {
+            session.get_terminal_viewport()
+        } else {
+            session.get_terminal_content()
+        };
+        let content = lines.join("\n");
+        Ok(Json(serde_json::json!({
+            "content": content,
+            "lines": lines.len(),
+            "processed": true
+        })))
+    } else {
+        // Return raw scrollback (with ANSI sequences preserved)
+        let content = session.get_scrollback();
+        Ok(Json(serde_json::json!({
+            "content": content,
+            "length": content.len(),
+            "processed": false
+        })))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1107,6 +1192,82 @@ async fn send_input(
         "status": "ok",
         "bytes": request.data.len()
     })))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SignalRequest {
+    /// Signal number to send (e.g., 10 for SIGUSR1, 12 for SIGUSR2)
+    signum: i32,
+    /// Optional: only send to specific session. If not provided, sends to all sessions.
+    session_id: Option<String>,
+}
+
+/// Send a signal to PTY child processes.
+/// Used for theme change notifications (SIGUSR1) and other process-level signals.
+async fn send_signal(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SignalRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    // Convert signal number to Signal enum
+    let signal = Signal::try_from(request.signum).map_err(|_| {
+        ServerError::PtySpawnError(format!("Invalid signal number: {}", request.signum))
+    })?;
+
+    let sessions = state.sessions.read();
+    let mut sent_count = 0;
+    let mut errors = Vec::new();
+
+    // Determine which sessions to signal
+    let sessions_to_signal: Vec<_> = if let Some(session_id) = &request.session_id {
+        sessions
+            .get(session_id)
+            .map(|s| vec![s.clone()])
+            .unwrap_or_default()
+    } else {
+        sessions.values().cloned().collect()
+    };
+
+    drop(sessions);
+
+    for session in sessions_to_signal {
+        if session.is_alive() {
+            let pid = Pid::from_raw(session.pid as i32);
+            match kill(pid, signal) {
+                Ok(()) => {
+                    info!(
+                        "[signal] Sent {} to session {} (pid {})",
+                        signal, session.id, session.pid
+                    );
+                    sent_count += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        "[signal] Failed to send {} to session {} (pid {}): {}",
+                        signal, session.id, session.pid, e
+                    );
+                    errors.push(format!("{}: {}", session.id, e));
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(Json(serde_json::json!({
+            "status": "ok",
+            "signal": request.signum,
+            "sent_count": sent_count
+        })))
+    } else {
+        Ok(Json(serde_json::json!({
+            "status": "partial",
+            "signal": request.signum,
+            "sent_count": sent_count,
+            "errors": errors
+        })))
+    }
 }
 
 // =============================================================================
@@ -1591,6 +1752,7 @@ async fn run_server(host: &str, port: u16) -> Result<()> {
         .route("/sessions/:session_id/capture", get(capture_session))
         .route("/sessions/:session_id/resize", post(resize_session))
         .route("/sessions/:session_id/input", post(send_input))
+        .route("/signal", post(send_signal))
         // WebSocket endpoints
         .route("/ws", get(websocket_events))
         .route("/sessions/:session_id/ws", get(websocket_terminal))

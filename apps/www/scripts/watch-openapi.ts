@@ -56,3 +56,4 @@ try {
 }
 
 log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
+console.log("[watch-openapi] initial client generation complete");

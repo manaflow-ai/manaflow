@@ -194,6 +194,7 @@ mod tests {
                 sandbox_ip: "10.0.0.2".to_string(),
                 cidr: 24,
             },
+            display: None,
             correlation_id: None,
         }
     }

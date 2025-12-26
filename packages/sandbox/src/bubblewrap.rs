@@ -1,9 +1,9 @@
 use crate::errors::{SandboxError, SandboxResult};
 use crate::ip_pool::{IpLease, IpPool};
 use crate::models::{
-    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
-    MuxServerMessage, PruneRequest, PruneResponse, PrunedItem, PtySessionId, SandboxNetwork,
-    SandboxStatus, SandboxSummary,
+    AwaitReadyRequest, AwaitReadyResponse, CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse,
+    HostEvent, MuxClientMessage, MuxServerMessage, PruneRequest, PruneResponse, PrunedItem,
+    PtySessionId, SandboxDisplay, SandboxNetwork, SandboxStatus, SandboxSummary, ServiceReadiness,
 };
 use crate::mux::terminal::{DaFilter, VirtualTerminal};
 use crate::service::SandboxService;
@@ -26,7 +26,7 @@ use std::{env, time::Duration};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -66,6 +66,8 @@ struct SandboxHandle {
     lease: IpLease,
     /// Correlation ID for matching placeholders to created sandboxes (from tab_id)
     correlation_id: Option<String>,
+    /// Display configuration for isolated X11/VNC desktop
+    display: Option<SandboxDisplay>,
 }
 
 #[derive(Clone)]
@@ -103,6 +105,10 @@ impl DockerConfig {
     }
 }
 
+/// Watch channel for service readiness updates.
+/// Subscribers can wait for specific services to become ready.
+type ReadinessWatch = watch::Sender<ServiceReadiness>;
+
 pub struct BubblewrapService {
     sandboxes: Mutex<HashMap<Uuid, SandboxEntry>>,
     workspace_root: PathBuf,
@@ -114,6 +120,9 @@ pub struct BubblewrapService {
     port: u16,
     next_index: AtomicUsize,
     docker: DockerConfig,
+    /// Service readiness tracking per sandbox.
+    /// Uses watch channels so multiple waiters can subscribe efficiently.
+    readiness: Mutex<HashMap<Uuid, ReadinessWatch>>,
 }
 
 fn nsenter_args(pid: u32, workdir: Option<&str>, command: &[String]) -> Vec<String> {
@@ -139,6 +148,293 @@ fn nsenter_args(pid: u32, workdir: Option<&str>, command: &[String]) -> Vec<Stri
     args
 }
 
+/// Start X11 stack in background (standalone function for use in spawned tasks).
+/// This is a non-blocking version of start_x11_stack that doesn't require &self.
+async fn start_x11_stack_background(
+    nsenter_path: &str,
+    inner_pid: u32,
+    display_number: u16,
+    vnc_port: u16,
+    cdp_port: u16,
+) -> Result<(), String> {
+    use tokio::time::timeout;
+    let cmd_timeout = Duration::from_secs(5);
+    let x11_display = format!(":{}", display_number);
+
+    // Helper to run nsenter command with timeout
+    async fn run_nsenter(
+        nsenter_path: &str,
+        pid: u32,
+        cmd: &[String],
+        timeout_duration: Duration,
+        name: &str,
+    ) -> Result<(), String> {
+        let result = timeout(
+            timeout_duration,
+            Command::new(nsenter_path)
+                .args(nsenter_args(pid, None, cmd))
+                .output(),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(output)) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    debug!("{} start warning: {}", name, stderr);
+                }
+                Ok(())
+            }
+            Ok(Err(e)) => Err(format!("{} command error: {}", name, e)),
+            Err(_) => {
+                debug!(
+                    "{} command timed out (expected for backgrounded process)",
+                    name
+                );
+                Ok(())
+            }
+        }
+    }
+
+    // Start Xvnc (TigerVNC)
+    let xvnc_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "Xvnc {} -geometry 1920x1080 -depth 24 -rfbport {} -SecurityTypes None -AlwaysShared -AcceptKeyEvents -AcceptPointerEvents &",
+            x11_display, vnc_port
+        ),
+    ];
+    run_nsenter(nsenter_path, inner_pid, &xvnc_cmd, cmd_timeout, "Xvnc").await?;
+
+    // Wait for Xvnc to start
+    sleep(Duration::from_millis(300)).await;
+
+    // Verify Xvnc is running
+    let verify_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("pgrep -f 'Xvnc {}'", x11_display),
+    ];
+    let verify_result = timeout(
+        cmd_timeout,
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &verify_cmd))
+            .output(),
+    )
+    .await;
+
+    let xvnc_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+    if !xvnc_running {
+        return Err(format!(
+            "Xvnc failed to start on display {} port {}",
+            x11_display, vnc_port
+        ));
+    }
+
+    // Start openbox (non-critical)
+    let openbox_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("DISPLAY={} openbox &", x11_display),
+    ];
+    if let Err(e) = run_nsenter(
+        nsenter_path,
+        inner_pid,
+        &openbox_cmd,
+        cmd_timeout,
+        "openbox",
+    )
+    .await
+    {
+        warn!("openbox failed to start (non-critical): {}", e);
+    }
+
+    // Start Chrome with CDP (non-critical)
+    let chrome_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            concat!(
+                "DISPLAY={} google-chrome --no-sandbox --disable-gpu ",
+                "--remote-debugging-port={} --remote-debugging-address=0.0.0.0 ",
+                "--user-data-dir=/tmp/chrome-sandbox-{} ",
+                "--disable-background-networking --disable-default-apps ",
+                "--disable-extensions --disable-sync --no-first-run ",
+                "--start-maximized &"
+            ),
+            x11_display, cdp_port, display_number
+        ),
+    ];
+    if let Err(e) = run_nsenter(nsenter_path, inner_pid, &chrome_cmd, cmd_timeout, "Chrome").await {
+        debug!("Chrome failed to start (non-critical): {}", e);
+    }
+
+    info!(
+        x11_display = %x11_display,
+        vnc_port = vnc_port,
+        "X11 stack ready (background)"
+    );
+    Ok(())
+}
+
+/// Start cmux-code (VS Code server) in background.
+/// This is a non-blocking function that starts the VS Code web server inside a sandbox.
+async fn start_vscode_background(
+    nsenter_path: &str,
+    inner_pid: u32,
+    vscode_port: u16,
+    workspace_path: &str,
+) -> Result<(), String> {
+    use tokio::time::timeout;
+    let cmd_timeout = Duration::from_secs(10);
+
+    // Start cmux-code server
+    // --host 0.0.0.0: Listen on all interfaces (needed for proxy access)
+    // --port: The port to listen on
+    // --without-connection-token: Disable auth (sandbox is already isolated)
+    // --disable-workspace-trust: Don't prompt for trust
+    // --disable-telemetry: No telemetry
+    // Use nohup to prevent SIGHUP when nsenter shell exits
+    let vscode_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            concat!(
+                "nohup /app/cmux-code/bin/code-server-oss ",
+                "--host 0.0.0.0 --port {} ",
+                "--without-connection-token ",
+                "--disable-workspace-trust ",
+                "--disable-telemetry ",
+                "--telemetry-level off ",
+                "{} ",
+                "> /tmp/cmux-code.log 2>&1 &"
+            ),
+            vscode_port, workspace_path
+        ),
+    ];
+
+    let result = timeout(
+        cmd_timeout,
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &vscode_cmd))
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!("cmux-code start warning: {}", stderr);
+            }
+        }
+        Ok(Err(e)) => return Err(format!("cmux-code command error: {}", e)),
+        Err(_) => {
+            debug!("cmux-code command timed out (expected for backgrounded process)");
+        }
+    }
+
+    // Wait for cmux-code to start listening
+    sleep(Duration::from_millis(500)).await;
+
+    // Verify cmux-code is running by checking if it's listening on the port
+    let verify_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("pgrep -f 'code-server-oss.*--port {}'", vscode_port),
+    ];
+    let verify_result = timeout(
+        Duration::from_secs(5),
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &verify_cmd))
+            .output(),
+    )
+    .await;
+
+    let vscode_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+    if !vscode_running {
+        return Err(format!("cmux-code failed to start on port {}", vscode_port));
+    }
+
+    info!(
+        vscode_port = vscode_port,
+        workspace = %workspace_path,
+        "cmux-code started"
+    );
+    Ok(())
+}
+
+/// Start cmux-pty server inside the sandbox (background process).
+/// This is the unified PTY server that handles terminal sessions.
+async fn start_cmux_pty_background(
+    nsenter_path: &str,
+    inner_pid: u32,
+    pty_port: u16,
+) -> Result<(), String> {
+    use tokio::time::timeout;
+    let cmd_timeout = Duration::from_secs(10);
+
+    // Start cmux-pty server
+    // --host 0.0.0.0: Listen on all interfaces (needed for proxy access)
+    // --port: The port to listen on
+    // Use nohup to prevent SIGHUP when nsenter shell exits
+    let pty_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "nohup /usr/local/bin/cmux-pty server --host 0.0.0.0 --port {} > /tmp/cmux-pty.log 2>&1 &",
+            pty_port
+        ),
+    ];
+
+    let result = timeout(
+        cmd_timeout,
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &pty_cmd))
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!("cmux-pty start warning: {}", stderr);
+            }
+        }
+        Ok(Err(e)) => return Err(format!("cmux-pty command error: {}", e)),
+        Err(_) => {
+            debug!("cmux-pty command timed out (expected for backgrounded process)");
+        }
+    }
+
+    // Wait for cmux-pty to start listening
+    sleep(Duration::from_millis(300)).await;
+
+    // Verify cmux-pty is running by checking if it's listening on the port
+    let verify_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("pgrep -f 'cmux-pty.*--port {}'", pty_port),
+    ];
+    let verify_result = timeout(
+        Duration::from_secs(5),
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &verify_cmd))
+            .output(),
+    )
+    .await;
+
+    let pty_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+    if !pty_running {
+        return Err(format!("cmux-pty failed to start on port {}", pty_port));
+    }
+
+    info!(pty_port = pty_port, "cmux-pty started");
+    Ok(())
+}
+
 impl BubblewrapService {
     pub async fn new(workspace_root: PathBuf, port: u16) -> SandboxResult<Self> {
         if !workspace_root.exists() {
@@ -162,6 +458,7 @@ impl BubblewrapService {
             port,
             next_index: AtomicUsize::new(0),
             docker,
+            readiness: Mutex::new(HashMap::new()),
         };
 
         service.setup_host_network().await?;
@@ -632,8 +929,17 @@ fi
         let root_overlay = path_to_string(&root_overlay, "root overlay")?;
         command.args(["--bind", &root_overlay, "/root"]);
 
-        // Make common credential-helper paths resolve to cmux-bridge symlinks inside the sandbox
-        for path_str in ["/opt", "/home/linuxbrew/.linuxbrew", "/snap"] {
+        // Mount VS Code extensions from Docker image (read-only for efficiency)
+        // This overlays the extensions dir on top of the writable /root
+        let vscode_extensions_path = "/root/.vscode-server-oss/extensions";
+        if Path::new(vscode_extensions_path).exists() {
+            command.args(["--ro-bind", vscode_extensions_path, vscode_extensions_path]);
+        }
+
+        // Make common paths available inside the sandbox
+        // /opt, /home/linuxbrew, /snap for credential helpers
+        // /app for cmux-code (VS Code server)
+        for path_str in ["/opt", "/home/linuxbrew/.linuxbrew", "/snap", "/app"] {
             let path = Path::new(path_str);
             if path.exists() {
                 command.args(["--ro-bind", path_str, path_str]);
@@ -1156,6 +1462,150 @@ impl SandboxService for BubblewrapService {
         };
         timing.record_timer("net_finish", net_finish_timer);
 
+        // Calculate display configuration for isolated X11/VNC desktop and VS Code
+        // Display numbers start at 10 to avoid conflicts with system displays (:0, :1, etc.)
+        // All sandboxes use fixed ports internally, accessed via subdomain routing:
+        //   {index}-39380.host -> noVNC, {index}-39378.host -> VS Code, {index}-39383.host -> cmux-pty
+        let display_number = (10 + index) as u16;
+        let vnc_port = 5900 + display_number;
+        let novnc_port = 39380_u16; // Fixed port, accessed via subdomain routing
+        let cdp_port = 39381_u16; // Fixed port, accessed via subdomain routing
+        let vscode_port = 39378_u16; // Fixed port for cmux-code
+        let pty_port = 39383_u16; // Fixed port for cmux-pty
+
+        // Display config is set immediately (ports are known upfront)
+        // Services start in background - use await_services_ready to wait for VNC/VS Code/PTY
+        let display = Some(SandboxDisplay {
+            display_number,
+            vnc_port,
+            novnc_port,
+            cdp_port,
+            vscode_port,
+            pty_port,
+        });
+
+        // Create readiness watch channel for this sandbox
+        let (readiness_tx, _) = watch::channel(ServiceReadiness::default());
+        {
+            let mut readiness_map = self.readiness.lock().await;
+            readiness_map.insert(id, readiness_tx);
+        }
+
+        // Spawn services startup in background (non-blocking)
+        // This allows sandbox creation to return immediately
+        {
+            let nsenter_path = self.nsenter_path.clone();
+            let sandbox_id = id;
+            let readiness = self.readiness.lock().await.get(&id).cloned();
+            let workspace_path = workspace.to_string_lossy().to_string();
+
+            tokio::spawn(async move {
+                // Start X11/VNC stack
+                let vnc_result = start_x11_stack_background(
+                    &nsenter_path,
+                    inner_pid,
+                    display_number,
+                    vnc_port,
+                    cdp_port,
+                )
+                .await;
+
+                let vnc_ready = match vnc_result {
+                    Ok(()) => {
+                        info!(
+                            sandbox_id = %sandbox_id,
+                            display_number = display_number,
+                            vnc_port = vnc_port,
+                            "X11 stack ready (background)"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(
+                            sandbox_id = %sandbox_id,
+                            error = %e,
+                            "X11 stack failed in background - VNC will be unavailable"
+                        );
+                        false
+                    }
+                };
+
+                // Update readiness with VNC status
+                if let Some(ref tx) = readiness {
+                    let _ = tx.send(ServiceReadiness {
+                        vnc: vnc_ready,
+                        vscode: false,
+                        pty: false,
+                    });
+                }
+
+                // Start cmux-pty FIRST (PTY server) - must be ready before VS Code extension activates
+                let pty_result =
+                    start_cmux_pty_background(&nsenter_path, inner_pid, pty_port).await;
+
+                let pty_ready = match pty_result {
+                    Ok(()) => {
+                        info!(
+                            sandbox_id = %sandbox_id,
+                            pty_port = pty_port,
+                            "cmux-pty ready (background)"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(
+                            sandbox_id = %sandbox_id,
+                            error = %e,
+                            "cmux-pty failed in background - PTY will be unavailable"
+                        );
+                        false
+                    }
+                };
+
+                // Update readiness with VNC and PTY status
+                if let Some(ref tx) = readiness {
+                    let _ = tx.send(ServiceReadiness {
+                        vnc: vnc_ready,
+                        vscode: false,
+                        pty: pty_ready,
+                    });
+                }
+
+                // Start cmux-code (VS Code server) AFTER cmux-pty is ready
+                let vscode_result =
+                    start_vscode_background(&nsenter_path, inner_pid, vscode_port, &workspace_path)
+                        .await;
+
+                let vscode_ready = match vscode_result {
+                    Ok(()) => {
+                        info!(
+                            sandbox_id = %sandbox_id,
+                            vscode_port = vscode_port,
+                            "cmux-code ready (background)"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(
+                            sandbox_id = %sandbox_id,
+                            error = %e,
+                            "cmux-code failed in background - VS Code will be unavailable"
+                        );
+                        false
+                    }
+                };
+
+                // Update readiness with all service statuses
+                if let Some(tx) = readiness {
+                    let _ = tx.send(ServiceReadiness {
+                        vnc: vnc_ready,
+                        vscode: vscode_ready,
+                        pty: pty_ready,
+                    });
+                }
+            });
+        }
+
         let handle = SandboxHandle {
             id,
             index,
@@ -1165,6 +1615,7 @@ impl SandboxService for BubblewrapService {
             created_at: Utc::now(),
             lease,
             correlation_id: request.tab_id.clone(),
+            display,
         };
 
         let entry = SandboxEntry {
@@ -2069,6 +2520,12 @@ impl SandboxService for BubblewrapService {
             sandboxes.remove(&id)
         };
 
+        // Clean up readiness tracking
+        {
+            let mut readiness_map = self.readiness.lock().await;
+            readiness_map.remove(&id);
+        }
+
         if let Some(entry) = entry {
             {
                 let mut pool = self.ip_pool.lock().await;
@@ -2277,6 +2734,122 @@ impl SandboxService for BubblewrapService {
             bytes_freed,
         })
     }
+
+    async fn await_services_ready(
+        &self,
+        id: String,
+        request: AwaitReadyRequest,
+    ) -> SandboxResult<AwaitReadyResponse> {
+        use tokio::time::timeout;
+
+        let sandbox_id = Uuid::parse_str(&id)
+            .map_err(|_| SandboxError::InvalidRequest(format!("invalid sandbox id: {}", id)))?;
+
+        // Check if sandbox exists
+        {
+            let sandboxes = self.sandboxes.lock().await;
+            if !sandboxes.contains_key(&sandbox_id) {
+                return Err(SandboxError::NotFound(sandbox_id));
+            }
+        }
+
+        // Get a receiver for the readiness watch channel
+        let mut rx = {
+            let readiness_map = self.readiness.lock().await;
+            match readiness_map.get(&sandbox_id) {
+                Some(tx) => tx.subscribe(),
+                None => {
+                    // No readiness tracking for this sandbox - return current state
+                    return Ok(AwaitReadyResponse {
+                        ready: false,
+                        services: ServiceReadiness::default(),
+                        timed_out: vec!["vnc".to_string()],
+                    });
+                }
+            }
+        };
+
+        // Determine which services to wait for
+        // Empty services list = wait for all configured services (vnc, vscode, pty)
+        let wait_for_vnc =
+            request.services.is_empty() || request.services.iter().any(|s| s == "vnc");
+        let wait_for_vscode =
+            request.services.is_empty() || request.services.iter().any(|s| s == "vscode");
+        let wait_for_pty =
+            request.services.is_empty() || request.services.iter().any(|s| s == "pty");
+
+        let timeout_duration = Duration::from_millis(request.timeout_ms);
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+
+        // Poll until services are ready or timeout
+        loop {
+            let current = rx.borrow().clone();
+
+            // Check if all requested services are ready
+            let vnc_ok = !wait_for_vnc || current.vnc;
+            let vscode_ok = !wait_for_vscode || current.vscode;
+            let pty_ok = !wait_for_pty || current.pty;
+
+            if vnc_ok && vscode_ok && pty_ok {
+                return Ok(AwaitReadyResponse {
+                    ready: true,
+                    services: current,
+                    timed_out: vec![],
+                });
+            }
+
+            // Wait for changes or timeout
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                // Timed out
+                let mut timed_out = vec![];
+                if wait_for_vnc && !current.vnc {
+                    timed_out.push("vnc".to_string());
+                }
+                if wait_for_vscode && !current.vscode {
+                    timed_out.push("vscode".to_string());
+                }
+                if wait_for_pty && !current.pty {
+                    timed_out.push("pty".to_string());
+                }
+                return Ok(AwaitReadyResponse {
+                    ready: false,
+                    services: current,
+                    timed_out,
+                });
+            }
+
+            // Wait for next update or timeout
+            match timeout(remaining, rx.changed()).await {
+                Ok(Ok(())) => {
+                    // Got an update, loop to check again
+                }
+                Ok(Err(_)) => {
+                    // Channel closed (sandbox deleted?)
+                    return Err(SandboxError::NotFound(sandbox_id));
+                }
+                Err(_) => {
+                    // Timeout
+                    let current = rx.borrow().clone();
+                    let mut timed_out = vec![];
+                    if wait_for_vnc && !current.vnc {
+                        timed_out.push("vnc".to_string());
+                    }
+                    if wait_for_vscode && !current.vscode {
+                        timed_out.push("vscode".to_string());
+                    }
+                    if wait_for_pty && !current.pty {
+                        timed_out.push("pty".to_string());
+                    }
+                    return Ok(AwaitReadyResponse {
+                        ready: false,
+                        services: current,
+                        timed_out,
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl SandboxHandle {
@@ -2289,6 +2862,7 @@ impl SandboxHandle {
             workspace: self.workspace.to_string_lossy().to_string(),
             status,
             network: self.network.clone(),
+            display: self.display.clone(),
             correlation_id: self.correlation_id.clone(),
         }
     }

@@ -1,26 +1,24 @@
-import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration";
+import { EnvironmentSetupFlow } from "@/components/environment";
 import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
-import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   clearEnvironmentDraft,
   persistEnvironmentDraftMetadata,
-  updateEnvironmentDraftConfig,
   useEnvironmentDraft,
 } from "@/state/environment-draft-store";
-import type { EnvironmentConfigDraft } from "@/types/environment";
 import {
   DEFAULT_MORPH_SNAPSHOT_ID,
   MORPH_SNAPSHOT_PRESETS,
   type MorphSnapshotId,
 } from "@cmux/shared";
+import { postApiMorphSetupInstanceMutation } from "@cmux/www-openapi-client/react-query";
+import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -84,24 +82,78 @@ function EnvironmentsPage() {
   const draft = useEnvironmentDraft(teamSlugOrId);
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
   const skipDraftHydrationRef = useRef(false);
+  const provisioningTriggeredRef = useRef(false);
 
+  // If we have a draft, use it - don't clear on navigation
+  // Only clear via explicit discard (handleDiscardAndExit or handleResetDraft)
   const activeStep = draft?.step ?? stepFromSearch;
   const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
   const activeInstanceId = draft?.instanceId ?? urlInstanceId;
   const activeSnapshotId = draft?.snapshotId ?? searchSnapshotId;
 
-  const derivedVscodeUrl = useMemo(() => {
-    if (!activeInstanceId) return undefined;
-    const hostId = activeInstanceId.replace(/_/g, "-");
-    return `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
-  }, [activeInstanceId]);
+  // Setup instance mutation for background provisioning
+  const setupInstanceMutation = useRQMutation(postApiMorphSetupInstanceMutation());
 
-  const derivedBrowserUrl = useMemo(() => {
-    if (!activeInstanceId) return undefined;
-    const hostId = activeInstanceId.replace(/_/g, "-");
-    const workspaceUrl = `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
-    return toMorphVncUrl(workspaceUrl) ?? undefined;
-  }, [activeInstanceId]);
+  // Trigger provisioning when on configure step without instanceId
+  useEffect(() => {
+    if (activeStep !== "configure") {
+      provisioningTriggeredRef.current = false;
+      return;
+    }
+
+    // Skip if already have instanceId or already triggered or mutation is pending
+    if (activeInstanceId || provisioningTriggeredRef.current || setupInstanceMutation.isPending) {
+      return;
+    }
+
+    provisioningTriggeredRef.current = true;
+
+    setupInstanceMutation.mutate(
+      {
+        body: {
+          teamSlugOrId,
+          selectedRepos: activeSelectedRepos,
+          snapshotId: activeSnapshotId,
+        },
+      },
+      {
+        onSuccess: (data) => {
+          // Update URL with instanceId
+          void navigate({
+            search: (prev) => ({
+              ...prev,
+              instanceId: data.instanceId,
+            }),
+            replace: true,
+          });
+          // Update draft with instanceId (preserves current step)
+          persistEnvironmentDraftMetadata(
+            teamSlugOrId,
+            {
+              selectedRepos: activeSelectedRepos,
+              instanceId: data.instanceId,
+              snapshotId: activeSnapshotId,
+            },
+            { resetConfig: false },
+          );
+          console.log("Instance provisioned:", data.instanceId);
+          console.log("Cloned repos:", data.clonedRepos);
+        },
+        onError: (error) => {
+          console.error("Failed to provision instance:", error);
+          provisioningTriggeredRef.current = false; // Allow retry
+        },
+      }
+    );
+  }, [
+    activeStep,
+    activeInstanceId,
+    activeSelectedRepos,
+    activeSnapshotId,
+    teamSlugOrId,
+    navigate,
+    setupInstanceMutation,
+  ]);
 
   useEffect(() => {
     if (activeStep !== "configure") {
@@ -139,17 +191,25 @@ function EnvironmentsPage() {
     }) => {
       const existingRepos = draft?.selectedRepos ?? [];
       const reposChanged = !haveSameRepos(existingRepos, payload.selectedRepos);
-      const instanceChanged = draft?.instanceId !== payload.instanceId;
       const snapshotChanged = draft?.snapshotId !== payload.snapshotId;
-      const shouldResetConfig =
-        !draft || reposChanged || instanceChanged || snapshotChanged;
+      const shouldResetConfig = !draft || reposChanged || snapshotChanged;
+
+      // If repos or snapshot changed, we need a NEW instance with the new repos
+      // Clear instanceId to trigger re-provisioning
+      const needsNewInstance = reposChanged || snapshotChanged;
+      const resolvedInstanceId = needsNewInstance ? undefined : payload.instanceId;
+
+      // Also reset the provisioning trigger so the effect will run again
+      if (needsNewInstance) {
+        provisioningTriggeredRef.current = false;
+      }
 
       skipDraftHydrationRef.current = false;
       persistEnvironmentDraftMetadata(
         teamSlugOrId,
         {
           selectedRepos: payload.selectedRepos,
-          instanceId: payload.instanceId,
+          instanceId: resolvedInstanceId,
           snapshotId: payload.snapshotId,
         },
         { resetConfig: shouldResetConfig, step: "configure" },
@@ -158,18 +218,8 @@ function EnvironmentsPage() {
     [draft, teamSlugOrId],
   );
 
-  const handlePersistConfig = useCallback(
-    (partial: Partial<EnvironmentConfigDraft>) => {
-      updateEnvironmentDraftConfig(teamSlugOrId, partial, {
-        selectedRepos: activeSelectedRepos,
-        instanceId: activeInstanceId,
-        snapshotId: activeSnapshotId,
-      });
-    },
-    [teamSlugOrId, activeInstanceId, activeSelectedRepos, activeSnapshotId],
-  );
-
-  const handleBackToRepositorySelection = useCallback(() => {
+  const handleBackToRepositorySelection = useCallback(async () => {
+    // Update draft state
     persistEnvironmentDraftMetadata(
       teamSlugOrId,
       {
@@ -179,7 +229,14 @@ function EnvironmentsPage() {
       },
       { resetConfig: false, step: "select" },
     );
-  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, teamSlugOrId]);
+    // Update URL to match
+    await navigate({
+      search: (prev) => ({
+        ...prev,
+        step: "select",
+      }),
+    });
+  }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, teamSlugOrId, navigate]);
 
   const handleResetDraft = useCallback(() => {
     skipDraftHydrationRef.current = true;
@@ -203,47 +260,55 @@ function EnvironmentsPage() {
     });
   }, [handleResetDraft, navigate, teamSlugOrId]);
 
+  // For configure step, wrap in FloatingPane like the select step
+  // Note: EnvironmentSetupFlow handles its own layout - initial-setup is centered, workspace-config is full-width
+  if (activeStep === "configure") {
+    return (
+      <FloatingPane header={<TitleBar title="Environments" actions={headerActions} />}>
+        <div className="flex flex-col grow select-none relative h-full overflow-hidden">
+          <EnvironmentSetupFlow
+            teamSlugOrId={teamSlugOrId}
+            selectedRepos={activeSelectedRepos}
+            instanceId={activeInstanceId}
+            initialEnvName={draft?.config?.envName}
+            initialMaintenanceScript={draft?.config?.maintenanceScript}
+            initialDevScript={draft?.config?.devScript}
+            initialExposedPorts={draft?.config?.exposedPorts}
+            initialEnvVars={draft?.config?.envVars}
+            onEnvironmentSaved={handleResetDraft}
+            onBack={handleBackToRepositorySelection}
+          />
+        </div>
+      </FloatingPane>
+    );
+  }
+
+  // For select step, show the repository picker in a floating pane
   return (
     <FloatingPane header={<TitleBar title="Environments" actions={headerActions} />}>
       <div className="flex flex-col grow select-none relative h-full overflow-hidden">
-        {activeStep === "select" ? (
-          <div className="p-6 max-w-3xl w-full mx-auto overflow-auto">
-            <RepositoryPicker
-              teamSlugOrId={teamSlugOrId}
-              instanceId={activeInstanceId}
-              initialSelectedRepos={activeSelectedRepos}
-              initialSnapshotId={activeSnapshotId}
-              showHeader={true}
-              showContinueButton={true}
-              showManualConfigOption={true}
-              onStartConfigure={handleStartConfigure}
-              topAccessory={
-                <button
-                  type="button"
-                  onClick={handleDiscardAndExit}
-                  className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to environments
-                </button>
-              }
-            />
-          </div>
-        ) : (
-          <EnvironmentConfiguration
-            selectedRepos={activeSelectedRepos}
+        <div className="p-6 max-w-3xl w-full mx-auto overflow-auto">
+          <RepositoryPicker
             teamSlugOrId={teamSlugOrId}
             instanceId={activeInstanceId}
-            vscodeUrl={derivedVscodeUrl}
-            browserUrl={derivedBrowserUrl}
-            isProvisioning={false}
-            onHeaderControlsChange={setHeaderActions}
-            persistedState={draft?.config}
-            onPersistStateChange={handlePersistConfig}
-            onBackToRepositorySelection={handleBackToRepositorySelection}
-            onEnvironmentSaved={handleResetDraft}
+            initialSelectedRepos={activeSelectedRepos}
+            initialSnapshotId={activeSnapshotId}
+            showHeader={true}
+            showContinueButton={true}
+            showManualConfigOption={true}
+            onStartConfigure={handleStartConfigure}
+            topAccessory={
+              <button
+                type="button"
+                onClick={handleDiscardAndExit}
+                className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to environments
+              </button>
+            }
           />
-        )}
+        </div>
       </div>
     </FloatingPane>
   );

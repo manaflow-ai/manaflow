@@ -236,10 +236,31 @@ If UI changes exist, capture screenshots:
    - Hidden UI: modals, dropdowns, tooltips, accordions
    - Responsive layouts if the PR includes responsive changes
 6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
-7. After taking a screenshot, always open the image to verify that the capture is expected
-8. If screenshot seems outdated, refresh the page and take the screenshot again.
-9. Delete any screenshot files from the filesystem that you do not want included
 </PHASE_2_CAPTURE>
+
+<PHASE_3_QUALITY_VERIFICATION>
+After capturing screenshots, you MUST verify each one for quality. For EACH screenshot file in ${outputDir}:
+
+1. OPEN the screenshot image file and visually inspect it
+2. EVALUATE the screenshot against these quality criteria:
+   - Does it show the intended UI component/page that the filename suggests?
+   - Is the content fully loaded (no spinners, skeleton loaders, or partial renders - unless that IS the intended capture)?
+   - Is the relevant UI element fully visible and not cut off?
+   - Is the screenshot free of error states, console overlays, or dev tool artifacts (unless intentionally capturing those)?
+   - Does it accurately represent the PR changes you intended to capture?
+
+3. DECIDE: Is this a good screenshot?
+   - GOOD: The screenshot clearly captures the intended UI state. Keep it.
+   - BAD: The screenshot is blurry, shows wrong content, has unintended loading states, is cut off, or doesn't represent the PR changes. DELETE IT.
+
+4. If BAD: Delete the screenshot file from the filesystem using \`rm <filepath>\`. Then either:
+   - Retake the screenshot after fixing the issue (refresh page, wait for content to load, scroll to element, resize viewport)
+   - Skip if the UI state cannot be reproduced
+
+5. Only include screenshots in your final output that you have verified as GOOD quality.
+
+Be ruthless about quality. A few excellent screenshots are far more valuable than many mediocre ones. Delete anything that doesn't clearly demonstrate the UI changes.
+</PHASE_3_QUALITY_VERIFICATION>
 
 <WHAT_TO_CAPTURE>
 Screenshot the UI states that the PR actually modifies. Be intentional:

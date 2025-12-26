@@ -29,6 +29,10 @@ import {
   getFrameworkPresetConfig,
   type FrameworkPreset,
 } from "./framework-preset-select";
+import {
+  MachinePresetSelect,
+  type MachinePresetId,
+} from "./machine-preset-select";
 import type { PackageManager } from "@/lib/github/framework-detection";
 import {
   VncViewer,
@@ -474,6 +478,9 @@ export function PreviewConfigureClient({
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
   const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
   const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>("other");
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<MachinePresetId>(
+    DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID
+  );
   const [maintenanceScript, setMaintenanceScript] = useState("");
   const [devScript, setDevScript] = useState("");
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
@@ -707,7 +714,7 @@ export function PreviewConfigureClient({
           repoUrl: `https://github.com/${repo}`,
           branch: "main",
           ttlSeconds: 3600,
-          snapshotId: DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID,
+          snapshotId: selectedSnapshotId,
         }),
       });
 
@@ -743,7 +750,7 @@ export function PreviewConfigureClient({
     } finally {
       setIsProvisioning(false);
     }
-  }, [repo, resolvedTeamSlugOrId]);
+  }, [repo, resolvedTeamSlugOrId, selectedSnapshotId]);
 
   useEffect(() => {
     if (!resolvedTeamSlugOrId) {
@@ -1506,6 +1513,12 @@ export function PreviewConfigureClient({
           value={frameworkPreset}
           onValueChange={handleFrameworkPresetChange}
           isLoading={isDetectingFramework}
+        />
+
+        {/* Machine Size Preset */}
+        <MachinePresetSelect
+          value={selectedSnapshotId}
+          onValueChange={setSelectedSnapshotId}
         />
 
         {/* Maintenance and Dev Scripts - Always expanded on initial setup */}

@@ -109,6 +109,14 @@
     "./components/vnc-viewer": {
       "import": "./src/components/vnc-viewer.tsx",
       "types": "./src/components/vnc-viewer.tsx"
+    },
+    "./components/environment": {
+      "import": "./src/components/environment/index.ts",
+      "types": "./src/components/environment/index.ts"
+    },
+    "./hooks/use-network": {
+      "import": "./src/hooks/use-network.ts",
+      "types": "./src/hooks/use-network.ts"
     }
   },
   "peerDependencies": {

@@ -1,4 +1,4 @@
-import { normalizeOrigin } from "@cmux/shared";
+import { normalizeOrigin, defaultHostConfig, getHostUrl } from "@cmux/shared";
 import { githubPrsBackfillRepoRouter } from "@/lib/routes/github.prs.backfill-repo.route";
 import { githubPrsBackfillRouter } from "@/lib/routes/github.prs.backfill.route";
 import { githubPrsCodeRouter } from "@/lib/routes/github.prs.code.route";
@@ -81,8 +81,8 @@ app.use(
   "*",
   cors({
     origin: [
-      "http://localhost:5173",
-      "http://localhost:9779",
+      getHostUrl(defaultHostConfig.client),
+      getHostUrl(defaultHostConfig.server),
       "https://cmux.sh",
       "https://www.cmux.sh",
       ...(clientPreviewOrigin ? [clientPreviewOrigin] : []),

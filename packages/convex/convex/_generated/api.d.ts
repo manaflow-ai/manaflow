@@ -41,6 +41,7 @@ import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
 import type * as morphInstanceMaintenance from "../morphInstanceMaintenance.js";
+import type * as morphInstances from "../morphInstances.js";
 import type * as notifications_http from "../notifications_http.js";
 import type * as previewConfigs from "../previewConfigs.js";
 import type * as previewRuns from "../previewRuns.js";
@@ -109,6 +110,7 @@ declare const fullApi: ApiFromModules<{
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
   morphInstanceMaintenance: typeof morphInstanceMaintenance;
+  morphInstances: typeof morphInstances;
   notifications_http: typeof notifications_http;
   previewConfigs: typeof previewConfigs;
   previewRuns: typeof previewRuns;

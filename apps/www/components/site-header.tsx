@@ -4,7 +4,8 @@ import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
 import type { MacDownloadUrls } from "@/lib/releases";
 import clsx from "clsx";
-import { Download, Globe } from "lucide-react";
+import { CmuxIcon } from "@/components/icons/cmux-icon";
+import { Download } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -156,7 +157,7 @@ export function SiteHeader({
             rel="noopener noreferrer"
             target="_blank"
           >
-            <Globe className="h-4 w-4" aria-hidden />
+            <CmuxIcon className="h-4 w-4" aria-hidden />
             <span>Web</span>
           </a>
         </div>
