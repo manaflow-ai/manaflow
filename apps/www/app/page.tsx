@@ -1,10 +1,10 @@
 import { MacDownloadLink } from "@/components/mac-download-link";
 import { SiteHeader } from "@/components/site-header";
+import { CmuxIcon } from "@/components/icons/cmux-icon";
 import {
   ArrowRight,
   Cloud,
   GitPullRequest,
-  Globe,
   Layers,
   Settings,
   Terminal,
@@ -223,7 +223,7 @@ export default async function LandingPage() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <Globe className="h-4 w-4" aria-hidden />
+                  <CmuxIcon className="h-4 w-4" aria-hidden />
                   Try web version
                 </a>
                 <MacDownloadLink

@@ -420,7 +420,7 @@ echo -e "${GREEN}Starting openapi client generator...${NC}"
 OPENAPI_CLIENT_PID=$!
 check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
 OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
-OPENAPI_READY_MARKER="[watch-openapi] initial client generation complete"
+OPENAPI_READY_MARKER="watch-openapi complete"
 wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
 
 # Start Electron if requested

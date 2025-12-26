@@ -73,6 +73,8 @@ const ResumeTaskRunResponse = z
 const CheckTaskRunPausedResponse = z
   .object({
     paused: z.boolean(),
+    stopped: z.boolean().optional(), // True if instance was permanently stopped by cleanup cron
+    stoppedAt: z.number().optional(), // When the instance was stopped
   })
   .openapi("CheckTaskRunPausedResponse");
 
@@ -162,6 +164,12 @@ morphRouter.openapi(
 
       await instance.resume();
 
+      // Record the resume for activity tracking (used by cleanup cron)
+      await convex.mutation(api.morphInstances.recordResume, {
+        instanceId,
+        teamSlugOrId,
+      });
+
       await convex.mutation(api.taskRuns.updateVSCodeStatus, {
         teamSlugOrId,
         id: taskRunId as Id<"taskRuns">,
@@ -241,7 +249,22 @@ morphRouter.openapi(
 
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({ instanceId });
+
+      let instance: Instance;
+      try {
+        instance = await client.instances.get({ instanceId });
+      } catch (instanceError) {
+        // If instance not found, it was likely stopped/deleted
+        const errorMessage = instanceError instanceof Error ? instanceError.message : String(instanceError);
+        if (errorMessage.includes("404") || errorMessage.includes("not found")) {
+          return c.json({
+            paused: true,
+            stopped: true,
+            stoppedAt: undefined, // We don't know exactly when it was stopped
+          });
+        }
+        throw instanceError;
+      }
 
       const metadataTeamId = (
         instance as unknown as {
@@ -253,7 +276,7 @@ morphRouter.openapi(
         return c.text("Forbidden", 403);
       }
 
-      return c.json({ paused: instance.status === "paused" });
+      return c.json({ paused: instance.status === "paused", stopped: false });
     } catch (error) {
       console.error(
         "[morph.check-task-run-paused] Failed to check instance status",
