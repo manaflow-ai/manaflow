@@ -1471,6 +1471,7 @@ export const updateVSCodeMetadataInternal = internalMutation({
             v.literal("docker"),
             v.literal("morph"),
             v.literal("daytona"),
+            v.literal("bubblewrap"),
             v.literal("other"),
           ),
         ),

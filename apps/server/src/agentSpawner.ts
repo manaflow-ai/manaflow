@@ -11,6 +11,7 @@ import type {
 } from "@cmux/shared/worker-schemas";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { parse as parseDotenv } from "dotenv";
+// import { BubblewrapSandbox, Sandbox } from "@cmux/sandbox-client"; // TODO: Migrate to BubblewrapSandbox
 import { sanitizeTmuxSessionName } from "./sanitizeTmuxSessionName";
 import {
   generateNewBranchName,
@@ -35,6 +36,9 @@ import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import { getWorktreePath, setupProjectWorkspace } from "./workspace";
 import { workerExec } from "./utils/workerExec";
 import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
+
+// Default sandboxd URL for local mode (used when migrating to BubblewrapSandbox)
+// const LOCAL_SANDBOXD_URL = "http://localhost:46831";
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
