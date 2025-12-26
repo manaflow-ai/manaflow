@@ -724,7 +724,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
     setCommentInputPos(null);
   };
 
-  // Only render if NOT on localhost:5173 OR if force shown with Option+C
+  // Only render if NOT on localhost dev ports OR if force shown with Option+C
   const shouldRender = () => {
     // Hide comments in web mode
     if (env.NEXT_PUBLIC_WEB_MODE) {
@@ -732,7 +732,12 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
     }
     const hostname = window.location.hostname;
     const port = window.location.port;
-    const isLocalhost5173 = hostname === "localhost" && port === "5173";
+    // Dev ports are 9775 + (range * 100): 9775, 9875, 9975, 10075, etc.
+    // Check if the port matches the pattern for any valid port range (0+)
+    const portNum = parseInt(port, 10);
+    const isDevPort =
+      !isNaN(portNum) && portNum >= 9775 && (portNum - 9775) % 100 === 0;
+    const isLocalhostDev = hostname === "localhost" && isDevPort;
     const isElectronApp = hostname === "cmux.local";
     if (forceShow) {
       return true;
@@ -740,7 +745,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
     if (isElectronApp) {
       return false;
     }
-    if (isLocalhost5173) {
+    if (isLocalhostDev) {
       return false;
     }
     return true;

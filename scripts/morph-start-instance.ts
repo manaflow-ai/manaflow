@@ -21,7 +21,7 @@ void (async () => {
 })();
 
 const vscodeUrl = instance.networking.httpServices.find(
-  (service) => service.port === 39378
+  (service) => service.port === 39378,
 )?.url;
 if (!vscodeUrl) {
   throw new Error("VSCode URL not found");
@@ -44,10 +44,12 @@ process.on("SIGINT", async () => {
 
 console.log(`Created instance: ${instance.id}`);
 
-const portsToExpose = [5173, 9777, 9778, 6791, 39378, 39377, 39379, 39380, 39381];
+const portsToExpose = [
+  9775, 9776, 9777, 9778, 6791, 39378, 39377, 39379, 39380, 39381,
+];
 console.log("Exposing ports", portsToExpose);
 await Promise.all(
-  portsToExpose.map((port) => instance.exposeHttpService(`port-${port}`, port))
+  portsToExpose.map((port) => instance.exposeHttpService(`port-${port}`, port)),
 );
 
 console.log("Exposed services");
@@ -58,7 +60,13 @@ const workerService = exposedServices.find((service) => service.port === 39377);
 const proxyService = exposedServices.find((service) => service.port === 39379);
 const vncService = exposedServices.find((service) => service.port === 39380);
 const cdpService = exposedServices.find((service) => service.port === 39381);
-if (!vscodeService || !workerService || !proxyService || !vncService || !cdpService) {
+if (
+  !vscodeService ||
+  !workerService ||
+  !proxyService ||
+  !vncService ||
+  !cdpService
+) {
   throw new Error("VSCode, worker, proxy, VNC, or DevTools service not found");
 }
 
