@@ -196,21 +196,14 @@ export default async function LandingPage() {
                     >
                       vision
                     </a>
-                    ,
+                    {" "}
+                    or
                     {" "}
                     <a
                       className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
                       href="#nav-features"
                     >
                       how it works today
-                    </a>
-                    , or explore the
-                    {" "}
-                    <a
-                      className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
-                      href="#nav-roadmap"
-                    >
-                      roadmap
                     </a>
                     .
                   </p>
