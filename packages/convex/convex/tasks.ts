@@ -29,6 +29,9 @@ export const get = authQuery({
     // Exclude preview tasks from the main tasks list
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
+    // Exclude local workspaces from the web UI (cmux.sh web mode)
+    q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+
     if (args.projectFullName) {
       q = q.filter((qq) =>
         qq.eq(qq.field("projectFullName"), args.projectFullName),
@@ -89,6 +92,9 @@ export const getWithNotificationOrder = authQuery({
     }
 
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces from the web UI (cmux.sh web mode)
+    q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -168,7 +174,7 @@ export const getPinned = authQuery({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Get pinned tasks (excluding archived and preview tasks)
+    // Get pinned tasks (excluding archived, preview, and local workspace tasks)
     const pinnedTasks = await ctx.db
       .query("tasks")
       .withIndex("by_pinned", (idx) =>
@@ -176,6 +182,7 @@ export const getPinned = authQuery({
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
       .filter((q) => q.neq(q.field("isPreview"), true))
+      .filter((q) => q.neq(q.field("isLocalWorkspace"), true))
       .collect();
 
     // Get unread task runs for this user in this team
@@ -223,6 +230,9 @@ export const getTasksWithTaskRuns = authQuery({
 
     // Exclude preview tasks from the main tasks list
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces from the web UI (cmux.sh web mode)
+    q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
