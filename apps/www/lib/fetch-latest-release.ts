@@ -14,6 +14,8 @@ export type ReleaseInfo = {
 
 type GithubRelease = {
   tag_name?: string;
+  draft?: boolean;
+  prerelease?: boolean;
   assets?: Array<{
     name?: string;
     browser_download_url?: string;
@@ -99,10 +101,14 @@ export async function fetchLatestRelease(): Promise<ReleaseInfo> {
 
     const releases = (await response.json()) as GithubRelease[];
 
-    // Find the first release that matches the cmux CLI pattern (v1.0.xxx)
+    // Find the first stable release that matches the cmux CLI pattern (v1.0.xxx)
+    // Exclude drafts and prereleases to match the behavior of /releases/latest
     const cmuxRelease = releases.find(
       (release) =>
-        typeof release.tag_name === "string" && isCmuxCliRelease(release.tag_name)
+        typeof release.tag_name === "string" &&
+        !release.draft &&
+        !release.prerelease &&
+        isCmuxCliRelease(release.tag_name)
     );
 
     return deriveReleaseInfo(cmuxRelease ?? null);
