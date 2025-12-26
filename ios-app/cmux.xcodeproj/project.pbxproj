@@ -13,6 +13,7 @@
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
 		6ED3832765AAB169F7254054 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */; };
+		7E0146088B71697EB516611F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */; };
 		83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E20F7A729081D044495605 /* CMuxApp.swift */; };
 		C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88ED9D7168B6FC097B490637 /* SignInView.swift */; };
 		D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D367AC3D322118AE559DBF /* AuthManager.swift */; };
@@ -31,6 +32,7 @@
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		88ED9D7168B6FC097B490637 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
 		D8732D7AB61D4190BACAAB03 /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
@@ -72,6 +74,7 @@
 		83C0A40B17FEEB2EA02D156B = {
 			isa = PBXGroup;
 			children = (
+				B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */,
 				F80B6A470B95146C17D0BE5A /* Sources */,
 				0F1AEEAEEF55364C5E4029D3 /* Products */,
 			);
@@ -125,6 +128,7 @@
 			buildConfigurationList = B8D38E764907D8415FC65997 /* Build configuration list for PBXNativeTarget "cmux" */;
 			buildPhases = (
 				35CFA4F0D45E49F370ECBCDF /* Sources */,
+				59260B41E0AD3DA23B6DF09F /* Resources */,
 				619D11C7B9AB804217EA26D4 /* Frameworks */,
 			);
 			buildRules = (
@@ -169,6 +173,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		59260B41E0AD3DA23B6DF09F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E0146088B71697EB516611F /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		35CFA4F0D45E49F370ECBCDF /* Sources */ = {

@@ -16,6 +16,7 @@ targets:
     platform: iOS
     sources:
       - Sources
+      - Assets.xcassets
     dependencies:
       - package: ConvexMobile
     settings:
@@ -24,6 +25,7 @@ targets:
       CURRENT_PROJECT_VERSION: "1"
       GENERATE_INFOPLIST_FILE: "YES"
       SWIFT_EMIT_LOC_STRINGS: "YES"
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Info.plist
       properties:

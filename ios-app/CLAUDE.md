@@ -14,7 +14,7 @@ xcodebuild -scheme cmux -sdk iphonesimulator -configuration Debug \
 xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/cmux.app
 
 # Or launch directly (installs and opens)
-xcrun simctl launch booted com.cmux.app
+xcrun simctl launch booted dev.cmux.app
 ```
 
 ## Architecture Note
