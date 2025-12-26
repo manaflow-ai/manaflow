@@ -134,23 +134,22 @@ struct NewTaskSheet: View {
             VStack(spacing: 16) {
                 TextEditor(text: $taskDescription)
                     .focused($isFocused)
-                    .frame(minHeight: 120)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .scrollContentBackground(.hidden)
                     .overlay(alignment: .topLeading) {
                         if taskDescription.isEmpty {
                             Text("Describe a coding task")
                                 .foregroundStyle(.tertiary)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 20)
+                                .padding(.top, 8)
+                                .padding(.leading, 5)
                                 .allowsHitTesting(false)
                         }
                     }
 
                 Spacer()
             }
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.top)
             .navigationTitle("New Task")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

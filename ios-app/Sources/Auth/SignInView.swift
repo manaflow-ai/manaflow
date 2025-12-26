@@ -50,6 +50,7 @@ struct SignInView: View {
                 .textContentType(.emailAddress)
                 .autocapitalization(.none)
                 .padding()
+                .frame(maxWidth: .infinity)
                 .background(Color(.systemGray6))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
