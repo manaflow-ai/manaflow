@@ -260,4 +260,85 @@ describe("BubblewrapSandbox e2e", () => {
     },
     60000
   );
+
+  it(
+    "can upload files to sandbox",
+    async () => {
+      if (!canRunTests) {
+        return;
+      }
+
+      const taskRunId = `test-upload-${Date.now()}` as Id<"taskRuns">;
+      const taskId = "task-test-id" as Id<"tasks">;
+
+      const sandbox = new BubblewrapSandbox({
+        sandboxdUrl: SANDBOXD_URL,
+        taskRunId,
+        taskId,
+        workspacePath: "/tmp",
+        teamSlugOrId: "test",
+      });
+
+      try {
+        await sandbox.start();
+
+        // Upload a text file
+        const content = Buffer.from("Hello from test!");
+        await sandbox.uploadFile("/tmp/test-file.txt", content);
+
+        // Verify the file exists and has correct content
+        const result = await sandbox.exec({
+          command: "cat",
+          args: ["/tmp/test-file.txt"],
+          cwd: "/tmp",
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe("Hello from test!");
+      } finally {
+        await sandbox.stop();
+      }
+    },
+    60000
+  );
+
+  it(
+    "can create terminal session",
+    async () => {
+      if (!canRunTests) {
+        return;
+      }
+
+      const taskRunId = `test-terminal-${Date.now()}` as Id<"taskRuns">;
+      const taskId = "task-test-id" as Id<"tasks">;
+
+      const sandbox = new BubblewrapSandbox({
+        sandboxdUrl: SANDBOXD_URL,
+        taskRunId,
+        taskId,
+        workspacePath: "/tmp",
+        teamSlugOrId: "test",
+      });
+
+      try {
+        await sandbox.start();
+
+        // Create a terminal session
+        await sandbox.createTerminal({
+          terminalId: "test-terminal",
+          command: "bash",
+          args: [],
+          cols: 80,
+          rows: 24,
+          cwd: "/tmp",
+        });
+
+        // The terminal is created - we just verify no errors thrown
+        // Terminal output is handled via PTY websocket, not tested here
+        expect(sandbox.isConnected()).toBe(true);
+      } finally {
+        await sandbox.stop();
+      }
+    },
+    60000
+  );
 });
