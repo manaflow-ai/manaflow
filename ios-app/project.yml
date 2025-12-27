@@ -58,6 +58,7 @@ targets:
     info:
       path: Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen:
           UIColorName: ""
           UIImageName: ""

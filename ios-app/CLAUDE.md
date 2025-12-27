@@ -28,6 +28,13 @@ xcrun simctl launch booted dev.cmux.app.dev
 
 ## TestFlight (Beta)
 
+**Quick upload (recommended):**
+```bash
+./build/testflight.sh
+```
+This script auto-increments the build number, archives, and uploads to TestFlight.
+
+**Manual steps (if needed):**
 ```bash
 # Archive
 xcodebuild -scheme cmux -configuration Beta \
@@ -40,11 +47,20 @@ xcodebuild -exportArchive \
   -exportOptionsPlist build/ExportOptions.plist
 ```
 
+**Build numbers:**
+- Stored in `project.yml` as `CURRENT_PROJECT_VERSION`
+- Must be unique per upload (auto-incremented by script)
+- Limit: 100 builds per version number
+
 The `ExportOptions.plist` configures:
 - Method: `app-store-connect`
 - Team ID: `7WLXT3NR37`
 - Provisioning profile: `cmux Beta Distribution`
 - Auto-upload on export
+
+**Encryption compliance:**
+- `ITSAppUsesNonExemptEncryption: false` is set in project.yml
+- This skips the "Missing Compliance" prompt in App Store Connect
 
 ## Architecture Note
 
