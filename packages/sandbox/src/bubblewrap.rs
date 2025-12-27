@@ -1248,20 +1248,25 @@ fi
             .map_err(|e| SandboxError::Internal(format!("failed to open pty: {e}")))?;
 
         // Build command: nsenter into sandbox and run command with args in cwd
+        // Escape all user-supplied values to prevent command injection
+        let escaped_cwd =
+            shell_escape::escape(std::borrow::Cow::Borrowed(cwd.as_str())).to_string();
+        let escaped_command =
+            shell_escape::escape(std::borrow::Cow::Borrowed(command.as_str())).to_string();
         let shell_cmd = if args.is_empty() {
-            command.clone()
+            escaped_command
         } else {
             // Quote args for shell execution
             let quoted_args: Vec<String> = args
                 .iter()
                 .map(|a| shell_escape::escape(std::borrow::Cow::Borrowed(a)).to_string())
                 .collect();
-            format!("{} {}", command, quoted_args.join(" "))
+            format!("{} {}", escaped_command, quoted_args.join(" "))
         };
         let nsenter_command = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
-            format!("cd {} && exec {}", cwd, shell_cmd),
+            format!("cd {} && exec {}", escaped_cwd, shell_cmd),
         ];
         let mut cmd = CommandBuilder::new(&self.nsenter_path);
         cmd.args(nsenter_args(inner_pid, None, &nsenter_command));
