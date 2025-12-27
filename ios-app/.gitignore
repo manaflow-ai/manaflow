@@ -41,3 +41,5 @@ fastlane/test_output
 
 # Dev docs (local reference)
 dev-docs/
+
+.sentryclirc
