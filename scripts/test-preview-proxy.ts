@@ -70,7 +70,7 @@ async function connectToProxy(targetHost: string, targetPort: number, credential
                     resolve({ tlsSocket, socket });
                 });
 
-                tlsSocket.on("error", (err) => {
+                tlsSocket.on("error", (err: Error) => {
                     console.error("TLS Error:", err);
                     reject(err);
                 });

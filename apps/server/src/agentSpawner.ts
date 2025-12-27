@@ -247,10 +247,14 @@ export async function spawnAgent(
       );
     }
 
+    // Callback URL for stop hooks to call crown/complete (Convex site URL)
+    const callbackUrl = env.NEXT_PUBLIC_CONVEX_URL.replace('.convex.cloud', '.convex.site');
+
     let envVars: Record<string, string> = {
       CMUX_PROMPT: processedTaskDescription,
       CMUX_TASK_RUN_ID: taskRunId,
       CMUX_TASK_RUN_JWT: taskRunJwt,
+      CMUX_CALLBACK_URL: callbackUrl,
       PROMPT: processedTaskDescription,
     };
 
@@ -453,6 +457,7 @@ export async function spawnAgent(
         taskId,
         theme: options.theme,
         teamSlugOrId,
+        envVars,
       });
     }
 

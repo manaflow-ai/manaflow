@@ -11,7 +11,7 @@ import { api } from "@cmux/convex/api";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { Suspense, useEffect, useMemo } from "react";
+import { Suspense, useEffect } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
@@ -43,7 +43,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   },
   loader: async ({ params }) => {
     convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.get,
+      query: api.tasks.getWithNotificationOrder,
       args: { teamSlugOrId: params.teamSlugOrId },
     });
     convexQueryClient.convexClient.prewarmQuery({
@@ -61,22 +61,15 @@ function LayoutComponent() {
   const { teamSlugOrId } = Route.useParams();
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders cascading to all child components.
+  // Uses getWithNotificationOrder which sorts tasks with unread notifications first
   const tasksQuery = useRQ({
-    ...convexQuery(api.tasks.get, { teamSlugOrId }),
+    ...convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId }),
     enabled: Boolean(teamSlugOrId),
   });
   const tasks = tasksQuery.data;
 
-  // Sort tasks by creation date (newest first) and take the latest 5
-  const recentTasks = useMemo(() => {
-    return (
-      tasks
-        ?.filter((task) => task.createdAt)
-        ?.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) || []
-    );
-  }, [tasks]);
-
-  const displayTasks = tasks === undefined ? undefined : recentTasks;
+  // Tasks are already sorted by the query (unread notifications first, then by createdAt)
+  const displayTasks = tasks;
 
   return (
     <ExpandTasksProvider>

@@ -739,40 +739,21 @@ function HeatmapThresholdControl({
   const sliderId = useId();
   const descriptionId = `${sliderId}-description`;
 
-  // Local state for immediate visual feedback during drag
-  const [localPercent, setLocalPercent] = useState<number | null>(null);
-  const isDragging = localPercent !== null;
-  const displayPercent = isDragging
-    ? localPercent
-    : Math.round(Math.min(Math.max(value, 0), 1) * 100);
+  // Convert normalized value (0-1) to display percent (0-100)
+  const displayPercent = Math.round(Math.min(Math.max(value, 0), 1) * 100);
 
-  // Sync local state when external value changes (and not dragging)
-  useEffect(() => {
-    if (!isDragging) {
-      setLocalPercent(null);
-    }
-  }, [value, isDragging]);
-
-  // Update local state during drag for visual feedback
+  // Update parent on every change for smooth updates via useDeferredValue
   const handleSliderChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const numeric = Number.parseInt(event.target.value, 10);
       if (Number.isNaN(numeric)) {
         return;
       }
-      setLocalPercent(Math.min(Math.max(numeric, 0), 100));
-    },
-    []
-  );
-
-  // Commit value to parent only on release
-  const handleSliderCommit = useCallback(() => {
-    if (localPercent !== null) {
-      const normalized = Math.min(Math.max(localPercent / 100, 0), 1);
+      const normalized = Math.min(Math.max(numeric / 100, 0), 1);
       onChange(normalized);
-      setLocalPercent(null);
-    }
-  }, [localPercent, onChange]);
+    },
+    [onChange]
+  );
 
   const handleColorChange = useCallback(
     (section: keyof HeatmapColorSettings, stop: keyof HeatmapColorSettings["line"]) =>
@@ -829,8 +810,6 @@ function HeatmapThresholdControl({
         step={1}
         value={displayPercent}
         onChange={handleSliderChange}
-        onMouseUp={handleSliderCommit}
-        onTouchEnd={handleSliderCommit}
         className="mt-3 w-full accent-sky-500"
         aria-valuemin={0}
         aria-valuemax={100}
@@ -973,7 +952,10 @@ function ErrorNavigator({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => onPrevious()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPrevious();
+                }}
                 className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to previous highlight (Shift+K)"
                 disabled={totalCount === 0}
@@ -996,7 +978,10 @@ function ErrorNavigator({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => onNext()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNext();
+                }}
                 className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to next highlight (Shift+J)"
                 disabled={totalCount === 0}
@@ -2117,17 +2102,20 @@ export function GitDiffHeatmapReviewViewer({
       const key = event.key.toLowerCase();
       if (key === "j") {
         event.preventDefault();
+        event.stopPropagation();
         handleFocusNext({ source: "keyboard" });
       } else if (key === "k") {
         event.preventDefault();
+        event.stopPropagation();
         handleFocusPrevious({ source: "keyboard" });
       }
     };
 
-    window.addEventListener("keydown", handleKeydown);
+    // Use capture phase to intercept before other handlers
+    window.addEventListener("keydown", handleKeydown, true);
 
     return () => {
-      window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("keydown", handleKeydown, true);
     };
   }, [handleFocusNext, handleFocusPrevious, targetCount]);
 

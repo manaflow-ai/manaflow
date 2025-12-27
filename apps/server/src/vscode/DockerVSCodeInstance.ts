@@ -260,6 +260,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       envVars.push(`VSCODE_THEME=${this.config.theme}`);
     }
 
+    // Add custom environment variables from config (e.g., CMUX_TASK_RUN_JWT, CMUX_CALLBACK_URL)
+    if (this.config.envVars) {
+      for (const [key, value] of Object.entries(this.config.envVars)) {
+        envVars.push(`${key}=${value}`);
+      }
+    }
+
     // Create container configuration
     const hostConfig: HostConfigWithCgroupns = {
       AutoRemove: true,

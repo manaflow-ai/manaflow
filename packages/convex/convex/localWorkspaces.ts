@@ -106,6 +106,7 @@ export const reserve = authMutation({
       isLocalWorkspace: true,
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
       userId,
       teamId,
     });

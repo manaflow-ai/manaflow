@@ -440,7 +440,7 @@ class CmuxTerminalManager {
 
   // Map of terminal name → {ptyId, pty} for terminals created via provideTerminalProfile
   // Used to set up tracking when VSCode creates the terminal
-  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo }>();
+  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo; isNewCreation?: boolean }>();
 
   // Queue of PTYs to restore - provideTerminalProfile consumes these
   // This allows VSCode to create terminals via profile provider while reusing existing PTYs
@@ -783,7 +783,8 @@ class CmuxTerminalManager {
       const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
 
       // Store for tracking when terminal opens
-      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data });
+      // Mark as new creation (not restore) so handleTerminalOpened focuses it
+      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data, isNewCreation: true });
 
       return { pty, name: data.name, id: data.id };
     } catch (err) {
@@ -951,8 +952,10 @@ class CmuxTerminalManager {
     };
     this._terminals.set(pending.id, managed);
 
-    // Show and focus terminals with editor location
-    if (pending.info.metadata?.location === 'editor') {
+    // Focus new terminals or terminals with editor location
+    // - New creations (user clicked +) should always be focused
+    // - Restored editor terminals should be focused
+    if (pending.isNewCreation || pending.info.metadata?.location === 'editor') {
       terminal.show(false); // false = take focus
     }
 

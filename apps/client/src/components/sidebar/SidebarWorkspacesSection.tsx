@@ -46,7 +46,7 @@ export function SidebarWorkspacesSection({
       <Dropdown.Root>
         <Dropdown.Trigger
           className={clsx(
-            "p-1 flex items-center justify-center",
+            "p-1 mr-[3px] flex items-center justify-center",
             "text-neutral-500 dark:text-neutral-400",
             "hover:text-neutral-700 dark:hover:text-neutral-200",
             "transition-colors"

@@ -4,7 +4,6 @@ import { stackServerApp } from "@/lib/utils/stack";
 import { PublicRepoAnonymousPrompt } from "../../../_components/public-repo-anonymous-prompt";
 import { PrivateRepoPrompt } from "../../../_components/private-repo-prompt";
 import { AnonymousToSignInPrompt } from "../../../_components/anonymous-to-signin-prompt";
-import { env } from "@/lib/utils/www-env";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -84,7 +83,6 @@ export default async function AuthPage({ params }: PageProps) {
       teamSlugOrId={githubOwner}
       repo={repo}
       githubOwner={githubOwner}
-      githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
     />
   );
 }

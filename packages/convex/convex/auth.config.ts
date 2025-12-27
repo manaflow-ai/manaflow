@@ -4,12 +4,14 @@ export default {
   providers: [
     {
       type: "customJwt",
+      applicationID: env.NEXT_PUBLIC_STACK_PROJECT_ID,
       issuer: `https://api.stack-auth.com/api/v1/projects/${env.NEXT_PUBLIC_STACK_PROJECT_ID}`,
       jwks: `https://api.stack-auth.com/api/v1/projects/${env.NEXT_PUBLIC_STACK_PROJECT_ID}/.well-known/jwks.json?include_anonymous=true`,
       algorithm: "ES256",
     },
     {
       type: "customJwt",
+      applicationID: `${env.NEXT_PUBLIC_STACK_PROJECT_ID}:anon`,
       issuer: `https://api.stack-auth.com/api/v1/projects-anonymous-users/${env.NEXT_PUBLIC_STACK_PROJECT_ID}`,
       jwks: `https://api.stack-auth.com/api/v1/projects/${env.NEXT_PUBLIC_STACK_PROJECT_ID}/.well-known/jwks.json?include_anonymous=true`,
       algorithm: "ES256",

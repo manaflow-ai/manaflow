@@ -725,6 +725,127 @@ sandboxesRouter.openapi(
   },
 );
 
+// Run maintenance and dev scripts in a sandbox
+const RunScriptsBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    maintenanceScript: z.string().optional(),
+    devScript: z.string().optional(),
+  })
+  .openapi("RunScriptsBody");
+
+const RunScriptsResponse = z
+  .object({
+    started: z.literal(true),
+  })
+  .openapi("RunScriptsResponse");
+
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/run-scripts",
+    tags: ["Sandboxes"],
+    summary: "Run maintenance and dev scripts in a sandbox",
+    description:
+      "Runs maintenance and/or dev scripts in tmux sessions within the sandbox. " +
+      "This ensures scripts run in a managed way that can be properly cleaned up before snapshotting.",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: RunScriptsBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: RunScriptsResponse,
+          },
+        },
+        description: "Scripts started successfully",
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Sandbox not found" },
+      500: { description: "Failed to run scripts" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const { teamSlugOrId, maintenanceScript, devScript } = c.req.valid("json");
+
+    // Need at least one script to run
+    if (!maintenanceScript && !devScript) {
+      return c.json({ started: true as const });
+    }
+
+    try {
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId,
+      });
+
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances
+        .get({ instanceId: id })
+        .catch((error) => {
+          console.error("[sandboxes.run-scripts] Failed to load instance", error);
+          return null;
+        });
+
+      if (!instance) {
+        return c.text("Sandbox not found", 404);
+      }
+
+      const metadataTeamId = (
+        instance as unknown as {
+          metadata?: { teamId?: string };
+        }
+      ).metadata?.teamId;
+
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Allocate script identifiers for tracking
+      const scriptIdentifiers = allocateScriptIdentifiers();
+
+      // Run scripts in background (don't await)
+      (async () => {
+        await runMaintenanceAndDevScripts({
+          instance,
+          maintenanceScript: maintenanceScript || undefined,
+          devScript: devScript || undefined,
+          identifiers: scriptIdentifiers,
+          convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+          isCloudWorkspace: true,
+        });
+      })().catch((error) => {
+        console.error(
+          "[sandboxes.run-scripts] Background script execution failed:",
+          error,
+        );
+      });
+
+      return c.json({ started: true as const });
+    } catch (error) {
+      console.error(
+        "[sandboxes.run-scripts] Failed to run scripts",
+        error,
+      );
+      return c.text("Failed to run scripts", 500);
+    }
+  },
+);
+
 // Stop/pause a sandbox
 sandboxesRouter.openapi(
   createRoute({
@@ -1355,6 +1476,23 @@ sandboxesRouter.openapi(
       }
 
       await instance.resume();
+
+      // Record the resume for activity tracking (used by cleanup cron)
+      // Get teamSlugOrId from request or fall back to instance metadata
+      const instanceMetadata = instance.metadata as Record<string, unknown> | undefined;
+      const effectiveTeamSlugOrId = teamSlugOrId ?? (instanceMetadata?.teamId as string | undefined);
+      if (effectiveTeamSlugOrId && morphInstanceId) {
+        try {
+          await convex.mutation(api.morphInstances.recordResume, {
+            instanceId: morphInstanceId,
+            teamSlugOrId: effectiveTeamSlugOrId,
+          });
+        } catch (recordError) {
+          // Don't fail the resume if recording fails
+          console.error("[sandboxes.resume] Failed to record resume activity:", recordError);
+        }
+      }
+
       return c.json({ resumed: true });
     } catch (error) {
       if (error instanceof HTTPException) {

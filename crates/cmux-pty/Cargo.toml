@@ -32,6 +32,9 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 # Terminal handling for attach
 crossterm = "0.28"
 
+# Terminal emulation
+cmux-terminal = { path = "../cmux-terminal" }
+
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
@@ -41,6 +44,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 thiserror = "1"
 url = "2"
+
+# Unix signal handling
+nix = { version = "0.29", features = ["signal"] }
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

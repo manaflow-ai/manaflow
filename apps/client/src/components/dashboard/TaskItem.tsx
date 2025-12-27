@@ -84,7 +84,7 @@ export const TaskItem = memo(function TaskItem({
       const tasks = localStore.getQuery(api.tasks.get, { teamSlugOrId: args.teamSlugOrId });
       if (tasks) {
         const updatedTasks = tasks.map(t =>
-          t._id === args.id ? { ...t, pinned: true, updatedAt: now } : t
+          t._id === args.id ? { ...t, pinned: true, updatedAt: now, hasUnread: t.hasUnread ?? false } : t
         );
         localStore.setQuery(api.tasks.get, { teamSlugOrId: args.teamSlugOrId }, updatedTasks);
       }
@@ -95,7 +95,7 @@ export const TaskItem = memo(function TaskItem({
       if (taskToPin) {
         // Insert at the beginning since it's the most recently updated
         localStore.setQuery(api.tasks.getPinned, { teamSlugOrId: args.teamSlugOrId },
-          [{ ...taskToPin, pinned: true, updatedAt: now }, ...pinned]
+          [{ ...taskToPin, pinned: true, updatedAt: now, hasUnread: taskToPin.hasUnread ?? false }, ...pinned]
         );
       }
     }

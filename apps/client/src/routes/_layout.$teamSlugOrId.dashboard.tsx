@@ -395,6 +395,7 @@ function DashboardComponent() {
           userId: "optimistic",
           teamId: teamSlugOrId,
           environmentId: args.environmentId,
+          hasUnread: false,
         };
 
         // Add the new task at the beginning (since we order by desc)

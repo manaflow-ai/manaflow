@@ -13,6 +13,8 @@ import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
+import { useQuery } from "convex/react";
+import { useSetTaskReadState } from "@/hooks/useMarkTaskAsRead";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -57,6 +59,33 @@ function TaskDetailPage() {
   });
   const taskRuns = taskRunsQuery.data;
   const clipboard = useClipboard({ timeout: 2000 });
+  const setTaskReadState = useSetTaskReadState(teamSlugOrId);
+
+  // Real-time subscription to unread state for mark-as-read triggering
+  const hasUnread = useQuery(api.taskNotifications.hasUnreadForTask, {
+    teamSlugOrId,
+    taskId,
+  });
+
+  // Mark as read when viewing AND focused, triggers when unread state changes
+  useEffect(() => {
+    if (!taskId || !hasUnread) return;
+
+    const markReadIfFocused = () => {
+      if (document.hasFocus()) {
+        setTaskReadState(taskId, true).catch((err) => {
+          console.error("Failed to mark task notifications as read:", err);
+        });
+      }
+    };
+
+    // Mark as read immediately if focused
+    markReadIfFocused();
+
+    // Handle user returning to the page
+    window.addEventListener("focus", markReadIfFocused);
+    return () => window.removeEventListener("focus", markReadIfFocused);
+  }, [hasUnread, taskId, setTaskReadState]);
 
   // Get the deepest matched child to extract runId if present
   const childMatches = useChildMatches();

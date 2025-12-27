@@ -162,6 +162,9 @@ enum Command {
 
     /// Open sandbox in Zed via SSH Remote
     Zed(IdeArgs),
+
+    /// Remove old sandboxes and optionally prune Docker resources
+    Prune(PruneArgs),
 }
 
 #[derive(Args, Debug)]
@@ -174,6 +177,29 @@ struct IdeArgs {
     /// Path to open in the IDE (defaults to /workspace for local, /root/workspace for cloud)
     #[arg(long, short = 'p')]
     path: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct PruneArgs {
+    /// Only prune sandboxes older than this duration (e.g., "24h", "7d", "1w")
+    #[arg(long, value_parser = parse_duration)]
+    until: Option<Duration>,
+
+    /// Skip confirmation prompt
+    #[arg(long, short = 'f')]
+    force: bool,
+
+    /// Show what would be deleted without actually deleting
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Also prune Docker resources (containers, images, volumes) older than the specified duration
+    #[arg(long)]
+    docker: bool,
+
+    /// Prune all sandboxes (ignore --until filter)
+    #[arg(long, short = 'a')]
+    all: bool,
 }
 
 #[derive(Args, Debug)]
@@ -480,6 +506,48 @@ fn parse_env(raw: &str) -> Result<EnvVar, String> {
         key: parts[0].to_string(),
         value: parts[1].to_string(),
     })
+}
+
+/// Parse a duration string like "24h", "7d", "1w" into a Duration
+fn parse_duration(raw: &str) -> Result<Duration, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("duration cannot be empty".to_string());
+    }
+
+    // Find where the number ends and the unit begins
+    let num_end = raw
+        .chars()
+        .position(|c| !c.is_ascii_digit())
+        .unwrap_or(raw.len());
+
+    if num_end == 0 {
+        return Err("duration must start with a number (e.g., \"24h\", \"7d\")".to_string());
+    }
+
+    let num: u64 = raw[..num_end]
+        .parse()
+        .map_err(|_| "invalid number in duration".to_string())?;
+
+    let unit = &raw[num_end..];
+    let seconds = match unit {
+        "s" | "sec" | "secs" | "second" | "seconds" => num,
+        "m" | "min" | "mins" | "minute" | "minutes" => num * 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => num * 3600,
+        "d" | "day" | "days" => num * 86400,
+        "w" | "wk" | "wks" | "week" | "weeks" => num * 604800,
+        "" => {
+            // Default to hours if no unit specified
+            num * 3600
+        }
+        _ => {
+            return Err(format!(
+                "unknown duration unit: \"{unit}\". Use s, m, h, d, or w"
+            ))
+        }
+    };
+
+    Ok(Duration::from_secs(seconds))
 }
 
 fn get_config_dir() -> PathBuf {
@@ -1048,6 +1116,9 @@ async fn run() -> anyhow::Result<()> {
             let api_url = get_cmux_api_url();
             handle_ide(&client, &cli.base_url, &api_url, "zed", &args).await?;
         }
+        Command::Prune(args) => {
+            handle_prune(&client, &cli.base_url, args).await?;
+        }
         Command::Sandboxes(cmd) => {
             match cmd {
                 SandboxCommand::List => {
@@ -1324,6 +1395,442 @@ where
     }
 
     Ok(response.json::<T>().await?)
+}
+
+/// Handle the prune command - delete old sandboxes and optionally Docker resources
+async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyhow::Result<()> {
+    use chrono::Utc;
+
+    // Fetch all sandboxes
+    let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
+    let response = client.get(&url).send().await?;
+    let sandboxes: Vec<SandboxSummary> = parse_response(response).await?;
+
+    if sandboxes.is_empty() {
+        eprintln!("No sandboxes found.");
+        // Still check for orphaned filesystem directories
+        prune_orphaned_fs(client, base_url, &args).await?;
+        if args.docker {
+            prune_docker(&args).await?;
+        }
+        return Ok(());
+    }
+
+    // Filter sandboxes by age
+    let now = Utc::now();
+    let cutoff_duration = if args.all {
+        None
+    } else {
+        Some(args.until.unwrap_or(Duration::from_secs(24 * 3600))) // Default: 24h
+    };
+
+    let mut to_prune: Vec<&SandboxSummary> = sandboxes
+        .iter()
+        .filter(|s| {
+            if let Some(duration) = cutoff_duration {
+                let age = now.signed_duration_since(s.created_at);
+                age.num_seconds() > duration.as_secs() as i64
+            } else {
+                true // --all: prune everything
+            }
+        })
+        .collect();
+
+    // Sort by age (oldest first)
+    to_prune.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    if to_prune.is_empty() {
+        let filter_desc = if args.all {
+            "all".to_string()
+        } else {
+            format!(
+                "older than {}",
+                format_duration(cutoff_duration.unwrap_or_default())
+            )
+        };
+        eprintln!("No sandboxes match the filter ({filter_desc}).");
+        // Still check for orphaned filesystem directories
+        prune_orphaned_fs(client, base_url, &args).await?;
+        if args.docker {
+            prune_docker(&args).await?;
+        }
+        return Ok(());
+    }
+
+    // Display what will be pruned
+    eprintln!(
+        "Found {} sandbox{} to prune:\n",
+        to_prune.len(),
+        if to_prune.len() == 1 { "" } else { "es" }
+    );
+
+    for sandbox in &to_prune {
+        let age = now.signed_duration_since(sandbox.created_at);
+        let age_str = format_chrono_duration(age);
+        eprintln!("  {} {} ({})", sandbox.id, sandbox.name, age_str);
+    }
+    eprintln!();
+
+    if args.dry_run {
+        eprintln!("(dry run - no sandboxes deleted)");
+        // Still check for orphaned filesystem directories (in dry-run mode)
+        prune_orphaned_fs(client, base_url, &args).await?;
+        if args.docker {
+            prune_docker(&args).await?;
+        }
+        return Ok(());
+    }
+
+    // Confirm unless --force
+    if !args.force {
+        eprint!(
+            "Delete {} sandbox{}? [y/N] ",
+            to_prune.len(),
+            if to_prune.len() == 1 { "" } else { "es" }
+        );
+        std::io::Write::flush(&mut std::io::stderr())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+
+        if input != "y" && input != "yes" {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    // Delete sandboxes
+    let mut deleted = 0;
+    let mut failed = 0;
+
+    for sandbox in &to_prune {
+        let delete_url = format!(
+            "{}/sandboxes/{}",
+            base_url.trim_end_matches('/'),
+            sandbox.id
+        );
+        match client.delete(&delete_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                eprintln!("  \x1b[32m✓\x1b[0m Deleted {}", sandbox.id);
+                deleted += 1;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                eprintln!(
+                    "  \x1b[31m✗\x1b[0m Failed to delete {}: {} {}",
+                    sandbox.id, status, body
+                );
+                failed += 1;
+            }
+            Err(e) => {
+                eprintln!("  \x1b[31m✗\x1b[0m Failed to delete {}: {}", sandbox.id, e);
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!();
+    eprintln!(
+        "Pruned {} sandbox{}, {} failed.",
+        deleted,
+        if deleted == 1 { "" } else { "es" },
+        failed
+    );
+
+    // Prune orphaned filesystem directories
+    prune_orphaned_fs(client, base_url, &args).await?;
+
+    if args.docker {
+        prune_docker(&args).await?;
+    }
+
+    Ok(())
+}
+
+/// Prune orphaned sandbox filesystem directories via server endpoint
+async fn prune_orphaned_fs(
+    client: &Client,
+    base_url: &str,
+    args: &PruneArgs,
+) -> anyhow::Result<()> {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize)]
+    struct PruneRequest {
+        max_age_secs: Option<u64>,
+        all: bool,
+        dry_run: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct PrunedItem {
+        id: String,
+        #[allow(dead_code)]
+        path: String,
+        age_secs: u64,
+        #[serde(default)]
+        size_bytes: u64,
+    }
+
+    #[derive(Deserialize)]
+    struct PruneResponse {
+        deleted_count: usize,
+        failed_count: usize,
+        items: Vec<PrunedItem>,
+        dry_run: bool,
+        #[serde(default)]
+        bytes_freed: u64,
+    }
+
+    fn format_bytes(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.2} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{} B", bytes)
+        }
+    }
+
+    eprintln!("\nPruning orphaned filesystem directories...");
+
+    let max_age_secs = if args.all {
+        None
+    } else {
+        Some(
+            args.until
+                .unwrap_or(Duration::from_secs(24 * 3600))
+                .as_secs(),
+        )
+    };
+
+    let request = PruneRequest {
+        max_age_secs,
+        all: args.all,
+        dry_run: args.dry_run,
+    };
+
+    let url = format!("{}/prune", base_url.trim_end_matches('/'));
+    let response = match client.post(&url).json(&request).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("  \x1b[33m!\x1b[0m Failed to prune orphaned directories: {e}");
+            return Ok(());
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        eprintln!(
+            "  \x1b[33m!\x1b[0m Failed to prune orphaned directories: {} {}",
+            status, body
+        );
+        return Ok(());
+    }
+
+    let result: PruneResponse = response.json().await?;
+
+    if result.items.is_empty() {
+        eprintln!("  No orphaned directories found.");
+    } else {
+        for item in &result.items {
+            let age_str = format_duration(Duration::from_secs(item.age_secs));
+            let size_str = format_bytes(item.size_bytes);
+            if result.dry_run {
+                eprintln!(
+                    "  (dry run) would delete: {} ({}, {})",
+                    item.id, age_str, size_str
+                );
+            } else {
+                eprintln!(
+                    "  \x1b[32m✓\x1b[0m Deleted {} ({}, {})",
+                    item.id, age_str, size_str
+                );
+            }
+        }
+        eprintln!();
+        let space_str = format_bytes(result.bytes_freed);
+        if result.dry_run {
+            eprintln!(
+                "Would prune {} orphaned director{} ({}), {} failed.",
+                result.deleted_count,
+                if result.deleted_count == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
+                space_str,
+                result.failed_count
+            );
+        } else {
+            eprintln!(
+                "Pruned {} orphaned director{} ({}), {} failed.",
+                result.deleted_count,
+                if result.deleted_count == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
+                space_str,
+                result.failed_count
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Prune Docker resources
+async fn prune_docker(args: &PruneArgs) -> anyhow::Result<()> {
+    eprintln!("\nPruning Docker resources...");
+
+    let filter = if args.all {
+        None
+    } else {
+        let duration = args.until.unwrap_or(Duration::from_secs(24 * 3600));
+        let secs = duration.as_secs();
+        // Use minutes for sub-hour durations to avoid truncation to 0h
+        // Docker supports both "Xh" and "Xm" formats
+        if secs < 3600 {
+            // Use minutes, with minimum of 1 minute
+            let mins = (secs / 60).max(1);
+            Some(format!("{mins}m"))
+        } else {
+            Some(format!("{}h", secs / 3600))
+        }
+    };
+
+    // Prune containers
+    let mut cmd = ProcessCommand::new("docker");
+    cmd.arg("container").arg("prune").arg("-f");
+    if let Some(ref f) = filter {
+        cmd.arg("--filter").arg(format!("until={f}"));
+    }
+
+    if args.dry_run {
+        eprintln!(
+            "  (dry run) would run: docker container prune -f{}",
+            filter
+                .as_ref()
+                .map(|f| format!(" --filter until={f}"))
+                .unwrap_or_default()
+        );
+    } else {
+        match cmd.output() {
+            Ok(output) => {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if !stdout.trim().is_empty() {
+                        eprintln!(
+                            "  \x1b[32m✓\x1b[0m Containers: {}",
+                            stdout.trim().replace('\n', ", ")
+                        );
+                    }
+                }
+            }
+            Err(e) => eprintln!("  \x1b[33m!\x1b[0m Failed to prune containers: {e}"),
+        }
+    }
+
+    // Prune images
+    let mut cmd = ProcessCommand::new("docker");
+    cmd.arg("image").arg("prune").arg("-f");
+    if let Some(ref f) = filter {
+        cmd.arg("--filter").arg(format!("until={f}"));
+    }
+
+    if args.dry_run {
+        eprintln!(
+            "  (dry run) would run: docker image prune -f{}",
+            filter
+                .as_ref()
+                .map(|f| format!(" --filter until={f}"))
+                .unwrap_or_default()
+        );
+    } else {
+        match cmd.output() {
+            Ok(output) => {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if !stdout.trim().is_empty() {
+                        eprintln!(
+                            "  \x1b[32m✓\x1b[0m Images: {}",
+                            stdout.trim().replace('\n', ", ")
+                        );
+                    }
+                }
+            }
+            Err(e) => eprintln!("  \x1b[33m!\x1b[0m Failed to prune images: {e}"),
+        }
+    }
+
+    // Prune volumes (no until filter support)
+    if args.all {
+        let mut cmd = ProcessCommand::new("docker");
+        cmd.arg("volume").arg("prune").arg("-f");
+
+        if args.dry_run {
+            eprintln!("  (dry run) would run: docker volume prune -f");
+        } else {
+            match cmd.output() {
+                Ok(output) => {
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if !stdout.trim().is_empty() {
+                            eprintln!(
+                                "  \x1b[32m✓\x1b[0m Volumes: {}",
+                                stdout.trim().replace('\n', ", ")
+                            );
+                        }
+                    }
+                }
+                Err(e) => eprintln!("  \x1b[33m!\x1b[0m Failed to prune volumes: {e}"),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Format a Duration as a human-readable string
+fn format_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else if secs < 604800 {
+        format!("{}d", secs / 86400)
+    } else {
+        format!("{}w", secs / 604800)
+    }
+}
+
+/// Format a chrono Duration as a human-readable string
+fn format_chrono_duration(d: chrono::Duration) -> String {
+    let secs = d.num_seconds();
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else if secs < 604800 {
+        format!("{}d ago", secs / 86400)
+    } else {
+        format!("{}w ago", secs / 604800)
+    }
 }
 
 struct ChunkedWriter {
