@@ -482,6 +482,101 @@ fn default_tty() -> bool {
     true
 }
 
+// ============================================================================
+// HTTP PTY Session Types
+// ============================================================================
+
+/// Request to create a new PTY session in a sandbox.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+pub struct PtyCreateRequest {
+    /// Optional session name
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Command to run (default: /bin/bash)
+    #[serde(default = "default_command")]
+    pub command: String,
+    /// Command arguments
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Terminal columns (default: 80)
+    #[serde(default = "default_cols")]
+    pub cols: u16,
+    /// Terminal rows (default: 24)
+    #[serde(default = "default_rows")]
+    pub rows: u16,
+    /// Working directory (default: /workspace)
+    #[serde(default = "default_cwd")]
+    pub cwd: String,
+    /// Environment variables as key-value pairs
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+}
+
+fn default_command() -> String {
+    "/bin/bash".to_string()
+}
+
+fn default_cwd() -> String {
+    "/workspace".to_string()
+}
+
+fn default_cols() -> u16 {
+    80
+}
+
+fn default_rows() -> u16 {
+    24
+}
+
+/// Information about a PTY session.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct PtySessionInfo {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub cwd: String,
+    pub created_at: DateTime<Utc>,
+    pub exited: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+/// List of PTY sessions.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct PtySessionList {
+    pub sessions: Vec<PtySessionInfo>,
+}
+
+/// Response from capturing PTY terminal content.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct PtyCaptureResponse {
+    /// Terminal content as text
+    pub content: String,
+    /// Cursor X position (column)
+    pub cursor_x: u16,
+    /// Cursor Y position (row)
+    pub cursor_y: u16,
+}
+
+/// Request to resize a PTY session.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+pub struct PtyResizeRequest {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// Request to send input to a PTY session.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+pub struct PtyInputRequest {
+    /// Base64-encoded input data
+    #[serde(with = "base64_bytes")]
+    pub data: Vec<u8>,
+}
+
 /// Helper module for base64 encoding/decoding of byte vectors in JSON.
 mod base64_bytes {
     use base64::{engine::general_purpose::STANDARD, Engine};

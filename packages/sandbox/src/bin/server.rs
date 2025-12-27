@@ -676,4 +676,61 @@ impl SandboxService for UnavailableSandboxService {
     ) -> SandboxResult<cmux_sandbox::models::AwaitReadyResponse> {
         Err(self.error("await services ready"))
     }
+
+    async fn pty_create_session(
+        &self,
+        _sandbox_id: String,
+        _request: cmux_sandbox::models::PtyCreateRequest,
+    ) -> SandboxResult<cmux_sandbox::models::PtySessionInfo> {
+        Err(self.error("create pty session"))
+    }
+
+    async fn pty_list_sessions(
+        &self,
+        _sandbox_id: String,
+    ) -> SandboxResult<Vec<cmux_sandbox::models::PtySessionInfo>> {
+        Err(self.error("list pty sessions"))
+    }
+
+    async fn pty_get_session(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+    ) -> SandboxResult<Option<cmux_sandbox::models::PtySessionInfo>> {
+        Err(self.error("get pty session"))
+    }
+
+    async fn pty_capture_session(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+    ) -> SandboxResult<cmux_sandbox::models::PtyCaptureResponse> {
+        Err(self.error("capture pty session"))
+    }
+
+    async fn pty_resize_session(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+        _request: cmux_sandbox::models::PtyResizeRequest,
+    ) -> SandboxResult<()> {
+        Err(self.error("resize pty session"))
+    }
+
+    async fn pty_send_input(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+        _data: Vec<u8>,
+    ) -> SandboxResult<()> {
+        Err(self.error("send pty input"))
+    }
+
+    async fn pty_delete_session(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+    ) -> SandboxResult<()> {
+        Err(self.error("delete pty session"))
+    }
 }
