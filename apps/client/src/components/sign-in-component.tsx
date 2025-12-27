@@ -38,7 +38,10 @@ export function SignInComponent() {
               </div>
               <button
                 onClick={() => {
-                  const url = `${WWW_ORIGIN}/handler/sign-in`;
+                  // Pass the Electron deeplink as the return URL so Stack Auth
+                  // redirects back to Electron after sign-in (including when already signed in)
+                  const returnUrl = encodeURIComponent("cmux://auth-callback");
+                  const url = `${WWW_ORIGIN}/handler/sign-in?after_auth_return_to=${returnUrl}`;
                   // Open in external browser via Electron handler
                   window.open(url, "_blank", "noopener,noreferrer");
                 }}
