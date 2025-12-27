@@ -45,6 +45,7 @@ import {
   CheckCircle,
   Circle,
   ChevronRight,
+  Cloud,
   Copy as CopyIcon,
   Crown,
   EllipsisVertical,
@@ -842,11 +843,19 @@ function TaskTreeInner({
       }
     }
 
-    return task.isCompleted ? (
-      <CheckCircle className="w-3 h-3 text-green-500" />
-    ) : (
-      <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />
-    );
+    if (task.isCompleted) {
+      return <CheckCircle className="w-3 h-3 text-green-500" />;
+    }
+
+    if (isLocalWorkspace) {
+      return <Monitor className="w-3 h-3 text-neutral-400" />;
+    }
+
+    if (isCloudWorkspace) {
+      return <Cloud className="w-3 h-3 text-neutral-400" />;
+    }
+
+    return <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />;
   })();
 
   const shouldShowTaskArchiveOverlay =

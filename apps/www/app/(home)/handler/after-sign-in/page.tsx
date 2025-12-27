@@ -71,8 +71,14 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
 
 export default async function AfterSignInPage({ searchParams: searchParamsPromise }: AfterSignInPageProps) {
   const stackCookies = await cookies();
-  const stackRefreshToken = stackCookies.get(`stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`)?.value;
-  const stackAccessToken = stackCookies.get("stack-access")?.value;
+  // Stack Auth uses __Host- prefix in production (HTTPS) for security
+  const refreshCookieName = `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`;
+  const stackRefreshToken =
+    stackCookies.get(`__Host-${refreshCookieName}`)?.value ??
+    stackCookies.get(refreshCookieName)?.value;
+  const stackAccessToken =
+    stackCookies.get("__Host-stack-access")?.value ??
+    stackCookies.get("stack-access")?.value;
 
   const searchParams = await searchParamsPromise;
   const afterAuthReturnToRaw = getSingleValue(searchParams?.after_auth_return_to ?? undefined);
