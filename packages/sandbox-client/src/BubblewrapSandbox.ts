@@ -50,7 +50,8 @@ export class BubblewrapSandbox extends Sandbox {
     this.sandboxId = sandbox.id;
     this.sandboxIndex = sandbox.index;
 
-    // Wait for services to be ready, cleanup on failure
+    // Wait for services to be ready if the endpoint exists
+    // Note: await-ready endpoint may not be available in all sandboxd versions
     try {
       const readyResponse = await this.client.awaitReady(this.sandboxId, {
         services: ["vscode", "pty"],
@@ -63,9 +64,18 @@ export class BubblewrapSandbox extends Sandbox {
         );
       }
     } catch (error) {
-      // Clean up the sandbox if readiness check fails
-      await this.cleanupSandbox();
-      throw error;
+      // If await-ready returns 404, the endpoint doesn't exist - continue anyway
+      if (
+        error instanceof Error &&
+        "statusCode" in error &&
+        (error as { statusCode: number }).statusCode === 404
+      ) {
+        // Endpoint not available, proceed without waiting for services
+      } else {
+        // Other errors - clean up and rethrow
+        await this.cleanupSandbox();
+        throw error;
+      }
     }
 
     this.connected = true;

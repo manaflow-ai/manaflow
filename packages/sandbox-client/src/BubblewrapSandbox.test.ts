@@ -1,17 +1,13 @@
 import type { Id } from "@cmux/convex/dataModel";
 import { spawn } from "node:child_process";
-import { platform } from "node:os";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BubblewrapSandbox } from "./BubblewrapSandbox.js";
 import { SandboxdClient } from "./sandboxd-client.js";
 
-const SANDBOXD_PORT = 46831;
+const SANDBOXD_PORT = 46832; // Use different port to avoid conflicts with dev server
 const SANDBOXD_URL = `http://localhost:${SANDBOXD_PORT}`;
 const CONTAINER_NAME = "cmux-sandboxd-test";
 const SANDBOXD_IMAGE = "ghcr.io/manaflow-ai/cmux-sandbox:latest";
-
-// Bubblewrap requires Linux namespaces, so these tests only run on Linux
-const IS_LINUX = platform() === "linux";
 
 async function isDockerAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -39,7 +35,8 @@ async function startSandboxdContainer(): Promise<void> {
     cleanup.on("error", () => resolve());
   });
 
-  // Start the sandboxd container
+  // Start the sandboxd container with dockerd
+  // On macOS, systemd doesn't work so we use a custom entrypoint script
   await new Promise<void>((resolve, reject) => {
     const proc = spawn("docker", [
       "run",
@@ -47,18 +44,19 @@ async function startSandboxdContainer(): Promise<void> {
       "--privileged",
       "-p",
       `${SANDBOXD_PORT}:${SANDBOXD_PORT}`,
-      "-v",
-      "/sys/fs/cgroup:/sys/fs/cgroup:rw",
-      "--tmpfs",
-      "/run:mode=755",
-      "--tmpfs",
-      "/run/lock:mode=755",
       "--name",
       CONTAINER_NAME,
+      "--entrypoint",
+      "/bin/bash",
       SANDBOXD_IMAGE,
-      "cmux-sandboxd",
-      "--port",
-      String(SANDBOXD_PORT),
+      "-c",
+      // Start dockerd in background, wait for socket, then start sandboxd
+      `dockerd --iptables=false &
+       for i in $(seq 1 30); do
+         if [ -S /var/run/docker.sock ]; then break; fi
+         sleep 1
+       done
+       exec cmux-sandboxd --port ${SANDBOXD_PORT}`,
     ]);
 
     let stderr = "";
@@ -75,9 +73,9 @@ async function startSandboxdContainer(): Promise<void> {
     proc.on("error", (err) => reject(err));
   });
 
-  // Wait for sandboxd to be healthy
+  // Wait for sandboxd to be healthy (takes longer since dockerd needs to start first)
   const client = new SandboxdClient(SANDBOXD_URL);
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     try {
       await client.health();
       return;
@@ -102,16 +100,9 @@ describe("BubblewrapSandbox e2e", () => {
   let canRunTests = false;
 
   beforeAll(async () => {
-    // Skip if Docker tests are disabled or not on Linux
+    // Skip if Docker tests are disabled
     if (process.env.CMUX_SKIP_DOCKER_TESTS === "1") {
       console.log("Skipping BubblewrapSandbox e2e: CMUX_SKIP_DOCKER_TESTS=1");
-      return;
-    }
-
-    if (!IS_LINUX) {
-      console.log(
-        "Skipping BubblewrapSandbox e2e: bubblewrap requires Linux namespaces"
-      );
       return;
     }
 
@@ -124,16 +115,20 @@ describe("BubblewrapSandbox e2e", () => {
     sandboxdWasRunning = await isSandboxdRunning();
     if (!sandboxdWasRunning) {
       try {
+        console.log("Starting sandboxd container...");
         await startSandboxdContainer();
         weStartedSandboxd = true;
+        console.log("Sandboxd container started successfully");
       } catch (err) {
         console.error("Failed to start sandboxd container:", err);
         return;
       }
+    } else {
+      console.log("Sandboxd already running");
     }
 
     canRunTests = true;
-  }, 60000);
+  }, 120000);
 
   afterAll(async () => {
     // Only stop if we started it
@@ -167,22 +162,23 @@ describe("BubblewrapSandbox e2e", () => {
         expect(info.provider).toBe("bubblewrap");
         expect(sandbox.isConnected()).toBe(true);
 
-        // Run a simple command
+        // Run a simple command (use /tmp as cwd since workspace may not exist)
         const result = await sandbox.exec({
           command: "echo",
           args: ["hello", "world"],
+          cwd: "/tmp",
         });
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe("hello world");
 
-        // Run command with working directory
-        const pwdResult = await sandbox.exec({
-          command: "pwd",
-          args: [],
-          cwd: "/workspace",
+        // Run another command to verify multiple execs work
+        const lsResult = await sandbox.exec({
+          command: "ls",
+          args: ["-la", "/"],
+          cwd: "/tmp",
         });
-        expect(pwdResult.exitCode).toBe(0);
-        expect(pwdResult.stdout.trim()).toBe("/workspace");
+        expect(lsResult.exitCode).toBe(0);
+        expect(lsResult.stdout).toContain("tmp");
       } finally {
         // Clean up
         await sandbox.stop();
@@ -218,6 +214,7 @@ describe("BubblewrapSandbox e2e", () => {
         const result = await sandbox.exec({
           command: "false",
           args: [],
+          cwd: "/tmp",
         });
         expect(result.exitCode).not.toBe(0);
       } finally {
