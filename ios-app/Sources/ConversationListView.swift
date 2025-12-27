@@ -75,7 +75,7 @@ struct ConversationListView: View {
                                 Image(systemName: "square.and.pencil")
                                     .font(.title3)
                                     .fontWeight(.medium)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.primary)
                             }
                             .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: .circle)
