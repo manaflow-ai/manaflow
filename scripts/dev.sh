@@ -318,9 +318,11 @@ start_sandboxd() {
 
     # Start the sandboxd container with systemd
     # Uses same flags as `cmux sandbox start` for proper cgroup/systemd support
+    # Pass CMUX_SANDBOX_PORT so the internal server listens on the correct port
     echo -e "${BLUE}Starting cmux-sandboxd container on port $SANDBOXD_PORT using $image_to_use...${NC}"
     if ! docker run -d --privileged \
         --cgroupns=host \
+        -e "CMUX_SANDBOX_PORT=$SANDBOXD_PORT" \
         -p "$SANDBOXD_PORT:$SANDBOXD_PORT" \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         -v "$CMUX_DATA_DIR:/var/lib/cmux:rw" \
