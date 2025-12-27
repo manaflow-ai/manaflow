@@ -263,6 +263,7 @@ export class BubblewrapSandbox extends Sandbox {
     }
 
     // Use cmux-sandboxd's PTY API to create a terminal session
+    // Note: cmux-pty expects env as a plain object (HashMap), not EnvVar[]
     await this.client.createPtySession(this.sandboxId, {
       name: opts.terminalId,
       command: opts.command,
@@ -270,9 +271,7 @@ export class BubblewrapSandbox extends Sandbox {
       cols: opts.cols || 80,
       rows: opts.rows || 24,
       cwd: opts.cwd || "/workspace",
-      env: opts.env
-        ? Object.entries(opts.env).map(([key, value]) => ({ key, value }))
-        : [],
+      env: opts.env,
     });
 
     // Handle auth files if provided

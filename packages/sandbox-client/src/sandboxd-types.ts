@@ -167,7 +167,8 @@ export interface PtyCreateSessionRequest {
   cols?: number;
   rows?: number;
   cwd?: string;
-  env?: EnvVar[];
+  /** Environment variables as key-value object (cmux-pty uses HashMap<String, String>) */
+  env?: Record<string, string>;
 }
 
 export interface PtySession {
