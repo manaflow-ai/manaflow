@@ -44,10 +44,30 @@ import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
 // Default sandboxd URL for local mode
 const LOCAL_SANDBOXD_URL = "http://localhost:46831";
 
-// Feature flag to use BubblewrapSandbox instead of DockerVSCodeInstance for local mode
-const USE_BUBBLEWRAP_SANDBOX =
-  process.env.CMUX_USE_BUBBLEWRAP === "1" ||
-  process.env.CMUX_USE_BUBBLEWRAP === "true";
+// Check if sandboxd is available at startup (cache the result)
+let sandboxdAvailable: boolean | null = null;
+async function isSandboxdAvailable(): Promise<boolean> {
+  if (sandboxdAvailable !== null) return sandboxdAvailable;
+
+  // If explicitly disabled, don't use sandboxd
+  if (process.env.CMUX_USE_BUBBLEWRAP === "0" || process.env.CMUX_USE_BUBBLEWRAP === "false") {
+    sandboxdAvailable = false;
+    console.log("[AgentSpawner] Sandboxd disabled via CMUX_USE_BUBBLEWRAP=false");
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${LOCAL_SANDBOXD_URL}/healthz`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    sandboxdAvailable = response.ok;
+    console.log(`[AgentSpawner] Sandboxd available: ${sandboxdAvailable}`);
+  } catch {
+    sandboxdAvailable = false;
+    console.log("[AgentSpawner] Sandboxd not available, falling back to Docker mode");
+  }
+  return sandboxdAvailable;
+}
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
@@ -414,7 +434,8 @@ export async function spawnAgent(
     let worktreePath: string;
 
     console.log("[AgentSpawner] [isCloudMode]", options.isCloudMode);
-    console.log("[AgentSpawner] [USE_BUBBLEWRAP_SANDBOX]", USE_BUBBLEWRAP_SANDBOX);
+    const useBubblewrap = await isSandboxdAvailable();
+    console.log("[AgentSpawner] [useBubblewrap]", useBubblewrap);
 
     if (options.isCloudMode) {
       // For remote sandboxes (Morph-backed via www API)
@@ -463,7 +484,7 @@ export async function spawnAgent(
 
       worktreePath = workspaceResult.worktreePath;
 
-      if (USE_BUBBLEWRAP_SANDBOX) {
+      if (useBubblewrap) {
         // Use BubblewrapSandbox via cmux-sandboxd HTTP API
         serverLogger.info(
           `[AgentSpawner] Creating BubblewrapSandbox for ${agent.name} (sandboxdUrl: ${LOCAL_SANDBOXD_URL})`
