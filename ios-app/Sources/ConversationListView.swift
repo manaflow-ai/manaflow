@@ -5,6 +5,11 @@ struct ConversationListView: View {
     @State private var searchText = ""
     @State private var showSettings = false
     @State private var showNewTask = false
+    @FocusState private var isSearchFocused: Bool
+
+    var isSearching: Bool {
+        isSearchFocused || !searchText.isEmpty
+    }
 
     var filteredConversations: [Conversation] {
         if searchText.isEmpty {
@@ -15,60 +20,73 @@ struct ConversationListView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                VStack(spacing: 0) {
-                    // Conversation list
-                    List {
-                        ForEach(filteredConversations) { conversation in
-                            NavigationLink(destination: ChatView(conversation: conversation)) {
-                                ConversationRow(conversation: conversation)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    withAnimation {
-                                        conversations.removeAll { $0.id == conversation.id }
-                                    }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-
-                                Button {
-                                    // Pin action
-                                } label: {
-                                    Label("Pin", systemImage: "pin")
-                                }
-                                .tint(.orange)
-                            }
-                            .swipeActions(edge: .leading) {
-                                Button {
-                                    // Mark as unread
-                                } label: {
-                                    Label("Unread", systemImage: "message.badge")
-                                }
-                                .tint(.blue)
-                            }
-                        }
+            List {
+                ForEach(filteredConversations) { conversation in
+                    NavigationLink(destination: ChatView(conversation: conversation)) {
+                        ConversationRow(conversation: conversation)
                     }
-                    .listStyle(.plain)
-
-                    // Bottom bar: Search + Compose (iOS 26 Liquid Glass)
-                    GlassEffectContainer {
-                        HStack(spacing: 12) {
-                            // Search field with glass capsule
-                            HStack(spacing: 8) {
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundStyle(.secondary)
-
-                                TextField("Search", text: $searchText)
-
-                                Image(systemName: "mic.fill")
-                                    .foregroundStyle(.secondary)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            withAnimation {
+                                conversations.removeAll { $0.id == conversation.id }
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .glassEffect(.regular.interactive(), in: .capsule)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
 
-                            // Compose button with glass circle
+                        Button {
+                            // Pin action
+                        } label: {
+                            Label("Pin", systemImage: "pin")
+                        }
+                        .tint(.orange)
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            // Mark as unread
+                        } label: {
+                            Label("Unread", systemImage: "message.badge")
+                        }
+                        .tint(.blue)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom) {
+                // Bottom bar: Search + Compose (iOS 26 Liquid Glass)
+                GlassEffectContainer {
+                    HStack(spacing: 12) {
+                        // Search field with glass capsule
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+
+                            TextField("Search", text: $searchText)
+                                .focused($isSearchFocused)
+
+                            Image(systemName: "mic.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+
+                        // Compose or Cancel button with glass circle
+                        if isSearching {
+                            Button {
+                                searchText = ""
+                                isSearchFocused = false
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.title3)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: 44, height: 44)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                        } else {
                             Button {
                                 showNewTask = true
                             } label: {
@@ -77,12 +95,13 @@ struct ConversationListView: View {
                                     .fontWeight(.medium)
                                     .foregroundStyle(.primary)
                             }
+                            .buttonStyle(.plain)
                             .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: .circle)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
             }
             .navigationTitle("Tasks")
@@ -123,24 +142,12 @@ struct ConversationListView: View {
 struct NewTaskSheet: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     @State private var taskDescription = ""
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                TextEditor(text: $taskDescription)
-                    .focused($isFocused)
+                InstantFocusTextView(text: $taskDescription, placeholder: "Describe a coding task")
                     .frame(maxWidth: .infinity, minHeight: 200)
-                    .scrollContentBackground(.hidden)
-                    .overlay(alignment: .topLeading) {
-                        if taskDescription.isEmpty {
-                            Text("Describe a coding task")
-                                .foregroundStyle(.tertiary)
-                                .padding(.top, 8)
-                                .padding(.leading, 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
 
                 Spacer()
             }
@@ -163,10 +170,64 @@ struct NewTaskSheet: View {
                     .disabled(taskDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .task {
-                try? await Task.sleep(for: .milliseconds(100))
-                isFocused = true
+        }
+    }
+}
+
+// UITextView that becomes first responder instantly - no focus transfer needed
+struct InstantFocusTextView: UIViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.backgroundColor = .clear
+        textView.delegate = context.coordinator
+        textView.text = text.isEmpty ? placeholder : text
+        textView.textColor = text.isEmpty ? .tertiaryLabel : .label
+        // Become first responder immediately - keyboard appears with sheet
+        textView.becomeFirstResponder()
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        // Only update if text changed externally
+        if uiView.text != text && !text.isEmpty {
+            uiView.text = text
+            uiView.textColor = .label
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, placeholder: placeholder)
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        @Binding var text: String
+        var placeholder: String
+
+        init(text: Binding<String>, placeholder: String) {
+            self._text = text
+            self.placeholder = placeholder
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if textView.textColor == .tertiaryLabel {
+                textView.text = ""
+                textView.textColor = .label
             }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if textView.text.isEmpty {
+                textView.text = placeholder
+                textView.textColor = .tertiaryLabel
+            }
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            text = textView.text
         }
     }
 }

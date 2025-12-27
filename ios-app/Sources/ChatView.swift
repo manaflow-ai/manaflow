@@ -13,39 +13,38 @@ struct ChatView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Messages
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                            MessageBubble(
-                                message: message,
-                                showTail: shouldShowTail(at: index),
-                                showTimestamp: shouldShowTimestamp(at: index)
-                            )
-                            .id(message.id)
-                        }
+        // Messages
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        MessageBubble(
+                            message: message,
+                            showTail: shouldShowTail(at: index),
+                            showTimestamp: shouldShowTimestamp(at: index)
+                        )
+                        .id(message.id)
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                    .padding(.bottom, 8)
                 }
-                .onAppear {
-                    scrollProxy = proxy
-                    scrollToBottom(animated: false)
-                }
-                .onChange(of: messages.count) {
-                    scrollToBottom(animated: true)
-                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                scrollProxy = proxy
+                scrollToBottom(animated: false)
+            }
+            .onChange(of: messages.count) {
+                scrollToBottom(animated: true)
             }
             .onTapGesture {
                 isInputFocused = false
             }
-
-            // Input bar
-            MessageInputBar(text: $newMessage, onSend: sendMessage)
-                .focused($isInputFocused)
+            .safeAreaInset(edge: .bottom) {
+                MessageInputBar(text: $newMessage, onSend: sendMessage)
+                    .focused($isInputFocused)
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -226,8 +225,9 @@ struct MessageInputBar: View {
                     Image(systemName: "plus")
                         .font(.title3)
                         .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                 }
+                .buttonStyle(.plain)
                 .frame(width: 36, height: 36)
                 .glassEffect(.regular.interactive(), in: .circle)
 
@@ -236,16 +236,21 @@ struct MessageInputBar: View {
                     TextField("iMessage", text: $text, axis: .vertical)
                         .lineLimit(1...5)
 
-                    if text.isEmpty {
-                        Image(systemName: "mic.fill")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button(action: onSend) {
-                            Image(systemName: "arrow.up.circle.fill")
+                    // Fixed size container to prevent layout shift
+                    ZStack {
+                        if text.isEmpty {
+                            Image(systemName: "mic.fill")
                                 .font(.title2)
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button(action: onSend) {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.title)
+                                    .foregroundStyle(.blue)
+                            }
                         }
                     }
+                    .frame(width: 32, height: 32)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)

@@ -7,13 +7,10 @@
 | Beta | `dev.cmux.app.beta` | cmux Beta | Manual |
 | Release | `dev.cmux.app` | cmux | Manual |
 
-## Simulator
+## Development
 ```bash
-xcodegen generate
-xcodebuild -scheme cmux -sdk iphonesimulator -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath build
-xcrun simctl install booted "build/Build/Products/Debug-iphonesimulator/cmux DEV.app"
-xcrun simctl launch booted dev.cmux.app.dev
+./scripts/reload.sh   # Build & install to simulator + iPhone (if connected)
+./scripts/device.sh   # Build & install to connected iPhone only
 ```
 
 ## TestFlight
