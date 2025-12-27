@@ -35,7 +35,6 @@ import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
-import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import { getWorktreePath, setupProjectWorkspace } from "./workspace";
 import { workerExec } from "./utils/workerExec";
@@ -43,31 +42,6 @@ import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
 
 // Default sandboxd URL for local mode
 const LOCAL_SANDBOXD_URL = "http://localhost:46831";
-
-// Check if sandboxd is available at startup (cache the result)
-let sandboxdAvailable: boolean | null = null;
-async function isSandboxdAvailable(): Promise<boolean> {
-  if (sandboxdAvailable !== null) return sandboxdAvailable;
-
-  // If explicitly disabled, don't use sandboxd
-  if (process.env.CMUX_USE_BUBBLEWRAP === "0" || process.env.CMUX_USE_BUBBLEWRAP === "false") {
-    sandboxdAvailable = false;
-    console.log("[AgentSpawner] Sandboxd disabled via CMUX_USE_BUBBLEWRAP=false");
-    return false;
-  }
-
-  try {
-    const response = await fetch(`${LOCAL_SANDBOXD_URL}/healthz`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    sandboxdAvailable = response.ok;
-    console.log(`[AgentSpawner] Sandboxd available: ${sandboxdAvailable}`);
-  } catch {
-    sandboxdAvailable = false;
-    console.log("[AgentSpawner] Sandboxd not available, falling back to Docker mode");
-  }
-  return sandboxdAvailable;
-}
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
@@ -428,14 +402,12 @@ export async function spawnAgent(
     serverLogger.info(`  Agent command: ${agentCommand}`);
     serverLogger.info(`  Tmux session name: ${tmuxSessionName}`);
 
-    // Instance can be either VSCodeInstance (Docker/Morph) or Sandbox (Bubblewrap)
+    // Instance can be either VSCodeInstance (cloud/Morph) or Sandbox (local/bubblewrap)
     let vscodeInstance: VSCodeInstance | null = null;
     let sandbox: Sandbox | null = null;
     let worktreePath: string;
 
     console.log("[AgentSpawner] [isCloudMode]", options.isCloudMode);
-    const useBubblewrap = await isSandboxdAvailable();
-    console.log("[AgentSpawner] [useBubblewrap]", useBubblewrap);
 
     if (options.isCloudMode) {
       // For remote sandboxes (Morph-backed via www API)
@@ -484,35 +456,19 @@ export async function spawnAgent(
 
       worktreePath = workspaceResult.worktreePath;
 
-      if (useBubblewrap) {
-        // Use BubblewrapSandbox via cmux-sandboxd HTTP API
-        serverLogger.info(
-          `[AgentSpawner] Creating BubblewrapSandbox for ${agent.name} (sandboxdUrl: ${LOCAL_SANDBOXD_URL})`
-        );
-        sandbox = new BubblewrapSandbox({
-          sandboxdUrl: LOCAL_SANDBOXD_URL,
-          workspacePath: worktreePath,
-          agentName: agent.name,
-          taskRunId,
-          taskId,
-          teamSlugOrId,
-          envVars,
-        });
-      } else {
-        // Use DockerVSCodeInstance (legacy Docker mode)
-        serverLogger.info(
-          `[AgentSpawner] Creating DockerVSCodeInstance for ${agent.name}`
-        );
-        vscodeInstance = new DockerVSCodeInstance({
-          workspacePath: worktreePath,
-          agentName: agent.name,
-          taskRunId,
-          taskId,
-          theme: options.theme,
-          teamSlugOrId,
-          envVars,
-        });
-      }
+      // Use BubblewrapSandbox via cmux-sandboxd HTTP API
+      serverLogger.info(
+        `[AgentSpawner] Creating BubblewrapSandbox for ${agent.name} (sandboxdUrl: ${LOCAL_SANDBOXD_URL})`
+      );
+      sandbox = new BubblewrapSandbox({
+        sandboxdUrl: LOCAL_SANDBOXD_URL,
+        workspacePath: worktreePath,
+        agentName: agent.name,
+        taskRunId,
+        taskId,
+        teamSlugOrId,
+        envVars,
+      });
     }
 
     // Update the task run with the worktree path (retry on OCC)
@@ -639,20 +595,6 @@ export async function spawnAgent(
           vnc?: string;
         }
       | undefined;
-    if (vscodeInstance instanceof DockerVSCodeInstance) {
-      const dockerPorts = vscodeInstance.getPorts();
-      if (dockerPorts && dockerPorts.vscode && dockerPorts.worker) {
-        ports = {
-          vscode: dockerPorts.vscode,
-          worker: dockerPorts.worker,
-          ...(dockerPorts.extension
-            ? { extension: dockerPorts.extension }
-            : {}),
-          ...(dockerPorts.proxy ? { proxy: dockerPorts.proxy } : {}),
-          ...(dockerPorts.vnc ? { vnc: dockerPorts.vnc } : {}),
-        };
-      }
-    }
 
     // Update VSCode instance information in Convex (retry on OCC)
     // Skip if www already persisted the VSCode info (cloud mode optimization)
@@ -766,122 +708,7 @@ export async function spawnAgent(
       }
     }
 
-    // Run maintenance script for Docker containers in a cmux-pty session (fire-and-forget)
-    // Note: For BubblewrapSandbox, we'll add maintenance script support in a future update
-    if (!options.isCloudMode && vscodeInstance instanceof DockerVSCodeInstance && workerSocket) {
-      const dockerWorkerSocket = workerSocket; // Capture for async closure
-      void (async () => {
-        try {
-          // Use pre-fetched workspace config
-          const workspaceConfigResult = await workspaceConfigPromise;
-          if (!workspaceConfigResult?.config?.maintenanceScript?.trim()) {
-            return;
-          }
-
-          const { config: workspaceConfig, projectFullName } = workspaceConfigResult;
-          serverLogger.info(
-            `[AgentSpawner] Running maintenance script for ${projectFullName} via cmux-pty`
-          );
-
-          // Write maintenance script to a file first (like cloud mode does)
-          const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
-          const maintenanceScriptPath = `${CMUX_RUNTIME_DIR}/maintenance.sh`;
-          const maintenanceScriptContent = `#!/bin/zsh
-set -eu
-
-cd /root/workspace
-
-echo "=== Maintenance Script Started at \\$(date) ==="
-${workspaceConfig.maintenanceScript}
-echo "=== Maintenance Script Completed at \\$(date) ==="
-`;
-
-          // Create directory and write script file using heredoc
-          const writeScriptCommand = `mkdir -p ${CMUX_RUNTIME_DIR} && cat > ${maintenanceScriptPath} <<'MAINTENANCE_SCRIPT_EOF'
-${maintenanceScriptContent}
-MAINTENANCE_SCRIPT_EOF
-chmod +x ${maintenanceScriptPath}`;
-
-          const writeScriptResult = await workerExec({
-            workerSocket: dockerWorkerSocket,
-            command: "bash",
-            args: ["-c", writeScriptCommand],
-            cwd: "/root/workspace",
-            env: {},
-            timeout: 10000,
-          });
-
-          if (writeScriptResult.exitCode !== 0) {
-            serverLogger.error(
-              `[AgentSpawner] Failed to write maintenance script file`,
-              { exitCode: writeScriptResult.exitCode, stdout: writeScriptResult.stdout, stderr: writeScriptResult.stderr }
-            );
-            return;
-          }
-
-          serverLogger.info(`[AgentSpawner] Wrote maintenance script to ${maintenanceScriptPath}`);
-
-          // Create a cmux-pty session for the maintenance script
-          const createResult = await workerExec({
-            workerSocket: dockerWorkerSocket,
-            command: "cmux-pty",
-            args: ["new", "--name", "maintenance", "--cwd", "/root/workspace", "--detached"],
-            cwd: "/root/workspace",
-            env: {},
-            timeout: 10000,
-          });
-
-          if (createResult.exitCode !== 0) {
-            serverLogger.error(
-              `[AgentSpawner] Failed to create maintenance PTY session`,
-              { exitCode: createResult.exitCode, stdout: createResult.stdout, stderr: createResult.stderr }
-            );
-            return;
-          }
-
-          serverLogger.info(`[AgentSpawner] Created maintenance PTY session`);
-
-          // Send command to run the script file
-          const sendResult = await workerExec({
-            workerSocket: dockerWorkerSocket,
-            command: "cmux-pty",
-            args: ["send-keys", "maintenance", maintenanceScriptPath, "Enter"],
-            cwd: "/root/workspace",
-            env: {},
-            timeout: 10000,
-          });
-
-          if (sendResult.exitCode !== 0) {
-            serverLogger.error(
-              `[AgentSpawner] Failed to send maintenance script to PTY`,
-              { exitCode: sendResult.exitCode, stdout: sendResult.stdout, stderr: sendResult.stderr }
-            );
-            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
-              teamSlugOrId,
-              id: runId,
-              maintenanceError: `Failed to send maintenance script: ${sendResult.stderr || sendResult.stdout}`,
-              devError: undefined,
-            });
-          } else {
-            serverLogger.info(
-              `[AgentSpawner] Maintenance script sent to PTY for ${projectFullName}`
-            );
-            // Clear any previous error (script is now running in PTY)
-            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
-              teamSlugOrId,
-              id: runId,
-              maintenanceError: undefined,
-              devError: undefined,
-            });
-          }
-        } catch (error) {
-          serverLogger.error(
-            `[AgentSpawner] Failed to run maintenance script`,
-            error
-          );
-        }
-      })();
-    }
+    // TODO: Add maintenance script support for BubblewrapSandbox
 
     const actualCommand = agent.command;
     const actualArgs = processedArgs;
@@ -1205,12 +1032,8 @@ exit $EXIT_CODE
             formData.append("image", blob, "image.png");
             formData.append("path", imageFile.path);
 
-            // Get worker port from VSCode instance
-            const workerPort =
-              vscodeInstance instanceof DockerVSCodeInstance
-                ? (vscodeInstance as DockerVSCodeInstance).getPorts()?.worker
-                : "39377";
-
+            // Use default worker port for cloud mode
+            const workerPort = "39377";
             const uploadUrl = `http://localhost:${workerPort}/upload-image`;
 
             serverLogger.info(`[AgentSpawner] Uploading image to ${uploadUrl}`);
