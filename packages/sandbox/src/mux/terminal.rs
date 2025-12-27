@@ -886,13 +886,14 @@ impl VirtualTerminal {
             if i > 0 {
                 result.push('\n');
             }
+            // Build the row content
+            let mut row_content = String::new();
             for cell in row.iter() {
-                result.push(cell.character);
+                row_content.push(cell.character);
             }
-            // Trim trailing spaces from each line
-            while result.ends_with(' ') && !result.ends_with('\n') {
-                result.pop();
-            }
+            // Trim trailing spaces from this row
+            let trimmed = row_content.trim_end_matches(' ');
+            result.push_str(trimmed);
         }
 
         result
