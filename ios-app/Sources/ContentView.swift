@@ -1,4 +1,5 @@
 import SwiftUI
+import Sentry
 
 struct ContentView: View {
     @StateObject private var authManager = AuthManager.shared
@@ -53,6 +54,15 @@ struct SettingsView: View {
                     NavigationLink("Convex Test") {
                         ConvexTestView()
                     }
+                    Button("Test Sentry Error") {
+                        SentrySDK.capture(error: NSError(domain: "dev.cmux.test", code: 1, userInfo: [
+                            NSLocalizedDescriptionKey: "Test error from cmux iOS app"
+                        ]))
+                    }
+                    Button("Test Sentry Crash") {
+                        fatalError("Test crash from cmux iOS app")
+                    }
+                    .foregroundStyle(.red)
                 }
                 #endif
 

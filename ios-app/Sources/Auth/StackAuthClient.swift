@@ -79,12 +79,15 @@ class StackAuthClient {
         let url = URL(string: "\(baseURL)/auth/password/sign-in")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 15
         commonHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
 
         let body = ["email": email, "password": password]
         request.httpBody = try JSONEncoder().encode(body)
 
+        print("🔐 Sending password sign-in request to \(url)")
         let (data, response) = try await URLSession.shared.data(for: request)
+        print("🔐 Got response from password sign-in")
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.networkError

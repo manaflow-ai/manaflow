@@ -1,4 +1,5 @@
 import SwiftUI
+import Sentry
 
 struct SignInView: View {
     @StateObject private var authManager = AuthManager.shared
@@ -58,6 +59,7 @@ struct SignInView: View {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Button {
@@ -116,6 +118,7 @@ struct SignInView: View {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Button {
@@ -163,6 +166,7 @@ struct SignInView: View {
                 return
             } catch let err {
                 error = err.localizedDescription
+                SentrySDK.capture(error: err)
                 return
             }
         }
@@ -175,6 +179,7 @@ struct SignInView: View {
             }
         } catch let err {
             error = err.localizedDescription
+            SentrySDK.capture(error: err)
         }
     }
 
@@ -185,6 +190,7 @@ struct SignInView: View {
             // Auth state will update automatically via @Published
         } catch let err {
             error = err.localizedDescription
+            SentrySDK.capture(error: err)
             code = ""
         }
     }
