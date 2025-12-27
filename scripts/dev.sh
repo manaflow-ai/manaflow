@@ -195,13 +195,13 @@ DOCKER_BUILD_PID=""
 if [ "$IS_DEVCONTAINER" = "true" ]; then
     # In devcontainer, always build since we have access to docker socket
     echo "Building sandbox Docker image from packages/sandbox/Dockerfile..."
-    docker build "${DOCKER_BUILD_ARGS[@]}" packages/sandbox &
+    docker build "${DOCKER_BUILD_ARGS[@]}" . &
     DOCKER_BUILD_PID=$!
 else
     # On host, build by default unless explicitly skipped
     if [ "$SKIP_DOCKER_BUILD" != "true" ] || [ "$FORCE_DOCKER_BUILD" = "true" ]; then
         echo "Building sandbox Docker image from packages/sandbox/Dockerfile..."
-        docker build "${DOCKER_BUILD_ARGS[@]}" packages/sandbox &
+        docker build "${DOCKER_BUILD_ARGS[@]}" . &
         DOCKER_BUILD_PID=$!
     else
         echo "Skipping Docker build (SKIP_DOCKER_BUILD=true)"
