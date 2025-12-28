@@ -207,9 +207,18 @@ type _PTYEvent = StateSyncEvent | PTYCreatedEvent | PTYUpdatedEvent | PTYDeleted
 
 function getConfig() {
   const config = vscode.workspace.getConfiguration('cmux');
+  const sandboxId = process.env.CMUX_SANDBOX_ID;
+  // CMUX_SANDBOX_URL contains the full URL including host IP reachable from sandbox
+  const sandboxUrl = process.env.CMUX_SANDBOX_URL;
+
+  // Priority: CMUX_SANDBOX_URL env var > VS Code setting > fallback
+  // This ensures sandboxd's endpoint is used when running inside a sandbox
+  const serverUrl = sandboxUrl || config.get<string>('ptyServerUrl', 'http://localhost:39383');
+
   return {
-    serverUrl: config.get<string>('ptyServerUrl', 'http://localhost:39383'),
+    serverUrl,
     defaultShell: config.get<string>('defaultShell', '/bin/zsh'),
+    sandboxId,
   };
 }
 
@@ -228,6 +237,7 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   private _dimensions: { cols: number; rows: number } = { cols: 80, rows: 24 };
   private _previousDimensions: { cols: number; rows: number } | null = null;
   private _skipInitialResize: boolean;
+  private _sandboxId: string | undefined;
 
   public readonly onDidWrite: vscode.Event<string> = this._onDidWrite.event;
   public readonly onDidClose: vscode.Event<number | void> = this._onDidClose.event;
@@ -235,10 +245,12 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   constructor(
     private readonly serverUrl: string,
     public readonly ptyId: string,
-    skipInitialResize = false // For restored sessions, skip resize on connect to avoid prompt redraw
+    skipInitialResize = false, // For restored sessions, skip resize on connect to avoid prompt redraw
+    sandboxId?: string
   ) {
-    console.log(`[cmux] CmuxPseudoterminal constructor for PTY ${ptyId}, skipInitialResize: ${skipInitialResize}`);
+    console.log(`[cmux] CmuxPseudoterminal constructor for PTY ${ptyId}, skipInitialResize: ${skipInitialResize}, sandboxId: ${sandboxId}`);
     this._skipInitialResize = skipInitialResize;
+    this._sandboxId = sandboxId;
     this._connectWebSocket();
   }
 
@@ -246,7 +258,10 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
     if (this._isDisposed) return;
 
     const wsUrl = this.serverUrl.replace(/^http/, 'ws');
-    const fullUrl = `${wsUrl}/sessions/${this.ptyId}/ws`;
+    // Use sandboxd path format if sandboxId is available, otherwise legacy cmux-pty format
+    const fullUrl = this._sandboxId
+      ? `${wsUrl}/sandboxes/${this._sandboxId}/pty/sessions/${this.ptyId}/attach`
+      : `${wsUrl}/sessions/${this.ptyId}/ws`;
     console.log(`[cmux] CmuxPseudoterminal connecting to: ${fullUrl}`);
     this._ws = new WebSocket(fullUrl);
 
@@ -578,9 +593,12 @@ class CmuxTerminalManager {
   // Used to detect when pty_created events should be skipped
   private _httpPendingCount = 0;
 
-  // Map of terminal name → {ptyId, pty} for terminals created via provideTerminalProfile
-  // Used to set up tracking when VSCode creates the terminal
+  // Map of PTY ID → pending terminal info for terminals created via provideTerminalProfile
+  // Keyed by PTY ID (not name) to avoid collisions when multiple terminals have the same name
   private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo; isNewCreation?: boolean }>();
+
+  // Counter for generating unique session names
+  private _sessionCounter = 0;
 
   // Queue of PTYs to restore - provideTerminalProfile consumes these
   // This allows VSCode to create terminals via profile provider while reusing existing PTYs
@@ -616,8 +634,21 @@ class CmuxTerminalManager {
 
   async initialize(): Promise<void> {
     const config = getConfig();
+    const bridgeConfig = getBridgeConfig();
     console.log('[cmux] CmuxTerminalManager initializing with config:', config);
+    console.log('[cmux] Bridge config:', bridgeConfig);
 
+    // When bridge socket is available (inside sandbox), use it directly
+    // Skip PtyClient WebSocket connection since events aren't needed
+    if (bridgeConfig.available) {
+      console.log('[cmux] Bridge socket available, using direct bridge communication');
+      this._initialized = true;
+      // Fetch initial state via bridge socket
+      await this._fetchInitialStateViaBridge(bridgeConfig.sandboxId!);
+      return;
+    }
+
+    // Legacy mode: connect to PtyClient for event broadcasts
     // Register handlers BEFORE connecting so we don't miss the initial state_sync
     this._registerEventHandlers();
 
@@ -632,6 +663,38 @@ class CmuxTerminalManager {
     }
 
     this._initialized = true;
+  }
+
+  private async _fetchInitialStateViaBridge(sandboxId: string): Promise<void> {
+    try {
+      console.log('[cmux] Fetching initial state via bridge socket');
+      const response = await sendBridgeRequest({
+        type: 'pty_list',
+        sandbox_id: sandboxId,
+      });
+
+      if (response.type === 'error') {
+        console.error('[cmux] Bridge socket error:', response.message);
+        this._resolveInitialSync();
+        return;
+      }
+
+      if (response.type === 'pty_list' && response.sessions) {
+        const terminals: TerminalInfo[] = response.sessions.map((session, index) =>
+          bridgeSessionToTerminalInfo(session, index)
+        );
+        console.log('[cmux] Got', terminals.length, 'terminals from bridge socket');
+        this._handleStateSync(terminals);
+      } else {
+        console.log('[cmux] No existing terminals found via bridge socket');
+        this._initialSyncDone = true;
+        this._resolveInitialSync();
+      }
+    } catch (err) {
+      console.error('[cmux] Failed to fetch initial state via bridge:', err);
+      this._initialSyncDone = true;
+      this._resolveInitialSync();
+    }
   }
 
   private _registerEventHandlers(): void {
@@ -835,7 +898,7 @@ class CmuxTerminalManager {
     console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}, metadata: ${JSON.stringify(info.metadata)}`);
 
     // Skip initial resize for restored sessions to avoid shell prompt redraw
-    const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore);
+    const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore, config.sandboxId);
 
     const terminal = vscode.window.createTerminal({
       name: info.name,
@@ -890,7 +953,7 @@ class CmuxTerminalManager {
   async createPtyAndGetTerminal(): Promise<{ pty: vscode.Pseudoterminal; name: string; id: string } | null> {
     const config = getConfig();
     const bridgeConfig = getBridgeConfig();
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/home/vscode';
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/workspace';
 
     // Track that we're waiting for response
     // This prevents pty_created handler from creating duplicate terminals
@@ -918,7 +981,10 @@ class CmuxTerminalManager {
         }
 
         if (response.type === 'pty_created' && response.session) {
+          // Generate unique name for this session
+          const sessionName = `session-${this._sessionCounter++}`;
           data = bridgeSessionToTerminalInfo(response.session, 0);
+          data.name = sessionName; // Override with unique name
           console.log('[cmux] Created PTY via bridge socket:', data.id, data.name);
         } else {
           console.error('[cmux] Unexpected bridge response:', response.type);
@@ -950,11 +1016,12 @@ class CmuxTerminalManager {
       this._pendingCreations.add(data.id);
 
       // Create pseudoterminal for this PTY
-      const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
+      const pty = new CmuxPseudoterminal(config.serverUrl, data.id, false, config.sandboxId);
 
       // Store for tracking when terminal opens
+      // Key by PTY ID to avoid collisions when names are duplicated
       // Mark as new creation (not restore) so handleTerminalOpened focuses it
-      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data, isNewCreation: true });
+      this._pendingTerminalSetup.set(data.id, { id: data.id, pty, info: data, isNewCreation: true });
 
       return { pty, name: data.name, id: data.id };
     } catch (err) {
@@ -967,7 +1034,7 @@ class CmuxTerminalManager {
 
   createTerminal(): void {
     const config = getConfig();
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/home/vscode';
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/workspace';
     this._ptyClient.createPty(config.defaultShell, cwd);
   }
 
@@ -1052,7 +1119,7 @@ class CmuxTerminalManager {
    * Stores the pty so we can set up proper tracking when terminal opens.
    */
   trackPendingTerminal(info: TerminalInfo, pty: CmuxPseudoterminal): void {
-    this._pendingTerminalSetup.set(info.name, { id: info.id, pty, info });
+    this._pendingTerminalSetup.set(info.id, { id: info.id, pty, info });
   }
 
   /**
@@ -1094,11 +1161,18 @@ class CmuxTerminalManager {
    * Sets up tracking and close listener using the already-created pty.
    */
   handleTerminalOpened(terminal: vscode.Terminal): void {
-    const pending = this._pendingTerminalSetup.get(terminal.name);
+    // Find pending entry by matching terminal name (since we key by PTY ID)
+    let pending: { id: string; pty: CmuxPseudoterminal; info: TerminalInfo; isNewCreation?: boolean } | undefined;
+    for (const entry of this._pendingTerminalSetup.values()) {
+      if (entry.info.name === terminal.name) {
+        pending = entry;
+        break;
+      }
+    }
     if (!pending) return;
 
     console.log(`[cmux] Setting up tracking for terminal ${terminal.name} (${pending.id})`);
-    this._pendingTerminalSetup.delete(terminal.name);
+    this._pendingTerminalSetup.delete(pending.id);
     this._pendingCreations.delete(pending.id);
 
     // If this was the last restore and queue is empty, mark restore complete
@@ -1219,7 +1293,7 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       if (lastPty) {
         console.log(`[cmux] provideTerminalProfile: restoring last queued PTY ${lastPty.id} (${lastPty.name})`);
         // Skip initial resize to avoid shell prompt redraw on reconnect
-        const pty = new CmuxPseudoterminal(config.serverUrl, lastPty.id, true);
+        const pty = new CmuxPseudoterminal(config.serverUrl, lastPty.id, true, config.sandboxId);
 
         // Track this terminal with its pty
         terminalManager.trackPendingTerminal(lastPty, pty);
@@ -1455,4 +1529,38 @@ export function createQueuedTerminals(): void {
     console.log('[cmux] Focusing cmux terminal');
     cmuxTerminal.terminal.show(false); // false = take focus
   }
+}
+
+/**
+ * Check if the bridge socket is available (we're running inside a sandbox).
+ */
+export function isBridgeSocketAvailable(): boolean {
+  return getBridgeConfig().available;
+}
+
+/**
+ * Create a new PTY terminal via bridge socket and show it.
+ * Used when there are no existing terminals to restore.
+ */
+export async function createNewPtyTerminal(): Promise<void> {
+  if (!terminalManager) {
+    console.error('[cmux] createNewPtyTerminal: terminalManager not initialized');
+    return;
+  }
+
+  console.log('[cmux] Creating new PTY terminal');
+  const result = await terminalManager.createPtyAndGetTerminal();
+  if (!result) {
+    console.error('[cmux] Failed to create new PTY terminal');
+    return;
+  }
+
+  // Create the VS Code terminal with our PTY
+  const terminal = vscode.window.createTerminal({
+    name: result.name,
+    pty: result.pty,
+    location: vscode.TerminalLocation.Editor, // Open in editor pane like the main agent terminal
+  });
+  terminal.show(false); // false = take focus
+  console.log('[cmux] Created and showing new PTY terminal:', result.name);
 }

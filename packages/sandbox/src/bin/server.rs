@@ -907,4 +907,13 @@ impl SandboxService for UnavailableSandboxService {
     ) -> SandboxResult<()> {
         Err(self.error("delete pty session"))
     }
+
+    async fn pty_attach_session(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+        _socket: axum::extract::ws::WebSocket,
+    ) -> SandboxResult<()> {
+        Err(self.error("attach pty session"))
+    }
 }

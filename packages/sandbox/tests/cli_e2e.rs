@@ -253,6 +253,15 @@ impl SandboxService for MockService {
     ) -> cmux_sandbox::errors::SandboxResult<()> {
         Ok(())
     }
+
+    async fn pty_attach_session(
+        &self,
+        _sandbox_id: String,
+        _session_id: String,
+        _socket: axum::extract::ws::WebSocket,
+    ) -> cmux_sandbox::errors::SandboxResult<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]

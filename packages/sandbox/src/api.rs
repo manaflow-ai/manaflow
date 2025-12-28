@@ -1084,21 +1084,21 @@ async fn pty_send_input(
     }
 }
 
-/// WebSocket attach to a PTY session.
-/// Note: For HTTP PTY sessions, prefer using input/capture endpoints.
-/// This endpoint is kept for compatibility but requires cmux-pty to be running.
+/// WebSocket attach to a PTY session for real-time I/O streaming.
 async fn pty_attach_session(
-    _state: axum::extract::State<AppState>,
-    Path((_id, _session_id)): Path<(String, String)>,
-    _ws: WebSocketUpgrade,
+    state: axum::extract::State<AppState>,
+    Path((id, session_id)): Path<(String, String)>,
+    ws: WebSocketUpgrade,
 ) -> Response {
-    // HTTP PTY sessions use input/capture endpoints instead of WebSocket attach
-    // For real-time streaming, use the /mux/attach endpoint instead
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "WebSocket attach not supported for HTTP PTY sessions. Use /mux/attach for streaming or input/capture endpoints for polling.",
-    )
-        .into_response()
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = state
+            .service
+            .pty_attach_session(id, session_id, socket)
+            .await
+        {
+            tracing::error!("PTY attach error: {:?}", e);
+        }
+    })
 }
 
 /// Send a signal to PTY processes in a sandbox.
@@ -1275,6 +1275,15 @@ mod tests {
             &self,
             _sandbox_id: String,
             _session_id: String,
+        ) -> SandboxResult<()> {
+            Ok(())
+        }
+
+        async fn pty_attach_session(
+            &self,
+            _sandbox_id: String,
+            _session_id: String,
+            _socket: WebSocket,
         ) -> SandboxResult<()> {
             Ok(())
         }

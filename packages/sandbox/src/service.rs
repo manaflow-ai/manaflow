@@ -113,6 +113,14 @@ pub trait SandboxService: Send + Sync + 'static {
     /// Delete (close) a PTY session.
     async fn pty_delete_session(&self, sandbox_id: String, session_id: String)
         -> SandboxResult<()>;
+
+    /// Attach to a PTY session via WebSocket for real-time I/O streaming.
+    async fn pty_attach_session(
+        &self,
+        sandbox_id: String,
+        session_id: String,
+        socket: WebSocket,
+    ) -> SandboxResult<()>;
 }
 
 #[derive(Clone)]

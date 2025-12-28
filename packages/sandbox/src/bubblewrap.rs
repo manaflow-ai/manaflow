@@ -27,7 +27,7 @@ use std::{env, time::Duration};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -57,11 +57,18 @@ struct HttpPtySession {
     input_tx: mpsc::UnboundedSender<Vec<u8>>,
     resize_tx: std::sync::mpsc::Sender<(u16, u16)>,
     terminal: Arc<Mutex<VirtualTerminal>>,
+    /// Broadcast channel for WebSocket clients to receive real-time output
+    output_tx: broadcast::Sender<PtyOutputEvent>,
     #[allow(dead_code)]
     master: Box<dyn MasterPty + Send>,
     #[allow(dead_code)]
-    child: Box<dyn portable_pty::Child + Send + Sync>,
+    child: Arc<std::sync::Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
+    #[allow(dead_code)]
     child_pid: Option<u32>,
+    /// Whether the process has exited
+    exited: Arc<std::sync::atomic::AtomicBool>,
+    /// Exit code if exited
+    exit_code: Arc<Mutex<Option<i32>>>,
     created_at: DateTime<Utc>,
     name: Option<String>,
     command: String,
@@ -69,6 +76,13 @@ struct HttpPtySession {
     cwd: String,
     cols: u16,
     rows: u16,
+}
+
+/// Event sent to WebSocket clients for PTY output
+#[derive(Clone, Debug)]
+enum PtyOutputEvent {
+    Data(Vec<u8>),
+    Exit(i32),
 }
 
 #[derive(Deserialize)]
@@ -320,9 +334,32 @@ async fn start_vscode_background(
     inner_pid: u32,
     vscode_port: u16,
     workspace_path: &str,
+    env_vars: &[(String, String)],
 ) -> Result<(), String> {
     use tokio::time::timeout;
     let cmd_timeout = Duration::from_secs(10);
+
+    // Build environment variable assignments for VS Code
+    // This ensures the extension can access CMUX_SANDBOX_ID, CMUX_SANDBOX_URL, etc.
+    // We use `env VAR=value command` syntax so the environment is set for the nohup process
+    let env_assignments: String = env_vars
+        .iter()
+        .filter(|(key, _)| key.starts_with("CMUX_"))
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                key,
+                shell_escape::escape(std::borrow::Cow::Borrowed(value))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let env_cmd = if env_assignments.is_empty() {
+        String::new()
+    } else {
+        format!("env {} ", env_assignments)
+    };
 
     // Start cmux-code server
     // --host 0.0.0.0: Listen on all interfaces (needed for proxy access)
@@ -331,12 +368,14 @@ async fn start_vscode_background(
     // --disable-workspace-trust: Don't prompt for trust
     // --disable-telemetry: No telemetry
     // Use nohup to prevent SIGHUP when nsenter shell exits
+    // Use `nohup env VAR=value ...` to ensure environment is inherited by backgrounded process
     let vscode_cmd = vec![
         "/bin/sh".to_string(),
         "-c".to_string(),
         format!(
             concat!(
-                "nohup /app/cmux-code/bin/code-server-oss ",
+                "nohup {}",
+                "/app/cmux-code/bin/code-server-oss ",
                 "--host 0.0.0.0 --port {} ",
                 "--without-connection-token ",
                 "--disable-workspace-trust ",
@@ -345,7 +384,7 @@ async fn start_vscode_background(
                 "{} ",
                 "> /tmp/cmux-code.log 2>&1 &"
             ),
-            vscode_port, workspace_path
+            env_cmd, vscode_port, workspace_path
         ),
     ];
 
@@ -1236,6 +1275,7 @@ fi
         rows: u16,
         env: std::collections::HashMap<String, String>,
         name: Option<String>,
+        sandbox_env: &[EnvVar],
     ) -> SandboxResult<HttpPtySession> {
         let system = NativePtySystem::default();
         let pair = system
@@ -1290,6 +1330,13 @@ fi
             cmd.env(key, value);
         }
 
+        // Apply sandbox environment variables (CMUX_*)
+        for env_var in sandbox_env {
+            if env_var.key.starts_with("CMUX_") {
+                cmd.env(&env_var.key, &env_var.value);
+            }
+        }
+
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -1308,6 +1355,9 @@ fi
 
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let (resize_tx, resize_rx) = std::sync::mpsc::channel::<(u16, u16)>();
+        // Broadcast channel for WebSocket clients (capacity 256 messages)
+        let (output_tx, _) = broadcast::channel::<PtyOutputEvent>(256);
+        let output_tx_clone = output_tx.clone();
 
         // Shared terminal for capturing output
         let terminal = Arc::new(Mutex::new(VirtualTerminal::new(
@@ -1317,7 +1367,17 @@ fi
         let terminal_clone = Arc::clone(&terminal);
         let input_tx_clone = input_tx.clone();
 
-        // Reader thread: PTY -> VirtualTerminal (buffered, not streamed)
+        // Exit state tracking
+        let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let exited_clone = Arc::clone(&exited);
+        let exit_code = Arc::new(Mutex::new(None));
+        let exit_code_clone = Arc::clone(&exit_code);
+
+        // Wrap child in Arc<Mutex> so reader thread can access it
+        let child_arc = Arc::new(std::sync::Mutex::new(child));
+        let child_for_reader = Arc::clone(&child_arc);
+
+        // Reader thread: PTY -> VirtualTerminal (buffered) + broadcast (streaming)
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -1329,7 +1389,22 @@ fi
                 }
 
                 match reader.read(&mut buf) {
-                    Ok(0) => break, // PTY closed
+                    Ok(0) => {
+                        // PTY closed - get actual exit code from child process
+                        let actual_exit_code = {
+                            let mut child =
+                                child_for_reader.lock().unwrap_or_else(|e| e.into_inner());
+                            // Wait for the child to get the actual exit status
+                            match child.wait() {
+                                Ok(status) => status.exit_code() as i32,
+                                Err(_) => 0, // Default to 0 if we can't get the status
+                            }
+                        };
+                        exited_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                        *exit_code_clone.blocking_lock() = Some(actual_exit_code);
+                        let _ = output_tx_clone.send(PtyOutputEvent::Exit(actual_exit_code));
+                        break;
+                    }
                     Ok(n) => {
                         let data = &buf[..n];
 
@@ -1343,8 +1418,25 @@ fi
                         for response in responses {
                             let _ = input_tx_clone.send(response);
                         }
+
+                        // Broadcast to WebSocket clients (ignore errors if no receivers)
+                        let _ = output_tx_clone.send(PtyOutputEvent::Data(data.to_vec()));
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        // Read error - try to get exit code anyway
+                        let actual_exit_code = {
+                            let mut child =
+                                child_for_reader.lock().unwrap_or_else(|e| e.into_inner());
+                            match child.try_wait() {
+                                Ok(Some(status)) => status.exit_code() as i32,
+                                _ => -1, // Default to -1 for read errors
+                            }
+                        };
+                        exited_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                        *exit_code_clone.blocking_lock() = Some(actual_exit_code);
+                        let _ = output_tx_clone.send(PtyOutputEvent::Exit(actual_exit_code));
+                        break;
+                    }
                 }
             }
         });
@@ -1363,9 +1455,12 @@ fi
             input_tx,
             resize_tx,
             terminal,
+            output_tx,
             master: pair.master,
-            child,
+            child: child_arc,
             child_pid,
+            exited,
+            exit_code,
             created_at: Utc::now(),
             name,
             command,
@@ -1439,6 +1534,7 @@ fn build_effective_env(
     merged.insert("DOCKER_HOST".to_string(), docker_host.to_string());
 
     merged.insert("CMUX_SANDBOX_ID".to_string(), sandbox_id.to_string());
+    merged.insert("CMUX_SANDBOX_PORT".to_string(), port.to_string());
     merged.insert(
         "CMUX_TAB_ID".to_string(),
         normalize_optional_field(tab_id).unwrap_or_else(|| "unknown".to_string()),
@@ -1618,6 +1714,11 @@ impl SandboxService for BubblewrapService {
             let sandbox_id = id;
             let readiness = self.readiness.lock().await.get(&id).cloned();
             let workspace_path = workspace.to_string_lossy().to_string();
+            // Clone environment variables for VS Code server
+            let vscode_env: Vec<(String, String)> = effective_env
+                .iter()
+                .map(|e| (e.key.clone(), e.value.clone()))
+                .collect();
 
             tokio::spawn(async move {
                 // Start X11/VNC stack
@@ -1677,9 +1778,14 @@ impl SandboxService for BubblewrapService {
                 }
 
                 // Start cmux-code (VS Code server)
-                let vscode_result =
-                    start_vscode_background(&nsenter_path, inner_pid, vscode_port, &workspace_path)
-                        .await;
+                let vscode_result = start_vscode_background(
+                    &nsenter_path,
+                    inner_pid,
+                    vscode_port,
+                    &workspace_path,
+                    &vscode_env,
+                )
+                .await;
 
                 let vscode_ready = match vscode_result {
                     Ok(()) => {
@@ -2971,12 +3077,16 @@ impl SandboxService for BubblewrapService {
         })?;
 
         // Get sandbox info
-        let (inner_pid, http_pty_sessions) = {
+        let (inner_pid, http_pty_sessions, sandbox_env) = {
             let sandboxes = self.sandboxes.lock().await;
             let entry = sandboxes
                 .get(&sandbox_uuid)
                 .ok_or(SandboxError::NotFound(sandbox_uuid))?;
-            (entry.inner_pid, Arc::clone(&entry.http_pty_sessions))
+            (
+                entry.inner_pid,
+                Arc::clone(&entry.http_pty_sessions),
+                entry.env.clone(),
+            )
         };
 
         // Create the PTY session
@@ -2990,6 +3100,7 @@ impl SandboxService for BubblewrapService {
                 request.rows,
                 request.env.clone(),
                 request.name.clone(),
+                &sandbox_env,
             )
             .await?;
 
@@ -3034,8 +3145,12 @@ impl SandboxService for BubblewrapService {
         let mut result = Vec::new();
 
         for (id, session) in sessions.iter() {
-            // Check if the session has exited by checking if the input channel is closed
-            let exited = session.input_tx.is_closed();
+            let exited = session.exited.load(std::sync::atomic::Ordering::SeqCst);
+            let exit_code = if exited {
+                *session.exit_code.blocking_lock()
+            } else {
+                None
+            };
             result.push(PtySessionInfo {
                 id: id.clone(),
                 name: session.name.clone(),
@@ -3046,7 +3161,7 @@ impl SandboxService for BubblewrapService {
                 rows: session.rows,
                 created_at: session.created_at,
                 exited,
-                exit_code: None, // TODO: track exit code when process exits
+                exit_code,
             });
         }
 
@@ -3073,7 +3188,12 @@ impl SandboxService for BubblewrapService {
         let sessions = http_pty_sessions.lock().await;
         match sessions.get(&session_id) {
             Some(session) => {
-                let exited = session.input_tx.is_closed();
+                let exited = session.exited.load(std::sync::atomic::Ordering::SeqCst);
+                let exit_code = if exited {
+                    *session.exit_code.blocking_lock()
+                } else {
+                    None
+                };
                 Ok(Some(PtySessionInfo {
                     id: session_id,
                     name: session.name.clone(),
@@ -3084,7 +3204,7 @@ impl SandboxService for BubblewrapService {
                     rows: session.rows,
                     created_at: session.created_at,
                     exited,
-                    exit_code: None, // TODO: track exit code when process exits
+                    exit_code,
                 }))
             }
             None => Ok(None),
@@ -3229,6 +3349,148 @@ impl SandboxService for BubblewrapService {
         }
 
         // Dropping the session will close its channels and clean up resources
+        Ok(())
+    }
+
+    async fn pty_attach_session(
+        &self,
+        sandbox_id: String,
+        session_id: String,
+        socket: WebSocket,
+    ) -> SandboxResult<()> {
+        let sandbox_uuid = Uuid::parse_str(&sandbox_id).map_err(|_| {
+            SandboxError::InvalidRequest(format!("invalid sandbox id: {}", sandbox_id))
+        })?;
+
+        // Get the session's channels, terminal, and exit state
+        let (input_tx, resize_tx, mut output_rx, terminal_arc, exited_arc, exit_code_arc) = {
+            let sandboxes = self.sandboxes.lock().await;
+            let entry = sandboxes
+                .get(&sandbox_uuid)
+                .ok_or(SandboxError::NotFound(sandbox_uuid))?;
+
+            let sessions = entry.http_pty_sessions.lock().await;
+            let session = sessions.get(&session_id).ok_or_else(|| {
+                SandboxError::InvalidRequest(format!("PTY session not found: {}", session_id))
+            })?;
+
+            (
+                session.input_tx.clone(),
+                session.resize_tx.clone(),
+                session.output_tx.subscribe(),
+                session.terminal.clone(),
+                session.exited.clone(),
+                session.exit_code.clone(),
+            )
+        };
+
+        // Render terminal content to ANSI (preserves colors, filters out problematic sequences)
+        let (initial_content, already_exited, stored_exit_code) = {
+            let terminal = terminal_arc.lock().await;
+            let rendered = terminal.render_to_ansi();
+            let exited = exited_arc.load(std::sync::atomic::Ordering::SeqCst);
+            let exit_code = if exited {
+                *exit_code_arc.lock().await
+            } else {
+                None
+            };
+            (rendered, exited, exit_code)
+        };
+
+        // Handle WebSocket I/O
+        let (mut ws_sink, mut ws_stream) = socket.split();
+
+        // Send raw PTY output for scrollback restoration (preserves colors/escape sequences)
+        if !initial_content.is_empty()
+            && ws_sink
+                .send(Message::Binary(initial_content.into()))
+                .await
+                .is_err()
+        {
+            return Ok(());
+        }
+
+        // If session already exited, send exit notification immediately and return
+        if already_exited {
+            let exit_code = stored_exit_code.unwrap_or(0);
+            let msg = format!("\x00{{\"type\":\"exit\",\"exit_code\":{}}}", exit_code);
+            let _ = ws_sink.send(Message::Text(msg.into())).await;
+            return Ok(());
+        }
+
+        // Task to forward PTY output to WebSocket
+        let mut output_task = tokio::spawn(async move {
+            loop {
+                match output_rx.recv().await {
+                    Ok(PtyOutputEvent::Data(data)) => {
+                        // Send raw data to WebSocket
+                        if ws_sink.send(Message::Binary(data.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(PtyOutputEvent::Exit(code)) => {
+                        // Send exit message as control message (null byte prefix + JSON)
+                        let msg = format!("\x00{{\"type\":\"exit\",\"exit_code\":{}}}", code);
+                        let _ = ws_sink.send(Message::Text(msg.into())).await;
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Missed some messages due to slow consumer, continue
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Task to forward WebSocket input to PTY
+        let mut input_task = tokio::spawn(async move {
+            while let Some(Ok(msg)) = ws_stream.next().await {
+                match msg {
+                    Message::Text(text) => {
+                        // Parse JSON message
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                            match parsed.get("type").and_then(|t| t.as_str()) {
+                                Some("input") => {
+                                    if let Some(data) = parsed.get("data").and_then(|d| d.as_str())
+                                    {
+                                        let _ = input_tx.send(data.as_bytes().to_vec());
+                                    }
+                                }
+                                Some("resize") => {
+                                    if let (Some(cols), Some(rows)) = (
+                                        parsed.get("cols").and_then(|c| c.as_u64()),
+                                        parsed.get("rows").and_then(|r| r.as_u64()),
+                                    ) {
+                                        let _ = resize_tx.send((rows as u16, cols as u16));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Message::Binary(data) => {
+                        // Raw binary input
+                        let _ = input_tx.send(data.to_vec());
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
+                }
+            }
+        });
+
+        // Wait for either task to complete, then abort the other to prevent resource leaks
+        tokio::select! {
+            _ = &mut output_task => {
+                input_task.abort();
+            }
+            _ = &mut input_task => {
+                output_task.abort();
+            }
+        }
+
         Ok(())
     }
 }
