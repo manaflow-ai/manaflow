@@ -276,10 +276,22 @@ final class ContainerResizeViewController: UIViewController {
     }
 
     private func scrollToBottom(animated: Bool) {
+        // Scroll so content bottom is at visible bottom (top of input bar area)
+        // Don't add contentInset.bottom - that would scroll past the content
+        let visibleHeight = scrollView.bounds.height - scrollView.contentInset.bottom
         let bottomOffset = CGPoint(
             x: 0,
-            y: max(0, scrollView.contentSize.height - scrollView.bounds.height)
+            y: max(0, scrollView.contentSize.height - visibleHeight)
         )
+        debugLog("""
+        📍 scrollToBottom:
+          contentSize.height: \(scrollView.contentSize.height)
+          bounds.height: \(scrollView.bounds.height)
+          visibleHeight: \(visibleHeight)
+          contentInset.bottom: \(scrollView.contentInset.bottom)
+          bottomOffset.y: \(bottomOffset.y)
+          animated: \(animated)
+        """)
         scrollView.setContentOffset(bottomOffset, animated: animated)
     }
 
