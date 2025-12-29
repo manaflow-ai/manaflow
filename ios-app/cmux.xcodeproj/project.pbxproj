@@ -8,37 +8,63 @@
 
 /* Begin PBXBuildFile section */
 		0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE5CB8A89417C399DB8D166 /* ChatView.swift */; };
+		186FE4324EB02EB7116DD1FB /* ChatApproachE.swift in Sources */ = {isa = PBXBuildFile; fileRef = F920AC2CCAE9986EB5352999 /* ChatApproachE.swift */; };
+		20A59B687D0399C43C985B31 /* DebugInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B87CA70AD58D024077E85845 /* DebugInputBar.swift */; };
+		23CA28ECA8EC4FAE570E0114 /* ChatApproachC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56E7794385EC788C81D82FF2 /* ChatApproachC.swift */; };
 		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
+		29E9312C2A926A7F490919BA /* ChatApproachF.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FC6CC6EBF7051F572D8539 /* ChatApproachF.swift */; };
 		2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEEADB25149C285A0422125 /* StackAuthClient.swift */; };
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
+		6415BA40E2ECD37DDCD0DF3A /* ChatApproachD.swift in Sources */ = {isa = PBXBuildFile; fileRef = A115D072155C8CD9743AD2F8 /* ChatApproachD.swift */; };
 		6ED3832765AAB169F7254054 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */; };
 		7E0146088B71697EB516611F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */; };
 		83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E20F7A729081D044495605 /* CMuxApp.swift */; };
 		8B6A74AEAD4EC07300279462 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 2AB0CD82D816F53E55B1E103 /* Sentry */; };
 		C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88ED9D7168B6FC097B490637 /* SignInView.swift */; };
+		D4055510E240081791955DC0 /* ChatApproachA.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B750DA9B2194CD1CA31A331 /* ChatApproachA.swift */; };
 		D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D367AC3D322118AE559DBF /* AuthManager.swift */; };
+		DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */; };
 		E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0C333BDE07456C757877E2 /* ConvexMobile */; };
 		E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */; };
 		EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8732D7AB61D4190BACAAB03 /* Environment.swift */; };
 		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
+		F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */; };
+		FF5AE899D52BA4D7F47BE886 /* ChatApproachG.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC3BF89914640E91D028B0F2 /* ChatApproachG.swift */; };
+		BA66A36E52047B2D3B710E33 /* ChatApproachH.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF01F49C369E7CE891189B65 /* ChatApproachH.swift */; };
+		B35DB98CCC0FCABD471C00B7 /* ChatApproachI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75670515EE743E0C02EFE2D /* ChatApproachI.swift */; };
+		320E0E4D329D68A978969630 /* ChatApproachJ.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CB58AA5BC15FDEA3D2C4FC1 /* ChatApproachJ.swift */; };
+		BA42FB00C9396F47F5E9CF6B /* ChatApproachK.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0670EA882E70F45B34CAC600 /* ChatApproachK.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0BE5CB8A89417C399DB8D166 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		1B750DA9B2194CD1CA31A331 /* ChatApproachA.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachA.swift; sourceTree = "<group>"; };
 		1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		2DEEADB25149C285A0422125 /* StackAuthClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthClient.swift; sourceTree = "<group>"; };
 		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		56E7794385EC788C81D82FF2 /* ChatApproachC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachC.swift; sourceTree = "<group>"; };
 		6679E0C9833E77D4A4295D4C /* ConvexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexClient.swift; sourceTree = "<group>"; };
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDebugMenu.swift; sourceTree = "<group>"; };
 		88ED9D7168B6FC097B490637 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		A115D072155C8CD9743AD2F8 /* ChatApproachD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachD.swift; sourceTree = "<group>"; };
+		A3FC6CC6EBF7051F572D8539 /* ChatApproachF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachF.swift; sourceTree = "<group>"; };
+		DC3BF89914640E91D028B0F2 /* ChatApproachG.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachG.swift; sourceTree = "<group>"; };
+		B75670515EE743E0C02EFE2D /* ChatApproachI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI.swift; sourceTree = "<group>"; };
+		6CB58AA5BC15FDEA3D2C4FC1 /* ChatApproachJ.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachJ.swift; sourceTree = "<group>"; };
+		0670EA882E70F45B34CAC600 /* ChatApproachK.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachK.swift; sourceTree = "<group>"; };
+		BF01F49C369E7CE891189B65 /* ChatApproachH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachH.swift; sourceTree = "<group>"; };
+		AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardContainer.swift; sourceTree = "<group>"; };
 		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
 		BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
 		D8732D7AB61D4190BACAAB03 /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		D9BA577D046F9E3C331F4986 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
+		F920AC2CCAE9986EB5352999 /* ChatApproachE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachE.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,7 +119,19 @@
 		BBE2BE334F53D4E47636EF15 /* Debug */ = {
 			isa = PBXGroup;
 			children = (
+				1B750DA9B2194CD1CA31A331 /* ChatApproachA.swift */,
+				56E7794385EC788C81D82FF2 /* ChatApproachC.swift */,
+				A115D072155C8CD9743AD2F8 /* ChatApproachD.swift */,
+				F920AC2CCAE9986EB5352999 /* ChatApproachE.swift */,
+				A3FC6CC6EBF7051F572D8539 /* ChatApproachF.swift */,
+				80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */,
+				DC3BF89914640E91D028B0F2 /* ChatApproachG.swift */,
+				B75670515EE743E0C02EFE2D /* ChatApproachI.swift */,
+				6CB58AA5BC15FDEA3D2C4FC1 /* ChatApproachJ.swift */,
+				0670EA882E70F45B34CAC600 /* ChatApproachK.swift */,
+				BF01F49C369E7CE891189B65 /* ChatApproachH.swift */,
 				E6A61F42F94D17993038F637 /* ConvexTestView.swift */,
+				B87CA70AD58D024077E85845 /* DebugInputBar.swift */,
 			);
 			path = Debug;
 			sourceTree = "<group>";
@@ -109,6 +147,7 @@
 		F80B6A470B95146C17D0BE5A /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */,
 				0BE5CB8A89417C399DB8D166 /* ChatView.swift */,
 				72E20F7A729081D044495605 /* CMuxApp.swift */,
 				1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */,
@@ -201,11 +240,24 @@
 			files = (
 				D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */,
 				83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */,
+				D4055510E240081791955DC0 /* ChatApproachA.swift in Sources */,
+				23CA28ECA8EC4FAE570E0114 /* ChatApproachC.swift in Sources */,
+				6415BA40E2ECD37DDCD0DF3A /* ChatApproachD.swift in Sources */,
+				186FE4324EB02EB7116DD1FB /* ChatApproachE.swift in Sources */,
+				29E9312C2A926A7F490919BA /* ChatApproachF.swift in Sources */,
+				FF5AE899D52BA4D7F47BE886 /* ChatApproachG.swift in Sources */,
+				B35DB98CCC0FCABD471C00B7 /* ChatApproachI.swift in Sources */,
+				320E0E4D329D68A978969630 /* ChatApproachJ.swift in Sources */,
+				BA42FB00C9396F47F5E9CF6B /* ChatApproachK.swift in Sources */,
+				BA66A36E52047B2D3B710E33 /* ChatApproachH.swift in Sources */,
+				DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */,
+				F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */,
 				0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */,
 				6ED3832765AAB169F7254054 /* ContentView.swift in Sources */,
 				E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */,
 				F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */,
 				24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */,
+				20A59B687D0399C43C985B31 /* DebugInputBar.swift in Sources */,
 				EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */,
 				361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */,
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,
@@ -286,7 +338,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Beta";
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
@@ -367,7 +419,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Dev";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
@@ -390,7 +442,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
