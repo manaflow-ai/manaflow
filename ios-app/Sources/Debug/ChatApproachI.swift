@@ -5,6 +5,16 @@ private func debugLog(_ message: String) {
     NSLog("[ChatApproachI] %@", message)
 }
 
+/// Overscroll fix variations to test
+enum OverscrollFix: String, CaseIterable {
+    case none = "None (current)"
+    case fix1_contentInsetAdjustment = "1: contentInsetAdjustmentBehavior=.never"
+    case fix2_inputBarHeightOnly = "2: inset=inputBarHeight only"
+    case fix3_adjustedContentInset = "3: use adjustedContentInset"
+    case fix4_scrollViewDelegate = "4: limit scroll in delegate"
+    case fix5_reducePadding = "5: reduce bottom padding"
+}
+
 /// Approach I: Container Resize (no scroll tricks)
 /// - Container height shrinks when keyboard appears
 /// - Scroll view fills container
@@ -12,43 +22,99 @@ private func debugLog(_ message: String) {
 /// - Top of visible content stays put, bottom gets "pushed" by keyboard
 struct ChatApproachI: View {
     let conversation: Conversation
+    @State private var selectedFix: OverscrollFix = .none
 
     var body: some View {
-        ContainerResizeViewController_Wrapper(conversation: conversation)
-            .ignoresSafeArea()
-            .navigationTitle("I: Container Resize")
-            .navigationBarTitleDisplayMode(.inline)
+        VStack(spacing: 0) {
+            // Fix selector at top
+            Picker("Overscroll Fix", selection: $selectedFix) {
+                ForEach(OverscrollFix.allCases, id: \.self) { fix in
+                    Text(fix.rawValue).tag(fix)
+                }
+            }
+            .pickerStyle(.menu)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color(.systemGroupedBackground))
+
+            ContainerResizeViewController_Wrapper(conversation: conversation, fix: selectedFix)
+                .ignoresSafeArea()
+        }
+        .navigationTitle("Container Resize")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 struct ContainerResizeViewController_Wrapper: UIViewControllerRepresentable {
     let conversation: Conversation
+    let fix: OverscrollFix
 
     func makeUIViewController(context: Context) -> ContainerResizeViewController {
-        ContainerResizeViewController(messages: conversation.messages)
+        ContainerResizeViewController(messages: conversation.messages, fix: fix)
     }
 
-    func updateUIViewController(_ uiViewController: ContainerResizeViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: ContainerResizeViewController, context: Context) {
+        uiViewController.updateFix(fix)
+    }
 }
 
-final class ContainerResizeViewController: UIViewController {
+final class ContainerResizeViewController: UIViewController, UIScrollViewDelegate {
     private var scrollView: UIScrollView!
     private var contentStack: UIStackView!
     private var inputBarVC: DebugInputBarViewController!
 
     private var messages: [Message]
+    private var currentFix: OverscrollFix
+    private var contentStackBottomConstraint: NSLayoutConstraint!
 
     // Track keyboard state for content offset adjustment
     private var keyboardAnimator: UIViewPropertyAnimator?
     private var lastKeyboardHeight: CGFloat = 0
     private var inputBarBottomConstraint: NSLayoutConstraint!
 
-    init(messages: [Message]) {
+    init(messages: [Message], fix: OverscrollFix) {
         self.messages = messages
+        self.currentFix = fix
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func updateFix(_ fix: OverscrollFix) {
+        guard fix != currentFix else { return }
+        currentFix = fix
+        debugLog("🔧 Fix changed to: \(fix.rawValue)")
+        applyFix()
+    }
+
+    private func applyFix() {
+        // Apply fix-specific settings
+        switch currentFix {
+        case .none:
+            scrollView.contentInsetAdjustmentBehavior = .automatic
+        case .fix1_contentInsetAdjustment:
+            scrollView.contentInsetAdjustmentBehavior = .never
+        case .fix2_inputBarHeightOnly:
+            scrollView.contentInsetAdjustmentBehavior = .automatic
+        case .fix3_adjustedContentInset:
+            scrollView.contentInsetAdjustmentBehavior = .automatic
+        case .fix4_scrollViewDelegate:
+            scrollView.contentInsetAdjustmentBehavior = .automatic
+        case .fix5_reducePadding:
+            scrollView.contentInsetAdjustmentBehavior = .automatic
+        }
+
+        // Update bottom padding for fix 5
+        let bottomPadding: CGFloat = (currentFix == .fix5_reducePadding) ? 0 : 8
+        contentStackBottomConstraint.constant = -bottomPadding
+
+        updateScrollViewInsets()
+        view.layoutIfNeeded()
+
+        DispatchQueue.main.async {
+            self.scrollToBottom(animated: false)
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -60,7 +126,10 @@ final class ContainerResizeViewController: UIViewController {
         populateMessages()
         setupKeyboardObservers()
 
-        debugLog("🚀 ChatApproachI viewDidLoad complete")
+        // Apply initial fix setting
+        applyFix()
+
+        debugLog("🚀 ChatApproachI viewDidLoad complete with fix: \(currentFix.rawValue)")
 
         DispatchQueue.main.async {
             self.scrollToBottom(animated: false)
@@ -121,8 +190,18 @@ final class ContainerResizeViewController: UIViewController {
         keyboardAnimator?.stopAnimation(true)
 
         let inputBarHeight = inputBarVC.view.bounds.height
-        // Use max of keyboardOverlap or safeBottom to always include safe area
-        let newBottomInset = inputBarHeight + max(keyboardOverlap, safeBottom)
+
+        // Calculate new bottom inset based on current fix
+        let newBottomInset: CGFloat
+        switch currentFix {
+        case .fix2_inputBarHeightOnly:
+            // Fix 2: only account for input bar + keyboard, not safe area
+            newBottomInset = inputBarHeight + effectiveKeyboardHeight
+        default:
+            // Default: use max of keyboardOverlap or safeBottom to always include safe area
+            newBottomInset = inputBarHeight + max(keyboardOverlap, safeBottom)
+        }
+
         let currentOffset = scrollView.contentOffset
 
         // Calculate target offset BEFORE changing any scroll view properties
@@ -174,6 +253,7 @@ final class ContainerResizeViewController: UIViewController {
         scrollView.keyboardDismissMode = .interactive
         scrollView.showsVerticalScrollIndicator = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.delegate = self
 
         // Tap to dismiss
         let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
@@ -187,6 +267,23 @@ final class ContainerResizeViewController: UIViewController {
         contentStack.spacing = 8
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
+    }
+
+    // MARK: - UIScrollViewDelegate (Fix 4: limit scroll)
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard currentFix == .fix4_scrollViewDelegate else { return }
+
+        // Calculate max offset so content bottom touches input bar top
+        let inputBarHeight = inputBarVC.view.bounds.height
+        let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
+        let visibleHeight = scrollView.bounds.height - inputBarHeight - safeBottom
+        let maxOffset = max(0, scrollView.contentSize.height - visibleHeight)
+
+        // Clamp offset if user tries to scroll past
+        if scrollView.contentOffset.y > maxOffset && !scrollView.isDecelerating {
+            scrollView.contentOffset.y = maxOffset
+        }
     }
 
     private func setupInputBar() {
@@ -206,6 +303,9 @@ final class ContainerResizeViewController: UIViewController {
         // Constrain to view.bottomAnchor, constant will be set in viewDidLayoutSubviews
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
 
+        // Content stack bottom constraint - will be adjusted for fix 5
+        contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
+
         // Scroll view extends to bottom, overlapping with input bar
         // This allows glass effect to blur content behind it
         NSLayoutConstraint.activate([
@@ -218,7 +318,7 @@ final class ContainerResizeViewController: UIViewController {
             contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 8),
             contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8),
+            contentStackBottomConstraint,
             contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
 
             // Input bar: sides to view, bottom managed by inputBarBottomConstraint
@@ -244,13 +344,34 @@ final class ContainerResizeViewController: UIViewController {
         let inputBarHeight = inputBarVC.view.bounds.height
         // Use window's safe area since view might have .ignoresSafeArea applied
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let newBottomInset = inputBarHeight + safeBottom
+
+        let newBottomInset: CGFloat
+        switch currentFix {
+        case .none, .fix1_contentInsetAdjustment, .fix4_scrollViewDelegate, .fix5_reducePadding:
+            // Default: inset = inputBarHeight + safeBottom
+            newBottomInset = inputBarHeight + safeBottom
+        case .fix2_inputBarHeightOnly:
+            // Fix 2: only account for input bar, not safe area
+            // Theory: safe area is BELOW input bar, not between content and input bar
+            newBottomInset = inputBarHeight
+        case .fix3_adjustedContentInset:
+            // Fix 3: use adjustedContentInset to see what iOS actually applies
+            // then set our inset to complement it
+            let adjusted = scrollView.adjustedContentInset.bottom
+            // If iOS already added safe area, only add input bar height
+            if adjusted >= safeBottom {
+                newBottomInset = inputBarHeight
+            } else {
+                newBottomInset = inputBarHeight + safeBottom
+            }
+        }
 
         debugLog("""
-        📐 updateScrollViewInsets:
+        📐 updateScrollViewInsets (\(currentFix.rawValue)):
           inputBarHeight: \(inputBarHeight)
           safeAreaInsets.bottom: \(safeBottom)
           newBottomInset: \(newBottomInset)
+          adjustedContentInset.bottom: \(scrollView.adjustedContentInset.bottom)
           lastKeyboardHeight: \(self.lastKeyboardHeight)
         """)
 
@@ -277,14 +398,25 @@ final class ContainerResizeViewController: UIViewController {
 
     private func scrollToBottom(animated: Bool) {
         // Scroll so content bottom is at visible bottom (top of input bar area)
-        // Don't add contentInset.bottom - that would scroll past the content
-        let visibleHeight = scrollView.bounds.height - scrollView.contentInset.bottom
+        let inputBarHeight = inputBarVC.view.bounds.height
+        let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
+
+        // For fix 4, calculate visible area without contentInset
+        let visibleHeight: CGFloat
+        if currentFix == .fix4_scrollViewDelegate {
+            // Visible = bounds minus input bar and safe area (actual obscured area)
+            visibleHeight = scrollView.bounds.height - inputBarHeight - safeBottom
+        } else {
+            // Use contentInset to determine visible area
+            visibleHeight = scrollView.bounds.height - scrollView.contentInset.bottom
+        }
+
         let bottomOffset = CGPoint(
             x: 0,
             y: max(0, scrollView.contentSize.height - visibleHeight)
         )
         debugLog("""
-        📍 scrollToBottom:
+        📍 scrollToBottom (\(currentFix.rawValue)):
           contentSize.height: \(scrollView.contentSize.height)
           bounds.height: \(scrollView.bounds.height)
           visibleHeight: \(visibleHeight)
