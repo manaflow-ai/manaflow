@@ -866,6 +866,283 @@ impl VirtualTerminal {
         self.internal_grid.cursor_col
     }
 
+    /// Get cursor position as (col, row) tuple
+    #[inline]
+    pub fn cursor_position(&self) -> (u16, u16) {
+        (
+            self.internal_grid.cursor_col as u16,
+            self.internal_grid.cursor_row as u16,
+        )
+    }
+
+    /// Capture the current terminal content as plain text.
+    /// Returns the visible screen content with each line separated by newlines.
+    pub fn capture(&self) -> String {
+        let mut result = String::new();
+        let rows = self.rows();
+        let lines = self.visible_lines(rows, 0);
+
+        for (i, row) in lines.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            // Build the row content
+            let mut row_content = String::new();
+            for cell in row.iter() {
+                row_content.push(cell.character);
+            }
+            // Trim trailing spaces from this row
+            let trimmed = row_content.trim_end_matches(' ');
+            result.push_str(trimmed);
+        }
+
+        result
+    }
+
+    /// Get all text including scrollback and viewport, suitable for restoring terminal state.
+    pub fn get_all_text(&self) -> String {
+        let mut lines = Vec::new();
+
+        // Add scrollback lines first
+        for row in &self.internal_grid.lines_above {
+            lines.push(row.as_string().trim_end().to_string());
+        }
+
+        // Add viewport lines
+        for row in &self.internal_grid.viewport {
+            lines.push(row.as_string().trim_end().to_string());
+        }
+
+        // Remove trailing empty lines
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+
+        lines.join("\n")
+    }
+
+    /// Render all content (scrollback + viewport) as ANSI-encoded bytes.
+    /// This preserves colors and styles in a way that can be replayed to a fresh terminal.
+    pub fn render_to_ansi(&self) -> Vec<u8> {
+        let mut output = Vec::with_capacity(64 * 1024);
+
+        // Helper to write ANSI SGR sequence for style
+        fn write_style(
+            output: &mut Vec<u8>,
+            styles: &CharacterStyles,
+            last_styles: &mut CharacterStyles,
+        ) {
+            if styles == last_styles {
+                return;
+            }
+
+            // Build SGR parameters
+            let mut params = Vec::new();
+
+            // Reset if styles differ significantly
+            if styles.foreground != last_styles.foreground
+                || styles.background != last_styles.background
+                || styles.modifiers != last_styles.modifiers
+            {
+                params.push(0); // Reset
+            }
+
+            // Modifiers
+            if styles.modifiers.contains(Modifier::BOLD) {
+                params.push(1);
+            }
+            if styles.modifiers.contains(Modifier::DIM) {
+                params.push(2);
+            }
+            if styles.modifiers.contains(Modifier::ITALIC) {
+                params.push(3);
+            }
+            if styles.modifiers.contains(Modifier::UNDERLINED) {
+                params.push(4);
+            }
+            if styles.modifiers.contains(Modifier::REVERSED) {
+                params.push(7);
+            }
+            if styles.modifiers.contains(Modifier::CROSSED_OUT) {
+                params.push(9);
+            }
+
+            // Foreground color
+            if let Some(fg) = styles.foreground {
+                match fg {
+                    Color::Rgb(r, g, b) => {
+                        params.extend_from_slice(&[38, 2, r, g, b]);
+                    }
+                    Color::Indexed(idx) => {
+                        if idx < 8 {
+                            params.push(30 + idx);
+                        } else if idx < 16 {
+                            params.push(90 + (idx - 8));
+                        } else {
+                            params.extend_from_slice(&[38, 5, idx]);
+                        }
+                    }
+                    Color::Black => params.push(30),
+                    Color::Red => params.push(31),
+                    Color::Green => params.push(32),
+                    Color::Yellow => params.push(33),
+                    Color::Blue => params.push(34),
+                    Color::Magenta => params.push(35),
+                    Color::Cyan => params.push(36),
+                    Color::Gray => params.push(37),
+                    Color::DarkGray => params.push(90),
+                    Color::LightRed => params.push(91),
+                    Color::LightGreen => params.push(92),
+                    Color::LightYellow => params.push(93),
+                    Color::LightBlue => params.push(94),
+                    Color::LightMagenta => params.push(95),
+                    Color::LightCyan => params.push(96),
+                    Color::White => params.push(97),
+                    Color::Reset => params.push(39),
+                }
+            }
+
+            // Background color
+            if let Some(bg) = styles.background {
+                match bg {
+                    Color::Rgb(r, g, b) => {
+                        params.extend_from_slice(&[48, 2, r, g, b]);
+                    }
+                    Color::Indexed(idx) => {
+                        if idx < 8 {
+                            params.push(40 + idx);
+                        } else if idx < 16 {
+                            params.push(100 + (idx - 8));
+                        } else {
+                            params.extend_from_slice(&[48, 5, idx]);
+                        }
+                    }
+                    Color::Black => params.push(40),
+                    Color::Red => params.push(41),
+                    Color::Green => params.push(42),
+                    Color::Yellow => params.push(43),
+                    Color::Blue => params.push(44),
+                    Color::Magenta => params.push(45),
+                    Color::Cyan => params.push(46),
+                    Color::Gray => params.push(47),
+                    Color::DarkGray => params.push(100),
+                    Color::LightRed => params.push(101),
+                    Color::LightGreen => params.push(102),
+                    Color::LightYellow => params.push(103),
+                    Color::LightBlue => params.push(104),
+                    Color::LightMagenta => params.push(105),
+                    Color::LightCyan => params.push(106),
+                    Color::White => params.push(107),
+                    Color::Reset => params.push(49),
+                }
+            }
+
+            if !params.is_empty() {
+                output.extend_from_slice(b"\x1b[");
+                for (i, p) in params.iter().enumerate() {
+                    if i > 0 {
+                        output.push(b';');
+                    }
+                    output.extend_from_slice(p.to_string().as_bytes());
+                }
+                output.push(b'm');
+            }
+
+            *last_styles = *styles;
+        }
+
+        let mut last_styles = CharacterStyles::default();
+        let default_styles = CharacterStyles::default();
+
+        // Process scrollback lines
+        for row in &self.internal_grid.lines_above {
+            let mut line_has_content = false;
+            let mut line_end = 0;
+
+            // Find the last non-space character
+            for (i, cell) in row.iter().enumerate() {
+                if cell.character != ' ' || cell.styles.get() != &default_styles {
+                    line_end = i + 1;
+                    line_has_content = true;
+                }
+            }
+
+            if line_has_content {
+                for cell in row.iter().take(line_end) {
+                    if cell.wide_spacer {
+                        continue;
+                    }
+                    write_style(&mut output, cell.styles.get(), &mut last_styles);
+                    let mut buf = [0u8; 4];
+                    let s = cell.character.encode_utf8(&mut buf);
+                    output.extend_from_slice(s.as_bytes());
+                }
+            }
+
+            // Reset styles at end of line and add newline
+            if last_styles != default_styles {
+                output.extend_from_slice(b"\x1b[0m");
+                last_styles = default_styles;
+            }
+            output.extend_from_slice(b"\r\n");
+        }
+
+        // Process viewport lines
+        let viewport_rows: Vec<_> = self.internal_grid.viewport.iter().collect();
+        let mut last_content_row = 0;
+
+        // Find the last row with content
+        for (i, row) in viewport_rows.iter().enumerate() {
+            for cell in row.iter() {
+                if cell.character != ' ' || cell.styles.get() != &default_styles {
+                    last_content_row = i + 1;
+                    break;
+                }
+            }
+        }
+
+        for (row_idx, row) in viewport_rows.iter().enumerate() {
+            if row_idx >= last_content_row {
+                break;
+            }
+
+            let mut line_end = 0;
+            for (i, cell) in row.iter().enumerate() {
+                if cell.character != ' ' || cell.styles.get() != &default_styles {
+                    line_end = i + 1;
+                }
+            }
+
+            for cell in row.iter().take(line_end) {
+                if cell.wide_spacer {
+                    continue;
+                }
+                write_style(&mut output, cell.styles.get(), &mut last_styles);
+                let mut buf = [0u8; 4];
+                let s = cell.character.encode_utf8(&mut buf);
+                output.extend_from_slice(s.as_bytes());
+            }
+
+            // Reset styles at end of line
+            if last_styles != default_styles {
+                output.extend_from_slice(b"\x1b[0m");
+                last_styles = default_styles;
+            }
+
+            // Add newline except for last line
+            if row_idx < last_content_row - 1 {
+                output.extend_from_slice(b"\r\n");
+            }
+        }
+
+        // Final reset
+        if last_styles != default_styles {
+            output.extend_from_slice(b"\x1b[0m");
+        }
+
+        output
+    }
+
     /// Set cursor row
     #[inline]
     pub fn set_cursor_row(&mut self, row: usize) {

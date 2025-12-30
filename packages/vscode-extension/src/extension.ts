@@ -2,7 +2,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
-import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, createQueuedTerminals } from "./terminal";
+import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, createQueuedTerminals, isBridgeSocketAvailable } from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -297,19 +297,24 @@ async function setupDefaultTerminal() {
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
-  // Check if cmux-pty is managing the "cmux" terminal
-  // This happens when the worker creates PTY sessions instead of tmux
-  const hasCmuxPty = await waitForCmuxPtyTerminal("cmux", 5000);
+  // Check if we're running inside a sandbox (bridge socket available)
+  if (isBridgeSocketAvailable()) {
+    log("Bridge socket available, using cmux-pty");
 
-  if (hasCmuxPty) {
-    // cmux-pty has the terminal - directly create it from the restore queue
-    log("cmux-pty is managing 'cmux' terminal, creating queued terminals");
-    // This directly creates the terminal using vscode.window.createTerminal with the PTY
-    // It bypasses provideTerminalProfile which requires user action to trigger
-    createQueuedTerminals();
+    // Check if there are existing PTY sessions to restore
+    const hasCmuxPty = await waitForCmuxPtyTerminal("cmux", 2000);
+
+    if (hasCmuxPty) {
+      // Restore existing terminals from the queue
+      log("Restoring existing PTY terminals");
+      createQueuedTerminals();
+    } else {
+      // No existing terminals - don't auto-create, let the user or agent create one
+      log("No existing PTY terminals, skipping auto-creation");
+    }
   } else {
-    // Fall back to tmux-based terminal
-    log("cmux-pty not available, falling back to tmux");
+    // Fall back to tmux-based terminal (not in sandbox)
+    log("Bridge socket not available, falling back to tmux");
 
     // Wait for tmux session to exist before creating terminal
     const tmuxSessionExists = await waitForTmuxSession("cmux");
@@ -384,13 +389,13 @@ function connectToWorker() {
   });
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   // Log activation
   console.log("[cmux] activate() called");
   log("[cmux] activate() called");
 
-  // Activate terminal module (PTY backend)
-  activateTerminal(context);
+  // Activate terminal module (PTY backend) - must await before using isBridgeSocketAvailable
+  await activateTerminal(context);
 
   // Register command to show output
   const showOutputCommand = vscode.commands.registerCommand(
@@ -408,7 +413,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   log("cmux is being activated");
 
-  // Connect to worker immediately and set up handlers
+  // In sandbox mode, setup terminal immediately (don't wait for worker socket)
+  if (isBridgeSocketAvailable()) {
+    log("Bridge socket available, setting up terminal immediately");
+    await setupDefaultTerminal();
+  }
+
+  // Connect to worker (for non-sandbox environments and other functionality)
   connectToWorker();
 
   const disposable = vscode.commands.registerCommand(
