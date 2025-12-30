@@ -109,10 +109,8 @@ describe("getCheckpointIcon", () => {
   });
 
   it("returns default icon for null/unknown type", () => {
-    // @ts-expect-error testing invalid type
-    expect(getCheckpointIcon(null)).toBe("📍");
-    // @ts-expect-error testing invalid type
-    expect(getCheckpointIcon("unknown")).toBe("📍");
+    expect(getCheckpointIcon(null as unknown as undefined)).toBe("📍");
+    expect(getCheckpointIcon("unknown" as unknown as undefined)).toBe("📍");
   });
 });
 
@@ -131,10 +129,8 @@ describe("getCheckpointColor", () => {
   });
 
   it("returns default color for null/unknown type", () => {
-    // @ts-expect-error testing invalid type
-    expect(getCheckpointColor(null)).toBe("bg-neutral-400");
-    // @ts-expect-error testing invalid type
-    expect(getCheckpointColor("unknown")).toBe("bg-neutral-400");
+    expect(getCheckpointColor(null as unknown as undefined)).toBe("bg-neutral-400");
+    expect(getCheckpointColor("unknown" as unknown as undefined)).toBe("bg-neutral-400");
   });
 });
 
