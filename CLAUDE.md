@@ -112,6 +112,91 @@ Log files are overwritten on each run. Use `tail -f logs/<file>` to follow live 
 The cmux cli is written in Rust.
 If working on the cmux cli (dmux in development mode), first read packages/sandbox/AGENTS.md
 
+## NEVER ASK - JUST DO IT (Action Bias Protocol)
+
+**This is the most important rule. When you encounter incomplete work, issues, or decisions:**
+
+### ❌ INVALID QUESTIONS (answer is always YES):
+```
+"Would you like me to..."         → Answer is YES. Just do it.
+"Should I fix this bug?"          → Answer is YES. Just fix it.
+"Do you want me to continue?"     → Answer is YES. Keep going.
+"Should I complete the integration?" → Answer is YES. Complete it.
+```
+
+### ✅ VALID QUESTIONS (polls that clarify the problem):
+```
+"The API could return 404 or 400 for this case. Which is correct?"  → Needs decision
+"Should this data be persisted or kept in memory?"                   → Architecture poll
+"Is this feature for all users or just admins?"                      → Scope clarification
+"The existing code uses pattern X, but Y seems better. Preference?"  → Pattern decision
+```
+
+### ✅ ALWAYS DO THIS (action, not asking):
+```
+"I found X issue. Fixing it now..."
+"The components aren't wired together. Completing the integration..."
+"Tests are failing. Investigating and fixing..."
+"Review found issues. Addressing them..."
+"Discovered missing integration. Creating issue and implementing..."
+```
+
+### The Rule
+
+**If you can do it, DO IT. Don't ask.**
+
+- Found a bug? Fix it.
+- Tests failing? Fix them.
+- Components not wired? Wire them.
+- Missing integration? Complete it.
+- Review found issues? Address them.
+- More work discovered? Create issues and keep working.
+
+### Valid Reasons to Ask (Polling)
+
+**Only poll when there's genuine ambiguity that affects implementation:**
+- Technical decisions with trade-offs (approach A vs B)
+- Business logic unclear (what SHOULD happen?)
+- Scope boundaries (is X in scope or out of scope?)
+- Breaking changes (acceptable or not?)
+- Need credentials/secrets you don't have
+- Destructive operations that could lose data
+
+### Invalid Reasons to Ask
+
+**Never ask if the answer is obviously YES:**
+- "Should I fix this bug?" → YES
+- "Should I complete the integration?" → YES
+- "Should I write tests?" → YES
+- "Should I continue working?" → YES
+- "Would you like me to..." → YES
+
+### During Ralph Wiggum Mode
+
+This rule is **especially critical** during Ralph mode:
+- NEVER stop to ask if you should continue
+- NEVER present options and wait for user to choose
+- NEVER say "would you like me to..."
+- ALWAYS keep working until `bd ready` returns empty
+- ALWAYS create issues for discovered work and continue
+
+### Discovered Work Protocol
+
+When you find incomplete work during implementation:
+
+1. **Create a beads issue immediately:**
+   ```bash
+   bd create --title="Wire RunVideoGallery to diff view" --type=task --priority=1 --labels $(git rev-parse --abbrev-ref HEAD)
+   ```
+
+2. **Keep working on it OR the next issue** - don't stop and ask
+
+3. **Only stop when:**
+   - All issues are closed
+   - All tests pass
+   - All checks pass
+   - Context is exhausted (then provide handoff)
+
 ## Task Planning with Beads
 
 **Use beads as the primary task tracker, NOT TodoWrite.**
@@ -136,16 +221,384 @@ Before starting any non-trivial task:
 
 ### Quick reference
 - `bd ready` - See available work
-- `bd create --title="..." --type=task --priority=2` - Create issue
+- `bd create --title="..." --type=task --priority=2 --labels <branch>` - Create issue (ALWAYS include label)
 - `bd update <id> --status=in_progress` - Start work
-- `bd close <id>` - Complete work
+- `bd close <id>` - Complete work (ONLY after commit)
 - `bd sync` - Sync with remote
+
+### One Issue = One Commit (MANDATORY)
+
+**Every beads issue close MUST have a corresponding git commit.**
+
+```bash
+# Before closing an issue, ALWAYS commit:
+git add -A
+git commit -m "feat: implement video recording
+
+Closes: beads-abc123"
+
+# THEN close the issue:
+bd close beads-abc123
+```
+
+This creates a clear audit trail where each commit maps to a completed issue.
+
+### Creating Issues for Discovered Work
+
+When you discover additional work during implementation, **immediately create issues**:
+
+```bash
+# Get current branch for label
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Create issue for discovered work
+bd create --title="Wire VideoPlayer to diff view" --type=task --priority=1 --labels $BRANCH
+
+# Continue working - either on this issue or the next one
+```
+
+**Examples of discovered work:**
+- Components exist but aren't connected
+- Missing API endpoints
+- Tests needed for new code
+- Integration not complete
+- Edge cases not handled
+
+**NEVER just note these and stop. Create issues and keep working.**
 
 ### When to skip questions entirely
 - Task is unambiguous and well-defined
 - You can determine scope by reading the code
 - It's a bug fix with clear reproduction steps
 - User explicitly says "just do it"
+- You're in Ralph Wiggum mode (ALWAYS skip questions)
+
+## Architectural Review Protocol
+
+**For significant decisions, ALWAYS surface options for human review.**
+
+### When to escalate for review
+- New systems, services, or major components
+- Breaking changes to existing APIs or data structures
+- Multiple viable approaches with meaningful trade-offs
+- Uncertainty about the "right" way to proceed
+- Security-sensitive changes
+- Performance-critical paths
+
+### What to present
+1. **2-3 viable approaches** - not just your preferred one
+2. **Pros/cons for each** - be honest about trade-offs
+3. **Your recommendation** - with clear reasoning
+4. **Questions that affect the choice** - what you need from the user
+
+### Example format
+```
+## Architectural Decision: [Topic]
+
+**Option A: [Name]**
+- Pros: ...
+- Cons: ...
+
+**Option B: [Name]**
+- Pros: ...
+- Cons: ...
+
+**Recommendation:** Option A because [reasoning]
+
+**Questions:**
+- [Anything that would change this recommendation?]
+```
+
+**NEVER just pick an approach and implement it for significant decisions.**
+
+## Closed-Loop Verification (MANDATORY)
+
+**This is NOT optional. Code is NOT "done" until verification passes.**
+
+The AI MUST automatically:
+1. Define success criteria BEFORE coding
+2. Write tests AS PART OF implementation (not after)
+3. Run tests and fix until green
+4. Verify E2E for user-facing features
+5. ONLY THEN mark work complete
+
+### Automatic Test Requirements
+
+When you write code, you MUST write corresponding tests:
+
+| File Pattern | Required Test | Run Command |
+|--------------|---------------|-------------|
+| `*.ts` (pure functions) | `*.test.ts` adjacent | `bun test <file>` |
+| `convex/*.ts` | Type tests or integration | `bun test` in convex |
+| `**/routes/*.ts` | API integration test | `bun test <route>.test.ts` |
+| React hooks | Hook behavior test | `bun test <hook>.test.ts` |
+| UI components | Document verification method | Manual or E2E |
+
+### The Verification Loop (Automatic)
+
+For EVERY implementation task, execute this loop automatically:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. DEFINE: What does success look like?                    │
+│     - Specific observable outcomes                          │
+│     - Edge cases and failure modes                          │
+│     - How to verify (test type)                             │
+├─────────────────────────────────────────────────────────────┤
+│  2. IMPLEMENT + TEST: Write code AND tests together         │
+│     - Test file created alongside implementation            │
+│     - Cover happy path + edge cases                         │
+│     - Tests should fail first, then pass                    │
+├─────────────────────────────────────────────────────────────┤
+│  3. RUN: Execute verification                               │
+│     - Run: bun test <file>                                  │
+│     - Run: bun check (types + lint)                         │
+│     - For UI: describe manual verification steps            │
+├─────────────────────────────────────────────────────────────┤
+│  4. FIX: If tests fail, fix and re-run                      │
+│     - DO NOT proceed until tests pass                       │
+│     - DO NOT skip failing tests                             │
+│     - DO NOT mark complete with red tests                   │
+├─────────────────────────────────────────────────────────────┤
+│  5. VERIFY E2E: For user-facing features                    │
+│     - Start dev server if needed                            │
+│     - Test actual user flow                                 │
+│     - Use browser agent or provide manual steps             │
+├─────────────────────────────────────────────────────────────┤
+│  6. ONLY NOW: Mark task complete                            │
+│     - All tests passing                                     │
+│     - bun check passing                                     │
+│     - E2E verified (if applicable)                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### If You Don't Know How to Verify
+
+If you're unsure how to test something, you MUST:
+
+1. **Ask the user explicitly:**
+   - "How should I verify this works?"
+   - "What does success look like for this feature?"
+   - "Should I write unit tests, integration tests, or manual verification?"
+
+2. **Never skip verification because you're unsure**
+   - Uncertainty about testing is a blocker, not an excuse to skip
+
+3. **Propose verification options:**
+   - "I could verify this by: (A) unit test, (B) integration test, (C) manual check at URL. Which do you prefer?"
+
+### What Counts as Verification
+
+| Verification Type | When to Use | Evidence Required |
+|-------------------|-------------|-------------------|
+| Unit tests | Pure functions, utils, parsers | Test file + passing output |
+| Integration tests | APIs, database operations | Test file + passing output |
+| Type tests | Zod schemas, type guards | Test file + passing output |
+| Manual verification | UI, visual changes | Steps + confirmation |
+| E2E tests | User flows, critical paths | Test file + passing output |
+| Browser agent | Complex UI interactions | Agent verification report |
+
+### Example: Implementing a Feature with Verification
+
+```markdown
+## Task: Add video recording support
+
+### 1. Success Criteria (BEFORE coding)
+- [ ] Can start recording from VNC canvas
+- [ ] Can add checkpoints during recording
+- [ ] Can stop and upload recording
+- [ ] Video plays back with chapter navigation
+- [ ] API rejects unauthorized requests
+
+### 2. Test Plan
+- Unit: `video-utils.test.ts` - formatTime, checkpoint helpers
+- Unit: `video-types.test.ts` - Zod schema validation
+- Integration: `video-recordings-http.test.ts` - API endpoints
+- E2E: Start dev server, record a session, verify playback
+
+### 3. Implementation + Tests
+[Write code AND tests together, not sequentially]
+
+### 4. Verification Output
+$ bun test packages/shared/src/screenshots/video
+ ✓ video-types.test.ts (25 tests)
+ ✓ video-utils.test.ts (30 tests)
+All tests passing.
+
+$ bun check
+No errors found.
+
+### 5. E2E Verification
+Started dev server at localhost:3000
+Recorded 30s test session with 3 checkpoints
+Playback verified: chapters clickable, seek works
+
+### 6. DONE - All verification passed
+```
+
+### Enforcement
+
+- `bd close` should NOT be called until verification passes
+- Ralph workflow includes verification as mandatory step
+- Session end hooks check for test coverage
+
+## Multi-Agent Review (Automatic)
+
+**For significant changes, spawn review subagents to catch issues before completion.**
+
+### When to Trigger Reviews
+
+Automatically spawn review subagents when:
+- Change affects >3 files or >100 lines of code
+- Implementing a new feature (not just a bug fix)
+- Modifying critical paths (auth, payments, data)
+- Uncertain about approach or implementation
+- Before closing a substantial issue
+
+### Review Agent Types
+
+Use the Task tool with `subagent_type=general-purpose` to spawn reviewers:
+
+| Review Type | Focus | Prompt Pattern |
+|-------------|-------|----------------|
+| Code Quality | Architecture, patterns, maintainability | "Review this diff for code quality..." |
+| Bug Detection | Edge cases, error handling, security | "Review this diff for potential bugs..." |
+| Alternative Approach | Better solutions, missed optimizations | "Suggest alternative approaches for..." |
+
+### How to Trigger Reviews
+
+```markdown
+## Triggering a Multi-Agent Review
+
+When you've completed significant implementation work, spawn parallel review subagents:
+
+1. Get the diff:
+   git diff HEAD~1 --stat  # See what changed
+   git diff HEAD~1         # Full diff
+
+2. Spawn review subagents in parallel using Task tool:
+   - Code Quality Reviewer
+   - Bug Detection Reviewer
+   - (Optional) Alternative Approach Reviewer
+
+3. Synthesize feedback:
+   - Collect all reviewer responses
+   - Prioritize issues (critical > major > minor)
+   - Fix critical/major issues before proceeding
+   - Document any intentionally ignored feedback
+
+4. Only proceed to close after addressing feedback
+```
+
+### Review Subagent Prompts
+
+**Code Quality Review:**
+```
+Review this code change for quality issues:
+
+[PASTE DIFF HERE]
+
+Focus on:
+- Code organization and structure
+- Naming conventions and clarity
+- Unnecessary complexity
+- Missing error handling
+- Adherence to project patterns (see CLAUDE.md)
+
+Return:
+- CRITICAL issues (must fix)
+- MAJOR issues (should fix)
+- MINOR issues (nice to fix)
+- GOOD things (what's done well)
+```
+
+**Bug Detection Review:**
+```
+Review this code change for potential bugs:
+
+[PASTE DIFF HERE]
+
+Focus on:
+- Edge cases not handled
+- Null/undefined scenarios
+- Race conditions
+- Security vulnerabilities
+- Error propagation issues
+- Resource leaks
+
+Return:
+- BUGS found (with severity)
+- RISKS identified
+- TEST CASES that should be added
+```
+
+**Alternative Approach Review:**
+```
+Review this implementation and suggest alternatives:
+
+[PASTE DIFF HERE]
+
+Context: [DESCRIBE WHAT YOU'RE TRYING TO DO]
+
+Focus on:
+- Simpler approaches
+- More idiomatic patterns
+- Performance optimizations
+- Existing code/libraries that could be reused
+
+Return:
+- ALTERNATIVE approaches (with trade-offs)
+- OPTIMIZATIONS possible
+- REUSE opportunities (existing code)
+```
+
+### Example: Triggering Reviews
+
+```markdown
+## I just implemented video recording. Let me trigger reviews.
+
+### Changes Summary
+- 5 new files, ~500 lines of code
+- New Convex table and mutations
+- HTTP API endpoints
+- React hook and component
+
+### Spawning Review Subagents...
+
+[Use Task tool to spawn 2-3 reviewers in parallel]
+
+### Review Results
+
+**Code Quality Review:**
+- CRITICAL: None
+- MAJOR: HTTP handler has inconsistent error codes
+- MINOR: Could extract common JSON response helper
+
+**Bug Detection Review:**
+- BUGS: Recording state not cleaned up on error
+- RISKS: No rate limiting on upload endpoint
+- TEST CASES: Add test for upload with invalid recordingId
+
+### Actions Taken
+1. Fixed inconsistent error codes
+2. Added cleanup on error
+3. Created issue for rate limiting (beads-xxx)
+4. Added requested test case
+
+### Ready to close issue
+```
+
+### Integration with cmux
+
+Since cmux is a multi-agent orchestration system, you can also use cmux itself for reviews:
+
+```bash
+# Use cmux to spawn multiple AI agents for review
+# Each agent reviews the same diff from different perspectives
+# Results are aggregated and presented
+```
+
+This is a natural fit for the cmux workflow where multiple agents work in parallel.
 
 ## Landing the Plane (Session Completion)
 
