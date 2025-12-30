@@ -61,13 +61,13 @@ const productPillars = [
   {
     title: "Supports cloud sandboxes or local Docker",
     description:
-      "cmux includes configurations for cloud sandbox mode with repos, cloud sandbox mode with environments, and local mode with Docker containers.",
+      "codemux includes configurations for cloud sandbox mode with repos, cloud sandbox mode with environments, and local mode with Docker containers.",
     icon: Cloud,
   },
   {
     title: "Integrates with your local auth setup",
     description:
-      "cmux integrates with your local auth setup and you can bring your OpenAI and Claude subscriptions or API keys to run the coding agents on tasks.",
+      "codemux integrates with your local auth setup and you can bring your OpenAI and Claude subscriptions or API keys to run the coding agents on tasks.",
     icon: Zap,
   },
 ];
@@ -108,13 +108,13 @@ const workflowSteps = [
   },
   {
     id: "step-ship",
-    title: "4. Ship directly from cmux",
+    title: "4. Ship directly from codemux",
     copy:
-      "Create your pull request inside cmux and finish the merge once verification is done.",
+      "Create your pull request inside codemux and finish the merge once verification is done.",
     checklist: [
-      "Open a pull request from the cmux review surface when you're ready.",
+      "Open a pull request from the codemux review surface when you're ready.",
       "Attach verification notes and confirm required checks before finishing.",
-      "Merge the pull request in cmux to wrap the run.",
+      "Merge the pull request in codemux to wrap the run.",
     ],
   },
 ];
@@ -139,7 +139,7 @@ const verificationHighlights = [
   {
     title: "Preview dev server environments directly",
     paragraphs: [
-      "cmux spins up the right dev servers based on your environment configuration as soon as work starts.",
+      "codemux spins up the right dev servers based on your environment configuration as soon as work starts.",
       "Open the live preview to validate UI, APIs, and workflows manually before you publish the pull request.",
     ],
     asset: cmuxDemo2,
@@ -174,11 +174,11 @@ export default async function LandingPage() {
 
               <div className="space-y-6">
                 <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                  Universal AI coding agent manager for 10x engineers
+                  Universal AI coding agent manager for 67x engineers
                 </h1>
                 <div className="space-y-4 text-base text-neutral-300 sm:text-lg">
                   <p>
-                    cmux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
+                    codemux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
                   </p>
                   <p>
                     Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready so parallel agent work stays verifiable, fast, and ready to ship.
@@ -219,8 +219,8 @@ export default async function LandingPage() {
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-4 py-3 text-sm font-semibold text-black shadow-xl transition hover:bg-neutral-100"
                   title={
                     latestVersion
-                      ? `Download cmux ${latestVersion} for macOS`
-                      : "Download cmux for macOS"
+                      ? `Download codemux ${latestVersion} for macOS`
+                      : "Download codemux for macOS"
                   }
                   urls={macDownloadUrls}
                 >
@@ -253,7 +253,7 @@ export default async function LandingPage() {
               </div>
               {latestVersion ? (
                 <p className="text-xs text-neutral-400">
-                  Latest release: cmux {latestVersion}. Need another build? Visit the GitHub release page for all downloads.
+                  Latest release: codemux {latestVersion}. Need another build? Visit the GitHub release page for all downloads.
                 </p>
               ) : (
                 <p className="text-xs text-neutral-400">
@@ -268,7 +268,7 @@ export default async function LandingPage() {
                     <iframe
                       className="h-full w-full"
                       src="https://www.youtube.com/embed/YtQTKSM_wsA"
-                      title="cmux demo video"
+                      title="codemux demo video"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen
                     />
@@ -291,9 +291,9 @@ export default async function LandingPage() {
             </div>
           </div>
           <div className="mt-12 relative overflow-hidden rounded-2xl">
-            <Image
-              src={cmuxDemo0}
-              alt="cmux dashboard showing parallel AI agents"
+              <Image
+                src={cmuxDemo0}
+                alt="codemux dashboard showing parallel AI agents"
               width={3248}
               height={2112}
               sizes="(min-width: 1024px) 1024px, 100vw"
@@ -311,14 +311,14 @@ export default async function LandingPage() {
                 Rethinking the developer interface
               </h2>
               <p className="mx-auto max-w-3xl text-sm text-neutral-400 sm:text-base">
-                Everyone is focusing on making AI agents better at coding but not on making it easier to verify their work. cmux focuses on the verification surface so developers who use multiple agents can ship fast and accurate code.
+                Everyone is focusing on making AI agents better at coding but not on making it easier to verify their work. codemux focuses on the verification surface so developers who use multiple agents can ship fast and accurate code.
               </p>
             </div>
             <div className="space-y-8 text-sm text-neutral-300 sm:text-base">
               <div className="space-y-2">
                 <p>
                   <span className="text-white font-semibold">The interface is the bottleneck.</span>{" "}
-                  Developers still spend most of their time reviewing and verifying code instead of prompting. cmux removes the window-juggling and diff spelunking that slows teams down.
+                  Developers still spend most of their time reviewing and verifying code instead of prompting. codemux removes the window-juggling and diff spelunking that slows teams down.
                 </p>
                 <blockquote className="border-l-2 border-white/10 pl-4 text-neutral-400">
                   <p>
@@ -340,11 +340,11 @@ export default async function LandingPage() {
               <div className="space-y-2">
                 <p>
                   <span className="text-white font-semibold">Verification is non-negotiable.</span>{" "}
-                  Code diffs are just the start. We need to see running apps, test results, and metrics for every agent without losing context. cmux keeps that verification front and center.
+                  Code diffs are just the start. We need to see running apps, test results, and metrics for every agent without losing context. codemux keeps that verification front and center.
                 </p>
                 <blockquote className="border-l-2 border-white/10 pl-4 text-neutral-400">
                   <p>
-                    cmux gives each agent its own world: separate container in the cloud or Docker, separate VS Code, separate git state. You can see exactly what changed immediately—without losing context.
+                    codemux gives each agent its own world: separate container in the cloud or Docker, separate VS Code, separate git state. You can see exactly what changed immediately—without losing context.
                   </p>
                 </blockquote>
               </div>
@@ -352,7 +352,7 @@ export default async function LandingPage() {
             <div className="mt-12 relative overflow-hidden rounded-2xl">
               <Image
                 src={cmuxDemo1}
-                alt="cmux dashboard showing task management for AI agents"
+                alt="codemux dashboard showing task management for AI agents"
                 width={3248}
                 height={2112}
                 sizes="(min-width: 1024px) 1024px, 100vw"
@@ -368,10 +368,10 @@ export default async function LandingPage() {
           <div className="space-y-12">
             <div className="space-y-3 text-center">
               <h2 className="text-2xl font-semibold text-white sm:text-3xl">
-                How cmux works today
+                How codemux works today
               </h2>
               <p className="mx-auto max-w-3xl text-sm text-neutral-400 sm:text-base">
-                The cmux dashboard keeps every agent and workspace organized so you can launch, monitor, and review without alt-tabbing between terminals, keeping track of VS Code windows, and restarting dev servers.
+                The codemux dashboard keeps every agent and workspace organized so you can launch, monitor, and review without alt-tabbing between terminals, keeping track of VS Code windows, and restarting dev servers.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -395,7 +395,7 @@ export default async function LandingPage() {
             <div className="mt-10 relative overflow-hidden rounded-2xl">
               <Image
                 src={cmuxDemo2}
-                alt="cmux vscode instances showing diffs"
+                alt="codemux vscode instances showing diffs"
                 width={3248}
                 height={2112}
                 sizes="(min-width: 1024px) 1024px, 100vw"
@@ -414,7 +414,7 @@ export default async function LandingPage() {
                 A guided workflow from start to finish
               </h2>
               <p className="mt-4 text-sm text-neutral-400 sm:text-base">
-                Each phase inside cmux is integral to keep the process fast and confidence high while coding agents execute tasks in parallel.
+                Each phase inside codemux is integral to keep the process fast and confidence high while coding agents execute tasks in parallel.
               </p>
             </div>
             <div className="grid flex-1 gap-6 sm:grid-cols-2">
@@ -494,11 +494,11 @@ export default async function LandingPage() {
         <section id="nav-requirements" className="mx-auto max-w-4xl px-4 pb-20 text-center sm:px-6 scroll-mt-32">
           <h2 className="text-2xl font-semibold text-white sm:text-3xl">Requirements</h2>
           <p className="mt-4 text-sm text-neutral-400 sm:text-base">
-            cmux runs locally on your machine. You&apos;ll need:
+            codemux runs locally on your machine. You&apos;ll need:
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
-              Docker installed or use cmux cloud
+              Docker installed or use codemux cloud
             </div>
             <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
               macOS 13+, Linux (preview), Windows (waitlist)
@@ -511,7 +511,7 @@ export default async function LandingPage() {
             <div className="space-y-3">
               <h2 className="text-xl font-semibold text-white sm:text-2xl">Talk to the team</h2>
               <p className="text-sm text-neutral-300 sm:text-base">
-                Curious how cmux can power your workflow? Book time with us for a demo or deep dive.
+                Curious how codemux can power your workflow? Book time with us for a demo or deep dive.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
@@ -540,7 +540,7 @@ export default async function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-4 py-8 text-sm text-neutral-500 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2">
             <Terminal className="h-4 w-4 text-neutral-600" aria-hidden />
-            <span className="font-mono">cmux by manaflow</span>
+            <span className="font-mono">codemux by manaflow</span>
           </div>
           <div className="flex items-center gap-6">
             {/* <a className="transition hover:text-white" href="/tutorial">
