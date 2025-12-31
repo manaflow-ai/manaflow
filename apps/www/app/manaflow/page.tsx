@@ -83,6 +83,29 @@ export default function ManaflowPage() {
               escalate the most urgent tasks for human review.
             </p>
           </div>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <a
+                href="https://preview.new"
+                target="_blank"
+                className="text-black underline hover:text-neutral-600"
+              >
+                preview.new
+              </a>
+              <a
+                href="https://x.com/xai/status/1997875233068626414"
+                target="_blank"
+                className="text-neutral-500 hover:text-neutral-700 hover:underline text-sm"
+              >
+                [x]
+              </a>
+            </div>
+            <p className="text-neutral-600 text-sm mt-1">
+              Code review agent that takes screenshots of code diffs involving
+              UI changes.
+            </p>
+          </div>
         </div>
 
         <div className="mt-12 flex gap-4 text-sm">
