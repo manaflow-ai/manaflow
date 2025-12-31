@@ -41,7 +41,8 @@ export const createClient = (config: Config = {}): Client => {
     ResolvedRequestOptions
   >();
 
-  const beforeRequest = async (options: RequestOptions) => {
+  // NOTE: Made generic to fix TypeScript variance issue with onSseEvent callback
+  const beforeRequest = async <TData = unknown>(options: RequestOptions<TData>) => {
     const opts = {
       ..._config,
       ...options,
@@ -70,7 +71,7 @@ export const createClient = (config: Config = {}): Client => {
       opts.headers.delete('Content-Type');
     }
 
-    const url = buildUrl(opts);
+    const url = buildUrl(opts as unknown as Parameters<typeof buildUrl>[0]);
 
     return { opts, url };
   };
@@ -85,9 +86,12 @@ export const createClient = (config: Config = {}): Client => {
 
     let request = new Request(url, requestInit);
 
+    // Cast opts for interceptors to fix TypeScript variance issue with onSseEvent callback
+    const optsForInterceptors = opts as unknown as ResolvedRequestOptions;
+
     for (const fn of interceptors.request._fns) {
       if (fn) {
-        request = await fn(request, opts);
+        request = await fn(request, optsForInterceptors);
       }
     }
 
@@ -98,7 +102,7 @@ export const createClient = (config: Config = {}): Client => {
 
     for (const fn of interceptors.response._fns) {
       if (fn) {
-        response = await fn(response, request, opts);
+        response = await fn(response, request, optsForInterceptors);
       }
     }
 
@@ -193,7 +197,7 @@ export const createClient = (config: Config = {}): Client => {
 
     for (const fn of interceptors.error._fns) {
       if (fn) {
-        finalError = (await fn(error, response, request, opts)) as string;
+        finalError = (await fn(error, response, request, optsForInterceptors)) as string;
       }
     }
 
@@ -219,6 +223,8 @@ export const createClient = (config: Config = {}): Client => {
   const makeSseFn =
     (method: Uppercase<HttpMethod>) => async (options: RequestOptions) => {
       const { opts, url } = await beforeRequest(options);
+      // Cast opts for interceptors to fix TypeScript variance issue with onSseEvent callback
+      const optsForInterceptors = opts as unknown as ResolvedRequestOptions;
       return createSseClient({
         ...opts,
         body: opts.body as BodyInit | null | undefined,
@@ -228,7 +234,7 @@ export const createClient = (config: Config = {}): Client => {
           let request = new Request(url, init);
           for (const fn of interceptors.request._fns) {
             if (fn) {
-              request = await fn(request, opts);
+              request = await fn(request, optsForInterceptors);
             }
           }
           return request;
