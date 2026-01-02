@@ -71,27 +71,13 @@ export default function ManaflowPage() {
           </div>
 
           <div>
-            <a
-              href="https://x.manaflow.com"
-              target="_blank"
-              className="text-black underline hover:text-neutral-600"
-            >
-              x.manaflow.com
-            </a>
-            <p className="text-neutral-600 text-sm mt-1">
-              Curated algorithmic X/Twitter feed that lets coding agents
-              escalate the most urgent tasks for human review.
-            </p>
-          </div>
-
-          <div>
             <div className="flex items-center gap-2">
               <a
-                href="https://preview.new"
+                href="https://x.manaflow.com"
                 target="_blank"
                 className="text-black underline hover:text-neutral-600"
               >
-                preview.new
+                x.manaflow.com
               </a>
               <a
                 href="https://x.com/xai/status/1997875233068626414"
@@ -101,6 +87,20 @@ export default function ManaflowPage() {
                 [x]
               </a>
             </div>
+            <p className="text-neutral-600 text-sm mt-1">
+              Curated algorithmic X/Twitter feed that lets coding agents
+              escalate the most urgent tasks for human review.
+            </p>
+          </div>
+
+          <div>
+            <a
+              href="https://preview.new"
+              target="_blank"
+              className="text-black underline hover:text-neutral-600"
+            >
+              preview.new
+            </a>
             <p className="text-neutral-600 text-sm mt-1">
               Code review agent that takes screenshots of code diffs involving
               UI changes.
