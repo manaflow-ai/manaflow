@@ -188,6 +188,13 @@ export function FlexiblePanelLayout({
     const bottomRowEnd = `calc(${100 - verticalSplit}% + ${PANEL_GAP_HALF}px)`;
 
     switch (layoutMode) {
+      case "single-panel":
+        return (
+          <div className="h-full w-full">
+            <div className="h-full w-full min-h-0 min-w-0">{topLeft}</div>
+          </div>
+        );
+
       case "four-panel":
         return (
           <>

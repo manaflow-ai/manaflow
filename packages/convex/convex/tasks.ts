@@ -10,6 +10,7 @@ export const get = authQuery({
     teamSlugOrId: v.string(),
     projectFullName: v.optional(v.string()),
     archived: v.optional(v.boolean()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -28,6 +29,11 @@ export const get = authQuery({
 
     // Exclude preview tasks from the main tasks list
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -70,6 +76,7 @@ export const getWithNotificationOrder = authQuery({
     teamSlugOrId: v.string(),
     projectFullName: v.optional(v.string()),
     archived: v.optional(v.boolean()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -89,6 +96,11 @@ export const getWithNotificationOrder = authQuery({
     }
 
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -163,20 +175,27 @@ export const getPreviewTasks = authQuery({
 export const getPinned = authQuery({
   args: {
     teamSlugOrId: v.string(),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     // Get pinned tasks (excluding archived and preview tasks)
-    const pinnedTasks = await ctx.db
+    let q = ctx.db
       .query("tasks")
       .withIndex("by_pinned", (idx) =>
         idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
       )
-      .filter((q) => q.neq(q.field("isArchived"), true))
-      .filter((q) => q.neq(q.field("isPreview"), true))
-      .collect();
+      .filter((qq) => qq.neq(qq.field("isArchived"), true))
+      .filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
+
+    const pinnedTasks = await q.collect();
 
     // Get unread task runs for this user in this team
     // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches

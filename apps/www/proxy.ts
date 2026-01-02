@@ -2,6 +2,29 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/utils/www-env";
 
+/**
+ * Check if any Stack Auth cookie exists matching the base name pattern.
+ * Stack Auth uses different naming conventions:
+ * - Local HTTP: `stack-refresh-{projectId}` / `stack-access`
+ * - Production HTTPS: `__Host-stack-refresh-{projectId}` / `__Host-stack-access`
+ * - With branch: `__Host-stack-refresh-{projectId}--default` / `__Host-stack-access--default`
+ */
+function hasStackCookie(
+  cookies: NextRequest["cookies"],
+  baseName: string
+): boolean {
+  const allCookies = cookies.getAll();
+
+  return allCookies.some(
+    (c) =>
+      (c.name === baseName ||
+        c.name === `__Host-${baseName}` ||
+        c.name.startsWith(`${baseName}--`) ||
+        c.name.startsWith(`__Host-${baseName}--`)) &&
+      c.value
+  );
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
@@ -38,13 +61,14 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for Stack Auth cookies
-  const stackAccessCookie = request.cookies.get("stack-access");
-  const stackRefreshCookie = request.cookies.get(
+  // Check for Stack Auth cookies (handles various naming patterns for local/production/branch variants)
+  const hasStackAccessCookie = hasStackCookie(request.cookies, "stack-access");
+  const hasStackRefreshCookie = hasStackCookie(
+    request.cookies,
     `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`
   );
 
-  const hasStackAuthCookies = !!(stackAccessCookie || stackRefreshCookie);
+  const hasStackAuthCookies = hasStackAccessCookie || hasStackRefreshCookie;
 
   // If no cookies, redirect to auth page
   if (!hasStackAuthCookies) {

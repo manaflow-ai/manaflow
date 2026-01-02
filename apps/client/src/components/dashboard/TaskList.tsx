@@ -7,6 +7,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { TaskItem } from "./TaskItem";
 import { PreviewItem } from "./PreviewItem";
 import { ChevronRight } from "lucide-react";
+import { env } from "../../client-env";
 
 type TaskCategoryKey =
   | "pinned"
@@ -183,12 +184,16 @@ export const TaskList = memo(function TaskList({
 }: {
   teamSlugOrId: string;
 }) {
-  const allTasks = useQuery(api.tasks.get, { teamSlugOrId });
+  // In web mode, exclude local workspaces from the task list
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+
+  const allTasks = useQuery(api.tasks.get, { teamSlugOrId, excludeLocalWorkspaces });
   const archivedTasks = useQuery(api.tasks.get, {
     teamSlugOrId,
     archived: true,
+    excludeLocalWorkspaces,
   });
-  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
   const previewRuns = useQuery(api.previewRuns.listByTeam, { teamSlugOrId });
   const [tab, setTab] = useState<"all" | "archived" | "previews">("all");
 

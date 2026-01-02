@@ -23,6 +23,7 @@ import {
   Check,
   Copy,
   GitMerge,
+  Loader2,
   Pencil,
   Pin,
   PinOff,
@@ -40,7 +41,9 @@ export const TaskItem = memo(function TaskItem({
   teamSlugOrId,
 }: TaskItemProps) {
   const clipboard = useClipboard({ timeout: 2000 });
-  const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
+  const { archiveWithUndo, unarchive, isArchiving } =
+    useArchiveTask(teamSlugOrId);
+  const taskIsArchiving = isArchiving(task._id);
   const navigate = useNavigate();
   const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
   const canRename = !isOptimisticUpdate;
@@ -555,21 +558,33 @@ export const TaskItem = memo(function TaskItem({
               ) : (
                 <button
                   onClick={handleArchive}
+                  disabled={taskIsArchiving}
                   className={clsx(
                     "p-1 rounded",
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    taskIsArchiving
+                      ? "opacity-100"
+                      : "group-hover:opacity-100 opacity-0",
+                    taskIsArchiving && "cursor-not-allowed"
                   )}
                   title="Archive task"
                 >
-                  <Archive className="w-3.5 h-3.5" />
+                  {taskIsArchiving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Archive className="w-3.5 h-3.5" />
+                  )}
                 </button>
               )}
             </TooltipTrigger>
             <TooltipContent side="top">
-              {task.isArchived ? "Unarchive task" : "Archive task"}
+              {taskIsArchiving
+                ? "Archiving..."
+                : task.isArchived
+                  ? "Unarchive task"
+                  : "Archive task"}
             </TooltipContent>
           </Tooltip>
         </div>

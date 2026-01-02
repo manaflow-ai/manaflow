@@ -639,37 +639,68 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  // Determine if this is a workspace-only task (local or cloud workspace)
-  const isWorkspaceOnlyTask = task?.isLocalWorkspace || task?.isCloudWorkspace;
+  // Determine workspace type for layout overrides
+  const isLocalWorkspaceTask = task?.isLocalWorkspace;
+  const isCloudWorkspaceTask = task?.isCloudWorkspace;
+
+  // Determine effective layout mode based on workspace type
+  // - Local workspaces: single panel (just VSCode)
+  // - Cloud workspaces: two-horizontal (VSCode left, browser right)
+  // - Regular tasks: use user's configured layout
+  const effectiveLayoutMode = useMemo(() => {
+    if (isLocalWorkspaceTask) {
+      return "single-panel" as const;
+    }
+    if (isCloudWorkspaceTask) {
+      return "two-horizontal" as const;
+    }
+    return panelConfig.layoutMode;
+  }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
 
   const currentLayout = useMemo(() => {
-    const layout = getCurrentLayoutPanels(panelConfig);
-
-    // For local/cloud workspaces, hide gitDiff and browser panels since they're not applicable
-    if (isWorkspaceOnlyTask) {
+    // For local workspaces: just VSCode
+    if (isLocalWorkspaceTask) {
       return {
-        topLeft: layout.topLeft === "gitDiff" || layout.topLeft === "browser" ? null : layout.topLeft,
-        topRight: layout.topRight === "gitDiff" || layout.topRight === "browser" ? null : layout.topRight,
-        bottomLeft: layout.bottomLeft === "gitDiff" || layout.bottomLeft === "browser" ? null : layout.bottomLeft,
-        bottomRight: layout.bottomRight === "gitDiff" || layout.bottomRight === "browser" ? null : layout.bottomRight,
+        topLeft: "workspace" as const,
+        topRight: null,
+        bottomLeft: null,
+        bottomRight: null,
       };
     }
 
-    return layout;
-  }, [panelConfig, isWorkspaceOnlyTask]);
+    // For cloud workspaces: VSCode left, browser right
+    if (isCloudWorkspaceTask) {
+      return {
+        topLeft: "workspace" as const,
+        topRight: "browser" as const,
+        bottomLeft: null,
+        bottomRight: null,
+      };
+    }
+
+    // Regular tasks: use configured layout
+    return getCurrentLayoutPanels(panelConfig);
+  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
 
-    // For local/cloud workspaces, exclude gitDiff and browser from available panels
-    if (isWorkspaceOnlyTask) {
+    // For local workspaces, exclude gitDiff and browser from available panels
+    if (isLocalWorkspaceTask) {
       return panels.filter((p) => p !== "gitDiff" && p !== "browser");
     }
 
+    // For cloud workspaces, exclude gitDiff (browser is used)
+    if (isCloudWorkspaceTask) {
+      return panels.filter((p) => p !== "gitDiff");
+    }
+
     return panels;
-  }, [panelConfig, isWorkspaceOnlyTask]);
+  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+
   const activePanelPositions = useMemo(
-    () => getActivePanelPositions(panelConfig.layoutMode),
-    [panelConfig.layoutMode]
+    () => getActivePanelPositions(effectiveLayoutMode),
+    [effectiveLayoutMode]
   );
 
   const isPanelPositionActive = useCallback(
@@ -769,7 +800,7 @@ function TaskDetailPage() {
             />
           ) : null}
           <FlexiblePanelLayout
-            layoutMode={panelConfig.layoutMode}
+            layoutMode={effectiveLayoutMode}
             storageKey="taskDetailGrid"
             topLeft={
               isPanelPositionActive("topLeft") && currentLayout.topLeft ? (
