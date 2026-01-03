@@ -13,6 +13,8 @@
 ./scripts/device.sh   # Build & install to connected iPhone only
 ```
 
+Always run `./scripts/reload.sh` after making code changes to reload the app.
+
 ## TestFlight
 ```bash
 ./scripts/testflight.sh  # Auto-increments build number, archives, uploads

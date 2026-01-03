@@ -56,8 +56,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var lastGeometryLogSignature: String?
     private var lastVisibleSignature: String?
     private var headerContainer: UIView!
-    private var backButton: UIButton!
-    private var backButtonBackground: UIVisualEffectView!
+    private var backButtonHost: UIHostingController<GlassBackButtonView>!
     private var titleLabel: UILabel!
     private var topFadeView: TopFadeView!
     private var topFadeHeightConstraint: NSLayoutConstraint!
@@ -243,20 +242,20 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         headerContainer.backgroundColor = .clear
         view.addSubview(headerContainer)
 
-        backButtonBackground = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
-        backButtonBackground.translatesAutoresizingMaskIntoConstraints = false
-        backButtonBackground.isUserInteractionEnabled = false
-        backButtonBackground.layer.cornerRadius = 18
-        backButtonBackground.clipsToBounds = true
-        headerContainer.addSubview(backButtonBackground)
-
-        backButton = UIButton(type: .system)
-        backButton.translatesAutoresizingMaskIntoConstraints = false
-        let chevron = UIImage(systemName: "chevron.left")
-        backButton.setImage(chevron, for: .normal)
-        backButton.tintColor = .label
-        backButton.addTarget(self, action: #selector(handleBackButton), for: .touchUpInside)
-        headerContainer.addSubview(backButton)
+        let backButtonHost = UIHostingController(
+            rootView: GlassBackButtonView { [weak self] in
+                self?.handleBackButton()
+            }
+        )
+        if #available(iOS 16.0, *) {
+            backButtonHost.safeAreaRegions = []
+        }
+        backButtonHost.view.translatesAutoresizingMaskIntoConstraints = false
+        backButtonHost.view.backgroundColor = .clear
+        addChild(backButtonHost)
+        headerContainer.addSubview(backButtonHost.view)
+        backButtonHost.didMove(toParent: self)
+        self.backButtonHost = backButtonHost
 
         titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -302,20 +301,15 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             headerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            backButtonBackground.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
-            backButtonBackground.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            backButtonBackground.widthAnchor.constraint(equalToConstant: 36),
-            backButtonBackground.heightAnchor.constraint(equalToConstant: 36),
-
-            backButton.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
-            backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            backButton.widthAnchor.constraint(equalToConstant: 36),
-            backButton.heightAnchor.constraint(equalToConstant: 36),
+            backButtonHost.view.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
+            backButtonHost.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            backButtonHost.view.widthAnchor.constraint(equalToConstant: 36),
+            backButtonHost.view.heightAnchor.constraint(equalToConstant: 36),
 
             titleLabel.centerXAnchor.constraint(equalTo: headerContainer.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: backButtonHost.view.centerYAnchor),
 
-            headerContainer.bottomAnchor.constraint(equalTo: backButton.bottomAnchor, constant: 8)
+            headerContainer.bottomAnchor.constraint(equalTo: backButtonHost.view.bottomAnchor, constant: 8)
         ])
     }
 
@@ -543,6 +537,27 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         for (index, frame) in visibleItems {
             log("CMUX_CHAT_MSG \(reason)   [\(index)] frame: \(frame)")
         }
+    }
+}
+
+private struct GlassBackButtonView: View {
+    let action: () -> Void
+
+    var body: some View {
+        GlassEffectContainer {
+            Button(action: action) {
+                Image(systemName: "chevron.left")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 36, height: 36)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("Back")
+        }
+        .frame(width: 36, height: 36)
+        .allowsHitTesting(true)
     }
 }
 
