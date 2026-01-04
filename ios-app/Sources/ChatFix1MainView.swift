@@ -31,7 +31,7 @@ private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
     let conversation: Conversation
 
     func makeUIViewController(context: Context) -> Fix1MainViewController {
-        Fix1MainViewController(messages: conversation.messages, titleText: conversation.name)
+        Fix1MainViewController(messages: conversation.messages)
     }
 
     func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {}
@@ -56,18 +56,12 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var contentStackTopConstraint: NSLayoutConstraint!
     private var lastGeometryLogSignature: String?
     private var lastVisibleSignature: String?
-    private var headerContainer: UIView!
-    private var backButtonHost: UIHostingController<GlassBackButtonView>!
-    private var titleLabel: UILabel!
     private var topFadeView: TopFadeView!
     private var topFadeHeightConstraint: NSLayoutConstraint!
     private var didLogGeometryOnce = false
 
-    private let titleText: String
-
-    init(messages: [Message], titleText: String) {
+    init(messages: [Message]) {
         self.messages = messages
-        self.titleText = titleText
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -80,7 +74,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         setupBackground()
         setupScrollView()
         setupInputBar()
-        setupHeaderOverlay()
+        setupTopFade()
         setupConstraints()
         populateMessages()
         setupKeyboardObservers()
@@ -97,7 +91,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.setNavigationBarHidden(true, animated: false)
         enableInteractivePopGesture()
     }
 
@@ -108,7 +101,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        navigationController?.setNavigationBarHidden(false, animated: false)
     }
 
     private func applyFix1() {
@@ -232,38 +224,11 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         inputBarVC.didMove(toParent: self)
     }
 
-    private func setupHeaderOverlay() {
+    private func setupTopFade() {
         topFadeView = TopFadeView()
         topFadeView.translatesAutoresizingMaskIntoConstraints = false
         topFadeView.isUserInteractionEnabled = false
         view.addSubview(topFadeView)
-
-        headerContainer = UIView()
-        headerContainer.translatesAutoresizingMaskIntoConstraints = false
-        headerContainer.backgroundColor = .clear
-        view.addSubview(headerContainer)
-
-        let backButtonHost = UIHostingController(
-            rootView: GlassBackButtonView { [weak self] in
-                self?.handleBackButton()
-            }
-        )
-        if #available(iOS 16.0, *) {
-            backButtonHost.safeAreaRegions = []
-        }
-        backButtonHost.view.translatesAutoresizingMaskIntoConstraints = false
-        backButtonHost.view.backgroundColor = .clear
-        addChild(backButtonHost)
-        headerContainer.addSubview(backButtonHost.view)
-        backButtonHost.didMove(toParent: self)
-        self.backButtonHost = backButtonHost
-
-        titleLabel = UILabel()
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = titleText
-        titleLabel.font = UIFont.preferredFont(forTextStyle: .headline)
-        titleLabel.textColor = .label
-        headerContainer.addSubview(titleLabel)
     }
 
     private func setupConstraints() {
@@ -273,7 +238,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         topFadeHeightConstraint = topFadeView.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
-            backgroundView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            backgroundView.topAnchor.constraint(equalTo: view.topAnchor),
             backgroundView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backgroundView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             backgroundView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -296,21 +261,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             topFadeView.topAnchor.constraint(equalTo: view.topAnchor),
             topFadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topFadeView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topFadeHeightConstraint,
-
-            headerContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            headerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            headerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-
-            backButtonHost.view.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
-            backButtonHost.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            backButtonHost.view.widthAnchor.constraint(equalToConstant: 36),
-            backButtonHost.view.heightAnchor.constraint(equalToConstant: 36),
-
-            titleLabel.centerXAnchor.constraint(equalTo: headerContainer.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: backButtonHost.view.centerYAnchor),
-
-            headerContainer.bottomAnchor.constraint(equalTo: backButtonHost.view.bottomAnchor, constant: 8)
+            topFadeHeightConstraint
         ])
     }
 
@@ -341,9 +292,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
         let inputBarHeight = inputBarVC.view.bounds.height
 
-        // Header height: 8pt padding + 36pt button + 8pt padding = 52pt below safe area
-        // Add 8pt extra so content doesn't sit right at header edge
-        let newTopInset = safeTop + 52 + 8
+        // Safe area already accounts for the navigation bar; add a small padding below it.
+        let newTopInset = safeTop + 8
         let newBottomInset = inputBarHeight + safeBottom
 
         log("updateScrollViewInsets:")
@@ -413,9 +363,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     private func updateTopFadeHeightIfNeeded() {
         let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
-        // Extend gradient past the header (safeTop + 8 + 36 + 8 = header bottom)
-        // Add extra 24pt for smooth fade into content area
-        let targetHeight = safeTop + 52 + 24
+        // Extend gradient a bit below the navigation bar for a smooth fade into content.
+        let targetHeight = safeTop + 24
         if abs(topFadeHeightConstraint.constant - targetHeight) > 0.5 {
             topFadeHeightConstraint.constant = targetHeight
             topFadeView.updateColors()
@@ -471,14 +420,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     @objc private func dismissKeyboard() {
         view.endEditing(true)
-    }
-
-    @objc private func handleBackButton() {
-        if let navigationController {
-            navigationController.popViewController(animated: true)
-        } else {
-            dismiss(animated: true)
-        }
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -559,27 +500,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         for (index, frame) in visibleItems {
             log("CMUX_CHAT_MSG \(reason)   [\(index)] frame: \(frame)")
         }
-    }
-}
-
-private struct GlassBackButtonView: View {
-    let action: () -> Void
-
-    var body: some View {
-        GlassEffectContainer {
-            Button(action: action) {
-                Image(systemName: "chevron.left")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.primary)
-            }
-            .buttonStyle(.plain)
-            .frame(width: 36, height: 36)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("Back")
-        }
-        .frame(width: 36, height: 36)
-        .allowsHitTesting(true)
     }
 }
 

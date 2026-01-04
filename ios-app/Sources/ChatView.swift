@@ -10,6 +10,8 @@ struct ChatView: View {
 
     var body: some View {
         ChatFix1MainView(conversation: conversation)
+            .navigationTitle(conversation.name)
+            .navigationBarTitleDisplayMode(.inline)
     }
 
 }
