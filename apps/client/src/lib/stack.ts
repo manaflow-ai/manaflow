@@ -30,15 +30,16 @@ convexQueryClient.convexClient.setAuth(
 
 /**
  * Checks if a response indicates an expired/invalid auth token.
+ * Only matches specific token expiration errors, not general auth failures.
  */
 function isTokenExpiredResponse(status: number, bodyText: string): boolean {
   if (status !== 401) return false;
   const lowerBody = bodyText.toLowerCase();
   return (
     lowerBody.includes("token expired") ||
-    lowerBody.includes("invalid auth header") ||
+    lowerBody.includes("invalid auth header expired") ||
     lowerBody.includes("jwt expired") ||
-    lowerBody.includes("unauthorized")
+    lowerBody.includes("token has expired")
   );
 }
 
@@ -52,8 +53,38 @@ function clearCachedUser(): void {
   }
 }
 
+/**
+ * Tracks ongoing refresh to prevent multiple simultaneous refresh attempts.
+ */
+let refreshPromise: Promise<void> | null = null;
+
+/**
+ * Refreshes the auth token with debouncing to prevent race conditions.
+ * Multiple concurrent calls will share the same refresh operation.
+ */
+async function refreshAuthToken(): Promise<void> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      clearCachedUser();
+      // Fetching the user triggers Stack Auth's internal refresh
+      await cachedGetUser(stackClientApp);
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
 const fetchWithAuth = (async (request: Request) => {
-  const makeRequest = async (isRetry: boolean): Promise<Response> => {
+  // Clone the request upfront for potential retry (request body can only be consumed once)
+  const requestForRetry = request.clone();
+
+  const makeRequest = async (req: Request): Promise<Response> => {
     const user = await cachedGetUser(stackClientApp);
     if (!user) {
       throw new Error("User not found");
@@ -65,16 +96,11 @@ const fetchWithAuth = (async (request: Request) => {
     for (const [key, value] of Object.entries(authHeaders)) {
       mergedHeaders.set(key, value);
     }
-    for (const [key, value] of request instanceof Request
-      ? request.headers.entries()
-      : []) {
+    for (const [key, value] of req.headers.entries()) {
       mergedHeaders.set(key, value);
     }
 
-    // Clone the request for potential retry (request body can only be consumed once)
-    const requestForFetch = isRetry ? request.clone() : request;
-
-    const response = await fetch(requestForFetch, {
+    const response = await fetch(req, {
       headers: mergedHeaders,
     });
 
@@ -82,7 +108,7 @@ const fetchWithAuth = (async (request: Request) => {
   };
 
   // First attempt
-  let response = await makeRequest(false);
+  let response = await makeRequest(request);
 
   // Check if it's an auth error that warrants a retry
   if (response.status === 401) {
@@ -96,15 +122,15 @@ const fetchWithAuth = (async (request: Request) => {
 
     if (isTokenExpiredResponse(response.status, bodyText)) {
       console.warn(
-        "[Auth] Token expired, clearing cache and retrying with fresh token..."
+        "[Auth] Token expired, refreshing and retrying with fresh token..."
       );
 
-      // Clear the cached user to force Stack Auth to refresh the token
-      clearCachedUser();
-
-      // Retry the request with fresh auth headers
+      // Refresh the token (debounced to prevent race conditions)
       try {
-        response = await makeRequest(true);
+        await refreshAuthToken();
+
+        // Retry the request with fresh auth headers using the cloned request
+        response = await makeRequest(requestForRetry);
         if (response.ok) {
           console.log("[Auth] Retry succeeded with refreshed token");
         }

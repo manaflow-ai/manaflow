@@ -23,7 +23,6 @@ async function fetchFreshUser(
 
     if (!user) {
       window.cachedUser = null;
-      window.userPromise = null;
       return null;
     }
 
@@ -31,7 +30,6 @@ async function fetchFreshUser(
 
     if (!tokens.accessToken) {
       window.cachedUser = null;
-      window.userPromise = null;
       return null;
     }
     window.cachedUser = user;
@@ -39,8 +37,10 @@ async function fetchFreshUser(
   } catch (error) {
     console.error("Error fetching fresh user:", error);
     window.cachedUser = null;
-    window.userPromise = null;
     return null;
+  } finally {
+    // Always clear the promise to allow future fetches
+    window.userPromise = null;
   }
 }
 
