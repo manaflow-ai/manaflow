@@ -26,6 +26,7 @@ import {
   type FileData,
 } from "react-diff-view";
 
+import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import {
   parseReviewHeatmap,
@@ -100,6 +101,7 @@ type FocusNavigateOptions = {
 type NavigateOptions = {
   updateAnchor?: boolean;
   updateHash?: boolean;
+  shouldScroll?: boolean;
 };
 
 type HeatmapFileStatus =
@@ -1232,19 +1234,34 @@ const FileDiffCard = memo(function FileDiffCardComponent({
       return;
     }
 
-    const targetCell = currentCard.querySelector<HTMLElement>(
-      `[data-change-key="${focusedChangeKey}"]`
-    );
-    if (!targetCell) {
-      return;
-    }
+    // Use a double requestAnimationFrame to ensure DOM has fully laid out
+    // after the card expands. The first frame schedules the work, the second
+    // ensures the layout pass is complete before scrolling.
+    const frameId = window.requestAnimationFrame(() => {
+      const innerFrameId = window.requestAnimationFrame(() => {
+        const targetCell = currentCard.querySelector<HTMLElement>(
+          `[data-change-key="${focusedChangeKey}"]`
+        );
+        if (!targetCell) {
+          return;
+        }
 
-    const targetRow = targetCell.closest("tr");
-    const scrollTarget =
-      targetRow instanceof HTMLElement ? targetRow : targetCell;
-    window.requestAnimationFrame(() => {
-      scrollElementToViewportCenter(scrollTarget, { scrollContainer });
+        const targetRow = targetCell.closest("tr");
+        const scrollTarget =
+          targetRow instanceof HTMLElement ? targetRow : targetCell;
+        scrollElementToViewportCenter(scrollTarget, { scrollContainer });
+      });
+      // Store inner frame ID for cleanup
+      (currentCard as HTMLDivElement & { _innerFrameId?: number })._innerFrameId = innerFrameId;
     });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      const innerFrameId = (currentCard as HTMLDivElement & { _innerFrameId?: number })._innerFrameId;
+      if (innerFrameId !== undefined) {
+        window.cancelAnimationFrame(innerFrameId);
+      }
+    };
   }, [focusedChangeKey, scrollContainer]);
 
   return (
@@ -1631,7 +1648,7 @@ export function GitDiffHeatmapReviewViewer({
   );
 
   const hydratedInitialPath =
-    typeof window !== "undefined"
+    typeof window !== "undefined" && !isElectron
       ? decodeURIComponent(window.location.hash.slice(1))
       : "";
 
@@ -1785,7 +1802,7 @@ export function GitDiffHeatmapReviewViewer({
   }, [directoryPaths, activePath]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || isElectron) {
       return;
     }
     const hash = decodeURIComponent(window.location.hash.slice(1));
@@ -1974,11 +1991,12 @@ export function GitDiffHeatmapReviewViewer({
       }
 
       const shouldUpdateHash = options?.updateHash ?? true;
-      if (shouldUpdateHash) {
+      if (shouldUpdateHash && !isElectron) {
         window.location.hash = encodeURIComponent(path);
       }
 
-      if (scrollContainer) {
+      const shouldScroll = options?.shouldScroll ?? true;
+      if (shouldScroll && scrollContainer) {
         const target = document.getElementById(path);
         if (target) {
           target.scrollIntoView({ behavior: "auto", block: "start" });
@@ -2102,20 +2120,17 @@ export function GitDiffHeatmapReviewViewer({
       const key = event.key.toLowerCase();
       if (key === "j") {
         event.preventDefault();
-        event.stopPropagation();
         handleFocusNext({ source: "keyboard" });
       } else if (key === "k") {
         event.preventDefault();
-        event.stopPropagation();
         handleFocusPrevious({ source: "keyboard" });
       }
     };
 
-    // Use capture phase to intercept before other handlers
-    window.addEventListener("keydown", handleKeydown, true);
+    window.addEventListener("keydown", handleKeydown);
 
     return () => {
-      window.removeEventListener("keydown", handleKeydown, true);
+      window.removeEventListener("keydown", handleKeydown);
     };
   }, [handleFocusNext, handleFocusPrevious, targetCount]);
 
@@ -2152,6 +2167,7 @@ export function GitDiffHeatmapReviewViewer({
     handleNavigate(focusedError.filePath, {
       updateAnchor: isUserInitiated,
       updateHash: isUserInitiated,
+      shouldScroll: false,
     });
 
     if (!isUserInitiated) {
@@ -2162,15 +2178,23 @@ export function GitDiffHeatmapReviewViewer({
       return;
     }
 
+    // Use double requestAnimationFrame to ensure DOM is fully laid out
+    // before attempting scroll, preventing flash/jitter
+    let innerFrameId: number | undefined;
     const frame = window.requestAnimationFrame(() => {
-      const article = document.getElementById(focusedError.anchorId);
-      if (article) {
-        scrollElementToViewportCenter(article, { scrollContainer });
-      }
+      innerFrameId = window.requestAnimationFrame(() => {
+        const article = document.getElementById(focusedError.anchorId);
+        if (article) {
+          scrollElementToViewportCenter(article, { scrollContainer });
+        }
+      });
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
+      if (innerFrameId !== undefined) {
+        window.cancelAnimationFrame(innerFrameId);
+      }
     };
   }, [focusedError, handleNavigate, scrollContainer]);
 

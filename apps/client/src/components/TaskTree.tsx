@@ -428,18 +428,20 @@ function TaskTreeInner({
   const hasVisibleRuns = activeRunsFlat.length > 0;
   const showRunNumbers = flattenedRuns.length > 1;
 
-  // For local workspaces, find the run with VSCode to navigate to VSCode view directly
-  const localWorkspaceRunWithVscode = useMemo(() => {
+  // For local workspaces, find the first run to navigate to VSCode view
+  // Use the run even when VSCode isn't ready yet (loading state)
+  const localWorkspaceRun = useMemo(() => {
     if (!task.isLocalWorkspace) {
       return null;
     }
-    // Find the first active run with a running VSCode instance
-    return (
-      activeRunsFlat.find(
-        (run) => run.vscode?.status === "running" && run.vscode?.url
-      ) ?? null
-    );
+    // Find the first active run (prefer one with running VSCode, but accept any)
+    return activeRunsFlat[0] ?? null;
   }, [task.isLocalWorkspace, activeRunsFlat]);
+
+  // Check if VSCode is actually ready for the local workspace run
+  const localWorkspaceVscodeReady = useMemo(() => {
+    return localWorkspaceRun?.vscode?.status === "running" && localWorkspaceRun?.vscode?.url;
+  }, [localWorkspaceRun]);
 
   const runMenuEntries = useMemo(
     () =>
@@ -888,7 +890,7 @@ function TaskTreeInner({
                 className={clsx(
                   "group/task block",
                   // For local workspaces, manually add active class since we navigate to VSCode sub-route
-                  localWorkspaceRunWithVscode && isTaskSelected && "active"
+                  localWorkspaceRun && isTaskSelected && "active"
                 )}
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
               onMouseEnter={handlePrefetch}
@@ -908,8 +910,8 @@ function TaskTreeInner({
                   event.preventDefault();
                   return;
                 }
-                // For local workspaces with active VSCode, expand and navigate to VSCode view
-                if (localWorkspaceRunWithVscode) {
+                // For local workspaces, expand and navigate to VSCode view
+                if (localWorkspaceRun) {
                   event.preventDefault();
                   setIsExpanded(true);
                   void navigate({
@@ -917,7 +919,7 @@ function TaskTreeInner({
                     params: {
                       teamSlugOrId,
                       taskId: task._id,
-                      runId: localWorkspaceRunWithVscode._id,
+                      runId: localWorkspaceRun._id,
                     },
                   });
                   return;
@@ -1081,25 +1083,28 @@ function TaskTreeInner({
           </ContextMenu.Portal>
         </ContextMenu.Root>
 
-        {/* For local workspaces, only show VSCode link when expanded */}
-        {isExpanded && localWorkspaceRunWithVscode ? (
+        {/* For local workspaces, show VSCode link when expanded (with loading state if not ready) */}
+        {isExpanded && localWorkspaceRun ? (
           <TaskRunDetailLink
             to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
             params={{
               teamSlugOrId,
               taskId: task._id,
-              runId: localWorkspaceRunWithVscode._id,
+              runId: localWorkspaceRun._id,
             }}
             icon={
               <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
             }
             label="VS Code"
             indentLevel={level + 1}
+            trailing={!localWorkspaceVscodeReady ? (
+              <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+            ) : undefined}
           />
         ) : null}
 
         {/* For non-local workspaces, show normal task runs content */}
-        {isExpanded && !localWorkspaceRunWithVscode ? (
+        {isExpanded && !localWorkspaceRun ? (
           <TaskRunsContent
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
