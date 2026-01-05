@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE5CB8A89417C399DB8D166 /* ChatView.swift */; };
+		1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */; };
 		20A59B687D0399C43C985B31 /* DebugInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B87CA70AD58D024077E85845 /* DebugInputBar.swift */; };
 		2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */; };
 		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
@@ -35,6 +36,16 @@
 		F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		5309AA5CCAC5CAADF68B53C4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0BC297CC62DC5C500BBEB719 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D6E5ED0C8EADF9B00BC1627F;
+			remoteInfo = cmux;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		0BE5CB8A89417C399DB8D166 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -57,9 +68,11 @@
 		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
 		BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
+		C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSyncUITests.swift; sourceTree = "<group>"; };
 		D8732D7AB61D4190BACAAB03 /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		D9BA577D046F9E3C331F4986 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
+		EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = cmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -80,8 +93,17 @@
 			isa = PBXGroup;
 			children = (
 				46410B90D2F45E6882E585AD /* cmux.app */,
+				EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		3EC041CE7CBA01395A239037 /* cmuxUITests */ = {
+			isa = PBXGroup;
+			children = (
+				C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */,
+			);
+			path = cmuxUITests;
 			sourceTree = "<group>";
 		};
 		4C3A73493721EACC742CE8ED /* Auth */ = {
@@ -99,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */,
+				3EC041CE7CBA01395A239037 /* cmuxUITests */,
 				F80B6A470B95146C17D0BE5A /* Sources */,
 				0F1AEEAEEF55364C5E4029D3 /* Products */,
 			);
@@ -179,6 +202,24 @@
 			productReference = 46410B90D2F45E6882E585AD /* cmux.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E59D9C58D7245568106A1197 /* cmuxUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5D5BA1E628F7B00E5FE18887 /* Build configuration list for PBXNativeTarget "cmuxUITests" */;
+			buildPhases = (
+				8CE346D1E01CF18FB8F7F811 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FC82B0E8F8C678BDC002C842 /* PBXTargetDependency */,
+			);
+			name = cmuxUITests;
+			packageProductDependencies = (
+			);
+			productName = cmuxUITests;
+			productReference = EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -190,6 +231,9 @@
 				TargetAttributes = {
 					D6E5ED0C8EADF9B00BC1627F = {
 						DevelopmentTeam = 7WLXT3NR37;
+					};
+					E59D9C58D7245568106A1197 = {
+						TestTargetID = D6E5ED0C8EADF9B00BC1627F;
 					};
 				};
 			};
@@ -212,6 +256,7 @@
 			projectRoot = "";
 			targets = (
 				D6E5ED0C8EADF9B00BC1627F /* cmux */,
+				E59D9C58D7245568106A1197 /* cmuxUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -258,9 +303,42 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8CE346D1E01CF18FB8F7F811 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		FC82B0E8F8C678BDC002C842 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D6E5ED0C8EADF9B00BC1627F /* cmux */;
+			targetProxy = 5309AA5CCAC5CAADF68B53C4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		066BAB781528BE0F431B5A66 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cmux.app.dev.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = cmux;
+			};
+			name = Debug;
+		};
 		1553B07068B96981191CC8DF /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -508,6 +586,40 @@
 			};
 			name = Beta;
 		};
+		D05301475DE3EE35DBCB081E /* Beta */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cmux.app.dev.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = cmux;
+			};
+			name = Beta;
+		};
+		DF1B16901F2B7FBB801F5AB4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cmux.app.dev.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = cmux;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -517,6 +629,16 @@
 				B4D1D4CD67E1F8391FA76A24 /* Beta */,
 				1553B07068B96981191CC8DF /* Debug */,
 				6E9CF3EFB0808AD4B2DD0469 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Beta;
+		};
+		5D5BA1E628F7B00E5FE18887 /* Build configuration list for PBXNativeTarget "cmuxUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D05301475DE3EE35DBCB081E /* Beta */,
+				066BAB781528BE0F431B5A66 /* Debug */,
+				DF1B16901F2B7FBB801F5AB4 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Beta;

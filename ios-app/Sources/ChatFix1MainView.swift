@@ -40,24 +40,103 @@ private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
 private final class Fix1MainViewController: UIViewController, UIScrollViewDelegate {
     private var scrollView: UIScrollView!
     private var contentStack: UIStackView!
+    private var bottomSpacerView: UIView!
+    private var extraSpacerView: UIView!
+    private var belowPillSpacerView: UIView!
+    private var extraSpacerLabel: UILabel!
+    private var bottomSpacerLabel: UILabel!
+    private var belowPillSpacerLabel: UILabel!
     private var inputBarVC: DebugInputBarViewController!
     private var backgroundView: UIView!
+    private var debugYellowOverlay: UIView!
+    private var debugRedOverlay: UIView!
+    private var debugGreenOverlay: UIView!
+    private var debugYellowLabel: UILabel!
+    private var debugRedLabel: UILabel!
+    private var debugGreenLabel: UILabel!
+    private var debugMessageLine: UIView!
+    private var debugPillLine: UIView!
+    private var debugInfoLabel: UILabel!
 
     private var messages: [Message]
-    private var lastAppliedBottomInset: CGFloat = 0
     private var lastAppliedTopInset: CGFloat = 0
     private var lastContentHeight: CGFloat = 0
     private var hasUserScrolled = false
     private var didInitialScrollToBottom = false
+    private var isInputBarMeasuring = false
     private var inputBarBottomConstraint: NSLayoutConstraint!
+    private var inputBarHeightConstraint: NSLayoutConstraint!
     private var contentStackBottomConstraint: NSLayoutConstraint!
     private var contentStackTopConstraint: NSLayoutConstraint!
+    private var contentStackMinHeightConstraint: NSLayoutConstraint!
+    private var bottomSpacerHeightConstraint: NSLayoutConstraint!
+    private var extraSpacerHeightConstraint: NSLayoutConstraint!
+    private var belowPillSpacerHeightConstraint: NSLayoutConstraint!
     private var lastGeometryLogSignature: String?
     private var lastVisibleSignature: String?
     private var topFadeView: TopFadeView!
     private var topFadeHeightConstraint: NSLayoutConstraint!
     private var didLogGeometryOnce = false
     private var isKeyboardVisible = false
+    private var keyboardAnimationDuration: TimeInterval = 0.25
+    private var keyboardAnimationOptions: UIView.AnimationOptions = [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]
+    private let debugAutoFocusInput: Bool = {
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_AUTOFOCUS"] {
+            return value == "1" || value.lowercased() == "true"
+        }
+        return true
+        #else
+        return false
+        #endif
+    }()
+    private let uiTestScrollFraction: CGFloat? = {
+        #if DEBUG
+        guard let value = ProcessInfo.processInfo.environment["CMUX_UITEST_SCROLL_FRACTION"] else {
+            return nil
+        }
+        if let fraction = Double(value) {
+            return CGFloat(max(0, min(1, fraction)))
+        }
+        return nil
+        #else
+        return nil
+        #endif
+    }()
+    private let debugAutoScrollToMiddle: Bool = {
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_AUTOSCROLL_MIDDLE"] {
+            return value == "1" || value.lowercased() == "true"
+        }
+        return false
+        #else
+        return false
+        #endif
+    }()
+    private let debugAutoScrollDelay: TimeInterval = 8.0
+    private let debugAutoFocusDelay: TimeInterval = {
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_AUTOFOCUS_DELAY"],
+           let delay = Double(value) {
+            return max(0, delay)
+        }
+        return 0
+        #else
+        return 0
+        #endif
+    }()
+    private var didAutoScrollToMiddle = false
+    private var lastKeyboardShiftSummary: String?
+    private var pendingKeyboardSample: DebugShiftSample?
+    private var lastOffsetDebug: String?
+    private var lastGapDebug: String?
+    private var lastAnchorIndexUsed: Int?
+    private var lastLayoutPillTopY: CGFloat?
+    private var previousLayoutPillTopY: CGFloat?
+    private var lastPillShiftDebug: String?
+    private var lastPillTopYClosed: CGFloat?
+    private var lastPillTopYOpen: CGFloat?
+    private var pendingKeyboardTransition: KeyboardTransition?
 
     init(messages: [Message]) {
         self.messages = messages
@@ -70,9 +149,17 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         super.viewDidLoad()
         view.backgroundColor = .clear
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleKeyboardFrameChange),
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil
+        )
+
         setupBackground()
         setupScrollView()
         setupInputBar()
+        setupDebugOverlay()
         setupTopFade()
         setupConstraints()
         populateMessages()
@@ -95,10 +182,52 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         enableInteractivePopGesture()
+        #if DEBUG
+        if debugAutoFocusInput {
+            let focusWork: () -> Void = { [weak self] in
+                self?.inputBarVC.setFocused(true)
+            }
+            if debugAutoFocusDelay > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + debugAutoFocusDelay, execute: focusWork)
+            } else {
+                DispatchQueue.main.async(execute: focusWork)
+            }
+        }
+        if debugAutoScrollToMiddle && !didAutoScrollToMiddle {
+            didAutoScrollToMiddle = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + debugAutoScrollDelay) { [weak self] in
+                guard let self else { return }
+                self.view.layoutIfNeeded()
+                let maxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height)
+                guard maxOffsetY > 1 else { return }
+                self.hasUserScrolled = true
+                let targetOffsetY = maxOffsetY * 0.5
+                self.scrollView.setContentOffset(CGPoint(x: 0, y: targetOffsetY), animated: false)
+            }
+        }
+        if let fraction = uiTestScrollFraction {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self else { return }
+                self.view.layoutIfNeeded()
+                let maxOffsetY = max(
+                    0,
+                    self.scrollView.contentSize.height - self.scrollView.bounds.height + self.scrollView.contentInset.bottom
+                )
+                let minOffsetY = -self.scrollView.contentInset.top
+                let targetOffsetY = max(minOffsetY, min(maxOffsetY, maxOffsetY * fraction))
+                self.hasUserScrolled = true
+                self.scrollView.setContentOffset(CGPoint(x: 0, y: targetOffsetY), animated: false)
+            }
+        }
+        #endif
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func applyFix1() {
@@ -107,7 +236,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.contentInset.top = 0
         scrollView.verticalScrollIndicatorInsets.top = 0
-        contentStackBottomConstraint.constant = -12
+        contentStackBottomConstraint.constant = 0
 
         log("applyFix1 - before updateScrollViewInsets")
         log("  view.window: \(String(describing: view.window))")
@@ -140,6 +269,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         scrollView.backgroundColor = .clear
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.delegate = self
+        scrollView.accessibilityIdentifier = "chat.scroll"
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tap.cancelsTouchesInView = false
@@ -152,6 +282,56 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         contentStack.spacing = 8
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
+
+        extraSpacerView = UIView()
+        extraSpacerView.translatesAutoresizingMaskIntoConstraints = false
+        extraSpacerView.backgroundColor = UIColor.yellow.withAlphaComponent(0.35)
+        extraSpacerView.layer.borderWidth = 1
+        extraSpacerView.layer.borderColor = UIColor.yellow.cgColor
+        extraSpacerView.isUserInteractionEnabled = false
+        extraSpacerLabel = makeSpacerLabel(color: .yellow)
+        extraSpacerView.addSubview(extraSpacerLabel)
+        NSLayoutConstraint.activate([
+            extraSpacerLabel.leadingAnchor.constraint(equalTo: extraSpacerView.leadingAnchor, constant: 4),
+            extraSpacerLabel.topAnchor.constraint(equalTo: extraSpacerView.topAnchor, constant: 2)
+        ])
+        contentStack.addArrangedSubview(extraSpacerView)
+        extraSpacerHeightConstraint = extraSpacerView.heightAnchor.constraint(equalToConstant: 0)
+        extraSpacerHeightConstraint.isActive = true
+
+        bottomSpacerView = UIView()
+        bottomSpacerView.translatesAutoresizingMaskIntoConstraints = false
+        bottomSpacerView.backgroundColor = UIColor.red.withAlphaComponent(0.25)
+        bottomSpacerView.layer.borderWidth = 1
+        bottomSpacerView.layer.borderColor = UIColor.red.cgColor
+        bottomSpacerView.isUserInteractionEnabled = false
+        bottomSpacerLabel = makeSpacerLabel(color: .red)
+        bottomSpacerView.addSubview(bottomSpacerLabel)
+        NSLayoutConstraint.activate([
+            bottomSpacerLabel.leadingAnchor.constraint(equalTo: bottomSpacerView.leadingAnchor, constant: 4),
+            bottomSpacerLabel.topAnchor.constraint(equalTo: bottomSpacerView.topAnchor, constant: 2)
+        ])
+        contentStack.addArrangedSubview(bottomSpacerView)
+        bottomSpacerHeightConstraint = bottomSpacerView.heightAnchor.constraint(equalToConstant: 0)
+        bottomSpacerHeightConstraint.isActive = true
+
+        belowPillSpacerView = UIView()
+        belowPillSpacerView.translatesAutoresizingMaskIntoConstraints = false
+        belowPillSpacerView.backgroundColor = UIColor.green.withAlphaComponent(0.2)
+        belowPillSpacerView.isUserInteractionEnabled = false
+        belowPillSpacerLabel = makeSpacerLabel(color: .green)
+        belowPillSpacerView.addSubview(belowPillSpacerLabel)
+        NSLayoutConstraint.activate([
+            belowPillSpacerLabel.leadingAnchor.constraint(equalTo: belowPillSpacerView.leadingAnchor, constant: 4),
+            belowPillSpacerLabel.topAnchor.constraint(equalTo: belowPillSpacerView.topAnchor, constant: 2)
+        ])
+        contentStack.addArrangedSubview(belowPillSpacerView)
+        belowPillSpacerHeightConstraint = belowPillSpacerView.heightAnchor.constraint(equalToConstant: 0)
+        belowPillSpacerHeightConstraint.isActive = true
+
+        contentStack.setCustomSpacing(0, after: extraSpacerView)
+        contentStack.setCustomSpacing(0, after: bottomSpacerView)
+        contentStack.setCustomSpacing(0, after: belowPillSpacerView)
     }
 
     private func setupBackground() {
@@ -167,10 +347,61 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         inputBarVC.onSend = { [weak self] in
             self?.sendMessage()
         }
+        inputBarVC.onLayoutChange = { [weak self] in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.updateBottomInsetsForKeyboard()
+            }
+        }
 
         addChild(inputBarVC)
         view.addSubview(inputBarVC.view)
         inputBarVC.didMove(toParent: self)
+
+#if DEBUG
+        isInputBarMeasuring = true
+        inputBarVC.view.alpha = 0
+#endif
+    }
+
+    private func setupDebugOverlay() {
+#if DEBUG
+        debugYellowOverlay = makeDebugOverlayView(color: .yellow)
+        debugRedOverlay = makeDebugOverlayView(color: .red)
+        debugGreenOverlay = makeDebugOverlayView(color: .green)
+        debugYellowLabel = makeDebugOverlayLabel(color: .yellow)
+        debugRedLabel = makeDebugOverlayLabel(color: .red)
+        debugGreenLabel = makeDebugOverlayLabel(color: .green)
+        debugMessageLine = makeDebugLineView(color: .cyan)
+        debugPillLine = makeDebugLineView(color: .magenta)
+        debugInfoLabel = UILabel()
+        debugInfoLabel.translatesAutoresizingMaskIntoConstraints = false
+        debugInfoLabel.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+        debugInfoLabel.textColor = .black
+        debugInfoLabel.backgroundColor = UIColor.white.withAlphaComponent(0.7)
+        debugInfoLabel.numberOfLines = 0
+        debugInfoLabel.layer.cornerRadius = 6
+        debugInfoLabel.layer.masksToBounds = true
+        debugInfoLabel.isUserInteractionEnabled = false
+
+        debugYellowOverlay.translatesAutoresizingMaskIntoConstraints = true
+        debugRedOverlay.translatesAutoresizingMaskIntoConstraints = true
+        debugGreenOverlay.translatesAutoresizingMaskIntoConstraints = true
+
+        debugYellowOverlay.autoresizingMask = [.flexibleWidth, .flexibleTopMargin, .flexibleBottomMargin]
+        debugRedOverlay.autoresizingMask = [.flexibleWidth, .flexibleTopMargin, .flexibleBottomMargin]
+        debugGreenOverlay.autoresizingMask = [.flexibleWidth, .flexibleTopMargin, .flexibleBottomMargin]
+
+        view.addSubview(debugYellowOverlay)
+        view.addSubview(debugRedOverlay)
+        view.addSubview(debugGreenOverlay)
+        view.addSubview(debugMessageLine)
+        view.addSubview(debugPillLine)
+        view.addSubview(debugYellowLabel)
+        view.addSubview(debugRedLabel)
+        view.addSubview(debugGreenLabel)
+        view.addSubview(debugInfoLabel)
+#endif
     }
 
     private func setupTopFade() {
@@ -182,8 +413,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     private func setupConstraints() {
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
-        contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12)
+        inputBarHeightConstraint = inputBarVC.view.heightAnchor.constraint(
+            equalToConstant: DebugInputBarMetrics.inputHeight + DebugInputBarMetrics.topPadding + 28
+        )
+        contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: 0)
         contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 0)
+        contentStackMinHeightConstraint = contentStack.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.heightAnchor, constant: 0)
+        contentStackMinHeightConstraint.priority = .defaultLow
         topFadeHeightConstraint = topFadeView.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
@@ -202,26 +438,37 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
             contentStackBottomConstraint,
             contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
+            contentStackMinHeightConstraint,
 
             inputBarVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputBarVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBarBottomConstraint,
+            inputBarHeightConstraint,
 
             topFadeView.topAnchor.constraint(equalTo: view.topAnchor),
             topFadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topFadeView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topFadeHeightConstraint
         ])
+
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         log("  view.window: \(String(describing: view.window))")
         log("  inputBarVC.view.bounds: \(inputBarVC.view.bounds)")
+        if isInputBarMeasuring, inputBarVC.view.bounds.height > 1 {
+            isInputBarMeasuring = false
+            inputBarVC.view.alpha = 1
+        }
         updateTopFadeHeightIfNeeded()
         updateTopInsetIfNeeded()
         updateBottomInsetsForKeyboard()
         maybeScrollToBottomIfNeeded()
+        let scale = max(1, view.traitCollection.displayScale)
+        let pillTopY = currentPillTopY(scale: scale)
+        previousLayoutPillTopY = lastLayoutPillTopY
+        lastLayoutPillTopY = pillTopY
         logContentGeometry(reason: "viewDidLayoutSubviews")
         logVisibleMessages(reason: "viewDidLayoutSubviews")
         if !didLogGeometryOnce, view.window != nil {
@@ -246,48 +493,441 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             scrollView.verticalScrollIndicatorInsets.top = newTopInset
             lastAppliedTopInset = newTopInset
         }
+
+        if abs(contentStackMinHeightConstraint.constant - lastAppliedTopInset) > 0.5 {
+            contentStackMinHeightConstraint.constant = lastAppliedTopInset
+        }
     }
 
-    private func updateBottomInsetsForKeyboard() {
-        let keyboardFrame = view.keyboardLayoutGuide.layoutFrame
-        let keyboardOverlap = max(0, view.bounds.maxY - keyboardFrame.minY)
-        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let keyboardVisible = keyboardOverlap > safeBottom + 1
-        let newInputBarConstant = keyboardVisible ? 0 : safeBottom
-
-        if keyboardVisible != isKeyboardVisible {
-            isKeyboardVisible = keyboardVisible
-            let horizontalPadding: CGFloat = keyboardVisible ? 12 : 20
-            inputBarVC.updateLayout(horizontalPadding: horizontalPadding, bottomPadding: 28)
-        }
-
-        if abs(inputBarBottomConstraint.constant - newInputBarConstant) > 0.5 {
-            inputBarBottomConstraint.constant = newInputBarConstant
-        }
-
-        let inputBarHeight = inputBarVC.view.bounds.height
-        let contentBottomPadding = max(0, -contentStackBottomConstraint.constant)
-        let effectiveKeyboardOverlap = keyboardVisible ? keyboardOverlap : 0
-        let newBottomInset = max(0, inputBarHeight + effectiveKeyboardOverlap - contentBottomPadding)
-
-        if abs(lastAppliedBottomInset - newBottomInset) <= 0.5 {
-            return
-        }
-
+    private func updateBottomInsetsForKeyboard(animated: Bool = false) {
+        let scale = max(1, view.traitCollection.displayScale)
+        view.layoutIfNeeded()
+        let oldPillFrame = computedPillFrameInView()
+        let currentPillTopY = pixelAlign(inputBarVC.view.frame.minY + oldPillFrame.minY, scale: scale)
+        let liveOldPillTopY = animated ? currentPillTopY : (lastLayoutPillTopY ?? currentPillTopY)
+        let liveOldOffsetY = scrollView.contentOffset.y
+        let liveOldMaxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        let liveDistanceFromBottom = max(0, liveOldMaxOffsetY - liveOldOffsetY)
         let oldBottomInset = scrollView.contentInset.bottom
-        let oldMaxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + oldBottomInset
-        let distanceFromBottom = max(0, oldMaxOffsetY - scrollView.contentOffset.y)
-        scrollView.contentInset.bottom = newBottomInset
-        scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
-        lastAppliedBottomInset = newBottomInset
+        let liveIsAtBottom = liveDistanceFromBottom <= 1
+        let transitionSnapshot = pendingKeyboardTransition
+        let useTransitionSnapshot = transitionSnapshot?.applied == false
+        let oldPillTopY = useTransitionSnapshot ? (transitionSnapshot?.oldPillTopY ?? liveOldPillTopY) : liveOldPillTopY
+        let oldOffsetY = useTransitionSnapshot ? (transitionSnapshot?.oldOffsetY ?? liveOldOffsetY) : liveOldOffsetY
+        let rawDistanceFromBottom = useTransitionSnapshot ? (transitionSnapshot?.distanceFromBottom ?? liveDistanceFromBottom) : liveDistanceFromBottom
+        let shouldAnchorToBottom = (useTransitionSnapshot ? (transitionSnapshot?.wasAtBottom ?? liveIsAtBottom) : liveIsAtBottom)
+            && !scrollView.isDragging
+            && !scrollView.isDecelerating
+        let visibleAnchorIndex = {
+            let anchor = visibleMessageAnchor()
+            return anchor.index >= 0 ? anchor.index : nil
+        }()
+        let anchorIndex = visibleAnchorIndex ?? anchorCandidateIndex(pillTopY: oldPillTopY)
+        let oldAnchorSample = anchorIndex.flatMap { anchorSample(index: $0, pillTopY: oldPillTopY) }
+        lastAnchorIndexUsed = oldAnchorSample?.index
 
-        let newMaxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + newBottomInset
-        var targetOffsetY = newMaxOffsetY - distanceFromBottom
-        let adjustedTop = scrollView.adjustedContentInset.top
-        let minY = -adjustedTop
-        let maxY = max(minY, newMaxOffsetY)
-        targetOffsetY = min(max(targetOffsetY, minY), maxY)
-        scrollView.contentOffset.y = targetOffsetY
+        let applyUpdates = { [weak self] in
+            guard let self else { return }
+            self.view.layoutIfNeeded()
+            let keyboardFrame = self.view.keyboardLayoutGuide.layoutFrame
+            let safeBottom = self.view.window?.safeAreaInsets.bottom ?? self.view.safeAreaInsets.bottom
+            let keyboardOverlap = max(0, keyboardFrame.height - safeBottom)
+            let keyboardVisible = keyboardOverlap > 1
+            let newInputBarConstant: CGFloat = 0
+
+            var needsLayout = false
+            var didToggleKeyboard = false
+            if animated {
+                let wasKeyboardVisible = self.isKeyboardVisible
+                if keyboardVisible != wasKeyboardVisible {
+                    didToggleKeyboard = true
+                    self.isKeyboardVisible = keyboardVisible
+                    let horizontalPadding: CGFloat = keyboardVisible ? 12 : 20
+                    let bottomPadding: CGFloat = keyboardVisible ? 8 : 28
+                    self.inputBarVC.updateLayout(
+                        horizontalPadding: horizontalPadding,
+                        bottomPadding: bottomPadding,
+                        animationDuration: self.keyboardAnimationDuration
+                    )
+                    needsLayout = true
+                }
+            }
+
+            if abs(self.inputBarBottomConstraint.constant - newInputBarConstant) > 0.5 {
+                self.inputBarBottomConstraint.constant = newInputBarConstant
+                needsLayout = true
+            }
+
+            let targetBarHeight: CGFloat
+            if didToggleKeyboard {
+                let bottomPadding: CGFloat = keyboardVisible ? 8 : 28
+                targetBarHeight = DebugInputBarMetrics.inputHeight + DebugInputBarMetrics.topPadding + bottomPadding
+            } else {
+                targetBarHeight = self.inputBarVC.preferredHeight(for: self.view.bounds.width)
+            }
+            if targetBarHeight > 1,
+               abs(self.inputBarHeightConstraint.constant - targetBarHeight) > 0.5 {
+                self.inputBarHeightConstraint.constant = targetBarHeight
+                needsLayout = true
+            }
+
+            if needsLayout {
+                self.view.layoutIfNeeded()
+            }
+
+            let desiredGap: CGFloat = 16
+            let pillFrame = self.computedPillFrameInView()
+            let pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+            let pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
+            let belowPillGap = max(0, self.view.bounds.maxY - pillBottomY)
+            let targetExtraSpacerHeight = self.pixelAlign(desiredGap, scale: scale)
+            let targetBottomSpacerHeight = self.pixelAlign(pillFrame.height, scale: scale)
+            let targetBelowPillHeight = self.pixelAlign(belowPillGap, scale: scale)
+            let targetBottomInset = self.pixelAlign(self.view.bounds.maxY - pillTopY + desiredGap, scale: scale)
+            if self.extraSpacerHeightConstraint.constant != 0 {
+                self.extraSpacerHeightConstraint.constant = 0
+            }
+            if self.bottomSpacerHeightConstraint.constant != 0 {
+                self.bottomSpacerHeightConstraint.constant = 0
+            }
+            if self.belowPillSpacerHeightConstraint.constant != 0 {
+                self.belowPillSpacerHeightConstraint.constant = 0
+            }
+
+            #if DEBUG
+            log("CMUX_CHAT_SPACER keyboard=\(keyboardVisible) pillTop=\(pillTopY) pillBottom=\(pillBottomY) belowGap=\(belowPillGap) extra=\(targetExtraSpacerHeight) red=\(targetBottomSpacerHeight) green=\(targetBelowPillHeight) inputBarFrame=\(self.inputBarVC.view.frame)")
+            #endif
+            if self.scrollView.contentInset.bottom != targetBottomInset {
+                self.scrollView.contentInset.bottom = targetBottomInset
+                self.scrollView.verticalScrollIndicatorInsets.bottom = targetBottomInset
+            }
+
+            self.view.layoutIfNeeded()
+            self.scrollView.layoutIfNeeded()
+
+            let newMaxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height + targetBottomInset)
+            let deltaInset = targetBottomInset - oldBottomInset
+            let deltaPill = pillTopY - oldPillTopY
+            let shouldAdjustOffset = animated || abs(deltaPill) > 0.5 || oldAnchorSample != nil || useTransitionSnapshot
+            if shouldAdjustOffset {
+                let adjustedTop = self.scrollView.adjustedContentInset.top
+                let minY = -adjustedTop
+                let maxY = max(minY, newMaxOffsetY)
+
+                var targetOffsetY = oldOffsetY - deltaPill
+                if !shouldAnchorToBottom,
+                   let oldAnchorSample,
+                   let anchorContentBottom = self.anchorBottomContentY(index: oldAnchorSample.index) {
+                    let desiredAnchorBottomY = pillTopY - oldAnchorSample.gap
+                    targetOffsetY = anchorContentBottom - desiredAnchorBottomY
+                }
+                if shouldAnchorToBottom {
+                    targetOffsetY = newMaxOffsetY
+                }
+
+                targetOffsetY = min(max(targetOffsetY, minY), maxY)
+                targetOffsetY = self.pixelAlign(targetOffsetY, scale: scale)
+                if useTransitionSnapshot, var transition = self.pendingKeyboardTransition, !transition.applied {
+                    transition.applied = true
+                    self.pendingKeyboardTransition = transition
+                }
+                self.scrollView.contentOffset.y = targetOffsetY
+                self.lastOffsetDebug = String(format: "off=%.1f->%.1f", oldOffsetY, targetOffsetY)
+                self.lastPillShiftDebug = String(format: "Δpill=%.1f Δinset=%.1f", deltaPill, deltaInset)
+
+                var gapDelta: CGFloat = 0
+                if !shouldAnchorToBottom,
+                   let oldAnchorSample,
+                   let newAnchorSample = self.anchorSample(index: oldAnchorSample.index, pillTopY: pillTopY) {
+                    gapDelta = newAnchorSample.gap - oldAnchorSample.gap
+                }
+                let gapIndex = oldAnchorSample?.index ?? -1
+                self.lastGapDebug = String(format: "gapΔ=%.1f idx=%d", gapDelta, gapIndex)
+            }
+
+            #if DEBUG
+            let overlayWidth = self.view.bounds.width
+            let redTop = pillTopY
+            self.debugYellowOverlay.frame = CGRect(
+                x: 0,
+                y: redTop - targetExtraSpacerHeight,
+                width: overlayWidth,
+                height: targetExtraSpacerHeight
+            )
+            self.debugRedOverlay.frame = CGRect(
+                x: 0,
+                y: redTop,
+                width: overlayWidth,
+                height: targetBottomSpacerHeight
+            )
+            self.debugGreenOverlay.frame = CGRect(
+                x: 0,
+                y: redTop + targetBottomSpacerHeight,
+                width: overlayWidth,
+                height: targetBelowPillHeight
+            )
+            let overlayLabelWidth: CGFloat = 140
+            let overlayLabelHeight: CGFloat = 18
+            self.debugYellowLabel.text = String(format: "yellow=%.1f", targetExtraSpacerHeight)
+            self.debugYellowLabel.frame = CGRect(
+                x: 8,
+                y: max(0, redTop - targetExtraSpacerHeight - overlayLabelHeight),
+                width: overlayLabelWidth,
+                height: overlayLabelHeight
+            )
+            self.debugRedLabel.text = String(format: "red=%.1f", targetBottomSpacerHeight)
+            self.debugRedLabel.frame = CGRect(
+                x: 8,
+                y: redTop + 2,
+                width: overlayLabelWidth,
+                height: overlayLabelHeight
+            )
+            self.debugGreenLabel.text = String(format: "green=%.1f", targetBelowPillHeight)
+            self.debugGreenLabel.frame = CGRect(
+                x: 8,
+                y: redTop + targetBottomSpacerHeight + 2,
+                width: overlayLabelWidth,
+                height: overlayLabelHeight
+            )
+            let lastMessageFrame = self.lastMessageFrameInView()
+            let gapToPill = lastMessageFrame == .zero ? 0 : (pillTopY - lastMessageFrame.maxY)
+            let expectedHeight = self.inputBarVC.contentTopInset + self.inputBarVC.contentBottomInset + DebugInputBarMetrics.inputHeight
+            let extra = max(0, self.inputBarVC.view.bounds.height - expectedHeight)
+            let measured = self.inputBarVC.pillMeasuredFrame
+            let shiftSummary = self.lastKeyboardShiftSummary ?? "Δmsg=-- Δpill=-- Δgap=-- Δanch=-- Δvis=--"
+            let offsetDebug = self.lastOffsetDebug ?? "off=--"
+            let gapDebug = self.lastGapDebug ?? "gapΔ=--"
+            let pillShiftDebug = self.lastPillShiftDebug ?? "Δpill=--"
+            let pillTopClosed = self.lastPillTopYClosed ?? 0
+            let pillTopOpen = self.lastPillTopYOpen ?? 0
+            let pillDelta = self.lastPillTopYClosed == nil || self.lastPillTopYOpen == nil ? 0 : (pillTopOpen - pillTopClosed)
+            let anchorIndex = self.lastAnchorIndexUsed ?? (self.anchorCandidateIndex(pillTopY: pillTopY) ?? -1)
+            let anchorGap = self.anchorSample(index: anchorIndex, pillTopY: pillTopY)?.gap ?? 0
+            self.debugInfoLabel.text = String(
+                format: "barH=%.1f pillY=%.1f pillH=%.1f gap=%.1f\nmeasY=%.1f measH=%.1f extra=%.1f below=%.1f\nkbdH=%.1f kbdMinY=%.1f kbdVis=%@ dist=%.1f anchor=%@ idx=%d aGap=%.1f %@ %@ %@ pΔ=%.1f",
+                self.inputBarVC.view.bounds.height,
+                pillTopY,
+                self.inputBarVC.pillHeight,
+                gapToPill,
+                measured.minY,
+                measured.height,
+                extra,
+                belowPillGap,
+                keyboardOverlap,
+                keyboardFrame.minY,
+                keyboardVisible ? "1" : "0",
+                rawDistanceFromBottom,
+                shouldAnchorToBottom ? "1" : "0",
+                anchorIndex,
+                anchorGap,
+                offsetDebug,
+                gapDebug,
+                pillShiftDebug,
+                shiftSummary,
+                pillDelta
+            )
+            self.extraSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.extraSpacerView.bounds.height, 0)
+            self.bottomSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.bottomSpacerView.bounds.height, 0)
+            self.belowPillSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.belowPillSpacerView.bounds.height, 0)
+            let labelWidth = self.view.bounds.width - 16
+            self.debugInfoLabel.frame = CGRect(x: 8, y: 8, width: labelWidth, height: 60)
+            self.debugInfoLabel.sizeToFit()
+            let labelHeight = min(60, max(36, self.debugInfoLabel.bounds.height + 8))
+            self.debugInfoLabel.frame = CGRect(x: 8, y: 8, width: labelWidth, height: labelHeight)
+            self.view.bringSubviewToFront(self.debugYellowOverlay)
+            self.view.bringSubviewToFront(self.debugRedOverlay)
+            self.view.bringSubviewToFront(self.debugGreenOverlay)
+            if lastMessageFrame != .zero {
+                self.debugMessageLine.isHidden = false
+                self.debugMessageLine.frame = CGRect(
+                    x: 0,
+                    y: lastMessageFrame.maxY,
+                    width: overlayWidth,
+                    height: 1
+                )
+            } else {
+                self.debugMessageLine.isHidden = true
+            }
+            self.debugPillLine.frame = CGRect(
+                x: 0,
+                y: pillTopY,
+                width: overlayWidth,
+                height: 1
+            )
+            self.view.bringSubviewToFront(self.debugMessageLine)
+            self.view.bringSubviewToFront(self.debugPillLine)
+            self.view.bringSubviewToFront(self.debugYellowLabel)
+            self.view.bringSubviewToFront(self.debugRedLabel)
+            self.view.bringSubviewToFront(self.debugGreenLabel)
+            self.view.bringSubviewToFront(self.debugInfoLabel)
+            #endif
+        }
+
+        if animated {
+            UIView.animate(
+                withDuration: keyboardAnimationDuration,
+                delay: 0,
+                options: keyboardAnimationOptions,
+                animations: applyUpdates
+            )
+        } else {
+            applyUpdates()
+        }
+    }
+
+    @objc private func handleKeyboardFrameChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo else { return }
+        let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let curveRaw = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? UIView.AnimationCurve.easeInOut.rawValue
+        let curve = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
+        keyboardAnimationDuration = duration
+        keyboardAnimationOptions = [curve, .beginFromCurrentState, .allowUserInteraction]
+        pendingKeyboardWillChange(userInfo)
+        prepareKeyboardTransitionSnapshot()
+
+        #if DEBUG
+        let before = captureDebugSample()
+        pendingKeyboardSample = before
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) { [weak self] in
+            guard let self else { return }
+            guard let start = self.pendingKeyboardSample else { return }
+            let after = self.captureDebugSample(anchorIndexOverride: start.anchorIndex)
+            let deltaMsg = after.messageBottomY - start.messageBottomY
+            let deltaPill = after.pillTopY - start.pillTopY
+            let deltaGap = after.gap - start.gap
+            let deltaVis = after.visibleAnchorY - start.visibleAnchorY
+            let deltaAnchorGap = after.anchorGap - start.anchorGap
+            let syncOk = abs(deltaAnchorGap) <= 1
+                && abs(deltaVis - deltaPill) <= 1
+            self.lastKeyboardShiftSummary = String(
+                format: "Δmsg=%.1f Δpill=%.1f Δgap=%.1f Δanch=%.1f Δvis=%.1f %@",
+                deltaMsg,
+                deltaPill,
+                deltaGap,
+                deltaAnchorGap,
+                deltaVis,
+                syncOk ? "OK" : "OFF"
+            )
+            self.pendingKeyboardTransition = nil
+        }
+        #endif
+
+        updateBottomInsetsForKeyboard(animated: true)
+        pendingKeyboardTransition = nil
+    }
+
+    private func pendingKeyboardWillChange(_ userInfo: [AnyHashable: Any]) {
+        guard let endValue = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let endFrame = endValue.cgRectValue
+        let endInView = view.convert(endFrame, from: nil)
+        let viewMaxY = view.bounds.maxY
+        let endTop = min(viewMaxY, endInView.minY)
+        let willBeVisible = endTop < viewMaxY - 1
+        let scale = max(1, view.traitCollection.displayScale)
+        let pillFrame = inputBarVC.pillFrameInView
+        let pillTopY = pixelAlign(inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+        if willBeVisible {
+            lastPillTopYOpen = pillTopY
+        } else {
+            lastPillTopYClosed = pillTopY
+        }
+    }
+
+    private func prepareKeyboardTransitionSnapshot() {
+        view.layoutIfNeeded()
+        let scale = max(1, view.traitCollection.displayScale)
+        let currentPillTopY = self.currentPillTopY(scale: scale)
+        let previousPillTopY = previousLayoutPillTopY
+        let oldPillTopY: CGFloat
+        if let previousPillTopY, abs(currentPillTopY - previousPillTopY) > 1 {
+            oldPillTopY = previousPillTopY
+        } else {
+            oldPillTopY = currentPillTopY
+        }
+        let oldOffsetY = scrollView.contentOffset.y
+        let oldMaxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        let distanceFromBottom = max(0, oldMaxOffsetY - oldOffsetY)
+        let wasAtBottom = distanceFromBottom <= 1
+        pendingKeyboardTransition = KeyboardTransition(
+            oldPillTopY: oldPillTopY,
+            oldOffsetY: oldOffsetY,
+            distanceFromBottom: distanceFromBottom,
+            wasAtBottom: wasAtBottom,
+            applied: false
+        )
+    }
+
+    private func makeDebugOverlayView(color: UIColor) -> UIView {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = color.withAlphaComponent(0.2)
+        view.layer.borderWidth = 1
+        view.layer.borderColor = color.cgColor
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    private func makeDebugOverlayLabel(color: UIColor) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = true
+        label.font = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+        label.textColor = .black
+        label.backgroundColor = color.withAlphaComponent(0.25)
+        label.textAlignment = .left
+        label.layer.borderWidth = 1
+        label.layer.borderColor = color.cgColor
+        label.layer.cornerRadius = 4
+        label.layer.masksToBounds = true
+        label.isUserInteractionEnabled = false
+        return label
+    }
+
+    private func makeDebugLineView(color: UIColor) -> UIView {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.backgroundColor = color
+        view.layer.borderWidth = 0
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    private func makeSpacerLabel(color: UIColor) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+        label.textColor = .black
+        label.backgroundColor = color.withAlphaComponent(0.2)
+        label.layer.borderWidth = 1
+        label.layer.borderColor = color.cgColor
+        label.layer.cornerRadius = 3
+        label.layer.masksToBounds = true
+        label.isUserInteractionEnabled = false
+        return label
+    }
+
+    private func pixelAlign(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+        let scaled = (value * scale).rounded()
+        return scaled / scale
+    }
+
+    private func currentPillTopY(scale: CGFloat) -> CGFloat {
+        let pillFrame = computedPillFrameInView()
+        return pixelAlign(inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+    }
+
+    private func computedPillFrameInView() -> CGRect {
+        let viewHeight = inputBarVC.view.bounds.height
+        guard viewHeight > 0 else { return .zero }
+        let contentTopInset = inputBarVC.contentTopInset
+        let contentBottomInset = inputBarVC.contentBottomInset
+        let expectedHeight = contentTopInset + contentBottomInset + DebugInputBarMetrics.inputHeight
+        let extra = max(0, viewHeight - expectedHeight)
+        let offset = extra / 2
+        let topLimit = contentTopInset + offset
+        let bottomLimit = max(topLimit, viewHeight - contentBottomInset - offset)
+        let availableHeight = max(0, bottomLimit - topLimit)
+        let height = min(DebugInputBarMetrics.inputHeight, availableHeight)
+        return CGRect(x: 0, y: topLimit, width: inputBarVC.view.bounds.width, height: height)
     }
 
     private func maybeScrollToBottomIfNeeded() {
@@ -351,23 +991,38 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         nav.interactivePopGestureRecognizer?.delegate = nil
     }
 
+    private func addMessageBubble(_ message: Message, showTail: Bool, showTimestamp: Bool) {
+        let bubble = MessageBubble(
+            message: message,
+            showTail: showTail,
+            showTimestamp: showTimestamp
+        )
+        let host = UIHostingController(rootView: bubble)
+        host.view.isAccessibilityElement = true
+        host.view.accessibilityIdentifier = "chat.message.\(message.id.uuidString)"
+        if #available(iOS 16.0, *) {
+            host.safeAreaRegions = []
+        }
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+
+        addChild(host)
+        if let previousLast = contentStack.arrangedSubviews.dropLast(3).last {
+            contentStack.setCustomSpacing(contentStack.spacing, after: previousLast)
+        }
+        let insertIndex = max(contentStack.arrangedSubviews.count - 3, 0)
+        contentStack.insertArrangedSubview(host.view, at: insertIndex)
+        contentStack.setCustomSpacing(0, after: host.view)
+        host.didMove(toParent: self)
+    }
+
     private func populateMessages() {
         for (index, message) in messages.enumerated() {
-            let bubble = MessageBubble(
-                message: message,
+            addMessageBubble(
+                message,
                 showTail: index == messages.count - 1,
                 showTimestamp: index == 0
             )
-            let host = UIHostingController(rootView: bubble)
-            if #available(iOS 16.0, *) {
-                host.safeAreaRegions = []
-            }
-            host.view.backgroundColor = .clear
-            host.view.translatesAutoresizingMaskIntoConstraints = false
-
-            addChild(host)
-            contentStack.addArrangedSubview(host.view)
-            host.didMove(toParent: self)
         }
     }
 
@@ -393,6 +1048,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     @objc private func dismissKeyboard() {
+        inputBarVC.setFocused(false)
         view.endEditing(true)
     }
 
@@ -423,17 +1079,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         messages.append(message)
         inputBarVC.clearText()
 
-        let bubble = MessageBubble(message: message, showTail: true, showTimestamp: false)
-        let host = UIHostingController(rootView: bubble)
-        if #available(iOS 16.0, *) {
-            host.safeAreaRegions = []
-        }
-        host.view.backgroundColor = .clear
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-
-        addChild(host)
-        contentStack.addArrangedSubview(host.view)
-        host.didMove(toParent: self)
+        addMessageBubble(message, showTail: true, showTimestamp: false)
 
         DispatchQueue.main.async {
             self.scrollToBottom(animated: true)
@@ -475,6 +1121,121 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             log("CMUX_CHAT_MSG \(reason)   [\(index)] frame: \(frame)")
         }
     }
+
+    private func lastMessageFrameInView() -> CGRect {
+        let messageViews = contentStack.arrangedSubviews.dropLast(3)
+        guard let lastMessageView = messageViews.last else { return .zero }
+        return contentStack.convert(lastMessageView.frame, to: view)
+    }
+
+    private struct DebugShiftSample {
+        let messageBottomY: CGFloat
+        let visibleAnchorY: CGFloat
+        let visibleAnchorIndex: Int
+        let pillTopY: CGFloat
+        let gap: CGFloat
+        let contentOffsetY: CGFloat
+        let anchorIndex: Int
+        let anchorGap: CGFloat
+    }
+
+    private func captureDebugSample(anchorIndexOverride: Int? = nil) -> DebugShiftSample {
+        let scale = max(1, view.traitCollection.displayScale)
+        let pillFrame = inputBarVC.pillFrameInView
+        let pillTopY = pixelAlign(inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+        let lastFrame = lastMessageFrameInView()
+        let messageBottom = lastFrame == .zero ? 0 : pixelAlign(lastFrame.maxY, scale: scale)
+        let gap = lastFrame == .zero ? 0 : (pillTopY - messageBottom)
+        let visibleAnchor = visibleMessageAnchor()
+        let anchorIndex = anchorIndexOverride ?? (anchorCandidateIndex(pillTopY: pillTopY) ?? -1)
+        let anchorGap = anchorSample(index: anchorIndex, pillTopY: pillTopY)?.gap ?? 0
+        return DebugShiftSample(
+            messageBottomY: messageBottom,
+            visibleAnchorY: visibleAnchor.y,
+            visibleAnchorIndex: visibleAnchor.index,
+            pillTopY: pillTopY,
+            gap: gap,
+            contentOffsetY: scrollView.contentOffset.y,
+            anchorIndex: anchorIndex,
+            anchorGap: anchorGap
+        )
+    }
+
+    private func visibleMessageAnchor() -> (index: Int, y: CGFloat) {
+        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        guard !messageViews.isEmpty else { return (index: -1, y: 0) }
+        let visibleRect = view.bounds
+        var bestIndex: Int = -1
+        var bestY: CGFloat = 0
+        for (index, subview) in messageViews.enumerated() {
+            let frame = contentStack.convert(subview.frame, to: view)
+            if frame.intersects(visibleRect) {
+                bestIndex = index
+                bestY = frame.minY
+                break
+            }
+        }
+        if bestIndex == -1, let last = messageViews.last {
+            let frame = contentStack.convert(last.frame, to: view)
+            bestIndex = messageViews.count - 1
+            bestY = frame.minY
+        }
+        let scale = max(1, view.traitCollection.displayScale)
+        return (index: bestIndex, y: pixelAlign(bestY, scale: scale))
+    }
+
+    private func anchorCandidateIndex(pillTopY: CGFloat) -> Int? {
+        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        guard !messageViews.isEmpty else { return nil }
+        var bestIndex: Int?
+        var bestMaxY: CGFloat = -.greatestFiniteMagnitude
+        for (index, subview) in messageViews.enumerated() {
+            let frame = contentStack.convert(subview.frame, to: view)
+            guard frame.maxY <= pillTopY - 1 else { continue }
+            if frame.maxY > bestMaxY {
+                bestMaxY = frame.maxY
+                bestIndex = index
+            }
+        }
+        if let bestIndex {
+            return bestIndex
+        }
+        return messageViews.count - 1
+    }
+
+    private func anchorSample(index: Int, pillTopY: CGFloat) -> AnchorSample? {
+        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        guard index >= 0, index < messageViews.count else { return nil }
+        let frame = contentStack.convert(messageViews[index].frame, to: view)
+        let scale = max(1, view.traitCollection.displayScale)
+        let bottomY = pixelAlign(frame.maxY, scale: scale)
+        let gap = pillTopY - bottomY
+        return AnchorSample(index: index, bottomY: bottomY, gap: gap)
+    }
+
+    private func anchorBottomContentY(index: Int) -> CGFloat? {
+        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        guard index >= 0, index < messageViews.count else { return nil }
+        let frame = messageViews[index].frame
+        let contentY = frame.maxY + contentStack.frame.minY
+        let scale = max(1, view.traitCollection.displayScale)
+        return pixelAlign(contentY, scale: scale)
+    }
+
+    private struct AnchorSample {
+        let index: Int
+        let bottomY: CGFloat
+        let gap: CGFloat
+    }
+
+    private struct KeyboardTransition {
+        let oldPillTopY: CGFloat
+        let oldOffsetY: CGFloat
+        let distanceFromBottom: CGFloat
+        let wasAtBottom: Bool
+        var applied: Bool
+    }
+
 }
 
 private final class TopFadeView: UIView {

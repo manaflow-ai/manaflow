@@ -3,6 +3,15 @@
 set -e
 cd "$(dirname "$0")/.."
 
+SIMULATOR_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --simulator-only|--sim-only)
+            SIMULATOR_ONLY=1
+            ;;
+    esac
+done
+
 xcodegen generate
 
 # Build for simulator
@@ -15,6 +24,11 @@ xcodebuild -scheme cmux -sdk iphonesimulator -configuration Debug \
 echo "📲 Installing on simulator..."
 xcrun simctl install booted "build/Build/Products/Debug-iphonesimulator/cmux DEV.app" 2>/dev/null || true
 xcrun simctl launch booted dev.cmux.app.dev 2>/dev/null || true
+
+if [ "$SIMULATOR_ONLY" -eq 1 ]; then
+    echo "✅ Done! (simulator only)"
+    exit 0
+fi
 
 # Check for connected device
 DEVICE_ID=$(xcrun xctrace list devices 2>&1 | grep -E "iPhone.*\([0-9]+\.[0-9]+\)" | grep -v Simulator | head -1 | grep -oE '\([A-F0-9-]+\)' | tr -d '()')

@@ -69,3 +69,14 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+  cmuxUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - cmuxUITests
+    dependencies:
+      - target: cmux
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.cmux.app.dev.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
