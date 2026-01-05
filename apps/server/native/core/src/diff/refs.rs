@@ -16,12 +16,20 @@ fn oid_from_rev_parse(repo: &Repository, rev: &str) -> anyhow::Result<ObjectId> 
     if let Ok(oid) = ObjectId::from_hex(rev.as_bytes()) {
         return Ok(oid);
     }
-    let candidates = [
+
+    let mut candidates = vec![
         rev.to_string(),
         format!("refs/remotes/origin/{}", rev),
         format!("refs/heads/{}", rev),
         format!("refs/tags/{}", rev),
     ];
+
+    // If rev already starts with "origin/", also try refs/remotes/{rev}
+    // to avoid creating "refs/remotes/origin/origin/branch"
+    if let Some(stripped) = rev.strip_prefix("origin/") {
+        candidates.insert(1, format!("refs/remotes/origin/{}", stripped));
+    }
+
     for cand in candidates {
         if let Ok(r) = repo.find_reference(&cand) {
             if let Some(id) = r.target().try_id() {
