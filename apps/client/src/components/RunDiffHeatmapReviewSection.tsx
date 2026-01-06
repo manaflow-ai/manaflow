@@ -9,6 +9,7 @@ import {
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import type { HeatmapModelOptionValue, TooltipLanguageValue } from "@/lib/heatmap-settings";
 import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
+import { kitties } from "./kitties";
 
 export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
@@ -139,11 +140,26 @@ export function RunDiffHeatmapReviewSection(
 
   const combinedDiffs = combinedDiffsRef.current;
 
+  const kitty = useMemo(
+    () => kitties[Math.floor(Math.random() * kitties.length)],
+    []
+  );
+
   if (combinedDiffs.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          No changes to display
+      <div className="grow bg-white dark:bg-neutral-900">
+        <div className="flex flex-col">
+          <hr className="border-neutral-200 dark:border-neutral-800" />
+          <div className="px-3 py-6 text-center">
+            <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+              You've reached the end of the diff!
+            </span>
+            <div className="grid place-content-center">
+              <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                {kitty}
+              </pre>
+            </div>
+          </div>
         </div>
       </div>
     );

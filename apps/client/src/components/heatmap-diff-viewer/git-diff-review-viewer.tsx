@@ -2377,6 +2377,7 @@ export function GitDiffHeatmapReviewViewer({
               />
             );
           })}
+          <hr className="border-neutral-200 dark:border-neutral-800" />
           <div className="h-[70dvh] w-full">
             <div className="px-3 py-6 text-center">
               <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
