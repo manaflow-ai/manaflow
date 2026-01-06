@@ -37,7 +37,7 @@ private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {}
 }
 
-private final class Fix1MainViewController: UIViewController, UIScrollViewDelegate {
+private final class Fix1MainViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     private var scrollView: UIScrollView!
     private var contentStack: UIStackView!
     private var bottomSpacerView: UIView!
@@ -147,6 +147,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var pendingInteractiveDismissalAnchor: InteractiveDismissalAnchor?
     private let interactiveDismissalActivationDelta: CGFloat = 0
     private var lastKeyboardOverlap: CGFloat?
+    private var didConfigureInteractivePopGesture = false
 #if DEBUG
     private let uiTestFakeKeyboardEnabled: Bool = {
         let value = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD"] ?? "0"
@@ -1455,9 +1456,25 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func enableInteractivePopGesture() {
-        guard let nav = navigationController else { return }
-        nav.interactivePopGestureRecognizer?.isEnabled = true
-        nav.interactivePopGestureRecognizer?.delegate = nil
+        guard let nav = navigationController,
+              let edgePan = nav.interactivePopGestureRecognizer else { return }
+        edgePan.isEnabled = true
+        if !didConfigureInteractivePopGesture {
+            didConfigureInteractivePopGesture = true
+            scrollView.panGestureRecognizer.require(toFail: edgePan)
+            edgePan.delegate = self
+        }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard let edgePan = navigationController?.interactivePopGestureRecognizer else { return false }
+        let isEdgePan = gestureRecognizer === edgePan || otherGestureRecognizer === edgePan
+        let isScrollPan = gestureRecognizer === scrollView.panGestureRecognizer
+            || otherGestureRecognizer === scrollView.panGestureRecognizer
+        return isEdgePan && isScrollPan
     }
 
     private func addMessageBubble(_ message: Message, showTail: Bool, showTimestamp: Bool) {
