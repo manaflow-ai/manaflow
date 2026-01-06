@@ -3965,9 +3965,9 @@ async fn run_gh_command(args: &[String], stdin: Option<&str>) -> (i32, String, S
     }
 }
 
-/// Stateful filter for DA (Device Attributes) sequences.
+/// Stateful filter for DA (Device Attributes) and DSR (Device Status Report) sequences.
 ///
-/// This filter removes DA1 and DA2 query/response sequences from terminal output
+/// This filter removes DA/DSR query/response sequences from terminal output
 /// before forwarding to clients. It handles sequences that may be split across
 /// multiple chunks by buffering incomplete escape sequences.
 ///
@@ -3976,6 +3976,8 @@ async fn run_gh_command(args: &[String], stdin: Option<&str>) -> (i32, String, S
 /// - DA2 query: ESC [ > c or ESC [ > 0 c
 /// - DA1 response: ESC [ ? params c
 /// - DA2 response: ESC [ > params c
+/// - DSR query: ESC [ 5 n or ESC [ 6 n
+/// - DSR response: ESC [ 0 n or ESC [ row ; col R
 #[derive(Default)]
 pub struct DaFilter {
     /// Buffer for incomplete escape sequences
@@ -4040,13 +4042,18 @@ impl DaFilter {
                     match byte {
                         b'?' => self.state = DaFilterState::CsiQuestion,
                         b'>' => self.state = DaFilterState::CsiGreater,
-                        b'0' => self.state = DaFilterState::InParams,
                         b'c' => {
                             // DA1 query: ESC [ c - filter it out
                             self.buffer.clear();
                             self.state = DaFilterState::Normal;
                         }
-                        // Any other character means it's not a DA sequence
+                        b'n' | b'R' => {
+                            // DSR/CPR with no params - filter it out
+                            self.buffer.clear();
+                            self.state = DaFilterState::Normal;
+                        }
+                        _ if byte.is_ascii_digit() => self.state = DaFilterState::InParams,
+                        // Any other character means it's not a DA/DSR sequence
                         _ => {
                             result.extend(&self.buffer);
                             self.buffer.clear();
@@ -4056,15 +4063,15 @@ impl DaFilter {
                 }
 
                 DaFilterState::CsiQuestion => {
-                    if byte == b'c' {
-                        // DA1 response: ESC [ ? params c - filter it out
+                    if byte == b'c' || byte == b'n' {
+                        // DA1/DSR response: ESC [ ? params c/n - filter it out
                         self.buffer.clear();
                         self.state = DaFilterState::Normal;
                     } else if byte.is_ascii_digit() || byte == b';' {
                         // Continue accumulating params
                         self.buffer.push(byte);
                     } else {
-                        // Not a DA1 response (e.g., ESC[?25h for cursor)
+                        // Not a DA/DSR response (e.g., ESC[?25h for cursor)
                         // Flush buffer INCLUDING the current byte
                         result.extend(&self.buffer);
                         result.push(byte);
@@ -4091,15 +4098,15 @@ impl DaFilter {
                 }
 
                 DaFilterState::InParams => {
-                    if byte == b'c' {
-                        // DA1 query with param: ESC [ 0 c - filter it out
+                    if byte == b'c' || byte == b'n' || byte == b'R' {
+                        // DA/DSR query/response with params - filter it out
                         self.buffer.clear();
                         self.state = DaFilterState::Normal;
                     } else if byte.is_ascii_digit() || byte == b';' {
                         // Continue accumulating params
                         self.buffer.push(byte);
                     } else {
-                        // Not a DA sequence, flush buffer INCLUDING the current byte
+                        // Not a DA/DSR sequence, flush buffer INCLUDING the current byte
                         result.extend(&self.buffer);
                         result.push(byte);
                         self.buffer.clear();
@@ -4121,7 +4128,7 @@ impl DaFilter {
     }
 }
 
-/// Stateless filter for DA queries (for simple cases where sequences won't be split).
+/// Stateless filter for DA/DSR queries (for simple cases where sequences won't be split).
 /// For streaming use cases, prefer `DaFilter` which handles split sequences.
 pub fn filter_da_queries(data: &[u8]) -> Vec<u8> {
     let mut filter = DaFilter::new();
@@ -6300,6 +6307,22 @@ mod tests {
     fn filter_da_queries_removes_da2_response() {
         // DA2 response: ESC [ > 0 ; 276 ; 0 c
         let input = b"hello\x1b[>0;276;0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_dsr_query() {
+        // DSR query: ESC [ 6 n
+        let input = b"hello\x1b[6nworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_cpr_response() {
+        // CPR response: ESC [ row ; col R
+        let input = b"hello\x1b[12;34Rworld";
         let filtered = filter_da_queries(input);
         assert_eq!(filtered, b"helloworld");
     }

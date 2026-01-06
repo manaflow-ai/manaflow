@@ -339,8 +339,8 @@ struct PtySession {
     input_tx: std::sync::mpsc::SyncSender<Vec<u8>>, // Bounded channel for backpressure
     pid: u32,
     metadata: RwLock<Option<serde_json::Value>>,
-    /// DA (Device Attributes) filter to prevent feedback loops with nested terminals.
-    /// Filters DA1/DA2 queries and responses that can cause infinite loops when
+    /// DA/DSR (Device Attributes/Status) filter to prevent feedback loops with nested terminals.
+    /// Filters DA/DSR queries and responses that can cause infinite loops when
     /// running terminal emulators inside terminal emulators.
     da_filter: Mutex<DaFilter>,
     /// Virtual terminal emulator for tracking terminal state.
@@ -746,14 +746,8 @@ async fn spawn_pty_reader(
                 read_count += 1;
                 total_bytes_read += n;
 
-                // Apply DaFilter to raw bytes to remove DA query/response sequences
-                let filtered_bytes = {
-                    let mut filter = session.da_filter.lock();
-                    filter.filter(&buf[..n])
-                };
-
-                // Process through virtual terminal emulator for state tracking
-                session.process_terminal(&filtered_bytes);
+                // Process raw bytes through virtual terminal emulator for state tracking
+                session.process_terminal(&buf[..n]);
                 let responses = session.drain_terminal_responses();
                 for response in responses {
                     if let Err(error) = session.write_input_bytes(response) {
@@ -763,6 +757,12 @@ async fn spawn_pty_reader(
                         );
                     }
                 }
+
+                // Apply DaFilter to raw bytes to remove DA/DSR query/response sequences
+                let filtered_bytes = {
+                    let mut filter = session.da_filter.lock();
+                    filter.filter(&buf[..n])
+                };
 
                 // Combine any leftover bytes from previous read with filtered data
                 utf8_buffer.extend_from_slice(&filtered_bytes);
