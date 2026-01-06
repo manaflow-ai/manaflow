@@ -540,7 +540,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
 
         // Safe area already accounts for the navigation bar; add a small padding below it.
-        let newTopInset = safeTop + 8
+        let newTopInset = safeTop + 46
 
         log("updateScrollViewInsets:")
         log("  safeTop: \(safeTop)")
