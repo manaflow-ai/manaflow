@@ -139,6 +139,33 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var lastPillTopYClosed: CGFloat?
     private var lastPillTopYOpen: CGFloat?
     private var pendingKeyboardTransition: KeyboardTransition?
+    private var interactiveDismissalAnchor: InteractiveDismissalAnchor?
+    private var isInteractiveDismissalActive = false
+    private var pendingInteractiveDismissal = false
+    private var pendingInteractiveDismissalStartOverlap: CGFloat?
+    private var interactiveDismissalStartOverlap: CGFloat?
+    private var pendingInteractiveDismissalAnchor: InteractiveDismissalAnchor?
+    private let interactiveDismissalActivationDelta: CGFloat = 0
+    private var lastKeyboardOverlap: CGFloat?
+#if DEBUG
+    private let uiTestFakeKeyboardEnabled: Bool = {
+        let value = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD"] ?? "0"
+        return value == "1" || value.lowercased() == "true"
+    }()
+    private let uiTestFakeKeyboardInitialOverlap: CGFloat = {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD_INITIAL_OVERLAP"],
+              let value = Double(raw) else {
+            return 0
+        }
+        return CGFloat(max(0, value))
+    }()
+    private var uiTestKeyboardOverlap: CGFloat?
+    private var uiTestInteractiveDismissalActive = false
+    private let uiTestKeyboardStep: CGFloat = 24
+    private var uiTestKeyboardStepDownButton: UIButton?
+    private var uiTestKeyboardStepUpButton: UIButton?
+    private var uiTestLastDismissTranslation: CGFloat = 0
+#endif
 
     init(messages: [Message]) {
         self.messages = messages
@@ -169,6 +196,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         populateMessages()
 
         applyFix1()
+        #if DEBUG
+        setupUiTestKeyboardControlsIfNeeded()
+        #endif
 
         log("🚀 viewDidLoad complete")
 
@@ -535,7 +565,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         updateTopInsetIfNeeded()
         updateBottomInsetsForKeyboard()
         updateContentMinHeightIfNeeded()
-        clampContentOffsetIfNeeded()
+        clampContentOffsetIfNeeded(keyboardOverlap: currentKeyboardOverlap())
         maybeScrollToBottomIfNeeded()
         let scale = max(1, view.traitCollection.displayScale)
         let pillTopY = currentPillTopY(scale: scale)
@@ -642,9 +672,35 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             self.view.layoutIfNeeded()
             let keyboardFrame = self.view.keyboardLayoutGuide.layoutFrame
             let safeBottom = self.view.window?.safeAreaInsets.bottom ?? self.view.safeAreaInsets.bottom
-            let keyboardOverlap = max(0, keyboardFrame.height - safeBottom)
+            let keyboardOverlap: CGFloat
+            #if DEBUG
+            if let uiTestKeyboardOverlap = self.uiTestKeyboardOverlap {
+                keyboardOverlap = uiTestKeyboardOverlap
+            } else {
+                keyboardOverlap = max(0, keyboardFrame.height - safeBottom)
+            }
+            #else
+            keyboardOverlap = max(0, keyboardFrame.height - safeBottom)
+            #endif
             let keyboardVisible = keyboardOverlap > 1
-            let newInputBarConstant: CGFloat = 0
+            let newInputBarConstant: CGFloat
+            #if DEBUG
+            if self.uiTestKeyboardOverlap != nil {
+                newInputBarConstant = -keyboardOverlap
+            } else {
+                newInputBarConstant = 0
+            }
+            #else
+            newInputBarConstant = 0
+            #endif
+            let keyboardIsMovingDown = self.keyboardIsMovingDown(current: keyboardOverlap)
+            let gestureIsDismissing = self.isDismissingKeyboardGesture()
+            self.updateInteractiveDismissalAnchorIfNeeded(
+                keyboardOverlap: keyboardOverlap,
+                keyboardIsMovingDown: keyboardIsMovingDown,
+                gestureIsDismissing: gestureIsDismissing
+            )
+            self.lastKeyboardOverlap = keyboardOverlap
 
             var needsLayout = false
             var didToggleKeyboard = false
@@ -694,6 +750,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 bottomInset: self.scrollView.contentInset.bottom
             )
             let shouldAnchorToBottom = wasAnchoredToBottom && !fitsAboveInput
+            let isInteractiveDismissal = keyboardOverlap > 1
+                && self.isInteractiveDismissalActive
+                && self.interactiveDismissalAnchor != nil
 
             let desiredGap: CGFloat = 16
             let pillFrame = self.computedPillFrameInView()
@@ -731,20 +790,43 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             let shouldAdjustOffset = animated || abs(deltaPill) > 0.5 || oldAnchorSample != nil || useTransitionSnapshot
             if shouldAdjustOffset {
                 let adjustedTop = self.scrollView.adjustedContentInset.top
-                let minY = -adjustedTop
-                let maxY = max(minY, newMaxOffsetY)
+                var minY = -adjustedTop
+                var maxY = max(minY, newMaxOffsetY)
+                if isInteractiveDismissal {
+                    let slack = self.interactiveDismissalSlack(currentOverlap: keyboardOverlap)
+                    if slack > 0.5 {
+                        minY -= slack
+                        maxY += slack
+                    }
+                }
 
                 var targetOffsetY = oldOffsetY - deltaPill
-                if !shouldAnchorToBottom,
+                if isInteractiveDismissal {
+                    if self.isInteractiveDismissalActive, let anchor = self.interactiveDismissalAnchor {
+                        if anchor.anchorIndex >= 0,
+                           let anchorGap = anchor.anchorGap,
+                           let anchorContentBottom = self.anchorBottomContentY(index: anchor.anchorIndex) {
+                            let desiredAnchorBottomY = pillTopY - anchorGap
+                            targetOffsetY = anchorContentBottom - desiredAnchorBottomY
+                        } else {
+                            let deltaFromStart = pillTopY - anchor.startPillTopY
+                            targetOffsetY = anchor.startOffsetY - deltaFromStart
+                        }
+                    }
+                }
+                if !isInteractiveDismissal,
+                   !shouldAnchorToBottom,
                    let oldAnchorSample,
                    let anchorContentBottom = self.anchorBottomContentY(index: oldAnchorSample.index) {
                     let desiredAnchorBottomY = pillTopY - oldAnchorSample.gap
                     targetOffsetY = anchorContentBottom - desiredAnchorBottomY
                 }
-                if shouldAnchorToBottom {
-                    targetOffsetY = newMaxOffsetY
-                } else if fitsAboveInput {
-                    targetOffsetY = minY
+                if !isInteractiveDismissal {
+                    if shouldAnchorToBottom {
+                        targetOffsetY = newMaxOffsetY
+                    } else if fitsAboveInput {
+                        targetOffsetY = minY
+                    }
                 }
 
                 targetOffsetY = min(max(targetOffsetY, minY), maxY)
@@ -898,8 +980,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
     }
 
-    private func clampContentOffsetIfNeeded() {
-        let bounds = contentOffsetBounds()
+    private func clampContentOffsetIfNeeded(keyboardOverlap: CGFloat? = nil) {
+        let bounds = contentOffsetBounds(keyboardOverlap: keyboardOverlap)
         let minY = bounds.minY
         let maxY = bounds.maxY
         let currentY = scrollView.contentOffset.y
@@ -911,12 +993,12 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
     }
 
-    private func contentOffsetBounds() -> (minY: CGFloat, maxY: CGFloat) {
+    private func contentOffsetBounds(keyboardOverlap: CGFloat? = nil) -> (minY: CGFloat, maxY: CGFloat) {
         let topInset = scrollView.adjustedContentInset.top
         let bottomInset = scrollView.contentInset.bottom
         let contentHeight = naturalContentHeight()
         let boundsHeight = scrollView.bounds.height
-        let minY = -topInset
+        var minY = -topInset
         let maxYRaw = contentHeight - boundsHeight + bottomInset
         let fits = contentFitsAboveInput(
             contentHeight: contentHeight,
@@ -924,7 +1006,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             topInset: topInset,
             bottomInset: bottomInset
         )
-        let maxY = fits ? minY : maxYRaw
+        var maxY = fits ? minY : maxYRaw
+        if let keyboardOverlap, isInteractiveDismissalActive {
+            let slack = interactiveDismissalSlack(currentOverlap: keyboardOverlap)
+            if slack > 0.5 {
+                minY -= slack
+                maxY += slack
+            }
+        }
         return (minY: minY, maxY: maxY)
     }
 
@@ -1078,6 +1167,223 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         return pixelAlign(inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
     }
 
+    #if DEBUG
+    private func setupUiTestKeyboardControlsIfNeeded() {
+        guard uiTestFakeKeyboardEnabled else { return }
+        let stepDown = UIButton(type: .custom)
+        stepDown.translatesAutoresizingMaskIntoConstraints = false
+        stepDown.alpha = 0.01
+        stepDown.accessibilityIdentifier = "chat.fakeKeyboard.stepDown"
+        stepDown.addTarget(self, action: #selector(handleUiTestKeyboardStepDown), for: .touchUpInside)
+        view.addSubview(stepDown)
+        let stepUp = UIButton(type: .custom)
+        stepUp.translatesAutoresizingMaskIntoConstraints = false
+        stepUp.alpha = 0.01
+        stepUp.accessibilityIdentifier = "chat.fakeKeyboard.stepUp"
+        stepUp.addTarget(self, action: #selector(handleUiTestKeyboardStepUp), for: .touchUpInside)
+        view.addSubview(stepUp)
+        uiTestKeyboardStepDownButton = stepDown
+        uiTestKeyboardStepUpButton = stepUp
+
+        NSLayoutConstraint.activate([
+            stepDown.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            stepDown.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            stepDown.widthAnchor.constraint(equalToConstant: 44),
+            stepDown.heightAnchor.constraint(equalToConstant: 44),
+            stepUp.topAnchor.constraint(equalTo: stepDown.bottomAnchor, constant: 8),
+            stepUp.leadingAnchor.constraint(equalTo: stepDown.leadingAnchor),
+            stepUp.widthAnchor.constraint(equalToConstant: 44),
+            stepUp.heightAnchor.constraint(equalToConstant: 44)
+        ])
+
+        if uiTestFakeKeyboardInitialOverlap > 0 {
+            uiTestKeyboardOverlap = uiTestFakeKeyboardInitialOverlap
+            DispatchQueue.main.async { [weak self] in
+                self?.applyUiTestKeyboardOverlap(animated: true)
+            }
+        }
+    }
+
+    @objc private func handleUiTestKeyboardStepDown() {
+        let current = uiTestKeyboardOverlap ?? 0
+        uiTestKeyboardOverlap = max(0, current - uiTestKeyboardStep)
+        applyUiTestKeyboardOverlap(animated: true)
+    }
+
+    @objc private func handleUiTestKeyboardStepUp() {
+        let current = uiTestKeyboardOverlap ?? 0
+        uiTestKeyboardOverlap = current + uiTestKeyboardStep
+        applyUiTestKeyboardOverlap(animated: true)
+    }
+
+    private func applyUiTestKeyboardOverlap(animated: Bool) {
+        uiTestInteractiveDismissalActive = true
+        updateBottomInsetsForKeyboard(animated: animated)
+        uiTestInteractiveDismissalActive = false
+    }
+
+    private func applyUiTestKeyboardDragIfNeeded() {
+        guard scrollView != nil, scrollView.isTracking else { return }
+        guard let overlap = uiTestKeyboardOverlap else { return }
+        let translation = scrollView.panGestureRecognizer.translation(in: view)
+        guard translation.y > 0.1 else { return }
+        let delta = translation.y - uiTestLastDismissTranslation
+        guard abs(delta) > 0.1 else { return }
+        uiTestLastDismissTranslation = translation.y
+        uiTestKeyboardOverlap = max(0, overlap - delta)
+        applyUiTestKeyboardOverlap(animated: false)
+        uiTestLastDismissTranslation = 0
+        scrollView.panGestureRecognizer.setTranslation(.zero, in: view)
+    }
+    #endif
+
+    private func currentKeyboardOverlap() -> CGFloat {
+        #if DEBUG
+        if let uiTestKeyboardOverlap {
+            return uiTestKeyboardOverlap
+        }
+        #endif
+        let keyboardFrame = view.keyboardLayoutGuide.layoutFrame
+        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
+        return max(0, keyboardFrame.height - safeBottom)
+    }
+
+    private func isDismissingKeyboardGesture() -> Bool {
+        guard scrollView != nil else { return false }
+        #if DEBUG
+        if uiTestInteractiveDismissalActive {
+            return true
+        }
+        #endif
+        let translation = scrollView.panGestureRecognizer.translation(in: view)
+        return scrollView.isTracking && translation.y > 0.5
+    }
+
+    private func keyboardIsMoving(current: CGFloat) -> Bool {
+        guard let lastKeyboardOverlap else { return false }
+        return abs(current - lastKeyboardOverlap) > 0.5
+    }
+
+    private func keyboardIsMovingDown(current: CGFloat) -> Bool {
+        guard let lastKeyboardOverlap else { return false }
+        return current < lastKeyboardOverlap - 0.5
+    }
+
+    private func interactiveDismissalSlack(currentOverlap: CGFloat) -> CGFloat {
+        guard isInteractiveDismissalActive else { return 0 }
+        let startOverlap = interactiveDismissalStartOverlap ?? currentOverlap
+        return max(0, startOverlap - currentOverlap)
+    }
+
+    private func makeInteractiveDismissalAnchor(pillTopY: CGFloat) -> InteractiveDismissalAnchor {
+        let visibleAnchor = visibleMessageAnchor()
+        let anchorIndex = anchorCandidateIndex(pillTopY: pillTopY)
+            ?? (visibleAnchor.index >= 0 ? visibleAnchor.index : -1)
+        let anchorGap = anchorIndex >= 0 ? anchorSample(index: anchorIndex, pillTopY: pillTopY)?.gap : nil
+        return InteractiveDismissalAnchor(
+            startOffsetY: scrollView.contentOffset.y,
+            startPillTopY: pillTopY,
+            anchorIndex: anchorIndex,
+            anchorGap: anchorGap
+        )
+    }
+
+    private func updateInteractiveDismissalAnchorIfNeeded(
+        keyboardOverlap: CGFloat,
+        keyboardIsMovingDown: Bool,
+        gestureIsDismissing: Bool
+    ) {
+        if keyboardOverlap <= 1 {
+            interactiveDismissalAnchor = nil
+            isInteractiveDismissalActive = false
+            pendingInteractiveDismissal = false
+            pendingInteractiveDismissalStartOverlap = nil
+            interactiveDismissalStartOverlap = nil
+            pendingInteractiveDismissalAnchor = nil
+            return
+        }
+        let keyboardIsChanging = keyboardIsMoving(current: keyboardOverlap)
+        if gestureIsDismissing {
+            pendingInteractiveDismissal = true
+            if pendingInteractiveDismissalStartOverlap == nil {
+                pendingInteractiveDismissalStartOverlap = lastKeyboardOverlap ?? keyboardOverlap
+            }
+            if interactiveDismissalAnchor == nil {
+                let scale = max(1, view.traitCollection.displayScale)
+                let pillTopY = currentPillTopY(scale: scale)
+                pendingInteractiveDismissalAnchor = makeInteractiveDismissalAnchor(pillTopY: pillTopY)
+            }
+        }
+        let isTrackingForDismiss = scrollView.isTracking || scrollView.isDecelerating || gestureIsDismissing
+        if interactiveDismissalAnchor == nil,
+           keyboardIsMovingDown,
+           (pendingInteractiveDismissal || gestureIsDismissing || isTrackingForDismiss) {
+            let startOverlap = pendingInteractiveDismissalStartOverlap ?? keyboardOverlap
+            let overlapDelta = startOverlap - keyboardOverlap
+            if overlapDelta >= interactiveDismissalActivationDelta {
+                if let pendingAnchor = pendingInteractiveDismissalAnchor {
+                    interactiveDismissalAnchor = pendingAnchor
+                } else {
+                    let scale = max(1, view.traitCollection.displayScale)
+                    let pillTopY = currentPillTopY(scale: scale)
+                    interactiveDismissalAnchor = makeInteractiveDismissalAnchor(pillTopY: pillTopY)
+                }
+                interactiveDismissalStartOverlap = keyboardOverlap
+                pendingInteractiveDismissal = false
+                pendingInteractiveDismissalAnchor = nil
+                pendingInteractiveDismissalStartOverlap = nil
+            }
+        }
+        if let startOverlap = interactiveDismissalStartOverlap,
+           !keyboardIsChanging,
+           !gestureIsDismissing,
+           !scrollView.isTracking,
+           !scrollView.isDecelerating,
+           keyboardOverlap >= startOverlap - 0.5 {
+            interactiveDismissalAnchor = nil
+            interactiveDismissalStartOverlap = nil
+            pendingInteractiveDismissal = false
+            pendingInteractiveDismissalAnchor = nil
+            pendingInteractiveDismissalStartOverlap = nil
+        } else if !gestureIsDismissing,
+                  !scrollView.isTracking,
+                  !scrollView.isDecelerating,
+                  !keyboardIsMovingDown {
+            pendingInteractiveDismissal = false
+            pendingInteractiveDismissalAnchor = nil
+            pendingInteractiveDismissalStartOverlap = nil
+        }
+        isInteractiveDismissalActive = interactiveDismissalAnchor != nil
+    }
+
+    private func applyInteractiveDismissalOffsetIfNeeded(
+        keyboardOverlap: CGFloat
+    ) {
+        guard keyboardOverlap > 1,
+              isInteractiveDismissalActive,
+              let anchor = interactiveDismissalAnchor else { return }
+        let scale = max(1, view.traitCollection.displayScale)
+        let pillTopY = currentPillTopY(scale: scale)
+        if anchor.anchorIndex >= 0,
+           let anchorGap = anchor.anchorGap,
+           let anchorContentBottom = anchorBottomContentY(index: anchor.anchorIndex) {
+            let desiredAnchorBottomY = pillTopY - anchorGap
+            let targetOffsetY = anchorContentBottom - desiredAnchorBottomY
+            let bounds = contentOffsetBounds(keyboardOverlap: keyboardOverlap)
+            let clamped = min(max(targetOffsetY, bounds.minY), bounds.maxY)
+            if abs(scrollView.contentOffset.y - clamped) > 0.5 {
+                scrollView.contentOffset.y = clamped
+            }
+            return
+        }
+
+        let deltaFromStart = pillTopY - anchor.startPillTopY
+        let fallbackOffsetY = anchor.startOffsetY - deltaFromStart
+        if abs(scrollView.contentOffset.y - fallbackOffsetY) > 0.5 {
+            scrollView.contentOffset.y = fallbackOffsetY
+        }
+    }
+
     private func computedPillFrameInView() -> CGRect {
         let viewHeight = inputBarVC.view.bounds.height
         guard viewHeight > 0 else { return .zero }
@@ -1227,25 +1533,84 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+#if DEBUG
+        if uiTestFakeKeyboardEnabled {
+            uiTestLastDismissTranslation = 0
+        }
+#endif
+        let keyboardOverlap = currentKeyboardOverlap()
+        let keyboardIsMovingDown = keyboardIsMovingDown(current: keyboardOverlap)
+        let gestureIsDismissing = isDismissingKeyboardGesture()
+        updateInteractiveDismissalAnchorIfNeeded(
+            keyboardOverlap: keyboardOverlap,
+            keyboardIsMovingDown: keyboardIsMovingDown,
+            gestureIsDismissing: gestureIsDismissing
+        )
+        lastKeyboardOverlap = keyboardOverlap
         if !decelerate {
-            clampContentOffsetIfNeeded()
+            clampContentOffsetIfNeeded(keyboardOverlap: keyboardOverlap)
             logContentGeometry(reason: "scrollEndDrag")
             logVisibleMessages(reason: "scrollEndDrag")
         }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+#if DEBUG
+        if uiTestFakeKeyboardEnabled {
+            applyUiTestKeyboardDragIfNeeded()
+        }
+#endif
+        let keyboardOverlap = currentKeyboardOverlap()
+        let keyboardIsMovingDown = keyboardIsMovingDown(current: keyboardOverlap)
+        let gestureIsDismissing = isDismissingKeyboardGesture()
+        updateInteractiveDismissalAnchorIfNeeded(
+            keyboardOverlap: keyboardOverlap,
+            keyboardIsMovingDown: keyboardIsMovingDown,
+            gestureIsDismissing: gestureIsDismissing
+        )
+        applyInteractiveDismissalOffsetIfNeeded(
+            keyboardOverlap: keyboardOverlap
+        )
+        lastKeyboardOverlap = keyboardOverlap
         logVisibleMessages(reason: "scroll")
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        clampContentOffsetIfNeeded()
+#if DEBUG
+        if uiTestFakeKeyboardEnabled {
+            uiTestLastDismissTranslation = 0
+        }
+#endif
+        let keyboardOverlap = currentKeyboardOverlap()
+        let keyboardIsMovingDown = keyboardIsMovingDown(current: keyboardOverlap)
+        let gestureIsDismissing = isDismissingKeyboardGesture()
+        updateInteractiveDismissalAnchorIfNeeded(
+            keyboardOverlap: keyboardOverlap,
+            keyboardIsMovingDown: keyboardIsMovingDown,
+            gestureIsDismissing: gestureIsDismissing
+        )
+        lastKeyboardOverlap = keyboardOverlap
+        clampContentOffsetIfNeeded(keyboardOverlap: keyboardOverlap)
         logContentGeometry(reason: "scrollEndDecel")
         logVisibleMessages(reason: "scrollEndDecel")
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserScrolled = true
+#if DEBUG
+        if uiTestFakeKeyboardEnabled {
+            uiTestLastDismissTranslation = 0
+        }
+#endif
+        let keyboardOverlap = currentKeyboardOverlap()
+        let keyboardIsMovingDown = keyboardIsMovingDown(current: keyboardOverlap)
+        let gestureIsDismissing = isDismissingKeyboardGesture()
+        updateInteractiveDismissalAnchorIfNeeded(
+            keyboardOverlap: keyboardOverlap,
+            keyboardIsMovingDown: keyboardIsMovingDown,
+            gestureIsDismissing: gestureIsDismissing
+        )
+        lastKeyboardOverlap = keyboardOverlap
     }
 
     private func sendMessage() {
@@ -1403,6 +1768,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let index: Int
         let bottomY: CGFloat
         let gap: CGFloat
+    }
+
+    private struct InteractiveDismissalAnchor {
+        let startOffsetY: CGFloat
+        let startPillTopY: CGFloat
+        let anchorIndex: Int
+        let anchorGap: CGFloat?
     }
 
     private struct KeyboardTransition {
