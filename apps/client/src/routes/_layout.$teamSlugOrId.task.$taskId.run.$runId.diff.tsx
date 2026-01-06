@@ -5,8 +5,10 @@ import type {
   StreamFileState,
   StreamFileStatus,
 } from "@/components/heatmap-diff-viewer";
+import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
+import { DiffViewToggle, type DiffViewMode } from "@/components/diff-view-toggle";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import type { ReviewHeatmapLine } from "@/lib/heatmap";
@@ -330,6 +332,8 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const [viewMode, setViewMode] = useState<DiffViewMode>("diff");
+  const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders. The data is prefetched in the loader.
@@ -903,8 +907,21 @@ function RunDiffPage() {
     [setStreamStateByFile]
   );
 
-  // Auto-trigger the simple review when diff data and settings are ready.
+  // Handler for view mode changes - track when user visits AI review
+  const handleViewModeChange = useCallback((mode: DiffViewMode) => {
+    setViewMode(mode);
+    if (mode === "ai-review" && !hasVisitedAiReview) {
+      setHasVisitedAiReview(true);
+    }
+  }, [hasVisitedAiReview]);
+
+  // Auto-trigger the simple review when diff data and settings are ready,
+  // but ONLY after user has visited the AI review tab (lazy loading).
   useEffect(() => {
+    // Don't start the review until user has visited AI review mode
+    if (!hasVisitedAiReview) {
+      return;
+    }
     if (!primaryRepo || !selectedRun?.newBranch) {
       return;
     }
@@ -937,6 +954,7 @@ function RunDiffPage() {
     diffQuery.dataUpdatedAt,
     diffQuery.isLoading,
     fileDiffsForReview,
+    hasVisitedAiReview,
     heatmapModel,
     heatmapTooltipLanguage,
     headRefForHeatmap,
@@ -1074,8 +1092,14 @@ function RunDiffPage() {
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
             )}
+            <div className="px-3.5 py-2 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 sticky top-[56px] z-[var(--z-sticky-low)]">
+              <DiffViewToggle
+                value={viewMode}
+                onChange={handleViewModeChange}
+              />
+            </div>
             <div
-              className="flex-1 min-h-0 mt-4"
+              className="flex-1 min-h-0"
               style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
             >
               <Suspense
@@ -1088,23 +1112,30 @@ function RunDiffPage() {
                 }
               >
                 {hasDiffSources ? (
-                  <RunDiffHeatmapReviewSection
-                    repoFullName={primaryRepo as string}
-                    additionalRepoFullNames={additionalRepos}
-                    withRepoPrefix={shouldPrefixDiffs}
-                    ref1={baseRef}
-                    ref2={headRef}
-                    onControlsChange={setDiffControls}
-                    streamStateByFile={deferredStreamStateByFile}
-                    heatmapThreshold={heatmapThreshold}
-                    heatmapColors={heatmapColors}
-                    heatmapModel={heatmapModel}
-                    heatmapTooltipLanguage={heatmapTooltipLanguage}
-                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
-                    onHeatmapColorsChange={handleHeatmapColorsChange}
-                    onHeatmapModelChange={handleHeatmapModelChange}
-                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
-                  />
+                  viewMode === "diff" ? (
+                    <MonacoGitDiffViewer
+                      diffs={diffQuery.data ?? []}
+                      onControlsChange={setDiffControls}
+                    />
+                  ) : (
+                    <RunDiffHeatmapReviewSection
+                      repoFullName={primaryRepo as string}
+                      additionalRepoFullNames={additionalRepos}
+                      withRepoPrefix={shouldPrefixDiffs}
+                      ref1={baseRef}
+                      ref2={headRef}
+                      onControlsChange={setDiffControls}
+                      streamStateByFile={deferredStreamStateByFile}
+                      heatmapThreshold={heatmapThreshold}
+                      heatmapColors={heatmapColors}
+                      heatmapModel={heatmapModel}
+                      heatmapTooltipLanguage={heatmapTooltipLanguage}
+                      onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                      onHeatmapColorsChange={handleHeatmapColorsChange}
+                      onHeatmapModelChange={handleHeatmapModelChange}
+                      onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                    />
+                  )
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
                     Missing repo or branches to show diff.
