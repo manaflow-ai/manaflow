@@ -80,16 +80,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var isKeyboardVisible = false
     private var keyboardAnimationDuration: TimeInterval = 0.25
     private var keyboardAnimationOptions: UIView.AnimationOptions = [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]
-    private let debugShowOverlay: Bool = {
-        #if DEBUG
-        if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_OVERLAY"] {
-            return value == "1" || value.lowercased() == "true"
-        }
-        return false
-        #else
-        return false
-        #endif
-    }()
     private let debugAutoFocusInput: Bool = {
         #if DEBUG
         if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_AUTOFOCUS"] {
@@ -293,15 +283,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
 
-        let showOverlay = debugShowOverlay
         extraSpacerView = UIView()
         extraSpacerView.translatesAutoresizingMaskIntoConstraints = false
-        extraSpacerView.backgroundColor = showOverlay ? UIColor.yellow.withAlphaComponent(0.35) : .clear
-        extraSpacerView.layer.borderWidth = showOverlay ? 1 : 0
-        extraSpacerView.layer.borderColor = showOverlay ? UIColor.yellow.cgColor : UIColor.clear.cgColor
+        extraSpacerView.backgroundColor = UIColor.yellow.withAlphaComponent(0.35)
+        extraSpacerView.layer.borderWidth = 1
+        extraSpacerView.layer.borderColor = UIColor.yellow.cgColor
         extraSpacerView.isUserInteractionEnabled = false
         extraSpacerLabel = makeSpacerLabel(color: .yellow)
-        extraSpacerLabel.isHidden = !showOverlay
         extraSpacerView.addSubview(extraSpacerLabel)
         NSLayoutConstraint.activate([
             extraSpacerLabel.leadingAnchor.constraint(equalTo: extraSpacerView.leadingAnchor, constant: 4),
@@ -313,12 +301,11 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
         bottomSpacerView = UIView()
         bottomSpacerView.translatesAutoresizingMaskIntoConstraints = false
-        bottomSpacerView.backgroundColor = showOverlay ? UIColor.red.withAlphaComponent(0.25) : .clear
-        bottomSpacerView.layer.borderWidth = showOverlay ? 1 : 0
-        bottomSpacerView.layer.borderColor = showOverlay ? UIColor.red.cgColor : UIColor.clear.cgColor
+        bottomSpacerView.backgroundColor = UIColor.red.withAlphaComponent(0.25)
+        bottomSpacerView.layer.borderWidth = 1
+        bottomSpacerView.layer.borderColor = UIColor.red.cgColor
         bottomSpacerView.isUserInteractionEnabled = false
         bottomSpacerLabel = makeSpacerLabel(color: .red)
-        bottomSpacerLabel.isHidden = !showOverlay
         bottomSpacerView.addSubview(bottomSpacerLabel)
         NSLayoutConstraint.activate([
             bottomSpacerLabel.leadingAnchor.constraint(equalTo: bottomSpacerView.leadingAnchor, constant: 4),
@@ -330,10 +317,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
         belowPillSpacerView = UIView()
         belowPillSpacerView.translatesAutoresizingMaskIntoConstraints = false
-        belowPillSpacerView.backgroundColor = showOverlay ? UIColor.green.withAlphaComponent(0.2) : .clear
+        belowPillSpacerView.backgroundColor = UIColor.green.withAlphaComponent(0.2)
         belowPillSpacerView.isUserInteractionEnabled = false
         belowPillSpacerLabel = makeSpacerLabel(color: .green)
-        belowPillSpacerLabel.isHidden = !showOverlay
         belowPillSpacerView.addSubview(belowPillSpacerLabel)
         NSLayoutConstraint.activate([
             belowPillSpacerLabel.leadingAnchor.constraint(equalTo: belowPillSpacerView.leadingAnchor, constant: 4),
@@ -380,7 +366,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     private func setupDebugOverlay() {
 #if DEBUG
-        guard debugShowOverlay else { return }
         debugYellowOverlay = makeDebugOverlayView(color: .yellow)
         debugRedOverlay = makeDebugOverlayView(color: .red)
         debugGreenOverlay = makeDebugOverlayView(color: .green)
@@ -661,122 +646,120 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             }
 
             #if DEBUG
-            if self.debugShowOverlay {
-                let overlayWidth = self.view.bounds.width
-                let redTop = pillTopY
-                self.debugYellowOverlay.frame = CGRect(
+            let overlayWidth = self.view.bounds.width
+            let redTop = pillTopY
+            self.debugYellowOverlay.frame = CGRect(
+                x: 0,
+                y: redTop - targetExtraSpacerHeight,
+                width: overlayWidth,
+                height: targetExtraSpacerHeight
+            )
+            self.debugRedOverlay.frame = CGRect(
+                x: 0,
+                y: redTop,
+                width: overlayWidth,
+                height: targetBottomSpacerHeight
+            )
+            self.debugGreenOverlay.frame = CGRect(
+                x: 0,
+                y: redTop + targetBottomSpacerHeight,
+                width: overlayWidth,
+                height: targetBelowPillHeight
+            )
+            let overlayLabelWidth: CGFloat = 140
+            let overlayLabelHeight: CGFloat = 18
+            self.debugYellowLabel.text = String(format: "yellow=%.1f", targetExtraSpacerHeight)
+            self.debugYellowLabel.frame = CGRect(
+                x: 8,
+                y: max(0, redTop - targetExtraSpacerHeight - overlayLabelHeight),
+                width: overlayLabelWidth,
+                height: overlayLabelHeight
+            )
+            self.debugRedLabel.text = String(format: "red=%.1f", targetBottomSpacerHeight)
+            self.debugRedLabel.frame = CGRect(
+                x: 8,
+                y: redTop + 2,
+                width: overlayLabelWidth,
+                height: overlayLabelHeight
+            )
+            self.debugGreenLabel.text = String(format: "green=%.1f", targetBelowPillHeight)
+            self.debugGreenLabel.frame = CGRect(
+                x: 8,
+                y: redTop + targetBottomSpacerHeight + 2,
+                width: overlayLabelWidth,
+                height: overlayLabelHeight
+            )
+            let lastMessageFrame = self.lastMessageFrameInView()
+            let gapToPill = lastMessageFrame == .zero ? 0 : (pillTopY - lastMessageFrame.maxY)
+            let expectedHeight = self.inputBarVC.contentTopInset + self.inputBarVC.contentBottomInset + DebugInputBarMetrics.inputHeight
+            let extra = max(0, self.inputBarVC.view.bounds.height - expectedHeight)
+            let measured = self.inputBarVC.pillMeasuredFrame
+            let shiftSummary = self.lastKeyboardShiftSummary ?? "Δmsg=-- Δpill=-- Δgap=-- Δanch=-- Δvis=--"
+            let offsetDebug = self.lastOffsetDebug ?? "off=--"
+            let gapDebug = self.lastGapDebug ?? "gapΔ=--"
+            let pillShiftDebug = self.lastPillShiftDebug ?? "Δpill=--"
+            let pillTopClosed = self.lastPillTopYClosed ?? 0
+            let pillTopOpen = self.lastPillTopYOpen ?? 0
+            let pillDelta = self.lastPillTopYClosed == nil || self.lastPillTopYOpen == nil ? 0 : (pillTopOpen - pillTopClosed)
+            let anchorIndex = self.lastAnchorIndexUsed ?? (self.anchorCandidateIndex(pillTopY: pillTopY) ?? -1)
+            let anchorGap = self.anchorSample(index: anchorIndex, pillTopY: pillTopY)?.gap ?? 0
+            self.debugInfoLabel.text = String(
+                format: "barH=%.1f pillY=%.1f pillH=%.1f gap=%.1f\nmeasY=%.1f measH=%.1f extra=%.1f below=%.1f\nkbdH=%.1f kbdMinY=%.1f kbdVis=%@ dist=%.1f anchor=%@ idx=%d aGap=%.1f %@ %@ %@ pΔ=%.1f",
+                self.inputBarVC.view.bounds.height,
+                pillTopY,
+                self.inputBarVC.pillHeight,
+                gapToPill,
+                measured.minY,
+                measured.height,
+                extra,
+                belowPillGap,
+                keyboardOverlap,
+                keyboardFrame.minY,
+                keyboardVisible ? "1" : "0",
+                rawDistanceFromBottom,
+                shouldAnchorToBottom ? "1" : "0",
+                anchorIndex,
+                anchorGap,
+                offsetDebug,
+                gapDebug,
+                pillShiftDebug,
+                shiftSummary,
+                pillDelta
+            )
+            self.extraSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.extraSpacerView.bounds.height, 0)
+            self.bottomSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.bottomSpacerView.bounds.height, 0)
+            self.belowPillSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.belowPillSpacerView.bounds.height, 0)
+            let labelWidth = self.view.bounds.width - 16
+            self.debugInfoLabel.frame = CGRect(x: 8, y: 8, width: labelWidth, height: 60)
+            self.debugInfoLabel.sizeToFit()
+            let labelHeight = min(60, max(36, self.debugInfoLabel.bounds.height + 8))
+            self.debugInfoLabel.frame = CGRect(x: 8, y: 8, width: labelWidth, height: labelHeight)
+            self.view.bringSubviewToFront(self.debugYellowOverlay)
+            self.view.bringSubviewToFront(self.debugRedOverlay)
+            self.view.bringSubviewToFront(self.debugGreenOverlay)
+            if lastMessageFrame != .zero {
+                self.debugMessageLine.isHidden = false
+                self.debugMessageLine.frame = CGRect(
                     x: 0,
-                    y: redTop - targetExtraSpacerHeight,
-                    width: overlayWidth,
-                    height: targetExtraSpacerHeight
-                )
-                self.debugRedOverlay.frame = CGRect(
-                    x: 0,
-                    y: redTop,
-                    width: overlayWidth,
-                    height: targetBottomSpacerHeight
-                )
-                self.debugGreenOverlay.frame = CGRect(
-                    x: 0,
-                    y: redTop + targetBottomSpacerHeight,
-                    width: overlayWidth,
-                    height: targetBelowPillHeight
-                )
-                let overlayLabelWidth: CGFloat = 140
-                let overlayLabelHeight: CGFloat = 18
-                self.debugYellowLabel.text = String(format: "yellow=%.1f", targetExtraSpacerHeight)
-                self.debugYellowLabel.frame = CGRect(
-                    x: 8,
-                    y: max(0, redTop - targetExtraSpacerHeight - overlayLabelHeight),
-                    width: overlayLabelWidth,
-                    height: overlayLabelHeight
-                )
-                self.debugRedLabel.text = String(format: "red=%.1f", targetBottomSpacerHeight)
-                self.debugRedLabel.frame = CGRect(
-                    x: 8,
-                    y: redTop + 2,
-                    width: overlayLabelWidth,
-                    height: overlayLabelHeight
-                )
-                self.debugGreenLabel.text = String(format: "green=%.1f", targetBelowPillHeight)
-                self.debugGreenLabel.frame = CGRect(
-                    x: 8,
-                    y: redTop + targetBottomSpacerHeight + 2,
-                    width: overlayLabelWidth,
-                    height: overlayLabelHeight
-                )
-                let lastMessageFrame = self.lastMessageFrameInView()
-                let gapToPill = lastMessageFrame == .zero ? 0 : (pillTopY - lastMessageFrame.maxY)
-                let expectedHeight = self.inputBarVC.contentTopInset + self.inputBarVC.contentBottomInset + DebugInputBarMetrics.inputHeight
-                let extra = max(0, self.inputBarVC.view.bounds.height - expectedHeight)
-                let measured = self.inputBarVC.pillMeasuredFrame
-                let shiftSummary = self.lastKeyboardShiftSummary ?? "Δmsg=-- Δpill=-- Δgap=-- Δanch=-- Δvis=--"
-                let offsetDebug = self.lastOffsetDebug ?? "off=--"
-                let gapDebug = self.lastGapDebug ?? "gapΔ=--"
-                let pillShiftDebug = self.lastPillShiftDebug ?? "Δpill=--"
-                let pillTopClosed = self.lastPillTopYClosed ?? 0
-                let pillTopOpen = self.lastPillTopYOpen ?? 0
-                let pillDelta = self.lastPillTopYClosed == nil || self.lastPillTopYOpen == nil ? 0 : (pillTopOpen - pillTopClosed)
-                let anchorIndex = self.lastAnchorIndexUsed ?? (self.anchorCandidateIndex(pillTopY: pillTopY) ?? -1)
-                let anchorGap = self.anchorSample(index: anchorIndex, pillTopY: pillTopY)?.gap ?? 0
-                self.debugInfoLabel.text = String(
-                    format: "barH=%.1f pillY=%.1f pillH=%.1f gap=%.1f\nmeasY=%.1f measH=%.1f extra=%.1f below=%.1f\nkbdH=%.1f kbdMinY=%.1f kbdVis=%@ dist=%.1f anchor=%@ idx=%d aGap=%.1f %@ %@ %@ pΔ=%.1f",
-                    self.inputBarVC.view.bounds.height,
-                    pillTopY,
-                    self.inputBarVC.pillHeight,
-                    gapToPill,
-                    measured.minY,
-                    measured.height,
-                    extra,
-                    belowPillGap,
-                    keyboardOverlap,
-                    keyboardFrame.minY,
-                    keyboardVisible ? "1" : "0",
-                    rawDistanceFromBottom,
-                    shouldAnchorToBottom ? "1" : "0",
-                    anchorIndex,
-                    anchorGap,
-                    offsetDebug,
-                    gapDebug,
-                    pillShiftDebug,
-                    shiftSummary,
-                    pillDelta
-                )
-                self.extraSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.extraSpacerView.bounds.height, 0)
-                self.bottomSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.bottomSpacerView.bounds.height, 0)
-                self.belowPillSpacerLabel.text = String(format: "h=%.1f c=%.1f", self.belowPillSpacerView.bounds.height, 0)
-                let labelWidth = self.view.bounds.width - 16
-                self.debugInfoLabel.frame = CGRect(x: 8, y: 8, width: labelWidth, height: 60)
-                self.debugInfoLabel.sizeToFit()
-                let labelHeight = min(60, max(36, self.debugInfoLabel.bounds.height + 8))
-                self.debugInfoLabel.frame = CGRect(x: 8, y: 8, width: labelWidth, height: labelHeight)
-                self.view.bringSubviewToFront(self.debugYellowOverlay)
-                self.view.bringSubviewToFront(self.debugRedOverlay)
-                self.view.bringSubviewToFront(self.debugGreenOverlay)
-                if lastMessageFrame != .zero {
-                    self.debugMessageLine.isHidden = false
-                    self.debugMessageLine.frame = CGRect(
-                        x: 0,
-                        y: lastMessageFrame.maxY,
-                        width: overlayWidth,
-                        height: 1
-                    )
-                } else {
-                    self.debugMessageLine.isHidden = true
-                }
-                self.debugPillLine.frame = CGRect(
-                    x: 0,
-                    y: pillTopY,
+                    y: lastMessageFrame.maxY,
                     width: overlayWidth,
                     height: 1
                 )
-                self.view.bringSubviewToFront(self.debugMessageLine)
-                self.view.bringSubviewToFront(self.debugPillLine)
-                self.view.bringSubviewToFront(self.debugYellowLabel)
-                self.view.bringSubviewToFront(self.debugRedLabel)
-                self.view.bringSubviewToFront(self.debugGreenLabel)
-                self.view.bringSubviewToFront(self.debugInfoLabel)
+            } else {
+                self.debugMessageLine.isHidden = true
             }
+            self.debugPillLine.frame = CGRect(
+                x: 0,
+                y: pillTopY,
+                width: overlayWidth,
+                height: 1
+            )
+            self.view.bringSubviewToFront(self.debugMessageLine)
+            self.view.bringSubviewToFront(self.debugPillLine)
+            self.view.bringSubviewToFront(self.debugYellowLabel)
+            self.view.bringSubviewToFront(self.debugRedLabel)
+            self.view.bringSubviewToFront(self.debugGreenLabel)
+            self.view.bringSubviewToFront(self.debugInfoLabel)
             #endif
         }
 

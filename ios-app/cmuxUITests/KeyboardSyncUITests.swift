@@ -23,7 +23,6 @@ final class KeyboardSyncUITests: XCTestCase {
     private func runKeyboardSyncTest(scrollFraction: Double?) {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
-        app.launchEnvironment["CMUX_SHOW_CHAT_FIX1"] = "1"
         if let scrollFraction {
             app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = String(scrollFraction)
         }
