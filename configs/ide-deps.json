@@ -13,12 +13,12 @@
     {
       "publisher": "ms-vscode",
       "name": "vscode-typescript-next",
-      "version": "6.0.20260103"
+      "version": "6.0.20260104"
     },
     {
       "publisher": "ms-python",
       "name": "python",
-      "version": "2025.21.2025121801"
+      "version": "2025.21.2026010501"
     },
     {
       "publisher": "ms-python",
@@ -30,9 +30,9 @@
     "@openai/codex": "0.77.0",
     "@anthropic-ai/claude-code": "2.0.76",
     "@google/gemini-cli": "0.22.5",
-    "opencode-ai": "1.1.1",
-    "codebuff": "1.0.568",
+    "opencode-ai": "1.1.2",
+    "codebuff": "1.0.570",
     "@devcontainers/cli": "0.80.3",
-    "@sourcegraph/amp": "0.0.1767556880-gd24d7a"
+    "@sourcegraph/amp": "0.0.1767628935-g7941fa"
   }
 }
