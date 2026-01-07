@@ -14,8 +14,6 @@ struct ContentView: View {
                 SignInView()
             }
         }
-        .animation(.easeInOut, value: authManager.isAuthenticated)
-        .animation(.easeInOut, value: authManager.isRestoringSession)
     }
 }
 

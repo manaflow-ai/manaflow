@@ -247,9 +247,8 @@ class AuthManager: ObservableObject {
     }
 
     func signOut() async {
-        if let refreshToken = keychain.get("refresh_token") {
-            try? await client.signOut(refreshToken: refreshToken)
-        }
+        let refreshToken = keychain.get("refresh_token")
+        self.isAuthenticated = false
 
         keychain.delete("access_token")
         keychain.delete("refresh_token")
@@ -258,8 +257,11 @@ class AuthManager: ObservableObject {
         // Clear Convex auth
         await ConvexClientManager.shared.clearAuth()
 
+        if let refreshToken {
+            try? await client.signOut(refreshToken: refreshToken)
+        }
+
         self.currentUser = nil
-        self.isAuthenticated = false
     }
 
     // MARK: - Access Token
