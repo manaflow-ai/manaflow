@@ -41,6 +41,13 @@ class StackAuthProvider: AuthProvider {
         print("🔐 Stack Auth: access_token exists: \(keychain.get("access_token") != nil)")
         print("🔐 Stack Auth: refresh_token exists: \(keychain.get("refresh_token") != nil)")
 
+        if let accessToken = keychain.get("access_token"),
+           accessTokenIsFresh(accessToken),
+           let cachedUser = AuthUserCache.shared.load() {
+            print("🔐 Stack Auth: Using cached user for access token")
+            return StackAuthResult(accessToken: accessToken, user: cachedUser)
+        }
+
         // First try to use existing access token
         if let accessToken = keychain.get("access_token") {
             print("🔐 Stack Auth: Using existing access token (len: \(accessToken.count))")
@@ -88,6 +95,26 @@ class StackAuthProvider: AuthProvider {
         }
 
         return token
+    }
+
+    private struct JWTPayload: Decodable {
+        let exp: Int?
+    }
+
+    private func accessTokenIsFresh(_ token: String) -> Bool {
+        guard let payload = decodeJWTPayload(token), let exp = payload.exp else {
+            return false
+        }
+        let expirationDate = Date(timeIntervalSince1970: TimeInterval(exp))
+        return expirationDate > Date().addingTimeInterval(30)
+    }
+
+    private func decodeJWTPayload(_ token: String) -> JWTPayload? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2, let payloadData = decodeBase64URL(String(parts[1])) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(JWTPayload.self, from: payloadData)
     }
 
     private func decodeBase64URL(_ string: String) -> Data? {
