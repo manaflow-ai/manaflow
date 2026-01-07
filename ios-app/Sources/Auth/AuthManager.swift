@@ -8,6 +8,7 @@ class AuthManager: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUser: StackAuthClient.User?
     @Published var isLoading = false
+    @Published var isRestoringSession = true
 
     private let client = StackAuthClient.shared
     private let keychain = KeychainHelper.shared
@@ -22,9 +23,25 @@ class AuthManager: ObservableObject {
     // MARK: - Session Management
 
     private func checkExistingSession() async {
+        defer { isRestoringSession = false }
         let hasRefresh = keychain.get("refresh_token")
         let hasAccess = keychain.get("access_token")
         print("🔐 Checking session - refresh: \(hasRefresh != nil), access: \(hasAccess != nil)")
+
+        if let accessToken = hasAccess {
+            do {
+                let user = try await client.getCurrentUser(accessToken: accessToken)
+                self.currentUser = user
+                self.isAuthenticated = true
+                print("🔐 Session restored from access token for \(user.primary_email ?? "unknown")")
+
+                // Sync with Convex
+                await ConvexClientManager.shared.syncAuth()
+                return
+            } catch {
+                print("🔐 Access token invalid: \(error)")
+            }
+        }
 
         guard let refreshToken = hasRefresh else {
             print("🔐 No refresh token found in keychain")
@@ -44,9 +61,15 @@ class AuthManager: ObservableObject {
             await ConvexClientManager.shared.syncAuth()
         } catch {
             print("🔐 Session restore failed: \(error)")
-            // Session invalid, clear tokens
-            keychain.delete("refresh_token")
-            keychain.delete("access_token")
+            if let authError = error as? AuthError, case .unauthorized = authError {
+                // Session invalid, clear tokens
+                keychain.delete("refresh_token")
+                keychain.delete("access_token")
+                self.currentUser = nil
+                self.isAuthenticated = false
+            } else {
+                print("🔐 Session restore failed for non-auth reason; keeping cached tokens")
+            }
         }
     }
 

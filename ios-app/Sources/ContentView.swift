@@ -6,13 +6,28 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if authManager.isAuthenticated {
+            if authManager.isRestoringSession {
+                SessionRestoreView()
+            } else if authManager.isAuthenticated {
                 MainTabView()
             } else {
                 SignInView()
             }
         }
         .animation(.easeInOut, value: authManager.isAuthenticated)
+        .animation(.easeInOut, value: authManager.isRestoringSession)
+    }
+}
+
+struct SessionRestoreView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("Restoring session...")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("auth.restoring")
     }
 }
 

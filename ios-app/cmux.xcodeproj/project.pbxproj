@@ -31,6 +31,7 @@
 		D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D367AC3D322118AE559DBF /* AuthManager.swift */; };
 		DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */; };
 		E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0C333BDE07456C757877E2 /* ConvexMobile */; };
+		E53E64DA59BFCB7E396E0865 /* AuthPersistenceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */; };
 		E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */; };
 		EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8732D7AB61D4190BACAAB03 /* Environment.swift */; };
 		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
@@ -78,6 +79,7 @@
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
 		EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = cmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
+		F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthPersistenceUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +107,7 @@
 		3EC041CE7CBA01395A239037 /* cmuxUITests */ = {
 			isa = PBXGroup;
 			children = (
+				F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */,
 				C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */,
 				9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */,
 			);
@@ -314,6 +317,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E53E64DA59BFCB7E396E0865 /* AuthPersistenceUITests.swift in Sources */,
 				1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */,
 				35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */,
 			);
