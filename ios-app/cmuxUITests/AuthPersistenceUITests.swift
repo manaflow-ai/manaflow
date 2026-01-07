@@ -11,6 +11,7 @@ final class AuthPersistenceUITests: XCTestCase {
         app.launch()
 
         ensureSignedIn(app: app)
+        assertNoRestoreFlash(app: app)
         waitForConversationList(app: app)
 
         app.terminate()
@@ -19,10 +20,21 @@ final class AuthPersistenceUITests: XCTestCase {
         relaunch.launch()
 
         assertNoSignInFlash(app: relaunch)
+        assertNoRestoreFlash(app: relaunch)
         waitForConversationList(app: relaunch)
 
         let emailField = relaunch.textFields["Email"]
         XCTAssertFalse(emailField.exists, "Sign-in screen should not be visible after relaunch")
+    }
+
+    func testSignedOutLaunchShowsSignInWithoutRestoreFlash() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_UITEST_CLEAR_AUTH"] = "1"
+        app.launch()
+
+        assertNoRestoreFlash(app: app)
+        let emailField = app.textFields["Email"]
+        XCTAssertTrue(emailField.waitForExistence(timeout: 2), "Sign-in screen should appear immediately when signed out")
     }
 
     private func ensureSignedIn(app: XCUIApplication) {
@@ -50,6 +62,15 @@ final class AuthPersistenceUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(duration)
         while Date() < deadline {
             XCTAssertFalse(emailField.exists, "Sign-in screen flashed during session restore")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+    }
+
+    private func assertNoRestoreFlash(app: XCUIApplication, duration: TimeInterval = 2.5) {
+        let restoring = app.otherElements["auth.restoring"]
+        let deadline = Date().addingTimeInterval(duration)
+        while Date() < deadline {
+            XCTAssertFalse(restoring.exists, "Restoring session view flashed on launch")
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
     }

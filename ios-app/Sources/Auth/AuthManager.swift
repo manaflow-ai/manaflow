@@ -8,13 +8,14 @@ class AuthManager: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUser: StackAuthClient.User?
     @Published var isLoading = false
-    @Published var isRestoringSession = true
+    @Published var isRestoringSession = false
 
     private let client = StackAuthClient.shared
     private let keychain = KeychainHelper.shared
 
     private init() {
         // Check for existing session on launch
+        primeSessionState()
         Task {
             await checkExistingSession()
         }
@@ -22,10 +23,44 @@ class AuthManager: ObservableObject {
 
     // MARK: - Session Management
 
+    private func primeSessionState() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CMUX_UITEST_CLEAR_AUTH"] == "1" {
+            keychain.delete("access_token")
+            keychain.delete("refresh_token")
+            AuthUserCache.shared.clear()
+            print("🔐 Cleared auth for UI test launch")
+        }
+        #endif
+
+        let hasRefresh = keychain.get("refresh_token")
+        let hasAccess = keychain.get("access_token")
+        let hasAnyToken = hasRefresh != nil || hasAccess != nil
+
+        if let cachedUser = AuthUserCache.shared.load() {
+            self.currentUser = cachedUser
+        }
+
+        if hasAnyToken {
+            self.isAuthenticated = true
+        } else {
+            self.currentUser = nil
+            self.isAuthenticated = false
+        }
+        self.isRestoringSession = false
+    }
+
     private func checkExistingSession() async {
         let hasRefresh = keychain.get("refresh_token")
         let hasAccess = keychain.get("access_token")
         print("🔐 Checking session - refresh: \(hasRefresh != nil), access: \(hasAccess != nil)")
+
+        if hasRefresh == nil && hasAccess == nil {
+            print("🔐 No cached tokens, showing sign-in immediately")
+            self.currentUser = nil
+            self.isAuthenticated = false
+            return
+        }
 
         if let accessToken = hasAccess, let remaining = accessTokenTimeRemaining(accessToken), remaining > 30 {
             if let cachedUser = AuthUserCache.shared.load() {
@@ -34,7 +69,6 @@ class AuthManager: ObservableObject {
             }
             self.isAuthenticated = true
             print("🔐 Optimistically restored session from access token")
-            isRestoringSession = false
             Task {
                 if self.currentUser == nil || remaining < 300 {
                     await validateCachedSession(accessToken: accessToken, refreshToken: hasRefresh)
@@ -47,49 +81,32 @@ class AuthManager: ObservableObject {
 
         guard let refreshToken = hasRefresh else {
             print("🔐 No refresh token found in keychain")
-            isRestoringSession = false
             return
         }
 
-        defer { isRestoringSession = false }
-        do {
-            let accessToken = try await client.refreshAccessToken(refreshToken: refreshToken)
-            keychain.set(accessToken, forKey: "access_token")
-
-            let user = try await client.getCurrentUser(accessToken: accessToken)
-            self.currentUser = user
-            self.isAuthenticated = true
-            AuthUserCache.shared.save(user)
-            print("🔐 Session restored for \(user.primary_email ?? "unknown")")
-
-            // Sync with Convex
-            await ConvexClientManager.shared.syncAuth()
-        } catch {
-            print("🔐 Session restore failed: \(error)")
-            if let authError = error as? AuthError, case .unauthorized = authError {
-                // Session invalid, clear tokens
-                keychain.delete("refresh_token")
-                keychain.delete("access_token")
-                AuthUserCache.shared.clear()
-                self.currentUser = nil
-                self.isAuthenticated = false
-            } else {
-                print("🔐 Session restore failed for non-auth reason; keeping cached tokens")
-            }
+        if let cachedUser = AuthUserCache.shared.load() {
+            self.currentUser = cachedUser
+            print("🔐 Loaded cached user for optimistic restore (refresh-only)")
+        }
+        self.isAuthenticated = true
+        Task {
+            await validateCachedSession(accessToken: hasAccess, refreshToken: refreshToken)
         }
     }
 
-    private func validateCachedSession(accessToken: String, refreshToken: String?) async {
-        do {
-            let user = try await client.getCurrentUser(accessToken: accessToken)
-            self.currentUser = user
-            self.isAuthenticated = true
-            AuthUserCache.shared.save(user)
-            print("🔐 Session validated for \(user.primary_email ?? "unknown")")
-            await ConvexClientManager.shared.syncAuth()
-            return
-        } catch {
-            print("🔐 Access token validation failed: \(error)")
+    private func validateCachedSession(accessToken: String?, refreshToken: String?) async {
+        if let accessToken {
+            do {
+                let user = try await client.getCurrentUser(accessToken: accessToken)
+                self.currentUser = user
+                self.isAuthenticated = true
+                AuthUserCache.shared.save(user)
+                print("🔐 Session validated for \(user.primary_email ?? "unknown")")
+                await ConvexClientManager.shared.syncAuth()
+                return
+            } catch {
+                print("🔐 Access token validation failed: \(error)")
+            }
         }
 
         guard let refreshToken else {
