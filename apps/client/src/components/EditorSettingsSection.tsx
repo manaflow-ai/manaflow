@@ -2,9 +2,45 @@ import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useConvex } from "convex/react";
-import { Plus, Trash2, HelpCircle } from "lucide-react";
+import { Plus, Trash2, HelpCircle, Copy, Check } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+
+// Copyable path component with auto-select and copy button
+function CopyablePath({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(path);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <code
+        className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded cursor-pointer select-all"
+        onClick={(e) => {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(e.currentTarget);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }}
+      >
+        {path}
+      </code>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="p-0.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+        aria-label="Copy path"
+      >
+        {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      </button>
+    </span>
+  );
+}
 
 interface Snippet {
   name: string;
@@ -289,7 +325,7 @@ export function EditorSettingsSection({
             settings.json
           </label>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
-            <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded">{getVSCodeUserPath()}settings.json</code>
+            <CopyablePath path={`${getVSCodeUserPath()}settings.json`} />
           </p>
           <textarea
             id="settingsJson"
@@ -310,7 +346,7 @@ export function EditorSettingsSection({
             keybindings.json
           </label>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
-            <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded">{getVSCodeUserPath()}keybindings.json</code>
+            <CopyablePath path={`${getVSCodeUserPath()}keybindings.json`} />
           </p>
           <textarea
             id="keybindingsJson"
@@ -338,7 +374,7 @@ export function EditorSettingsSection({
             </button>
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
-            <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded">{getVSCodeUserPath()}snippets/</code>
+            <CopyablePath path={`${getVSCodeUserPath()}snippets/`} />
           </p>
           {snippets.length === 0 ? (
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
