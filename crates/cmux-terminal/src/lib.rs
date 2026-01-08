@@ -2,7 +2,7 @@
 //!
 //! This crate provides:
 //! - `VirtualTerminal`: Full ANSI/VT100 terminal emulator with scrollback
-//! - `DaFilter`: Filter for Device Attributes queries to prevent feedback loops
+//! - `DaFilter`: Filter for Device Attributes and Device Status queries to prevent feedback loops
 //! - `Grid`, `Row`, `TerminalCharacter`: Terminal buffer types
 //!
 //! # Usage
@@ -14,7 +14,7 @@
 //! let mut term = VirtualTerminal::new(24, 80);
 //! term.process(b"Hello, World!\r\n");
 //!
-//! // Filter DA queries from PTY output
+//! // Filter DA/DSR queries from PTY output
 //! let mut filter = DaFilter::new();
 //! let filtered = filter.filter(b"\x1b[c"); // DA1 query filtered out
 //! ```

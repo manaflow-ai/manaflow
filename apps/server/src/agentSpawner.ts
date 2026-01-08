@@ -797,9 +797,10 @@ chmod +x ${maintenanceScriptPath}`;
     const commandString = [actualCommand, ...actualArgs]
       .map(shellEscaped)
       .join(" ");
+    const isCodexAgent = agent.name.toLowerCase().includes("codex");
 
     // Log the actual command for Codex agents to debug notify command
-    if (agent.name.toLowerCase().includes("codex")) {
+    if (isCodexAgent) {
       serverLogger.info(
         `[AgentSpawner] Codex command string: ${commandString}`
       );
@@ -810,34 +811,16 @@ chmod +x ${maintenanceScriptPath}`;
     const unsetCommand =
       unsetEnvVars.length > 0 ? `unset ${unsetEnvVars.join(" ")}; ` : "";
 
-    // For Codex agents, use direct command execution to preserve notify argument
-    // The notify command contains complex JSON that gets mangled through shell layers
-    const tmuxArgs = agent.name.toLowerCase().includes("codex")
-      ? [
-          "new-session",
-          "-d",
-          "-s",
-          tmuxSessionName,
-          "-c",
-          "/root/workspace",
-          actualCommand,
-          ...actualArgs.map((arg) => {
-            // Replace $CMUX_PROMPT with actual prompt value
-            if (arg === "$CMUX_PROMPT") {
-              return processedTaskDescription;
-            }
-            return arg;
-          }),
-        ]
-      : [
-          "new-session",
-          "-d",
-          "-s",
-          tmuxSessionName,
-          "bash",
-          "-lc",
-          `${unsetCommand}exec ${commandString}`,
-        ];
+    // Use a shell command so CMUX_PROMPT stays a single argument even with newlines.
+    const tmuxArgs = [
+      "new-session",
+      "-d",
+      "-s",
+      tmuxSessionName,
+      "bash",
+      "-lc",
+      `${unsetCommand}exec ${commandString}`,
+    ];
 
     // Build cmux-pty specific command (the actual agent command without tmux/bash wrapper)
     // For Codex agents, replace $CMUX_PROMPT with actual prompt value (matching tmux behavior)
