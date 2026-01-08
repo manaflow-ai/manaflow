@@ -436,7 +436,7 @@ esbenp.prettier-vscode
 bradlc.vscode-tailwindcss`}
           />
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Run <CopyablePath path="code --list-extensions" /> to get your extension list.
+            Run <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded select-all">code --list-extensions</code> to get your extension list.
           </p>
         </div>
       </div>
