@@ -36,6 +36,7 @@ const NETWORK_BASE: Ipv4Addr = Ipv4Addr::new(10, 201, 0, 0);
 const HOST_IF_PREFIX: &str = "vethh";
 const NS_IF_PREFIX: &str = "vethn";
 const DOCKER_CONTAINER_SOCKET: &str = "/run/docker.sock";
+const SANDBOX_WORKSPACE_MOUNT: &str = "/workspace";
 
 /// Handle for a multiplexed PTY session.
 struct PtySessionHandle {
@@ -906,9 +907,9 @@ fi
             DOCKER_CONTAINER_SOCKET,
             "--bind",
             &workspace_str,
-            "/workspace",
+            SANDBOX_WORKSPACE_MOUNT,
             "--chdir",
-            "/workspace",
+            SANDBOX_WORKSPACE_MOUNT,
             "--hostname",
             &format!("sandbox-{}", index),
             "--json-status-fd",
@@ -1497,7 +1498,7 @@ impl SandboxService for BubblewrapService {
             let nsenter_path = self.nsenter_path.clone();
             let sandbox_id = id;
             let readiness = self.readiness.lock().await.get(&id).cloned();
-            let workspace_path = workspace.to_string_lossy().to_string();
+            let workspace_path = SANDBOX_WORKSPACE_MOUNT;
 
             tokio::spawn(async move {
                 // Start X11/VNC stack
@@ -1573,7 +1574,7 @@ impl SandboxService for BubblewrapService {
 
                 // Start cmux-code (VS Code server) AFTER cmux-pty is ready
                 let vscode_result =
-                    start_vscode_background(&nsenter_path, inner_pid, vscode_port, &workspace_path)
+                    start_vscode_background(&nsenter_path, inner_pid, vscode_port, workspace_path)
                         .await;
 
                 let vscode_ready = match vscode_result {

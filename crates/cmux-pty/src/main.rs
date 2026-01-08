@@ -378,11 +378,18 @@ impl PtySession {
     /// Uses a bounded channel for backpressure - if the PTY can't keep up,
     /// this will block (which is correct behavior for flow control).
     fn write_input(&self, data: &str) -> Result<()> {
+        self.write_input_bytes(data.as_bytes().to_vec())
+    }
+
+    fn write_input_bytes(&self, data: Vec<u8>) -> Result<()> {
         let len = data.len();
+        if len == 0 {
+            return Ok(());
+        }
         if len > 100 {
             info!("[session:{}] Queueing large input: {} bytes", self.id, len);
         }
-        self.input_tx.send(data.as_bytes().to_vec()).map_err(|e| {
+        self.input_tx.send(data).map_err(|e| {
             error!("[session:{}] Input channel send failed: {}", self.id, e);
             anyhow::anyhow!("PTY input channel closed")
         })?;
@@ -452,11 +459,11 @@ impl PtySession {
         *self.metadata.write() = metadata;
     }
 
-    /// Process bytes through the virtual terminal emulator.
-    /// Updates the terminal's internal grid state.
-    fn process_terminal(&self, data: &[u8]) {
+    /// Process bytes through the virtual terminal emulator and collect responses.
+    fn process_terminal(&self, data: &[u8]) -> Vec<Vec<u8>> {
         let mut terminal = self.terminal.lock();
         terminal.process(data);
+        terminal.drain_responses()
     }
 
     /// Resize the virtual terminal emulator.
@@ -731,14 +738,24 @@ async fn spawn_pty_reader(
                 read_count += 1;
                 total_bytes_read += n;
 
+                // Process through virtual terminal emulator for state tracking
+                let responses = session.process_terminal(&buf[..n]);
+                if !responses.is_empty() {
+                    for response in responses {
+                        if let Err(e) = session.write_input_bytes(response) {
+                            error!(
+                                "[reader:{}] Failed to send terminal response: {}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
+
                 // Apply DaFilter to raw bytes to remove DA query/response sequences
                 let filtered_bytes = {
                     let mut filter = session.da_filter.lock();
                     filter.filter(&buf[..n])
                 };
-
-                // Process through virtual terminal emulator for state tracking
-                session.process_terminal(&filtered_bytes);
 
                 // Combine any leftover bytes from previous read with filtered data
                 utf8_buffer.extend_from_slice(&filtered_bytes);

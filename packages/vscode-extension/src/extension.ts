@@ -279,7 +279,7 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // If any meaningful editors exist (not just system/onboarding tabs), don't do anything
+  // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup
   const isSystemTab = (label: string | undefined): boolean => {
     if (!label) return false;
     // Exact matches for known system tabs
@@ -290,9 +290,11 @@ async function setupDefaultTerminal() {
   };
   const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
   const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
-  if (meaningfulTabs.length > 0) {
-    log(`Found ${meaningfulTabs.length} existing tab(s), skipping setup`);
-    return;
+  const preserveFocus = meaningfulTabs.length > 0;
+  if (preserveFocus) {
+    log(
+      `Found ${meaningfulTabs.length} existing tab(s), preserving focus during setup`
+    );
   }
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
@@ -306,7 +308,7 @@ async function setupDefaultTerminal() {
     log("cmux-pty is managing 'cmux' terminal, creating queued terminals");
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
-    createQueuedTerminals();
+    createQueuedTerminals({ focus: !preserveFocus });
   } else {
     // Fall back to tmux-based terminal
     log("cmux-pty not available, falling back to tmux");
@@ -317,25 +319,31 @@ async function setupDefaultTerminal() {
       log("Tmux session not found, skipping terminal creation");
       // Still proceed with SCM/multi-diff setup
     } else {
+      const workspacePath =
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/workspace";
       // Create terminal and attach to tmux session (Editor pane for main agent)
       const terminal = vscode.window.createTerminal({
         name: "cmux",
         location: vscode.TerminalLocation.Editor,
-        cwd: "/root/workspace",
+        cwd: workspacePath,
         env: process.env,
       });
-      terminal.show();
+      terminal.show(preserveFocus);
       activeTerminals.set("default", terminal);
       terminal.sendText("tmux attach-session -t cmux");
     }
   }
 
-  // Run all UI setup in parallel
-  log("Setting up SCM view, multi-diff editor in parallel...");
-  await Promise.all([
-    vscode.commands.executeCommand("workbench.view.scm"),
-    openMultiDiffEditor(),
-  ]);
+  if (!preserveFocus) {
+    // Run all UI setup in parallel
+    log("Setting up SCM view, multi-diff editor in parallel...");
+    await Promise.all([
+      vscode.commands.executeCommand("workbench.view.scm"),
+      openMultiDiffEditor(),
+    ]);
+  } else {
+    log("Skipping SCM/multi-diff setup due to existing tabs");
+  }
 
   log("Terminal setup complete");
 }

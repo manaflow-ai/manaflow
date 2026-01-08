@@ -454,7 +454,6 @@ function TaskTreeInner({
     [flattenedRuns]
   );
   const prefetched = useRef(false);
-  const taskLinkRef = useRef<HTMLAnchorElement | null>(null);
   const prefetchTaskRuns = useCallback(() => {
     if (prefetched.current || isOptimisticTask) {
       return;
@@ -541,7 +540,7 @@ function TaskTreeInner({
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
 
-  // Expand and scroll into view when task becomes selected
+  // Expand when task becomes selected
   useEffect(() => {
     if (!isTaskSelected) {
       return;
@@ -549,16 +548,6 @@ function TaskTreeInner({
 
     // Expand the task if not already expanded
     setIsExpanded(true);
-
-    // Scroll into view
-    const linkElement = taskLinkRef.current;
-    if (linkElement) {
-      linkElement.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-        behavior: "instant",
-      });
-    }
   }, [isTaskSelected]);
   const [isTaskLinkFocusVisible, setIsTaskLinkFocusVisible] = useState(false);
   const handleTaskLinkFocus = useCallback(
@@ -882,7 +871,6 @@ function TaskTreeInner({
         <ContextMenu.Root>
           <ContextMenu.Trigger>
               <Link
-                ref={taskLinkRef}
                 to="/$teamSlugOrId/task/$taskId"
                 params={{ teamSlugOrId, taskId: task._id }}
                 search={{ runId: undefined }}
