@@ -65,6 +65,8 @@ export const createTestRun = authMutation({
   },
   handler: async (ctx, args): Promise<{
     previewRunId: Id<"previewRuns">;
+    taskId: Id<"tasks">;
+    taskRunId: Id<"taskRuns">;
     prNumber: number;
     repoFullName: string;
   }> => {
@@ -158,12 +160,51 @@ export const createTestRun = authMutation({
       updatedAt: now,
     });
 
-    // Note: task and taskRun are NOT created here - they will be created
-    // by runPreviewJob AFTER the VM starts. This ensures the preview job
-    // doesn't show up in the UI with non-functional workspace/browser links.
+    // Get user ID from auth context
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Authentication required");
+    }
+    const userId = config.createdByUserId ?? "system";
+
+    // Create task for this preview run
+    const taskId: Id<"tasks"> = await ctx.runMutation(
+      internal.tasks.createForPreview,
+      {
+        teamId,
+        userId,
+        previewRunId: runId,
+        repoFullName,
+        prNumber,
+        prUrl: args.prUrl,
+        headSha,
+        baseBranch: config.repoDefaultBranch,
+      }
+    );
+
+    // Create taskRun
+    const { taskRunId }: { taskRunId: Id<"taskRuns"> } = await ctx.runMutation(
+      internal.taskRuns.createForPreview,
+      {
+        taskId,
+        teamId,
+        userId,
+        prUrl: args.prUrl,
+        environmentId: config.environmentId,
+        newBranch: undefined,
+      }
+    );
+
+    // Link the taskRun to the preview run
+    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+      previewRunId: runId,
+      taskRunId,
+    });
 
     return {
       previewRunId: runId,
+      taskId,
+      taskRunId,
       prNumber,
       repoFullName,
     };
@@ -192,6 +233,8 @@ export const createTestRunInternal = internalMutation({
   },
   handler: async (ctx, args): Promise<{
     previewRunId: Id<"previewRuns">;
+    taskId: Id<"tasks">;
+    taskRunId: Id<"taskRuns">;
     prNumber: number;
     repoFullName: string;
   }> => {
@@ -258,12 +301,46 @@ export const createTestRunInternal = internalMutation({
       updatedAt: now,
     });
 
-    // Note: task and taskRun are NOT created here - they will be created
-    // by runPreviewJob AFTER the VM starts. This ensures the preview job
-    // doesn't show up in the UI with non-functional workspace/browser links.
+    const userId = config.createdByUserId ?? "system";
+
+    // Create task for this preview run
+    const taskId: Id<"tasks"> = await ctx.runMutation(
+      internal.tasks.createForPreview,
+      {
+        teamId,
+        userId,
+        previewRunId: runId,
+        repoFullName,
+        prNumber,
+        prUrl: args.prUrl,
+        headSha,
+        baseBranch: config.repoDefaultBranch,
+      }
+    );
+
+    // Create taskRun
+    const { taskRunId }: { taskRunId: Id<"taskRuns"> } = await ctx.runMutation(
+      internal.taskRuns.createForPreview,
+      {
+        taskId,
+        teamId,
+        userId,
+        prUrl: args.prUrl,
+        environmentId: config.environmentId,
+        newBranch: undefined,
+      }
+    );
+
+    // Link the taskRun to the preview run
+    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+      previewRunId: runId,
+      taskRunId,
+    });
 
     return {
       previewRunId: runId,
+      taskId,
+      taskRunId,
       prNumber,
       repoFullName,
     };
@@ -677,9 +754,10 @@ export const retryTestJob = action({
     }
 
     // Create a new test run with the same PR URL
-    // Note: task/taskRun will be created later when the VM starts
     const newRun: {
       previewRunId: Id<"previewRuns">;
+      taskId: Id<"tasks">;
+      taskRunId: Id<"taskRuns">;
       prNumber: number;
       repoFullName: string;
     } = await ctx.runMutation(internal.previewTestJobs.createTestRunInternal, {

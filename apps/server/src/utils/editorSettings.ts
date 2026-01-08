@@ -44,7 +44,7 @@ const homeDir = os.homedir();
 const posix = path.posix;
 
 // IDE Provider path configurations
-type IdeProvider = "coder" | "openvscode" | "cmux-code";
+type IdeProvider = "coder" | "openvscode";
 
 interface IdePaths {
   userDir: string;
@@ -71,14 +71,6 @@ const IDE_PATHS: Record<IdeProvider, IdePaths> = {
     snippetsDir: "/root/.openvscode-server/data/User/snippets",
     extensionsDir: "/root/.openvscode-server/extensions",
     binaryPath: "/app/openvscode-server/bin/openvscode-server",
-  },
-  "cmux-code": {
-    userDir: "/root/.vscode-server-oss/data/User",
-    profileDir: "/root/.vscode-server-oss/data/User/profiles/default-profile",
-    machineDir: "/root/.vscode-server-oss/data/Machine",
-    snippetsDir: "/root/.vscode-server-oss/data/User/snippets",
-    extensionsDir: "/root/.vscode-server-oss/extensions",
-    binaryPath: "/app/cmux-code/bin/code-server-oss",
   },
 };
 
@@ -354,10 +346,6 @@ function buildExtensionInstallCommand(listPath: string): string {
     '  EXT_DIR="/root/.code-server/extensions"',
     '  USER_DIR="/root/.code-server"',
     '  CLI_PATH="/app/code-server/bin/code-server"',
-    'elif [ "$IDE_PROVIDER" = "cmux-code" ]; then',
-    '  EXT_DIR="/root/.vscode-server-oss/extensions"',
-    '  USER_DIR="/root/.vscode-server-oss/data"',
-    '  CLI_PATH="/app/cmux-code/bin/code-server-oss"',
     "else",
     '  EXT_DIR="/root/.openvscode-server/extensions"',
     '  USER_DIR="/root/.openvscode-server/data"',
@@ -366,11 +354,7 @@ function buildExtensionInstallCommand(listPath: string): string {
     "",
     '# Fallback CLI detection',
     'if [ ! -x "$CLI_PATH" ]; then',
-    '  if [ -x /app/cmux-code/bin/code-server-oss ]; then',
-    '    CLI_PATH="/app/cmux-code/bin/code-server-oss"',
-    '    EXT_DIR="/root/.vscode-server-oss/extensions"',
-    '    USER_DIR="/root/.vscode-server-oss/data"',
-    '  elif [ -x /app/code-server/bin/code-server ]; then',
+    '  if [ -x /app/code-server/bin/code-server ]; then',
     '    CLI_PATH="/app/code-server/bin/code-server"',
     '    EXT_DIR="/root/.code-server/extensions"',
     '    USER_DIR="/root/.code-server"',
@@ -440,19 +424,9 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
     // Write settings to both IDE provider locations for compatibility
     // The correct one will be used based on which IDE is installed
     const targets = [
-      // cmux-code paths
-      posix.join(IDE_PATHS["cmux-code"].userDir, "settings.json"),
-      posix.join(
-        IDE_PATHS["cmux-code"].profileDir ?? IDE_PATHS["cmux-code"].userDir,
-        "settings.json"
-      ),
-      posix.join(IDE_PATHS["cmux-code"].machineDir, "settings.json"),
       // OpenVSCode paths
       posix.join(IDE_PATHS.openvscode.userDir, "settings.json"),
-      posix.join(
-        IDE_PATHS.openvscode.profileDir ?? IDE_PATHS.openvscode.userDir,
-        "settings.json"
-      ),
+      posix.join(IDE_PATHS.openvscode.profileDir ?? IDE_PATHS.openvscode.userDir, "settings.json"),
       posix.join(IDE_PATHS.openvscode.machineDir, "settings.json"),
       // Coder paths
       posix.join(IDE_PATHS.coder.userDir, "settings.json"),
@@ -468,12 +442,7 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
   }
 
   if (editor.keybindings) {
-    // Write keybindings to all IDE provider locations
-    authFiles.push({
-      destinationPath: posix.join(IDE_PATHS["cmux-code"].userDir, "keybindings.json"),
-      contentBase64: encode(editor.keybindings.content),
-      mode: "644",
-    });
+    // Write keybindings to both IDE provider locations
     authFiles.push({
       destinationPath: posix.join(IDE_PATHS.openvscode.userDir, "keybindings.json"),
       contentBase64: encode(editor.keybindings.content),
@@ -490,12 +459,7 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
     for (const snippet of editor.snippets) {
       const name = path.basename(snippet.path);
       if (!name) continue;
-      // Write snippets to all IDE provider locations
-      authFiles.push({
-        destinationPath: posix.join(IDE_PATHS["cmux-code"].snippetsDir, name),
-        contentBase64: encode(snippet.content),
-        mode: "644",
-      });
+      // Write snippets to both IDE provider locations
       authFiles.push({
         destinationPath: posix.join(IDE_PATHS.openvscode.snippetsDir, name),
         contentBase64: encode(snippet.content),

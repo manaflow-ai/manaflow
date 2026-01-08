@@ -144,30 +144,20 @@ export function useIframePreflight({
   const phaseRef = useRef<IframePreflightPhase>("idle");
   const { socket } = useSocket();
 
-  // Track the URL to prevent unnecessary preflight restarts when URL reference changes but value is the same
-  const prevUrlRef = useRef<string | null | undefined>(url);
-  const stableUrl = useMemo(() => {
-    if (url === prevUrlRef.current) {
-      return prevUrlRef.current;
-    }
-    prevUrlRef.current = url;
-    return url;
-  }, [url]);
-
   type PreflightMode = "morph" | "server";
 
   const preflightMode = useMemo<PreflightMode | null>(() => {
-    if (!stableUrl) {
+    if (!url) {
       return null;
     }
-    if (shouldUseIframePreflightProxy(stableUrl)) {
+    if (shouldUseIframePreflightProxy(url)) {
       return "morph";
     }
-    if (shouldUseServerIframePreflight(stableUrl)) {
+    if (shouldUseServerIframePreflight(url)) {
       return "server";
     }
     return null;
-  }, [stableUrl]);
+  }, [url]);
 
   const isMorphTarget = preflightMode === "morph";
 
@@ -182,7 +172,7 @@ export function useIframePreflight({
   useEffect(() => {
     if (
       !enabled ||
-      !stableUrl ||
+      !url ||
       !preflightMode ||
       (preflightMode === "server" && !socket)
     ) {
@@ -247,7 +237,7 @@ export function useIframePreflight({
     const runMorphPreflight = async () => {
       try {
         const requestUrl = new URL("/api/iframe/preflight", WWW_ORIGIN);
-        requestUrl.search = new URLSearchParams({ url: stableUrl }).toString();
+        requestUrl.search = new URLSearchParams({ url }).toString();
         const stackHeaders = await user.getAuthHeaders();
 
         const response = await fetch(requestUrl, {
@@ -408,7 +398,7 @@ export function useIframePreflight({
               reject(new Error("Socket is not connected."));
               return;
             }
-            socket.emit("iframe-preflight", { url: stableUrl }, (response) => {
+            socket.emit("iframe-preflight", { url }, (response) => {
               if (cancelled || controller.signal.aborted) {
                 return;
               }
@@ -455,7 +445,7 @@ export function useIframePreflight({
       controller.abort();
       abortRef.current = null;
     };
-  }, [enabled, preflightMode, socket, stableUrl, user]);
+  }, [enabled, preflightMode, socket, url, user]);
 
   return {
     phase,

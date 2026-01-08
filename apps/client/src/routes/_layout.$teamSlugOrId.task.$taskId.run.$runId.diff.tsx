@@ -5,7 +5,6 @@ import type {
   StreamFileState,
   StreamFileStatus,
 } from "@/components/heatmap-diff-viewer";
-import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useSocket } from "@/contexts/socket/use-socket";
@@ -14,7 +13,6 @@ import type { ReviewHeatmapLine } from "@/lib/heatmap";
 import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
-import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
@@ -332,8 +330,6 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
-  const [isAiReviewActive, setIsAiReviewActive] = useState(false);
-  const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders. The data is prefetched in the loader.
@@ -907,24 +903,8 @@ function RunDiffPage() {
     [setStreamStateByFile]
   );
 
-  // Handler for toggling AI review - track when user first visits AI review
-  const handleToggleAiReview = useCallback(() => {
-    setIsAiReviewActive((prev) => {
-      const next = !prev;
-      if (next && !hasVisitedAiReview) {
-        setHasVisitedAiReview(true);
-      }
-      return next;
-    });
-  }, [hasVisitedAiReview]);
-
-  // Auto-trigger the simple review when diff data and settings are ready,
-  // but ONLY after user has visited the AI review tab (lazy loading).
+  // Auto-trigger the simple review when diff data and settings are ready.
   useEffect(() => {
-    // Don't start the review until user has visited AI review mode
-    if (!hasVisitedAiReview) {
-      return;
-    }
     if (!primaryRepo || !selectedRun?.newBranch) {
       return;
     }
@@ -957,7 +937,6 @@ function RunDiffPage() {
     diffQuery.dataUpdatedAt,
     diffQuery.isLoading,
     fileDiffsForReview,
-    hasVisitedAiReview,
     heatmapModel,
     heatmapTooltipLanguage,
     headRefForHeatmap,
@@ -1058,8 +1037,6 @@ function RunDiffPage() {
             onCollapseAllChecks={collapseAllChecks}
             onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
-            isAiReviewActive={isAiReviewActive}
-            onToggleAiReview={handleToggleAiReview}
           />
           {task?.text && (
             <div className="mb-2 px-3.5">
@@ -1091,14 +1068,14 @@ function RunDiffPage() {
               <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
                 Loading screenshots...
               </div>
-            ) : screenshotSets.length > 0 ? (
+            ) : (
               <RunScreenshotGallery
                 screenshotSets={screenshotSets}
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
-            ) : null}
+            )}
             <div
-              className={cn("flex-1 min-h-0", screenshotSets.length > 0 && "mt-6")}
+              className="flex-1 min-h-0 mt-4"
               style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
             >
               <Suspense
@@ -1111,30 +1088,23 @@ function RunDiffPage() {
                 }
               >
                 {hasDiffSources ? (
-                  isAiReviewActive ? (
-                    <RunDiffHeatmapReviewSection
-                      repoFullName={primaryRepo as string}
-                      additionalRepoFullNames={additionalRepos}
-                      withRepoPrefix={shouldPrefixDiffs}
-                      ref1={baseRef}
-                      ref2={headRef}
-                      onControlsChange={setDiffControls}
-                      streamStateByFile={deferredStreamStateByFile}
-                      heatmapThreshold={heatmapThreshold}
-                      heatmapColors={heatmapColors}
-                      heatmapModel={heatmapModel}
-                      heatmapTooltipLanguage={heatmapTooltipLanguage}
-                      onHeatmapThresholdChange={handleHeatmapThresholdChange}
-                      onHeatmapColorsChange={handleHeatmapColorsChange}
-                      onHeatmapModelChange={handleHeatmapModelChange}
-                      onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
-                    />
-                  ) : (
-                    <MonacoGitDiffViewer
-                      diffs={diffQuery.data ?? []}
-                      onControlsChange={setDiffControls}
-                    />
-                  )
+                  <RunDiffHeatmapReviewSection
+                    repoFullName={primaryRepo as string}
+                    additionalRepoFullNames={additionalRepos}
+                    withRepoPrefix={shouldPrefixDiffs}
+                    ref1={baseRef}
+                    ref2={headRef}
+                    onControlsChange={setDiffControls}
+                    streamStateByFile={deferredStreamStateByFile}
+                    heatmapThreshold={heatmapThreshold}
+                    heatmapColors={heatmapColors}
+                    heatmapModel={heatmapModel}
+                    heatmapTooltipLanguage={heatmapTooltipLanguage}
+                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                    onHeatmapColorsChange={handleHeatmapColorsChange}
+                    onHeatmapModelChange={handleHeatmapModelChange}
+                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                  />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
                     Missing repo or branches to show diff.

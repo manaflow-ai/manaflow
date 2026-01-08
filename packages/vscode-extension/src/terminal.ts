@@ -1274,17 +1274,12 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
  * Directly creates the vscode terminals without going through provideTerminalProfile.
  * Focuses the "cmux" terminal if found.
  */
-export function createQueuedTerminals(options?: { focus?: boolean }): void {
+export function createQueuedTerminals(): void {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
 
   // Focus the "cmux" terminal (main agent terminal) after creation
-  const shouldFocus = options?.focus ?? true;
-  if (!shouldFocus) {
-    return;
-  }
-
   const terminals = terminalManager.getTerminals();
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {

@@ -18,16 +18,6 @@ import {
 import { persistentIframeManager } from "@/lib/persistentIframeManager";
 import { cn } from "@/lib/utils";
 
-// Stable memoized wrapper className to avoid recreation on every render
-const STABLE_IFRAME_CLASSNAMES = new Map<string, string>();
-function getStableClassName(className: string | undefined): string | undefined {
-  if (!className) return undefined;
-  const existing = STABLE_IFRAME_CLASSNAMES.get(className);
-  if (existing) return existing;
-  STABLE_IFRAME_CLASSNAMES.set(className, className);
-  return className;
-}
-
 export type PersistentIframeStatus = "loading" | "loaded" | "error";
 
 interface PersistentIframeProps {
@@ -115,12 +105,6 @@ export function PersistentIframe({
   const prevPersistKeyRef = useRef<string>(persistKey);
   const prevSrcRef = useRef<string>(src);
 
-  // Store callbacks in refs to avoid triggering effects on callback changes
-  const onLoadRef = useRef(onLoad);
-  const onErrorRef = useRef(onError);
-  onLoadRef.current = onLoad;
-  onErrorRef.current = onError;
-
   // Only reset to loading when persistKey or src actually changes to a different value
   // This prevents flickering when references change but values are the same
   useEffect(() => {
@@ -141,20 +125,19 @@ export function PersistentIframe({
     }
   }, []);
 
-  // Stable callbacks that use refs - won't trigger effect re-runs
   const handleLoad = useCallback(() => {
     clearLoadTimeout();
     setStatus("loaded");
-    onLoadRef.current?.();
-  }, [clearLoadTimeout]);
+    onLoad?.();
+  }, [clearLoadTimeout, onLoad]);
 
   const handleError = useCallback(
     (error: Error) => {
       clearLoadTimeout();
       setStatus("error");
-      onErrorRef.current?.(error);
+      onError?.(error);
     },
-    [clearLoadTimeout]
+    [clearLoadTimeout, onError]
   );
 
   const {
@@ -227,12 +210,7 @@ export function PersistentIframe({
     status,
   ]);
 
-  // Memoize wrapper className to prevent recreation on every render
-  const wrapperClassName = useMemo(
-    () => getStableClassName(cn(iframeClassName, persistentWrapperClassName)),
-    [iframeClassName, persistentWrapperClassName]
-  );
-
+  const wrapperClassName = cn(iframeClassName, persistentWrapperClassName);
   const wrapperStyle = useMemo(() => {
     if (!iframeStyle && !persistentWrapperStyle) {
       return undefined;

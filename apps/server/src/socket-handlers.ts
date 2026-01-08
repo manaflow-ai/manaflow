@@ -87,26 +87,6 @@ interface ExecError extends Error {
 
 const isWindows = process.platform === "win32";
 
-function collectWorktreePaths(nodes: unknown): string[] {
-  const paths = new Set<string>();
-
-  const walk = (entries: unknown): void => {
-    if (!Array.isArray(entries)) return;
-    for (const entry of entries) {
-      if (typeof entry !== "object" || entry === null) continue;
-      const worktreePath = Reflect.get(Object(entry), "worktreePath");
-      if (typeof worktreePath === "string" && worktreePath.trim().length > 0) {
-        paths.add(worktreePath);
-      }
-      const children = Reflect.get(Object(entry), "children");
-      walk(children);
-    }
-  };
-
-  walk(nodes);
-  return Array.from(paths);
-}
-
 function sanitizeShellPath(candidate: string | undefined | null): string | null {
   if (!candidate) {
     return null;
@@ -2463,27 +2443,6 @@ ${title}`;
 
         // Stop/pause all containers via helper (handles querying + logging)
         const results = await stopContainersForRuns(taskId, safeTeam);
-
-        try {
-          const runsTree = await getConvex().query(api.taskRuns.getByTask, {
-            teamSlugOrId: safeTeam,
-            taskId,
-          });
-          const worktreePaths = collectWorktreePaths(runsTree);
-          if (worktreePaths.length > 0) {
-            for (const worktreePath of worktreePaths) {
-              gitDiffManager.unwatchWorkspace(worktreePath);
-            }
-            serverLogger.info(
-              `Stopped git diff watchers for archived task ${taskId}: ${worktreePaths.join(", ")}`
-            );
-          }
-        } catch (error) {
-          serverLogger.error(
-            `Failed to clean up git diff watchers for archived task ${taskId}:`,
-            error
-          );
-        }
 
         // Log summary
         const successful = results.filter((r) => r.success).length;

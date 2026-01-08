@@ -1,5 +1,8 @@
 import type { AvailableEditors } from "@cmux/shared";
-import { connectToMainServer } from "@cmux/shared/socket";
+import {
+  connectToMainServer,
+  type MainServerSocket,
+} from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
@@ -8,8 +11,13 @@ import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
 import { WebSocketContext } from "./socket-context";
-import type { SocketContextType } from "./types";
 import { env } from "@/client-env";
+
+export interface SocketContextType {
+  socket: MainServerSocket | null;
+  isConnected: boolean;
+  availableEditors: AvailableEditors | null;
+}
 
 interface SocketProviderProps {
   children: React.ReactNode;
@@ -44,7 +52,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       return;
     }
     let disposed = false;
-    let createdSocket: SocketContextType["socket"] | null = null;
+    let createdSocket: MainServerSocket | null = null;
     (async () => {
       // Fetch full auth JSON for server to forward as x-stack-auth
       const user = await cachedGetUser(stackClientApp);

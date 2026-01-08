@@ -61,9 +61,3 @@ export const CODEX_AUTH_JSON: AgentConfigApiKey = {
   description:
     "Contents of ~/.codex/auth.json. Copy and paste the full JSON contents here.",
 };
-
-export const AWS_BEARER_TOKEN_BEDROCK: AgentConfigApiKey = {
-  envVar: "AWS_BEARER_TOKEN_BEDROCK",
-  displayName: "AWS Bedrock Bearer Token",
-  description: "Bearer token for AWS Bedrock API access to Claude models",
-};

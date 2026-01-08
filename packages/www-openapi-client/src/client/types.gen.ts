@@ -422,7 +422,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_m0lw91ep' | 'snapshot_hnwrt0re' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_kdgfqv7d' | 'snapshot_whba4mbt' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -785,7 +785,7 @@ export type PreviewRun = {
     prUrl: string;
     headSha: string;
     baseSha?: string | null;
-    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'superseded';
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
     createdAt: number;
     updatedAt: number;
     dispatchedAt?: number | null;
@@ -3103,10 +3103,12 @@ export type PostApiPreviewTestJobsErrors = {
 
 export type PostApiPreviewTestJobsResponses = {
     /**
-     * Test job created (task/taskRun will be created after VM starts)
+     * Test job created
      */
     200: {
         previewRunId: string;
+        taskId: string;
+        taskRunId: string;
         prNumber: number;
         repoFullName: string;
     };

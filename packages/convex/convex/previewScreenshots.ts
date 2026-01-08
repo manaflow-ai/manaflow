@@ -222,6 +222,8 @@ export const triggerGithubComment = internalAction({
         previewRunId: args.previewRunId,
         workspaceUrl,
         devServerUrl,
+        includePreviousRuns: true,
+        previewConfigId: previewRun.previewConfigId,
       });
 
       console.log("[previewScreenshots] GitHub comment updated successfully", {
@@ -245,6 +247,8 @@ export const triggerGithubComment = internalAction({
         previewRunId: args.previewRunId,
         workspaceUrl,
         devServerUrl,
+        includePreviousRuns: true,
+        previewConfigId: previewRun.previewConfigId,
       });
 
       console.log("[previewScreenshots] GitHub comment posted successfully", {

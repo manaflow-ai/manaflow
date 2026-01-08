@@ -1,5 +1,4 @@
 import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
-import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import type { DiffViewerControls, StreamFileState, StreamFileStatus } from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { Dropdown } from "@/components/ui/dropdown";
@@ -22,7 +21,7 @@ import { api } from "@cmux/convex/api";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
-import { ExternalLink, Flame, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
+import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
@@ -305,19 +304,6 @@ export function PullRequestDetailView({
       collapseChecks: collapseAllChecks,
     } : null);
   }, [expandAllChecks, collapseAllChecks]);
-
-  const [isAiReviewActive, setIsAiReviewActive] = useState(false);
-  const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
-
-  const handleToggleAiReview = useCallback(() => {
-    setIsAiReviewActive((prev) => {
-      const next = !prev;
-      if (next && !hasVisitedAiReview) {
-        setHasVisitedAiReview(true);
-      }
-      return next;
-    });
-  }, [hasVisitedAiReview]);
 
   // Git diff query for heatmap streaming review
   const baseRef = currentPR ? normalizeGitRef(currentPR.baseRef) : null;
@@ -680,9 +666,6 @@ export function PullRequestDetailView({
   // Only trigger if there's no cached fileOutputs (KV cache hit)
   const hasFileOutputs = fileOutputs && fileOutputs.length > 0;
   useEffect(() => {
-    if (!hasVisitedAiReview) {
-      return;
-    }
     if (!currentPR?.repoFullName || !baseRef || !headRef) {
       return;
     }
@@ -724,7 +707,6 @@ export function PullRequestDetailView({
     headRef,
     heatmapModel,
     heatmapTooltipLanguage,
-    hasVisitedAiReview,
     startSimpleReview,
     workspaceSettingsData,
   ]);
@@ -942,20 +924,6 @@ export function PullRequestDetailView({
                     Open on GitHub
                   </a>
                 ) : null}
-                <button
-                  onClick={handleToggleAiReview}
-                  className={clsx(
-                    "p-1 select-none transition-colors",
-                    isAiReviewActive
-                      ? "text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300"
-                      : "text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
-                  )}
-                  aria-label={isAiReviewActive ? "Switch to diff view" : "Switch to AI review"}
-                  aria-pressed={isAiReviewActive}
-                  title={isAiReviewActive ? "Viewing AI Review" : "View AI Review"}
-                >
-                  <Flame className="w-3.5 h-3.5" />
-                </button>
                 <Dropdown.Root>
                   <Dropdown.Trigger
                     className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none"
@@ -1049,49 +1017,40 @@ export function PullRequestDetailView({
                 onToggle={handleToggleChecks}
               />
             </Suspense>
-            <div className="mt-6">
-              <Suspense
-                fallback={
-                  <div className="flex items-center justify-center h-full">
-                    <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
-                      Loading diffs...
-                    </div>
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
+                    Loading diffs...
                   </div>
-                }
-              >
-                {currentPR?.repoFullName &&
-                  currentPR.baseRef &&
-                  currentPR.headRef ? (
-                  isAiReviewActive ? (
-                    <RunDiffHeatmapReviewSection
-                      repoFullName={currentPR.repoFullName}
-                      ref1={normalizeGitRef(currentPR.baseRef)}
-                      ref2={normalizeGitRef(currentPR.headRef)}
-                      onControlsChange={handleDiffControlsChange}
-                      fileOutputs={fileOutputs ?? undefined}
-                      streamStateByFile={streamStateByFile}
-                      heatmapThreshold={heatmapThreshold}
-                      heatmapColors={heatmapColors}
-                      heatmapModel={heatmapModel}
-                      heatmapTooltipLanguage={heatmapTooltipLanguage}
-                      onHeatmapThresholdChange={handleHeatmapThresholdChange}
-                      onHeatmapColorsChange={handleHeatmapColorsChange}
-                      onHeatmapModelChange={handleHeatmapModelChange}
-                      onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
-                    />
-                  ) : (
-                    <MonacoGitDiffViewer
-                      diffs={diffQuery.data ?? []}
-                      onControlsChange={handleDiffControlsChange}
-                    />
-                  )
-                ) : (
-                  <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
-                    Missing repo or branches to show diff.
-                  </div>
-                )}
-              </Suspense>
-            </div>
+                </div>
+              }
+            >
+              {currentPR?.repoFullName &&
+                currentPR.baseRef &&
+                currentPR.headRef ? (
+                <RunDiffHeatmapReviewSection
+                  repoFullName={currentPR.repoFullName}
+                  ref1={normalizeGitRef(currentPR.baseRef)}
+                  ref2={normalizeGitRef(currentPR.headRef)}
+                  onControlsChange={handleDiffControlsChange}
+                  fileOutputs={fileOutputs ?? undefined}
+                  streamStateByFile={streamStateByFile}
+                  heatmapThreshold={heatmapThreshold}
+                  heatmapColors={heatmapColors}
+                  heatmapModel={heatmapModel}
+                  heatmapTooltipLanguage={heatmapTooltipLanguage}
+                  onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                  onHeatmapColorsChange={handleHeatmapColorsChange}
+                  onHeatmapModelChange={handleHeatmapModelChange}
+                  onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                />
+              ) : (
+                <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
+                  Missing repo or branches to show diff.
+                </div>
+              )}
+            </Suspense>
           </div>
         </div>
       </div>

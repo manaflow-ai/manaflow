@@ -10,7 +10,7 @@ export CMUX_HOME
 export CMUX_WORKER_PORT="${CMUX_WORKER_PORT}"
 export WORKER_PORT
 export NODE_ENV="${NODE_ENV:-production}"
-export IS_SANDBOX="${IS_SANDBOX:-1}"
+export IS_SANDBOX="${IS_SANDBOX:-true}"
 export NODE_PATH="${CMUX_HOME}/builtins/build/node_modules${NODE_PATH:+:${NODE_PATH}}"
 
 mkdir -p "${CMUX_HOME}/workspace" /var/log/cmux

@@ -76,7 +76,7 @@ const PreviewRunSchema = z
     prUrl: z.string(),
     headSha: z.string(),
     baseSha: z.string().optional().nullable(),
-    status: z.enum(["pending", "running", "completed", "failed", "skipped", "superseded"]),
+    status: z.enum(["pending", "running", "completed", "failed", "skipped"]),
     createdAt: z.number(),
     updatedAt: z.number(),
     dispatchedAt: z.number().optional().nullable(),
@@ -445,11 +445,13 @@ previewRouter.openapi(
     },
     responses: {
       200: {
-        description: "Test job created (task/taskRun will be created after VM starts)",
+        description: "Test job created",
         content: {
           "application/json": {
             schema: z.object({
               previewRunId: z.string(),
+              taskId: z.string(),
+              taskRunId: z.string(),
               prNumber: z.number(),
               repoFullName: z.string(),
             }),

@@ -456,10 +456,6 @@ export const addPrReaction = internalAction({
  * with the diff heatmap link while screenshots are still being captured.
  *
  * Returns the comment ID and URL which should be stored for later updates.
- *
- * NOTE: Superseded runs will still post their own comment but will NOT collapse
- * other comments. This prevents a superseded run from collapsing comments from
- * newer runs that superseded it.
  */
 export const postInitialPreviewComment = internalAction({
   args: {
@@ -524,7 +520,6 @@ export const postInitialPreviewComment = internalAction({
       });
 
       // Store the comment ID on the preview run for later updates
-      // Note: We don't change status here to avoid overwriting a "superseded" status
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: "running",
@@ -532,30 +527,13 @@ export const postInitialPreviewComment = internalAction({
         githubCommentId: data.id,
       });
 
-      // Check if this run is superseded before collapsing other comments.
-      // Superseded runs should NOT collapse other comments because there may be
-      // newer runs whose comments we don't want to collapse.
-      const supersessionCheck = await ctx.runQuery(
-        internal.previewRuns.checkIfSuperseded,
-        { previewRunId },
-      );
-
-      if (!supersessionCheck.superseded) {
-        await collapseOlderPreviewComments({
-          octokit,
-          owner: repo.owner,
-          repo: repo.repo,
-          prNumber,
-          latestCommentId: data.id,
-        });
-      } else {
-        console.log("[github_pr_comments] Skipping collapse for superseded run", {
-          previewRunId,
-          prNumber,
-          commentId: data.id,
-          supersededBy: supersessionCheck.supersededBy,
-        });
-      }
+      await collapseOlderPreviewComments({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        latestCommentId: data.id,
+      });
 
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
     } catch (error) {
@@ -974,30 +952,13 @@ export const postPreviewComment = internalAction({
         githubCommentId: data.id,
       });
 
-      // Check if this run is superseded before collapsing other comments.
-      // Superseded runs should NOT collapse other comments because there may be
-      // newer runs whose comments we don't want to collapse.
-      const supersessionCheck = await ctx.runQuery(
-        internal.previewRuns.checkIfSuperseded,
-        { previewRunId },
-      );
-
-      if (!supersessionCheck.superseded) {
-        await collapseOlderPreviewComments({
-          octokit,
-          owner: repo.owner,
-          repo: repo.repo,
-          prNumber,
-          latestCommentId: data.id,
-        });
-      } else {
-        console.log("[github_pr_comments] Skipping collapse for superseded run (postPreviewComment)", {
-          previewRunId,
-          prNumber,
-          commentId: data.id,
-          supersededBy: supersessionCheck.supersededBy,
-        });
-      }
+      await collapseOlderPreviewComments({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        latestCommentId: data.id,
+      });
 
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
     } catch (error) {

@@ -382,17 +382,6 @@ export async function spawnAgent(
       return arg;
     });
 
-    const usesDangerousPermissions = processedArgs.includes(
-      "--dangerously-skip-permissions"
-    );
-    if (usesDangerousPermissions && envVars.IS_SANDBOX !== "1") {
-      const previousValue = envVars.IS_SANDBOX;
-      envVars.IS_SANDBOX = "1";
-      serverLogger.info(
-        `[AgentSpawner] Setting IS_SANDBOX=1 for ${agent.name} (was ${previousValue ?? "unset"})`
-      );
-    }
-
     const agentCommand = `${agent.command} ${processedArgs.join(" ")}`;
 
     // Build the tmux session command that will be sent via socket.io
