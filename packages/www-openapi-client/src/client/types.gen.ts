@@ -797,6 +797,28 @@ export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
 };
 
+export type EditorSettingsResponse = {
+    settingsJson?: string;
+    keybindingsJson?: string;
+    snippets?: Array<{
+        name: string;
+        content: string;
+    }>;
+    extensions?: string;
+    updatedAt?: number;
+} | null;
+
+export type EditorSettingsBody = {
+    teamSlugOrId: string;
+    settingsJson?: string;
+    keybindingsJson?: string;
+    snippets?: Array<{
+        name: string;
+        content: string;
+    }>;
+    extensions?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -3279,6 +3301,79 @@ export type PostApiPreviewTestJobsByPreviewRunIdRetryResponses = {
 };
 
 export type PostApiPreviewTestJobsByPreviewRunIdRetryResponse = PostApiPreviewTestJobsByPreviewRunIdRetryResponses[keyof PostApiPreviewTestJobsByPreviewRunIdRetryResponses];
+
+export type DeleteApiEditorSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/editor-settings';
+};
+
+export type DeleteApiEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type DeleteApiEditorSettingsResponses = {
+    /**
+     * Editor settings cleared
+     */
+    204: void;
+};
+
+export type DeleteApiEditorSettingsResponse = DeleteApiEditorSettingsResponses[keyof DeleteApiEditorSettingsResponses];
+
+export type GetApiEditorSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/editor-settings';
+};
+
+export type GetApiEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiEditorSettingsResponses = {
+    /**
+     * Editor settings retrieved
+     */
+    200: EditorSettingsResponse;
+};
+
+export type GetApiEditorSettingsResponse = GetApiEditorSettingsResponses[keyof GetApiEditorSettingsResponses];
+
+export type PostApiEditorSettingsData = {
+    body: EditorSettingsBody;
+    path?: never;
+    query?: never;
+    url: '/api/editor-settings';
+};
+
+export type PostApiEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiEditorSettingsResponses = {
+    /**
+     * Editor settings saved
+     */
+    200: EditorSettingsResponse;
+};
+
+export type PostApiEditorSettingsResponse = PostApiEditorSettingsResponses[keyof PostApiEditorSettingsResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
