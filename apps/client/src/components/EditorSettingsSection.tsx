@@ -47,6 +47,20 @@ const FILE_LOCATIONS = {
   },
 };
 
+// Detect user's platform for showing relevant file paths
+function getUserPlatform(): "macOS" | "Linux" | "Windows" {
+  if (typeof navigator === "undefined") return "macOS";
+  const platform = navigator.platform.toLowerCase();
+  if (platform.includes("mac")) return "macOS";
+  if (platform.includes("win")) return "Windows";
+  return "Linux";
+}
+
+function getVSCodeUserPath(): string {
+  const platform = getUserPlatform();
+  return FILE_LOCATIONS.vscode.locations[platform];
+}
+
 export function EditorSettingsSection({
   teamSlugOrId,
   onDataChange,
@@ -262,17 +276,21 @@ export function EditorSettingsSection({
         {/* Description */}
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           Upload your VS Code, Cursor, or Windsurf settings to sync them to cloud
-          sandboxes. These settings override auto-detected settings.
+          sandboxes. When configured, these settings <strong>override</strong> auto-detected
+          local settings. Click the help icon for paths on other platforms.
         </p>
 
         {/* Settings JSON */}
         <div>
           <label
             htmlFor="settingsJson"
-            className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+            className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
           >
             settings.json
           </label>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+            <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded">{getVSCodeUserPath()}settings.json</code>
+          </p>
           <textarea
             id="settingsJson"
             value={settingsJson}
@@ -287,10 +305,13 @@ export function EditorSettingsSection({
         <div>
           <label
             htmlFor="keybindingsJson"
-            className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+            className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
           >
             keybindings.json
           </label>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+            <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded">{getVSCodeUserPath()}keybindings.json</code>
+          </p>
           <textarea
             id="keybindingsJson"
             value={keybindingsJson}
@@ -303,7 +324,7 @@ export function EditorSettingsSection({
 
         {/* Snippets */}
         <div>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-1">
             <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
               Snippets
             </label>
@@ -316,6 +337,9 @@ export function EditorSettingsSection({
               Add snippet file
             </button>
           </div>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+            <code className="bg-neutral-100 dark:bg-neutral-800 px-1 rounded">{getVSCodeUserPath()}snippets/</code>
+          </p>
           {snippets.length === 0 ? (
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
               No snippet files added. Click "Add snippet file" to add one.
