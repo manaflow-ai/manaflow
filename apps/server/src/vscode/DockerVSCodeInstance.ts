@@ -16,6 +16,9 @@ import {
   type VSCodeInstanceInfo,
 } from "./VSCodeInstance";
 
+const DEFAULT_WORKER_IMAGE = "cmux-worker:0.0.1";
+const FALLBACK_WORKER_IMAGE = "lawrencecchen/cmux:latest";
+
 // Global port mapping storage
 export interface ContainerMapping {
   containerName: string;
@@ -77,57 +80,73 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   constructor(config: VSCodeInstanceConfig) {
     super(config);
     this.containerName = `cmux-${this.taskRunId}`;
-    this.imageName = process.env.WORKER_IMAGE_NAME || "cmux-worker:0.0.1";
+    this.imageName = process.env.WORKER_IMAGE_NAME || DEFAULT_WORKER_IMAGE;
     dockerLogger.info(`WORKER_IMAGE_NAME: ${process.env.WORKER_IMAGE_NAME}`);
     dockerLogger.info(`this.imageName: ${this.imageName}`);
     // Register this instance
     VSCodeInstance.getInstances().set(this.instanceId, this);
   }
 
-  private async ensureImageExists(docker: Docker): Promise<void> {
-    try {
-      // Check if image exists locally
-      await docker.getImage(this.imageName).inspect();
-      dockerLogger.info(`Image ${this.imageName} found locally`);
-    } catch (_error) {
-      // Image doesn't exist locally, try to pull it
-      dockerLogger.info(
-        `Image ${this.imageName} not found locally, pulling...`
-      );
+  private async imageExists(docker: Docker, imageName: string): Promise<boolean> {
+    const images = await docker.listImages({
+      filters: { reference: [imageName] },
+    });
+    return images.length > 0;
+  }
 
-      try {
-        const stream = await docker.pull(this.imageName);
-        await new Promise((resolve, reject) => {
-          docker.modem.followProgress(
-            stream,
-            (err: Error | null, res: unknown[]) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve(res);
-              }
-            },
-            (event: { status: string; progress: string }) => {
-              // Log pull progress
-              if (event.status) {
-                dockerLogger.info(
-                  `Pull progress: ${event.status} ${event.progress || ""}`
-                );
-              }
+  private async pullImage(docker: Docker, imageName: string): Promise<void> {
+    dockerLogger.info(`Image ${imageName} not found locally, pulling...`);
+    try {
+      const stream = await docker.pull(imageName);
+      await new Promise<void>((resolve, reject) => {
+        docker.modem.followProgress(
+          stream,
+          (err: Error | null) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
             }
-          );
-        });
-        dockerLogger.info(`Successfully pulled image ${this.imageName}`);
-      } catch (pullError) {
-        dockerLogger.error(
-          `Failed to pull image ${this.imageName}:`,
-          pullError
+          },
+          (event: { status?: string; progress?: string }) => {
+            if (event.status) {
+              dockerLogger.info(
+                `Pull progress: ${event.status} ${event.progress || ""}`
+              );
+            }
+          }
         );
-        throw new Error(
-          `Failed to pull Docker image ${this.imageName}: ${pullError}`
-        );
+      });
+      dockerLogger.info(`Successfully pulled image ${imageName}`);
+    } catch (error) {
+      console.error(`Failed to pull image ${imageName}:`, error);
+      dockerLogger.error(`Failed to pull image ${imageName}:`, error);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to pull Docker image ${imageName}: ${message}`);
+    }
+  }
+
+  private async ensureImageExists(docker: Docker): Promise<void> {
+    const configuredImage = this.imageName;
+    const hasEnvOverride = Boolean(process.env.WORKER_IMAGE_NAME);
+
+    if (await this.imageExists(docker, configuredImage)) {
+      dockerLogger.info(`Image ${configuredImage} found locally`);
+      return;
+    }
+
+    if (!hasEnvOverride && configuredImage === DEFAULT_WORKER_IMAGE) {
+      dockerLogger.warn(
+        `Image ${configuredImage} not found locally. Falling back to ${FALLBACK_WORKER_IMAGE}.`
+      );
+      this.imageName = FALLBACK_WORKER_IMAGE;
+      if (await this.imageExists(docker, this.imageName)) {
+        dockerLogger.info(`Image ${this.imageName} found locally`);
+        return;
       }
     }
+
+    await this.pullImage(docker, this.imageName);
   }
 
   /**
