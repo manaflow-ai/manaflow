@@ -66,7 +66,7 @@ const IDE_PATHS: Record<IdeProvider, IdePaths> = {
   },
   cmuxcode: {
     userDir: "/root/.vscode-server-oss/data/User",
-    profileDir: null,
+    profileDir: "/root/.vscode-server-oss/data/User/profiles/default-profile",
     machineDir: "/root/.vscode-server-oss/data/Machine",
     snippetsDir: "/root/.vscode-server-oss/data/User/snippets",
     extensionsDir: "/root/.vscode-server-oss/extensions",
@@ -442,6 +442,7 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
     const targets = [
       // cmux-code paths
       posix.join(IDE_PATHS.cmuxcode.userDir, "settings.json"),
+      posix.join(IDE_PATHS.cmuxcode.profileDir ?? IDE_PATHS.cmuxcode.userDir, "settings.json"),
       posix.join(IDE_PATHS.cmuxcode.machineDir, "settings.json"),
       // OpenVSCode paths
       posix.join(IDE_PATHS.openvscode.userDir, "settings.json"),
