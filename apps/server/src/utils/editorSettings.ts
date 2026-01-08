@@ -503,20 +503,23 @@ function buildUploadFromUserSettings(
   if (userSettings.snippets && userSettings.snippets.length > 0) {
     for (const snippet of userSettings.snippets) {
       if (!snippet.name || !snippet.content) continue;
+      // Sanitize filename to prevent path traversal attacks
+      const sanitizedName = posix.basename(snippet.name);
+      if (!sanitizedName) continue;
       const encodedSnippet = encode(snippet.content);
       // Write snippets to all IDE provider locations
       authFiles.push({
-        destinationPath: posix.join(IDE_PATHS["cmux-code"].snippetsDir, snippet.name),
+        destinationPath: posix.join(IDE_PATHS["cmux-code"].snippetsDir, sanitizedName),
         contentBase64: encodedSnippet,
         mode: "644",
       });
       authFiles.push({
-        destinationPath: posix.join(IDE_PATHS.openvscode.snippetsDir, snippet.name),
+        destinationPath: posix.join(IDE_PATHS.openvscode.snippetsDir, sanitizedName),
         contentBase64: encodedSnippet,
         mode: "644",
       });
       authFiles.push({
-        destinationPath: posix.join(IDE_PATHS.coder.snippetsDir, snippet.name),
+        destinationPath: posix.join(IDE_PATHS.coder.snippetsDir, sanitizedName),
         contentBase64: encodedSnippet,
         mode: "644",
       });
