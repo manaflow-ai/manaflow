@@ -1197,7 +1197,117 @@ vscodeIO.on("connection", (socket) => {
 // =============================================================================
 
 const PTY_SERVER_URL = process.env.PTY_SERVER_URL || "http://localhost:39383";
+const PTY_SERVER_LOCAL_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "0.0.0.0",
+]);
+const ptyServerInfo = (() => {
+  try {
+    const parsed = new URL(PTY_SERVER_URL);
+    const port = parsed.port ? Number(parsed.port) : 39383;
+    const isLocal = PTY_SERVER_LOCAL_HOSTS.has(parsed.hostname);
+    return { port, isLocal };
+  } catch (error) {
+    log("WARN", "[cmux-pty] Invalid PTY_SERVER_URL; falling back to defaults", {
+      PTY_SERVER_URL,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { port: 39383, isLocal: true };
+  }
+})();
 const ptyClient = new CmuxPtyClient(PTY_SERVER_URL);
+let ptyStartupPromise: Promise<boolean> | null = null;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const startPtyServer = async (): Promise<boolean> => {
+  if (!ptyServerInfo.isLocal) {
+    return false;
+  }
+
+  return new Promise<boolean>((resolve) => {
+    try {
+      const child = spawn(
+        "cmux-pty",
+        [
+          "server",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          String(ptyServerInfo.port),
+        ],
+        {
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+
+      child.on("error", (error) => {
+        log("ERROR", "[cmux-pty] Failed to spawn cmux-pty server", {
+          error: error.message,
+        });
+        resolve(false);
+      });
+
+      child.unref();
+      resolve(true);
+    } catch (error) {
+      log("ERROR", "[cmux-pty] Failed to launch cmux-pty server", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      resolve(false);
+    }
+  });
+};
+
+const ensurePtyServerAvailable = async (): Promise<boolean> => {
+  if (await ptyClient.health()) {
+    return true;
+  }
+
+  if (!ptyServerInfo.isLocal) {
+    return false;
+  }
+
+  if (!ptyStartupPromise) {
+    ptyStartupPromise = (async () => {
+      log(
+        "WARN",
+        "[cmux-pty] Server unavailable; attempting to start locally",
+        {
+          url: PTY_SERVER_URL,
+        },
+      );
+
+      const started = await startPtyServer();
+      if (!started) {
+        return false;
+      }
+
+      const maxAttempts = 5;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        await sleep(300);
+        if (await ptyClient.health()) {
+          return true;
+        }
+      }
+
+      log("WARN", "[cmux-pty] Server did not become healthy in time", {
+        url: PTY_SERVER_URL,
+      });
+      return false;
+    })().finally(() => {
+      ptyStartupPromise = null;
+    });
+  }
+
+  return ptyStartupPromise;
+};
 
 // Create terminal helper function
 async function createTerminal(
@@ -1268,7 +1378,7 @@ async function createTerminal(
   // ==========================================================================
   if (backend === "cmux-pty") {
     // Check if cmux-pty server is available, fall back to tmux if not
-    const ptyAvailable = await ptyClient.health();
+    const ptyAvailable = await ensurePtyServerAvailable();
     if (!ptyAvailable) {
       log("INFO", `[createTerminal] cmux-pty server not available, falling back to tmux for ${terminalId}`);
       // Fall through to tmux backend below
