@@ -1017,40 +1017,42 @@ export function PullRequestDetailView({
                 onToggle={handleToggleChecks}
               />
             </Suspense>
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
-                    Loading diffs...
+            <div className="mt-6">
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
+                      Loading diffs...
+                    </div>
                   </div>
-                </div>
-              }
-            >
-              {currentPR?.repoFullName &&
-                currentPR.baseRef &&
-                currentPR.headRef ? (
-                <RunDiffHeatmapReviewSection
-                  repoFullName={currentPR.repoFullName}
-                  ref1={normalizeGitRef(currentPR.baseRef)}
-                  ref2={normalizeGitRef(currentPR.headRef)}
-                  onControlsChange={handleDiffControlsChange}
-                  fileOutputs={fileOutputs ?? undefined}
-                  streamStateByFile={streamStateByFile}
-                  heatmapThreshold={heatmapThreshold}
-                  heatmapColors={heatmapColors}
-                  heatmapModel={heatmapModel}
-                  heatmapTooltipLanguage={heatmapTooltipLanguage}
-                  onHeatmapThresholdChange={handleHeatmapThresholdChange}
-                  onHeatmapColorsChange={handleHeatmapColorsChange}
-                  onHeatmapModelChange={handleHeatmapModelChange}
-                  onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
-                />
-              ) : (
-                <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
-                  Missing repo or branches to show diff.
-                </div>
-              )}
-            </Suspense>
+                }
+              >
+                {currentPR?.repoFullName &&
+                  currentPR.baseRef &&
+                  currentPR.headRef ? (
+                  <RunDiffHeatmapReviewSection
+                    repoFullName={currentPR.repoFullName}
+                    ref1={normalizeGitRef(currentPR.baseRef)}
+                    ref2={normalizeGitRef(currentPR.headRef)}
+                    onControlsChange={handleDiffControlsChange}
+                    fileOutputs={fileOutputs ?? undefined}
+                    streamStateByFile={streamStateByFile}
+                    heatmapThreshold={heatmapThreshold}
+                    heatmapColors={heatmapColors}
+                    heatmapModel={heatmapModel}
+                    heatmapTooltipLanguage={heatmapTooltipLanguage}
+                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                    onHeatmapColorsChange={handleHeatmapColorsChange}
+                    onHeatmapModelChange={handleHeatmapModelChange}
+                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                  />
+                ) : (
+                  <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
+                    Missing repo or branches to show diff.
+                  </div>
+                )}
+              </Suspense>
+            </div>
           </div>
         </div>
       </div>

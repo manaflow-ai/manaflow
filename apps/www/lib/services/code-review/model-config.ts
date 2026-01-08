@@ -190,8 +190,9 @@ const FINE_TUNED_OPENAI_DENSE_MODEL_ID =
   "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-dense:CaaqvYVO";
 const FINE_TUNED_OPENAI_DENSE_V2_MODEL_ID =
   "ft:gpt-4.1-2025-04-14:lawrence:cmux-heatmap-dense-4-1:CahKn54r";
-const ANTHROPIC_OPUS_41_MODEL_ID = "claude-opus-4-1-20250805";
-const ANTHROPIC_OPUS_45_MODEL_ID = "claude-opus-4-5";
+// AWS Bedrock model IDs for Claude (using cross-region inference)
+const ANTHROPIC_OPUS_41_MODEL_ID = "global.anthropic.claude-opus-4-1-20250807-v1:0";
+const ANTHROPIC_OPUS_45_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0";
 
 function createFineTunedOpenAiConfig(): ModelConfig {
   return {

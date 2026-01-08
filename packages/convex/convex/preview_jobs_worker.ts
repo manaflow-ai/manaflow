@@ -41,6 +41,21 @@ const resolveConvexUrl = (): string | null => {
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Custom error thrown when a preview run has been superseded by a newer commit.
+ * This is used to signal graceful early termination (not a failure).
+ */
+class SupersededError extends Error {
+  constructor(
+    public readonly previewRunId: Id<"previewRuns">,
+    public readonly supersededBy?: Id<"previewRuns">,
+    public readonly reason?: string,
+  ) {
+    super(`Preview run ${previewRunId} was superseded`);
+    this.name = "SupersededError";
+  }
+}
+
+/**
  * Fetch the screenshot collector release URL from Convex
  */
 async function fetchScreenshotCollectorRelease({
@@ -86,21 +101,68 @@ async function fetchScreenshotCollectorRelease({
 
 /**
  * Get changed files in the PR via Morph exec
+ *
+ * Strategy:
+ * 1. If baseSha is provided, try diffing against it directly (most reliable for PRs)
+ * 2. Fall back to merge-base with origin/baseBranch
+ * 3. Fall back to direct diff against origin/baseBranch
+ * 4. Return empty array if all approaches fail (graceful degradation)
  */
 async function getChangedFiles({
   morphClient,
   instanceId,
   repoDir,
   baseBranch,
+  baseSha,
   previewRunId,
 }: {
   morphClient: ReturnType<typeof createMorphCloudClient>;
   instanceId: string;
   repoDir: string;
   baseBranch: string;
+  baseSha?: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<string[]> {
-  // Get the merge base first
+  // Strategy 1: Use baseSha directly if available (most reliable for PRs)
+  if (baseSha) {
+    console.log("[preview-jobs] Attempting to get changed files using baseSha", {
+      previewRunId,
+      baseSha,
+    });
+
+    const baseShaResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instanceId },
+      body: {
+        command: ["git", "-C", repoDir, "diff", "--name-only", `${baseSha}..HEAD`],
+      },
+    });
+
+    if (!baseShaResponse.error && baseShaResponse.data?.exit_code === 0) {
+      const changedFiles = (baseShaResponse.data?.stdout || "")
+        .split("\n")
+        .map((f) => f.trim())
+        .filter((f) => f.length > 0);
+
+      console.log("[preview-jobs] Got changed files using baseSha", {
+        previewRunId,
+        baseSha,
+        fileCount: changedFiles.length,
+        files: changedFiles.slice(0, 10),
+      });
+
+      return changedFiles;
+    }
+
+    console.warn("[preview-jobs] Failed to diff against baseSha, trying merge-base approach", {
+      previewRunId,
+      baseSha,
+      exitCode: baseShaResponse.data?.exit_code,
+      stderr: sliceOutput(baseShaResponse.data?.stderr),
+    });
+  }
+
+  // Strategy 2: Get the merge base with origin/baseBranch
   const mergeBaseResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
@@ -109,65 +171,84 @@ async function getChangedFiles({
     },
   });
 
-  if (mergeBaseResponse.error || mergeBaseResponse.data?.exit_code !== 0) {
-    console.warn("[preview-jobs] Failed to get merge base, falling back to origin diff", {
+  if (!mergeBaseResponse.error && mergeBaseResponse.data?.exit_code === 0) {
+    const mergeBase = mergeBaseResponse.data?.stdout?.trim();
+    if (mergeBase) {
+      // Get changed files between merge base and HEAD
+      const diffResponse = await execInstanceInstanceIdExecPost({
+        client: morphClient,
+        path: { instance_id: instanceId },
+        body: {
+          command: ["git", "-C", repoDir, "diff", "--name-only", `${mergeBase}..HEAD`],
+        },
+      });
+
+      if (!diffResponse.error && diffResponse.data?.exit_code === 0) {
+        const changedFiles = (diffResponse.data?.stdout || "")
+          .split("\n")
+          .map((f) => f.trim())
+          .filter((f) => f.length > 0);
+
+        console.log("[preview-jobs] Got changed files using merge-base", {
+          previewRunId,
+          mergeBase,
+          fileCount: changedFiles.length,
+          files: changedFiles.slice(0, 10),
+        });
+
+        return changedFiles;
+      }
+
+      console.warn("[preview-jobs] Failed to diff against merge-base", {
+        previewRunId,
+        mergeBase,
+        exitCode: diffResponse.data?.exit_code,
+        stderr: sliceOutput(diffResponse.data?.stderr),
+      });
+    }
+  } else {
+    console.warn("[preview-jobs] Failed to get merge base, trying direct origin diff", {
       previewRunId,
       exitCode: mergeBaseResponse.data?.exit_code,
       stderr: sliceOutput(mergeBaseResponse.data?.stderr),
     });
-
-    // Fallback: diff against origin/baseBranch directly
-    const fallbackResponse = await execInstanceInstanceIdExecPost({
-      client: morphClient,
-      path: { instance_id: instanceId },
-      body: {
-        command: ["git", "-C", repoDir, "diff", "--name-only", `origin/${baseBranch}`],
-      },
-    });
-
-    if (fallbackResponse.error || fallbackResponse.data?.exit_code !== 0) {
-      throw new Error("Failed to get changed files");
-    }
-
-    return (fallbackResponse.data?.stdout || "")
-      .split("\n")
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
   }
 
-  const mergeBase = mergeBaseResponse.data?.stdout?.trim();
-  if (!mergeBase) {
-    throw new Error("Empty merge base result");
-  }
-
-  // Get changed files between merge base and HEAD
-  const diffResponse = await execInstanceInstanceIdExecPost({
+  // Strategy 3: Fallback - diff against origin/baseBranch directly
+  const fallbackResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
     body: {
-      command: ["git", "-C", repoDir, "diff", "--name-only", `${mergeBase}..HEAD`],
+      command: ["git", "-C", repoDir, "diff", "--name-only", `origin/${baseBranch}`],
     },
   });
 
-  if (diffResponse.error || diffResponse.data?.exit_code !== 0) {
-    throw new Error(
-      `Failed to get changed files: ${diffResponse.data?.stderr || diffResponse.error}`
-    );
+  if (!fallbackResponse.error && fallbackResponse.data?.exit_code === 0) {
+    const changedFiles = (fallbackResponse.data?.stdout || "")
+      .split("\n")
+      .map((f) => f.trim())
+      .filter((f) => f.length > 0);
+
+    console.log("[preview-jobs] Got changed files using direct origin diff", {
+      previewRunId,
+      baseBranch,
+      fileCount: changedFiles.length,
+      files: changedFiles.slice(0, 10),
+    });
+
+    return changedFiles;
   }
 
-  const changedFiles = (diffResponse.data?.stdout || "")
-    .split("\n")
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0);
-
-  console.log("[preview-jobs] Got changed files", {
+  // Strategy 4: All approaches failed - return empty array for graceful degradation
+  console.warn("[preview-jobs] All changed file detection strategies failed, returning empty array", {
     previewRunId,
-    mergeBase,
-    fileCount: changedFiles.length,
-    files: changedFiles.slice(0, 10), // Log first 10 files
+    baseSha,
+    baseBranch,
+    lastExitCode: fallbackResponse.data?.exit_code,
+    lastStderr: sliceOutput(fallbackResponse.data?.stderr),
   });
 
-  return changedFiles;
+  return [];
 }
 
 interface ScreenshotCollectorOptions {
@@ -1034,6 +1115,10 @@ export async function runPreviewJob(
     return;
   }
 
+  // Note: We continue even if status is "superseded" because each preview run
+  // should complete and update its own GitHub comment. The user pushed this commit
+  // and deserves to see its preview results.
+
   const convexUrl = resolveConvexUrl();
   if (!convexUrl) {
     console.error("[preview-jobs] Convex URL not configured; cannot trigger screenshots", {
@@ -1189,55 +1274,14 @@ export async function runPreviewJob(
   const snapshotId = environment.morphSnapshotId;
   let instance: InstanceModel | null = null;
   let taskId: Id<"tasks"> | null = null;
+  let wasSuperseded = false; // Track if the run was superseded for cleanup
+  let keepInstanceForTaskRun = false;
 
-  if (!taskRunId) {
-    console.log("[preview-jobs] No taskRun linked to preview run, creating one now", {
-      previewRunId,
-      repoFullName: run.repoFullName,
-      prNumber: run.prNumber,
-    });
+  // Note: task/taskRun creation is now deferred until AFTER the VM starts
+  // This ensures the preview job doesn't appear in the UI until it has working links
 
-    // Use "system" as fallback for legacy configs without createdByUserId
-    const configUserId = config.createdByUserId ?? "system";
-
-    taskId = await ctx.runMutation(internal.tasks.createForPreview, {
-      teamId: run.teamId,
-      userId: configUserId,
-      previewRunId,
-      repoFullName: run.repoFullName,
-      prNumber: run.prNumber,
-      prUrl: run.prUrl,
-      headSha: run.headSha,
-      baseBranch: config.repoDefaultBranch,
-    });
-
-    const { taskRunId: createdTaskRunId } = await ctx.runMutation(
-      internal.taskRuns.createForPreview,
-      {
-        taskId,
-        teamId: run.teamId,
-        userId: configUserId,
-        prUrl: run.prUrl,
-        environmentId: config.environmentId,
-        newBranch: run.headRef,
-      },
-    );
-
-    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
-      previewRunId,
-      taskRunId: createdTaskRunId,
-    });
-
-    taskRunId = createdTaskRunId;
-
-    console.log("[preview-jobs] Created and linked task/taskRun for preview run", {
-      previewRunId,
-      taskId,
-      taskRunId,
-    });
-  }
-
-  if (!taskId && taskRunId) {
+  // If we already have a taskRunId (from non-test runs), get the taskId
+  if (taskRunId) {
     const existingTaskRun = await ctx.runQuery(internal.taskRuns.getById, { id: taskRunId });
     if (existingTaskRun?.taskId) {
       taskId = existingTaskRun.taskId;
@@ -1250,7 +1294,6 @@ export async function runPreviewJob(
     }
   }
 
-  const keepInstanceForTaskRun = Boolean(taskRunId);
   console.log("[preview-jobs] Launching Morph instance", {
     previewRunId,
     snapshotId,
@@ -1267,7 +1310,9 @@ export async function runPreviewJob(
 
   // Post initial GitHub comment early with diff heatmap link
   // This gives users immediate feedback while screenshots are being captured
-  if (run.repoInstallationId) {
+  // Skip for test preview runs (stateReason === "Test preview run") - they shouldn't post to GitHub
+  const isTestRun = run.stateReason === "Test preview run";
+  if (run.repoInstallationId && !isTestRun) {
     try {
       const initialCommentResult = await ctx.runAction(
         internal.github_pr_comments.postInitialPreviewComment,
@@ -1300,26 +1345,13 @@ export async function runPreviewJob(
   }
 
   try {
-    // Generate JWT for screenshot upload authentication if we have a taskRunId
-    const previewJwt = taskRunId
-      ? await new SignJWT({
-          taskRunId,
-          teamId: run.teamId,
-          userId: config.createdByUserId,
-        })
-          .setProtectedHeader({ alg: "HS256" })
-          .setIssuedAt()
-          .setExpirationTime("12h")
-          .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET))
-      : null;
-
     console.log("[preview-jobs] Starting Morph instance", {
       previewRunId,
       hasTaskRunId: Boolean(taskRunId),
-      hasToken: Boolean(previewJwt),
       snapshotId,
     });
 
+    // Start VM first - task/taskRun creation happens AFTER the VM is ready
     instance = await startMorphInstance(morphClient, {
       snapshotId,
       metadata: {
@@ -1361,6 +1393,77 @@ export async function runPreviewJob(
       workerHealthUrl: `${workerService.url}/health`,
     });
 
+    // Note: We intentionally do NOT abort on supersession here.
+    // Each preview run should complete and update its own GitHub comment,
+    // even if a newer commit has arrived. This ensures the user sees results
+    // for each commit they pushed.
+
+    // Now that VM is running, create task/taskRun if needed
+    // This ensures the preview job only appears in UI after VM has working links
+    if (!taskRunId) {
+      console.log("[preview-jobs] VM ready, now creating task/taskRun", {
+        previewRunId,
+        repoFullName: run.repoFullName,
+        prNumber: run.prNumber,
+      });
+
+      // Use "system" as fallback for legacy configs without createdByUserId
+      const configUserId = config.createdByUserId ?? "system";
+
+      taskId = await ctx.runMutation(internal.tasks.createForPreview, {
+        teamId: run.teamId,
+        userId: configUserId,
+        previewRunId,
+        repoFullName: run.repoFullName,
+        prNumber: run.prNumber,
+        prUrl: run.prUrl,
+        headSha: run.headSha,
+        baseBranch: config.repoDefaultBranch,
+      });
+
+      const { taskRunId: createdTaskRunId } = await ctx.runMutation(
+        internal.taskRuns.createForPreview,
+        {
+          taskId,
+          teamId: run.teamId,
+          userId: configUserId,
+          prUrl: run.prUrl,
+          environmentId: config.environmentId,
+          newBranch: run.headRef,
+        },
+      );
+
+      await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+        previewRunId,
+        taskRunId: createdTaskRunId,
+      });
+
+      taskRunId = createdTaskRunId;
+
+      console.log("[preview-jobs] Created and linked task/taskRun for preview run", {
+        previewRunId,
+        taskId,
+        taskRunId,
+      });
+    }
+
+    // Keep instance running if we have a taskRun (for interactive access)
+    keepInstanceForTaskRun = Boolean(taskRunId);
+
+    // Generate JWT for screenshot upload authentication now that we have taskRunId
+    const previewJwt = taskRunId
+      ? await new SignJWT({
+          taskRunId,
+          teamId: run.teamId,
+          userId: config.createdByUserId,
+        })
+          .setProtectedHeader({ alg: "HS256" })
+          .setIssuedAt()
+          .setExpirationTime("12h")
+          .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET))
+      : null;
+
+    // Update taskRun with VM instance info and URLs
     if (taskRunId) {
       const networking = instance.networking?.http_services?.map((s) => ({
         status: "running" as const,
@@ -1708,6 +1811,7 @@ export async function runPreviewJob(
       stdout: checkoutResult.stdout?.slice(0, 200),
     });
 
+
     // Step 4: Apply environment variables and trigger screenshot collection
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
@@ -1848,11 +1952,14 @@ export async function runPreviewJob(
       });
 
       // Get changed files via Morph exec
+      // Pass baseSha from the PR webhook for more reliable diffing (especially for repos
+      // where origin/main might not exist, e.g., forks or repos with different default branches)
       const changedFiles = await getChangedFiles({
         morphClient,
         instanceId: instance.id,
         repoDir,
         baseBranch: defaultBranch,
+        baseSha: run.baseSha,
         previewRunId,
       });
 
@@ -1992,14 +2099,20 @@ export async function runPreviewJob(
             previewRunId,
           });
 
-          // Trigger GitHub comment update
-          await ctx.runAction(internal.previewScreenshots.triggerGithubComment, {
-            previewRunId,
-          });
+          // Trigger GitHub comment update (skip for test runs)
+          if (!isTestRun) {
+            await ctx.runAction(internal.previewScreenshots.triggerGithubComment, {
+              previewRunId,
+            });
 
-          console.log("[preview-jobs] GitHub comment update triggered", {
-            previewRunId,
-          });
+            console.log("[preview-jobs] GitHub comment update triggered", {
+              previewRunId,
+            });
+          } else {
+            console.log("[preview-jobs] Skipping GitHub comment for test run", {
+              previewRunId,
+            });
+          }
         } catch (screenshotSetError) {
           console.error("[preview-jobs] Failed to create screenshot set or update GitHub comment", {
             previewRunId,
@@ -2070,6 +2183,20 @@ export async function runPreviewJob(
       hasTaskRunId: Boolean(taskRunId),
     });
   } catch (error) {
+    // Handle SupersededError specially - this is graceful termination, not a failure
+    if (error instanceof SupersededError) {
+      console.log("[preview-jobs] Preview job terminated due to supersession", {
+        previewRunId,
+        supersededBy: error.supersededBy,
+        reason: error.reason,
+      });
+      // Set flag to ensure Morph instance is cleaned up in finally block
+      wasSuperseded = true;
+      // Don't mark as failed - the run is already marked as superseded
+      // The finally block will clean up the Morph instance
+      return;
+    }
+
     const message =
       error instanceof Error ? error.message : String(error ?? "Unknown error");
     console.error("[preview-jobs] Preview job failed", {
@@ -2111,13 +2238,21 @@ export async function runPreviewJob(
 
     throw error;
   } finally {
-    if (instance && !keepInstanceForTaskRun) {
+    // Always stop instance if run was superseded - the work is stale
+    // Also stop if not keeping for task run
+    if (instance && (wasSuperseded || !keepInstanceForTaskRun)) {
+      const instanceId = instance.id;
       try {
-        await stopMorphInstance(morphClient, instance.id);
+        console.log("[preview-jobs] Stopping Morph instance", {
+          previewRunId,
+          instanceId,
+          reason: wasSuperseded ? "superseded" : "not_kept_for_task",
+        });
+        await stopMorphInstance(morphClient, instanceId);
       } catch (stopError) {
         console.warn("[preview-jobs] Failed to stop Morph instance", {
           previewRunId,
-          instanceId: instance.id,
+          instanceId,
           error: stopError,
         });
       }

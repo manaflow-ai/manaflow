@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useMemo } from "react";
 import { persistentIframeManager } from "../lib/persistentIframeManager";
 
 interface UsePersistentIframeOptions {
@@ -61,18 +61,13 @@ export function usePersistentIframe({
 }: UsePersistentIframeOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  // Store current callbacks in refs to avoid stale closure issues and allow
-  // proper cleanup of event listeners when the effect re-runs
+  // Store callbacks in refs to avoid triggering effects on callback changes
   const onLoadRef = useRef(onLoad);
   const onErrorRef = useRef(onError);
+  onLoadRef.current = onLoad;
+  onErrorRef.current = onError;
 
-  // Keep refs up to date
-  useEffect(() => {
-    onLoadRef.current = onLoad;
-    onErrorRef.current = onError;
-  }, [onLoad, onError]);
-
-  // Preload effect
+  // Preload effect - only depends on key, url, and iframe options
   useEffect(() => {
     if (preload) {
       persistentIframeManager
@@ -82,9 +77,14 @@ export function usePersistentIframe({
     }
   }, [key, url, preload, allow, sandbox]);
 
-  // Mount/unmount effect - intentionally excludes onLoad/onError from deps
-  // to prevent effect re-runs when callbacks change. The refs ensure we
-  // always call the latest callbacks.
+  // Memoize mount options to prevent unnecessary re-mounts
+  const mountOptions = useMemo(
+    () => ({ className, style, allow, sandbox }),
+    [className, style, allow, sandbox]
+  );
+
+  // Mount/unmount effect - only re-runs when key, url, or mount options change
+  // Uses refs for callbacks to avoid effect re-runs when callbacks change
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -93,8 +93,11 @@ export function usePersistentIframe({
     let iframe: HTMLIFrameElement | null = null;
 
     try {
-      // Get or create the iframe
-      iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
+      // Get or create the iframe (use allow/sandbox from mountOptions for consistency)
+      iframe = persistentIframeManager.getOrCreateIframe(key, url, {
+        allow: mountOptions.allow,
+        sandbox: mountOptions.sandbox,
+      });
 
       // Set up load handlers if not already loaded
       if (!iframe.contentWindow || iframe.src !== url) {
@@ -125,12 +128,7 @@ export function usePersistentIframe({
       cleanupRef.current = persistentIframeManager.mountIframe(
         key,
         containerRef.current,
-        {
-          className,
-          style,
-          allow,
-          sandbox,
-        }
+        mountOptions
       );
     } catch (error) {
       console.error("Error mounting iframe:", error);
@@ -148,7 +146,7 @@ export function usePersistentIframe({
         cleanupRef.current = null;
       }
     };
-  }, [key, url, className, style, allow, sandbox, preload]);
+  }, [key, url, mountOptions, preload]);
 
   const handlePreload = useCallback(() => {
     return persistentIframeManager.preloadIframe(key, url, { allow, sandbox });

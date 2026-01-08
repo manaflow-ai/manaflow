@@ -1,11 +1,11 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject } from "ai";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import {
-  CLOUDFLARE_ANTHROPIC_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  BEDROCK_AWS_REGION,
 } from "@cmux/shared";
 import { getConvex } from "@/lib/utils/get-convex";
 import {
@@ -72,13 +72,13 @@ export async function runHeatmapReview(
 
   // Validate API keys based on provider
   const openAiApiKey = process.env.OPENAI_API_KEY;
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  const awsBedrockToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
 
   if (effectiveModelConfig.provider === "openai" && !openAiApiKey) {
     throw new Error("OPENAI_API_KEY environment variable is required for OpenAI models");
   }
-  if (effectiveModelConfig.provider === "anthropic" && !anthropicApiKey) {
-    throw new Error("ANTHROPIC_API_KEY environment variable is required for Anthropic models");
+  if (effectiveModelConfig.provider === "anthropic" && !awsBedrockToken) {
+    throw new Error("AWS_BEARER_TOKEN_BEDROCK environment variable is required for Anthropic models via Bedrock");
   }
 
   const convex = getConvex({ accessToken: config.accessToken });
@@ -221,9 +221,11 @@ export async function runHeatmapReview(
     });
 
     // Create provider clients
-    const anthropic = createAnthropic({
-      apiKey: anthropicApiKey ?? "",
-      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+    // AWS Bedrock SDK reads AWS_BEARER_TOKEN_BEDROCK and AWS_REGION from env vars by default
+    // We pass them explicitly for clarity
+    const bedrock = createAmazonBedrock({
+      region: process.env.AWS_REGION ?? BEDROCK_AWS_REGION,
+      apiKey: awsBedrockToken,
     });
     const openai = createOpenAI({
       apiKey: openAiApiKey ?? "",
@@ -233,7 +235,7 @@ export async function runHeatmapReview(
     // Create the model instance based on provider
     const modelInstance =
       effectiveModelConfig.provider === "anthropic"
-        ? anthropic(effectiveModelConfig.model)
+        ? bedrock(effectiveModelConfig.model)
         : openai(effectiveModelConfig.model);
 
     console.info("[heatmap-review] Using model", {

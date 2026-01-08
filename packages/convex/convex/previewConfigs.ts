@@ -80,7 +80,7 @@ export const upsert = authMutation({
     teamSlugOrId: v.string(),
     repoFullName: v.string(),
     environmentId: v.optional(v.id("environments")),
-    repoInstallationId: v.number(),
+    repoInstallationId: v.optional(v.number()),
     repoDefaultBranch: v.optional(v.string()),
     status: v.optional(
       v.union(
@@ -117,7 +117,7 @@ export const upsert = authMutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         environmentId: args.environmentId ?? existing.environmentId,
-        repoInstallationId: args.repoInstallationId,
+        repoInstallationId: args.repoInstallationId ?? existing.repoInstallationId,
         repoDefaultBranch: args.repoDefaultBranch ?? existing.repoDefaultBranch,
         status: args.status ?? existing.status ?? "active",
         updatedAt: now,

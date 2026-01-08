@@ -18,9 +18,10 @@
     "bench-morph": "bun run --env-file ../../.env scripts/bench-morph-setup.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.39",
-    "@ai-sdk/google": "^2.0.25",
-    "@ai-sdk/openai": "^2.0.58",
+    "@ai-sdk/amazon-bedrock": "^4.0.8",
+    "@ai-sdk/anthropic": "^3.0.6",
+    "@ai-sdk/google": "^3.0.3",
+    "@ai-sdk/openai": "^3.0.4",
     "@asteasolutions/zod-to-openapi": "^8.1.0",
     "@base-ui-components/react": "^1.0.0-beta.7",
     "@cmux/convex": "workspace:*",
@@ -44,7 +45,7 @@
     "@tanstack/react-query": "^5.86.2",
     "@vercel/functions": "^1.4.0",
     "@vercel/related-projects": "^1.0.0",
-    "ai": "^5.0.82",
+    "ai": "^6.0.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "^1.29.3",

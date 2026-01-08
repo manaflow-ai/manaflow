@@ -73,26 +73,39 @@ export const createScreenshotSet = internalMutation({
       }
     );
 
-    const primaryScreenshot = screenshots[0];
-    if (primaryScreenshot) {
-      await ctx.runMutation(internal.taskRuns.updateScreenshotMetadata, {
-        id: taskRun._id,
-        storageId: primaryScreenshot.storageId,
-        mimeType: primaryScreenshot.mimeType,
-        fileName: primaryScreenshot.fileName,
-        commitSha: primaryScreenshot.commitSha,
-        screenshotSetId,
-      });
-    } else if (args.status !== "completed") {
-      await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
-        id: taskRun._id,
-      });
-    }
-
+    // CRITICAL: Patch previewRun with screenshotSetId IMMEDIATELY after creating the set.
+    // This must happen before updateScreenshotMetadata because ctx.runMutation creates
+    // separate transactions - if updateScreenshotMetadata fails, we still want the
+    // previewRun to be linked to the screenshot set so the UI can display screenshots.
     await ctx.db.patch(args.previewRunId, {
       screenshotSetId,
       updatedAt: Date.now(),
     });
+
+    // Update taskRun metadata (non-critical - wrapped in try-catch)
+    const primaryScreenshot = screenshots[0];
+    try {
+      if (primaryScreenshot) {
+        await ctx.runMutation(internal.taskRuns.updateScreenshotMetadata, {
+          id: taskRun._id,
+          storageId: primaryScreenshot.storageId,
+          mimeType: primaryScreenshot.mimeType,
+          fileName: primaryScreenshot.fileName,
+          commitSha: primaryScreenshot.commitSha,
+          screenshotSetId,
+        });
+      } else if (args.status !== "completed") {
+        await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
+          id: taskRun._id,
+        });
+      }
+    } catch (error) {
+      // Log but don't fail - the screenshot set is already created and linked
+      console.error(
+        "[createScreenshotSet] Failed to update taskRun screenshot metadata:",
+        error
+      );
+    }
 
     return screenshotSetId;
   },
@@ -142,6 +155,14 @@ export const triggerGithubComment = internalAction({
     }
 
     const { run: previewRun } = run;
+
+    // Skip GitHub comments for test preview runs
+    if (previewRun.stateReason === "Test preview run") {
+      console.log("[previewScreenshots] Skipping GitHub comment for test run", {
+        previewRunId: args.previewRunId,
+      });
+      return;
+    }
 
     if (!previewRun.screenshotSetId) {
       console.warn("[previewScreenshots] No screenshot set for run", {
@@ -201,8 +222,6 @@ export const triggerGithubComment = internalAction({
         previewRunId: args.previewRunId,
         workspaceUrl,
         devServerUrl,
-        includePreviousRuns: true,
-        previewConfigId: previewRun.previewConfigId,
       });
 
       console.log("[previewScreenshots] GitHub comment updated successfully", {
@@ -226,8 +245,6 @@ export const triggerGithubComment = internalAction({
         previewRunId: args.previewRunId,
         workspaceUrl,
         devServerUrl,
-        includePreviousRuns: true,
-        previewConfigId: previewRun.previewConfigId,
       });
 
       console.log("[previewScreenshots] GitHub comment posted successfully", {

@@ -33,8 +33,31 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
-  if (hostname === "preview.new" && pathname === "/") {
-    return NextResponse.rewrite(new URL("/preview", request.url));
+  // Handle preview.new domain routing
+  if (hostname === "preview.new") {
+    // Redirect /preview/* to /* to avoid duplicate URLs
+    // (e.g., preview.new/preview → preview.new/)
+    if (pathname === "/preview") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url, 301);
+    }
+    if (pathname.startsWith("/preview/")) {
+      const url = request.nextUrl.clone();
+      url.pathname = pathname.replace(/^\/preview/, "");
+      return NextResponse.redirect(url, 301);
+    }
+
+    // Rewrite clean URLs to actual routes
+    if (pathname === "/") {
+      return NextResponse.rewrite(new URL("/preview", request.url));
+    }
+    if (pathname === "/test") {
+      return NextResponse.rewrite(new URL("/preview/test", request.url));
+    }
+    if (pathname === "/configure") {
+      return NextResponse.rewrite(new URL("/preview/configure", request.url));
+    }
   }
 
   if (hostname === "manaflow.com" && pathname === "/") {

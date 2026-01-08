@@ -17,6 +17,11 @@ export const env = createEnv({
     GEMINI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
+    // AWS Bedrock for Claude
+    AWS_BEARER_TOKEN_BEDROCK: z.string().min(1),
+    AWS_REGION: z.string().min(1).default("us-west-1"),
+    ANTHROPIC_MODEL: z.string().min(1).default("global.anthropic.claude-opus-4-5-20251101-v1:0"),
+    ANTHROPIC_SMALL_FAST_MODEL: z.string().min(1).default("us.anthropic.claude-haiku-4-5-20251001-v1:0"),
   },
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),
