@@ -80,7 +80,12 @@ class AuthManager: ObservableObject {
         }
 
         guard let refreshToken = hasRefresh else {
-            print("🔐 No refresh token found in keychain")
+            print("🔐 No refresh token found in keychain, clearing auth state")
+            // Clear expired access token and auth state since we can't refresh
+            keychain.delete("access_token")
+            AuthUserCache.shared.clear()
+            self.currentUser = nil
+            self.isAuthenticated = false
             return
         }
 
