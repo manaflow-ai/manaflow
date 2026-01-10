@@ -246,16 +246,9 @@ impl CliSpawner {
 
         // Standard mounts
         bwrap_args.extend_from_slice(&[
-            "--dev",
-            "/dev",
-            "--proc",
-            "/proc",
-            "--tmpfs",
-            "/tmp",
+            "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
             // Set working directory
-            "--chdir",
-            cwd_str,
-            // Separator before command
+            "--chdir", cwd_str, // Separator before command
             "--",
         ]);
 

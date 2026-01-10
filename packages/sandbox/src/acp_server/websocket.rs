@@ -1,9 +1,7 @@
 //! WebSocket handler for ACP connections from iOS clients.
 
-use std::io;
 use std::sync::Arc;
 
-use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::http::HeaderMap;
@@ -30,7 +28,12 @@ pub struct AcpServerState {
 
 impl AcpServerState {
     /// Create new ACP server state.
-    pub fn new(convex_url: String, jwt_secret: String, convex_admin_key: String, default_cwd: std::path::PathBuf) -> Self {
+    pub fn new(
+        convex_url: String,
+        jwt_secret: String,
+        convex_admin_key: String,
+        default_cwd: std::path::PathBuf,
+    ) -> Self {
         Self {
             convex_url,
             jwt_secret,
@@ -45,6 +48,7 @@ impl AcpServerState {
 pub struct ConversationTokenPayload {
     pub conversation_id: String,
     pub team_id: String,
+    #[allow(dead_code)]
     pub user_id: Option<String>,
 }
 
@@ -360,87 +364,14 @@ async fn handle_acp_connection(
     drop(tx);
 
     // Wait for tasks to complete with timeout
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            let _ = cli_read_task.await;
-            let _ = ws_write_task.await;
-        }
-    ).await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let _ = cli_read_task.await;
+        let _ = ws_write_task.await;
+    })
+    .await;
 
     info!(
         conversation_id = %token_payload.conversation_id,
         "ACP connection closed"
     );
-}
-
-/// WebSocket reader wrapper for ACP protocol.
-pub struct WsRead {
-    stream: futures::stream::SplitStream<axum::extract::ws::WebSocket>,
-}
-
-impl tokio::io::AsyncRead for WsRead {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        loop {
-            match futures::ready!(self.stream.poll_next_unpin(cx)) {
-                Some(Ok(Message::Binary(data))) => {
-                    buf.put_slice(&data);
-                    return std::task::Poll::Ready(Ok(()));
-                }
-                Some(Ok(Message::Text(data))) => {
-                    buf.put_slice(data.as_bytes());
-                    return std::task::Poll::Ready(Ok(()));
-                }
-                Some(Ok(Message::Close(_))) | None => {
-                    return std::task::Poll::Ready(Ok(()));
-                }
-                Some(Err(e)) => {
-                    return std::task::Poll::Ready(Err(io::Error::other(e)));
-                }
-                _ => continue,
-            }
-        }
-    }
-}
-
-/// WebSocket writer wrapper for ACP protocol.
-pub struct WsWrite {
-    sink: futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
-}
-
-impl tokio::io::AsyncWrite for WsWrite {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        match self
-            .sink
-            .start_send_unpin(Message::Binary(Bytes::copy_from_slice(buf)))
-        {
-            Ok(_) => {
-                let _ = self.sink.poll_flush_unpin(cx);
-                std::task::Poll::Ready(Ok(buf.len()))
-            }
-            Err(e) => std::task::Poll::Ready(Err(io::Error::other(e))),
-        }
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        self.sink.poll_flush_unpin(cx).map_err(io::Error::other)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        self.sink.poll_close_unpin(cx).map_err(io::Error::other)
-    }
 }
