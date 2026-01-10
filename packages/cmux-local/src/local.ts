@@ -14,8 +14,9 @@ import { type Task, type MCPQuestion, type MCPProgress } from "./types.js";
 
 /**
  * Default model - Claude Opus 4.5
+ * Using alias since full model ID may vary by account/region
  */
-export const DEFAULT_MODEL = "claude-opus-4-5-20251101";
+export const DEFAULT_MODEL = "opus";
 
 /**
  * Orchestration Protocol - instructs Claude to write questions to inbox file

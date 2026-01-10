@@ -862,32 +862,86 @@ export async function runDashboard(): Promise<void> {
     refreshTasks().catch(console.error);
   }, 5000);
 
-  // Interactive prompt
+  // Interactive prompt with single-key shortcuts
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
-  const prompt = (): void => {
-    if (!isRunning) {
+  // Enable keypress events for single-key shortcuts
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
+
+  let inputBuffer = "";
+  let isPrompting = true;
+
+  process.stdin.on("keypress", async (str, key) => {
+    if (!isPrompting) return;
+
+    // Handle Ctrl+C
+    if (key?.ctrl && key.name === "c") {
+      isRunning = false;
       clearInterval(pollInterval);
       rl.close();
       console.log(chalk.gray("\n  Goodbye!\n"));
       process.exit(0);
     }
 
-    // Ensure terminal is in a clean state before prompting
-    process.stdout.write(chalk.cyan("  > "));
-    rl.question("", async (inputStr) => {
+    // Single-key shortcuts (only when buffer is empty)
+    if (inputBuffer === "" && str) {
+      if (str === "c") {
+        process.stdout.write("\n");
+        await refreshTasks();
+        clearScreen();
+        printDashboard();
+        printQuickHelp();
+        process.stdout.write(chalk.cyan("  > "));
+        return;
+      }
+      if (str === "q") {
+        isRunning = false;
+        clearInterval(pollInterval);
+        rl.close();
+        console.log(chalk.gray("\n  Goodbye!\n"));
+        process.exit(0);
+      }
+    }
+
+    // Handle Enter
+    if (key?.name === "enter") {
+      process.stdout.write("\n");
+      isPrompting = false;
       try {
-        await handleCommand(inputStr, rl);
+        await handleCommand(inputBuffer, rl);
       } catch (err) {
         console.error(chalk.red("  Error:"), err);
       }
-      // Small delay to let inquirer fully release stdin
-      setTimeout(() => prompt(), 10);
-    });
-  };
+      inputBuffer = "";
+      isPrompting = true;
+      process.stdout.write(chalk.cyan("  > "));
+      return;
+    }
+
+    // Handle backspace
+    if (key?.name === "backspace") {
+      if (inputBuffer.length > 0) {
+        inputBuffer = inputBuffer.slice(0, -1);
+        process.stdout.write("\b \b");
+      }
+      return;
+    }
+
+    // Regular character input
+    if (str && !key?.ctrl && !key?.meta) {
+      inputBuffer += str;
+      process.stdout.write(str);
+    }
+  });
+
+  // Initial prompt
+  process.stdout.write(chalk.cyan("  > "));
 
   rl.on("close", () => {
     isRunning = false;
@@ -895,6 +949,4 @@ export async function runDashboard(): Promise<void> {
     console.log(chalk.gray("\n  Goodbye!\n"));
     process.exit(0);
   });
-
-  prompt();
 }
