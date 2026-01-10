@@ -61,30 +61,39 @@ export async function POST(request: NextRequest) {
     const isOAuthToken = getIsOAuthToken(
       xApiKeyHeader || authorizationHeader || ""
     );
-    const useOriginalApiKey =
+    // Check if user provided their own API key (not the hardcoded placeholder)
+    const hasUserProvidedApiKey =
       !isOAuthToken &&
+      xApiKeyHeader !== null &&
       xApiKeyHeader !== hardCodedApiKey &&
-      authorizationHeader !== hardCodedApiKey;
+      xApiKeyHeader.startsWith("sk-ant-");
     const body = await request.json();
 
     // Build headers
-    const headers: Record<string, string> =
-      useOriginalApiKey && !TEMPORARY_DISABLE_AUTH
-        ? (() => {
-            const filtered = new Headers(request.headers);
-            return Object.fromEntries(filtered);
-          })()
-        : {
-            "Content-Type": "application/json",
-            "x-api-key": env.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-          };
+    // IMPORTANT: Always use user's API key if they provided one.
+    // Never fall back to platform's ANTHROPIC_API_KEY for Claude Code tasks.
+    let headers: Record<string, string>;
+    if (hasUserProvidedApiKey) {
+      // User provided their own API key - pass it through to Anthropic
+      // This allows tracking while user pays for their own usage
+      headers = {
+        "Content-Type": "application/json",
+        "x-api-key": xApiKeyHeader,
+        "anthropic-version": "2023-06-01",
+      };
+    } else {
+      // No user-provided API key - use platform's key (for non-Claude-Code requests)
+      // Claude Code tasks should use Bedrock instead when no user key is provided
+      headers = {
+        "Content-Type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      };
+    }
 
-    // Add beta header if beta param is present
-    if (!useOriginalApiKey) {
-      if (beta === "true") {
-        headers["anthropic-beta"] = "messages-2023-12-15";
-      }
+    // Add beta header if needed
+    if (beta === "true") {
+      headers["anthropic-beta"] = "messages-2023-12-15";
     }
 
     const response = await fetch(ANTHROPIC_API_URL, {

@@ -277,12 +277,15 @@ exit 0`;
   }
 
   // Create settings.json with hooks configuration
-  // When using OAuth or user's API key, go direct to Anthropic (no proxy)
-  // When using Bedrock, no API key settings needed (credentials handled via env vars)
+  // Priority:
+  // 1. OAuth token - Direct to Anthropic (user pays via their subscription)
+  // 2. User's ANTHROPIC_API_KEY - Route through cmux proxy for tracking (user pays via their API key)
+  // 3. Neither - AWS Bedrock (cmux pays via Bedrock, credentials handled via env vars)
+  // IMPORTANT: We NEVER use cmux's platform-provided ANTHROPIC_API_KEY
   const settingsConfig: Record<string, unknown> = {
     alwaysThinkingEnabled: true,
-    // Use the user's Anthropic API key directly (not through cmux proxy)
-    // Only set this when using the user's own API key
+    // When user provides their own API key, set it in settings.json
+    // The proxy will pass this key through to Anthropic (not use platform's key)
     ...(useUserApiKey ? { anthropicApiKey: ctx.apiKeys?.ANTHROPIC_API_KEY } : {}),
     hooks: {
       Stop: [
@@ -310,7 +313,14 @@ exit 0`;
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
-      // No longer using the cmux proxy - we go direct or use Bedrock
+      // When user provides their own API key, route through cmux proxy for tracking
+      // OAuth users go direct to Anthropic, Bedrock users don't need proxy
+      ...(useUserApiKey
+        ? {
+            ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
+            ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}`,
+          }
+        : {}),
     },
   };
 
