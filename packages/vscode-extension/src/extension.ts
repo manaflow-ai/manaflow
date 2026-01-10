@@ -2,7 +2,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
-import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, createQueuedTerminals } from "./terminal";
+import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, waitForAnyCmuxPtyTerminals, createQueuedTerminals } from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -299,19 +299,31 @@ async function setupDefaultTerminal() {
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
-  // Check if cmux-pty is managing the "cmux" terminal
-  // This happens when the worker creates PTY sessions instead of tmux
-  const hasCmuxPty = await waitForCmuxPtyTerminal("cmux", 5000);
+  // Check if cmux-pty is managing ANY terminals (not just "cmux")
+  // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
+  // We use a longer timeout (15s) to allow the orchestrator to finish
+  log("Waiting for cmux-pty terminals (up to 15s)...");
+  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(15000);
 
-  if (hasCmuxPty) {
-    // cmux-pty has the terminal - directly create it from the restore queue
-    log("cmux-pty is managing 'cmux' terminal, creating queued terminals");
+  if (hasCmuxPtyTerminals) {
+    // cmux-pty has terminals - create all of them from the restore queue
+    log("cmux-pty is managing terminals, creating queued terminals");
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
-    createQueuedTerminals({ focus: !preserveFocus });
+    await createQueuedTerminals({ focus: !preserveFocus });
+
+    // Also check for the specific "cmux" terminal (main agent)
+    // If not present yet, it might still be created by the agent spawner
+    const hasCmuxTerminal = await waitForCmuxPtyTerminal("cmux", 5000);
+    if (hasCmuxTerminal) {
+      log("Found 'cmux' terminal in cmux-pty");
+      // The terminal was already created by createQueuedTerminals
+    } else {
+      log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
+    }
   } else {
     // Fall back to tmux-based terminal
-    log("cmux-pty not available, falling back to tmux");
+    log("cmux-pty not available or no terminals, falling back to tmux");
 
     // Wait for tmux session to exist before creating terminal
     const tmuxSessionExists = await waitForTmuxSession("cmux");

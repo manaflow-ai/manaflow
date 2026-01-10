@@ -89,7 +89,13 @@ function VSCodeComponent() {
   // Extract stable values from taskRun to avoid re-renders when unrelated fields change
   const rawWorkspaceUrl = taskRun?.vscode?.workspaceUrl;
   const vsCodeProvider = taskRun?.vscode?.provider;
+  const vsCodeStatusMessage = taskRun?.vscode?.statusMessage;
+  const taskRunStatus = taskRun?.status;
+  const taskRunErrorMessage = taskRun?.errorMessage;
   const localServeWebBaseUrl = localServeWeb.data?.baseUrl;
+
+  // Check if the task run failed (e.g., Docker pull failed)
+  const hasTaskRunFailed = taskRunStatus === "failed";
 
   // Memoize the workspace URL to prevent unnecessary recalculations
   const workspaceUrl = useMemo(
@@ -151,9 +157,13 @@ function VSCodeComponent() {
   const loadingFallback = useMemo(
     () =>
       isLocalWorkspace ? null : (
-        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+        <WorkspaceLoadingIndicator
+          variant="vscode"
+          status="loading"
+          loadingDescription={vsCodeStatusMessage}
+        />
       ),
-    [isLocalWorkspace]
+    [isLocalWorkspace, vsCodeStatusMessage]
   );
   const errorFallback = useMemo(
     () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
@@ -216,7 +226,12 @@ function VSCodeComponent() {
           )}
           {!hasWorkspace && !isLocalWorkspace ? (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+              <WorkspaceLoadingIndicator
+                variant="vscode"
+                status={hasTaskRunFailed ? "error" : "loading"}
+                loadingDescription={vsCodeStatusMessage}
+                errorDescription={taskRunErrorMessage ?? undefined}
+              />
             </div>
           ) : null}
           {taskRun ? (

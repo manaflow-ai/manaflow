@@ -29,7 +29,8 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
+    "@types/express": "^4.17.23",
+    "@types/express-serve-static-core": "4.19.6",
     "@types/multer": "^1.4.11",
     "@types/node": "^24.9.1",
     "@types/ws": "^8.5.13",

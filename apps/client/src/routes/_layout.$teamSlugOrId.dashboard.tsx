@@ -477,19 +477,44 @@ function DashboardComponent() {
       if (!isEnvSelected && !isCloudMode) {
         // Always check Docker status when in local mode, regardless of current state
         if (socket) {
-          const ready = await new Promise<boolean>((resolve) => {
+          const dockerCheck = await new Promise<{
+            isRunning: boolean;
+            workerImage?: {
+              name: string;
+              isAvailable: boolean;
+              isPulling?: boolean;
+            };
+          }>((resolve) => {
             socket.emit("check-provider-status", (response) => {
               const isRunning = !!response?.dockerStatus?.isRunning;
               if (typeof isRunning === "boolean") {
                 setDockerReady(isRunning);
               }
-              resolve(isRunning);
+              resolve({
+                isRunning,
+                workerImage: response?.dockerStatus?.workerImage,
+              });
             });
           });
 
           // Only show the alert if Docker is actually not running after checking
-          if (!ready) {
+          if (!dockerCheck.isRunning) {
             toast.error("Docker is not running. Start Docker Desktop.");
+            return;
+          }
+
+          // Check if Docker worker image is available
+          if (dockerCheck.workerImage && !dockerCheck.workerImage.isAvailable) {
+            const imageName = dockerCheck.workerImage.name;
+            if (dockerCheck.workerImage.isPulling) {
+              toast.error(
+                `Docker image "${imageName}" is currently being pulled. Please wait for it to complete.`
+              );
+            } else {
+              toast.error(
+                `Docker image "${imageName}" is not available. Please pull it first: docker pull ${imageName}`
+              );
+            }
             return;
           }
         } else {
@@ -738,7 +763,8 @@ function DashboardComponent() {
     }));
 
     const options: SelectOption[] = [];
-    if (envOptions.length > 0) {
+    // Only show environments in cloud mode
+    if (isCloudMode && envOptions.length > 0) {
       options.push({
         label: "Environments",
         value: "__heading-env",
@@ -756,7 +782,7 @@ function DashboardComponent() {
     }
 
     return options;
-  }, [reposByOrg, environmentsQuery.data]);
+  }, [reposByOrg, environmentsQuery.data, isCloudMode]);
 
   const selectedRepoFullName = useMemo(() => {
     if (!selectedProject[0] || isEnvSelected) return null;

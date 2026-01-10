@@ -1030,6 +1030,7 @@ export const updateVSCodeInstance = authMutation({
         v.literal("running"),
         v.literal("stopped"),
       ),
+      statusMessage: v.optional(v.string()),
       ports: v.optional(
         v.object({
           vscode: v.string(),
@@ -1131,6 +1132,39 @@ export const updateVSCodePorts = authMutation({
       vscode: {
         ...vscode,
         ports: args.ports,
+      },
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+// Update VSCode instance status message (for showing Docker pull progress, etc.)
+export const updateVSCodeStatusMessage = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    statusMessage: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const run = await ctx.db.get(args.id);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+    if (run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    const vscode = run.vscode || {
+      provider: "docker" as const,
+      status: "starting" as const,
+    };
+
+    await ctx.db.patch(args.id, {
+      vscode: {
+        ...vscode,
+        statusMessage: args.statusMessage,
       },
       updatedAt: Date.now(),
     });

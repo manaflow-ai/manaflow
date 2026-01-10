@@ -259,6 +259,7 @@ const convexSchema = defineSchema({
           v.literal("running"),
           v.literal("stopped")
         ),
+        statusMessage: v.optional(v.string()), // Human-readable status (e.g., "Pulling Docker image...")
         ports: v.optional(
           v.object({
             vscode: v.string(),

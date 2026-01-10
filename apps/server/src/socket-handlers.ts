@@ -576,7 +576,7 @@ export function setupSocketHandlers(
           return;
         }
 
-        // For local mode, ensure Docker is running before attempting to spawn
+        // For local mode, ensure Docker is running and image is available before attempting to spawn
         if (!taskData.isCloudMode) {
           try {
             const { checkDockerStatus } = await import(
@@ -589,6 +589,22 @@ export function setupSocketHandlers(
                 error:
                   "Docker is not running. Please start Docker Desktop or switch to Cloud mode.",
               });
+              return;
+            }
+            // Check if the worker image is available
+            if (docker.workerImage && !docker.workerImage.isAvailable) {
+              const imageName = docker.workerImage.name;
+              if (docker.workerImage.isPulling) {
+                callback({
+                  taskId,
+                  error: `Docker image "${imageName}" is currently being pulled. Please wait for the pull to complete and try again.`,
+                });
+              } else {
+                callback({
+                  taskId,
+                  error: `Docker image "${imageName}" is not available. Please pull the image first using: docker pull ${imageName}`,
+                });
+              }
               return;
             }
           } catch (e) {
@@ -2446,6 +2462,129 @@ ${title}`;
         callback({
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("docker-pull-image", async (callback) => {
+      // In web mode, Docker operations are not supported
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback({
+          success: false,
+          error: "Docker operations are not available in the web version.",
+        });
+        return;
+      }
+
+      try {
+        const { checkDockerStatus } = await import(
+          "@cmux/shared/providers/common/check-docker"
+        );
+        const docker = await checkDockerStatus();
+
+        if (!docker.isRunning) {
+          callback({
+            success: false,
+            error: "Docker is not running. Please start Docker Desktop first.",
+          });
+          return;
+        }
+
+        const imageName =
+          docker.workerImage?.name ||
+          process.env.WORKER_IMAGE_NAME ||
+          "docker.io/manaflow/cmux:latest";
+
+        // Check if already pulling
+        if (docker.workerImage?.isPulling) {
+          callback({
+            success: false,
+            imageName,
+            error: `Docker image "${imageName}" is already being pulled.`,
+          });
+          return;
+        }
+
+        // Check if already available
+        if (docker.workerImage?.isAvailable) {
+          callback({
+            success: true,
+            imageName,
+          });
+          return;
+        }
+
+        serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+
+        // Use dockerode to pull the image
+        const dockerClient = DockerVSCodeInstance.getDocker();
+
+        const stream = await dockerClient.pull(imageName);
+
+        // Wait for the pull to complete
+        await new Promise<void>((resolve, reject) => {
+          dockerClient.modem.followProgress(
+            stream,
+            (err: Error | null) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve();
+              }
+            },
+            (event: { status: string; progress?: string; id?: string }) => {
+              if (event.status) {
+                serverLogger.info(
+                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+                );
+              }
+            }
+          );
+        });
+
+        serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
+        callback({
+          success: true,
+          imageName,
+        });
+      } catch (error) {
+        serverLogger.error("Error pulling Docker image:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        // Provide user-friendly error messages
+        let userFriendlyError: string;
+        if (
+          errorMessage.includes("timeout") ||
+          errorMessage.includes("stalled")
+        ) {
+          userFriendlyError =
+            "Docker image pull timed out. This may be due to slow network or Docker registry issues.";
+        } else if (
+          errorMessage.includes("not found") ||
+          errorMessage.includes("manifest unknown")
+        ) {
+          userFriendlyError =
+            "Docker image not found. Please check if the image name is correct.";
+        } else if (
+          errorMessage.includes("unauthorized") ||
+          errorMessage.includes("authentication")
+        ) {
+          userFriendlyError =
+            "Docker authentication failed. Please ensure you have access to the Docker registry.";
+        } else if (
+          errorMessage.includes("ECONNREFUSED") ||
+          errorMessage.includes("connection refused")
+        ) {
+          userFriendlyError =
+            "Cannot connect to Docker daemon. Please ensure Docker is running.";
+        } else {
+          userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
+        }
+
+        callback({
+          success: false,
+          error: userFriendlyError,
         });
       }
     });

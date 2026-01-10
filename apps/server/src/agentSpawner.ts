@@ -1089,13 +1089,20 @@ exit $EXIT_CODE
           formData.append("image", blob, "image.png");
           formData.append("path", imageFile.path);
 
-          // Get worker port from VSCode instance
-          const workerPort =
-            vscodeInstance instanceof DockerVSCodeInstance
-              ? (vscodeInstance as DockerVSCodeInstance).getPorts()?.worker
-              : "39377";
-
-          const uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          // Get upload URL from VSCode instance
+          let uploadUrl: string;
+          if (vscodeInstance instanceof DockerVSCodeInstance) {
+            const workerPort = vscodeInstance.getPorts()?.worker;
+            uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          } else if (vscodeInstance instanceof CmuxVSCodeInstance) {
+            const workerUrl = vscodeInstance.getWorkerUrl();
+            if (!workerUrl) {
+              throw new Error("Worker URL not available for cloud instance");
+            }
+            uploadUrl = `${workerUrl}/upload-image`;
+          } else {
+            throw new Error("Unknown VSCode instance type");
+          }
 
           serverLogger.info(`[AgentSpawner] Uploading image to ${uploadUrl}`);
 

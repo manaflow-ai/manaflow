@@ -294,10 +294,10 @@ class PtyClient {
 
       const timeout = setTimeout(() => {
         if (!this._connected) {
-          console.error('[cmux] PtyClient connection timeout');
+          console.error('[cmux] PtyClient connection timeout after 10s');
           reject(new Error('Connection timeout'));
         }
-      }, 5000);
+      }, 10000); // Increased from 5s to 10s to allow for slower startup
 
       this._ws.onopen = () => {
         clearTimeout(timeout);
@@ -1269,12 +1269,66 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
 }
 
 /**
+ * Check if cmux-pty has ANY terminals (not just a specific name).
+ * This is useful for detecting if cmux-pty is being used at all.
+ */
+export function hasAnyCmuxPtyTerminals(): boolean {
+  if (!terminalManager) return false;
+  return terminalManager.hasTerminals() || terminalManager.hasQueuedTerminals();
+}
+
+/**
+ * Wait for cmux-pty to have ANY terminals.
+ * Returns true if cmux-pty has any terminals, false if not found after waiting.
+ * This is more reliable than waiting for a specific terminal name since
+ * maintenance/dev terminals may be created before the agent's "cmux" terminal.
+ */
+export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Promise<boolean> {
+  if (!terminalManager) return false;
+
+  // Wait for initial sync to complete (with longer timeout)
+  const syncTimeout = 10000; // 10 seconds - increased from 5s
+  try {
+    await Promise.race([
+      terminalManager.waitForInitialSync(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
+      )
+    ]);
+  } catch {
+    // Timeout or connection failure - fall back to tmux
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out');
+    return false;
+  }
+
+  // Check if ANY terminals exist
+  if (hasAnyCmuxPtyTerminals()) {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: found terminals after initial sync');
+    return true;
+  }
+
+  // Wait longer for terminals to be created (orchestrator may still be running)
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: waiting for terminals...');
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (hasAnyCmuxPtyTerminals()) {
+      console.log(`[cmux] waitForAnyCmuxPtyTerminals: found terminals after ${Date.now() - startTime}ms`);
+      return true;
+    }
+  }
+
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: no terminals found after waiting');
+  return false;
+}
+
+/**
  * Create all queued terminals from cmux-pty state_sync.
  * This should be called after waitForCmuxPtyTerminal() confirms terminals exist.
  * Directly creates the vscode terminals without going through provideTerminalProfile.
- * Focuses the "cmux" terminal if found.
+ * Focuses the "cmux" terminal if found, or the first available terminal.
  */
-export function createQueuedTerminals(options?: { focus?: boolean }): void {
+export async function createQueuedTerminals(options?: { focus?: boolean }): Promise<void> {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
@@ -1286,9 +1340,35 @@ export function createQueuedTerminals(options?: { focus?: boolean }): void {
   }
 
   const terminals = terminalManager.getTerminals();
+  console.log(`[cmux] Have ${terminals.length} terminals after drain`);
+
+  // First try to focus the "cmux" terminal (main agent)
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {
     console.log('[cmux] Focusing cmux terminal');
     cmuxTerminal.terminal.show(false); // false = take focus
+    return;
+  }
+
+  // If no "cmux" terminal, try to focus the "dev" terminal (for cloud workspaces)
+  const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
+  if (devTerminal) {
+    console.log('[cmux] Focusing dev terminal');
+    devTerminal.terminal.show(false);
+    return;
+  }
+
+  // Otherwise focus the first terminal in panel location
+  const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
+  if (panelTerminal) {
+    console.log('[cmux] Focusing first panel terminal:', panelTerminal.info.name);
+    panelTerminal.terminal.show(false);
+    return;
+  }
+
+  // Last resort: focus any terminal
+  if (terminals.length > 0) {
+    console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
+    terminals[0].terminal.show(false);
   }
 }
