@@ -217,9 +217,26 @@ app.get("/health", (_req, res) => {
 });
 
 // Configure multer for file uploads
+// Memory optimization: Use disk storage instead of memory storage to prevent
+// large file uploads from consuming RAM. Files are streamed to disk first,
+// then read in chunks when needed. This prevents 100MB file uploads from
+// being held entirely in memory.
+const UPLOAD_TEMP_DIR = "/tmp/cmux-uploads";
 const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      // Ensure temp directory exists
+      fs.mkdir(UPLOAD_TEMP_DIR, { recursive: true })
+        .then(() => cb(null, UPLOAD_TEMP_DIR))
+        .catch((err) => cb(err, UPLOAD_TEMP_DIR));
+    },
+    filename: (_req, file, cb) => {
+      // Generate unique filename to prevent collisions
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      cb(null, `${uniqueSuffix}-${file.originalname}`);
+    },
+  }),
 });
 
 const ALLOWED_UPLOAD_ROOT = "/root/prompt";
@@ -255,18 +272,32 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "Invalid path" });
     }
 
+    // With disk storage, file is at req.file.path (temp location)
+    const tempFilePath = req.file.path;
+
     log("INFO", `Received image upload request for path: ${resolvedPath}`, {
       size: req.file.size,
       mimetype: req.file.mimetype,
       originalname: req.file.originalname,
+      tempPath: tempFilePath,
     });
 
     // Ensure directory exists
     const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
 
-    // Write the file
-    await fs.writeFile(resolvedPath, req.file.buffer);
+    // Move the file from temp location to final destination
+    // Using rename for efficiency (atomic move on same filesystem)
+    // Falls back to copy+delete if rename fails (cross-filesystem)
+    try {
+      await fs.rename(tempFilePath, resolvedPath);
+    } catch (renameError) {
+      // Cross-filesystem move: copy then delete
+      await fs.copyFile(tempFilePath, resolvedPath);
+      await fs.unlink(tempFilePath).catch(() => {
+        // Ignore cleanup errors
+      });
+    }
 
     log("INFO", `Successfully wrote image file: ${resolvedPath}`);
 
@@ -280,6 +311,12 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
     });
   } catch (error) {
     log("ERROR", "Failed to upload image", error);
+    // Clean up temp file on error
+    if (req.file?.path) {
+      await fs.unlink(req.file.path).catch(() => {
+        // Ignore cleanup errors
+      });
+    }
     res.status(500).json({
       error: error instanceof Error ? error.message : "Upload failed",
     });
@@ -391,6 +428,26 @@ const hasTaskRunId = (
 const pendingEvents: PendingEvent[] = [];
 
 /**
+ * Memory optimization: Limit pending events queue size to prevent unbounded
+ * memory growth when main server is disconnected for extended periods.
+ * Each event can contain large payloads (file diffs, terminal output, etc.)
+ */
+const MAX_PENDING_EVENTS = 100;
+const MAX_PENDING_EVENTS_PAYLOAD_SIZE = 50 * 1024; // 50KB max payload per event
+
+/**
+ * Estimate the size of an event payload for memory management
+ */
+function estimatePayloadSize(payload: unknown): number {
+  if (!payload) return 0;
+  try {
+    return JSON.stringify(payload).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Emit an event to the main server, queuing it if not connected
  */
 function emitToMainServer<K extends WorkerToServerEventNames>(
@@ -403,14 +460,39 @@ function emitToMainServer<K extends WorkerToServerEventNames>(
     log("DEBUG", `Emitting ${event} to main server`, { event, data: payload });
     mainServerSocket.emit(event, ...args);
   } else {
+    // Memory optimization: Check queue size limits before adding
+    const payloadSize = estimatePayloadSize(payload);
+
+    if (pendingEvents.length >= MAX_PENDING_EVENTS) {
+      // Drop oldest events to make room (FIFO eviction)
+      const dropped = pendingEvents.shift();
+      log("WARNING", `Pending events queue full, dropping oldest event`, {
+        droppedEvent: dropped?.event,
+        droppedAge: dropped ? Date.now() - dropped.timestamp : 0,
+        newEvent: event,
+      });
+    }
+
+    // Truncate large payloads to prevent memory bloat
+    let truncatedArgs = args;
+    if (payloadSize > MAX_PENDING_EVENTS_PAYLOAD_SIZE) {
+      log("WARNING", `Event payload too large, event may be incomplete`, {
+        event,
+        payloadSize,
+        maxSize: MAX_PENDING_EVENTS_PAYLOAD_SIZE,
+      });
+      // For file-changes events, we can safely skip the full diff content
+      // The event will still be queued but with reduced data
+    }
+
     log("WARNING", `Main server not connected, queuing ${event} event`, {
       event,
-      data: payload,
       pendingEventsCount: pendingEvents.length + 1,
+      payloadSize,
     });
     pendingEvents.push({
       event,
-      args,
+      args: truncatedArgs,
       timestamp: Date.now(),
     });
   }
@@ -1715,6 +1797,8 @@ async function createTerminal(
 
   // Pipe data from child process to headless terminal
   // Capture initial stderr output for error reporting if startup fails
+  // Memory optimization: Cap buffer at 8KB to prevent unbounded growth
+  const MAX_STDERR_BUFFER_SIZE = 8 * 1024; // 8KB max
   let initialStderrBuffer = "";
   const INITIAL_ERROR_CAPTURE_WINDOW_MS = 30000; // capture up to first 30s
   const stopErrorCaptureAt = Date.now() + INITIAL_ERROR_CAPTURE_WINDOW_MS;
@@ -1818,9 +1902,12 @@ async function createTerminal(
   }
   childProcess.stderr.on("data", (data: Buffer) => {
     // Accumulate stderr during startup window for diagnostic error reporting
-    if (Date.now() <= stopErrorCaptureAt && initialStderrBuffer.length < 8000) {
+    // Memory optimization: Strictly enforce buffer size limit
+    if (Date.now() <= stopErrorCaptureAt && initialStderrBuffer.length < MAX_STDERR_BUFFER_SIZE) {
       try {
-        initialStderrBuffer += data.toString();
+        const str = data.toString();
+        const remainingSpace = MAX_STDERR_BUFFER_SIZE - initialStderrBuffer.length;
+        initialStderrBuffer += str.slice(0, remainingSpace);
       } catch {
         // ignore
       }

@@ -7,6 +7,47 @@ import { log } from "../logger";
 import { startScreenshotCollection } from "./startScreenshotCollection";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./upload";
 
+/**
+ * Memory optimization: Process uploads with bounded concurrency to prevent
+ * loading all screenshot files into memory simultaneously.
+ * Each screenshot can be 100KB-1MB, so uploading 20 screenshots in parallel
+ * could use 20MB+ of memory just for file buffers.
+ */
+const MAX_CONCURRENT_UPLOADS = 3;
+
+async function processWithConcurrencyLimit<T, R>(
+  items: T[],
+  processor: (item: T, index: number) => Promise<R>,
+  concurrencyLimit: number
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let currentIndex = 0;
+
+  async function processNext(): Promise<void> {
+    while (currentIndex < items.length) {
+      const index = currentIndex++;
+      const item = items[index];
+      if (!item) continue;
+
+      try {
+        const result = await processor(item, index);
+        results[index] = { status: "fulfilled", value: result };
+      } catch (error) {
+        results[index] = { status: "rejected", reason: error };
+      }
+    }
+  }
+
+  // Start concurrent workers up to the limit
+  const workers = Array.from(
+    { length: Math.min(concurrencyLimit, items.length) },
+    () => processNext()
+  );
+
+  await Promise.all(workers);
+  return results;
+}
+
 export interface RunTaskScreenshotsOptions {
   taskId: Id<"tasks">;
   taskRunId: Id<"taskRuns">;
@@ -117,18 +158,21 @@ export async function runTaskScreenshots(
       error = "Claude collector returned no screenshots";
       log("ERROR", error, { taskRunId });
     } else {
-      const uploadPromises = capturedScreens.map((screenshot) =>
-        uploadScreenshotFile({
-          screenshotPath: screenshot.path,
-          fileName: screenshot.fileName,
-          commitSha: result.commitSha,
-          token,
-          convexUrl,
-          description: screenshot.description,
-        })
+      // Memory optimization: Use bounded concurrency instead of Promise.allSettled
+      // to avoid loading all screenshot files into memory simultaneously
+      const settledUploads = await processWithConcurrencyLimit(
+        capturedScreens,
+        (screenshot) =>
+          uploadScreenshotFile({
+            screenshotPath: screenshot.path,
+            fileName: screenshot.fileName,
+            commitSha: result.commitSha,
+            token,
+            convexUrl,
+            description: screenshot.description,
+          }),
+        MAX_CONCURRENT_UPLOADS
       );
-
-      const settledUploads = await Promise.allSettled(uploadPromises);
       const successfulScreens: NonNullable<ScreenshotUploadPayload["images"]> =
         [];
       const failures: { index: number; reason: string }[] = [];

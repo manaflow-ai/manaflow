@@ -21,6 +21,13 @@ interface FileWatcherOptions {
   gitIgnore?: boolean;
 }
 
+/**
+ * Memory optimization: Limit the size of tracking Maps to prevent unbounded growth
+ * in large codebases with many file changes.
+ */
+const MAX_PENDING_CHANGES = 500;
+const MAX_GIT_STATUS_ENTRIES = 1000;
+
 export class FileWatcher {
   private watcher: FSWatcher | null = null;
   private watchPath: string;
@@ -132,14 +139,27 @@ export class FileWatcher {
     }
 
     try {
+      // Memory optimization: Limit buffer size for git status output
       const { stdout } = await execAsync("git status --porcelain", {
         cwd: this.gitRepoPath,
+        maxBuffer: 2 * 1024 * 1024, // 2MB limit (reduced from default 10MB)
       });
 
       this.lastGitStatus.clear();
 
       const lines = stdout.split("\n").filter((line) => line.trim());
-      for (const line of lines) {
+
+      // Memory optimization: Limit the number of entries we track
+      const maxEntries = Math.min(lines.length, MAX_GIT_STATUS_ENTRIES);
+      if (lines.length > MAX_GIT_STATUS_ENTRIES) {
+        log("WARN", `[FileWatcher] Git status has ${lines.length} entries, limiting to ${MAX_GIT_STATUS_ENTRIES}`, {
+          taskRunId: this.taskRunId,
+        });
+      }
+
+      for (let i = 0; i < maxEntries; i++) {
+        const line = lines[i];
+        if (!line) continue;
         const status = line.substring(0, 2).trim();
         const filePath = line.substring(3).trim();
         if (filePath) {
@@ -191,6 +211,21 @@ export class FileWatcher {
       timestamp: Date.now(),
     };
 
+    // Memory optimization: Limit pending changes to prevent unbounded growth
+    // during burst file operations (e.g., npm install, large git operations)
+    if (this.pendingChanges.size >= MAX_PENDING_CHANGES && !this.pendingChanges.has(fullPath)) {
+      log("WARN", `[FileWatcher] Pending changes limit reached (${MAX_PENDING_CHANGES}), flushing early`, {
+        taskRunId: this.taskRunId,
+        pendingCount: this.pendingChanges.size,
+      });
+      // Flush immediately to prevent memory growth
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = null;
+      }
+      this.flushPendingChanges();
+    }
+
     this.pendingChanges.set(fullPath, change);
 
     // Reset debounce timer
@@ -239,9 +274,11 @@ export async function computeGitDiff(
       command += ` -- ${relativePaths.join(" ")}`;
     }
 
+    // Memory optimization: Reduced buffer from 10MB to 5MB
+    // Large diffs should be viewed in git tools, not held in memory
     const { stdout } = await execAsync(command, {
       cwd: gitRepoPath,
-      maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+      maxBuffer: 5 * 1024 * 1024, // 5MB buffer
     });
 
     return stdout;

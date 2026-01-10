@@ -39,11 +39,17 @@ export const DEFAULT_TERMINAL_CONFIG: ITerminalOptions = {
  * Terminal configuration for server-side (headless) terminals.
  * Note: Server terminals use a different Terminal class from @xterm/headless
  * which has slightly different options.
+ *
+ * Memory optimization: Reduced scrollback from 100000 to 5000 lines to prevent
+ * swap thrashing when running multiple concurrent agent terminals. Each line
+ * can be ~500 bytes, so 100k lines = ~50MB per terminal. With 50 concurrent
+ * terminals, this was causing ~2.5GB of memory usage just for scrollback.
+ * 5000 lines (~2.5MB) is sufficient for most agent workflows.
  */
 export const SERVER_TERMINAL_CONFIG = {
   cols: 80,
   rows: 24,
-  scrollback: 100000,
+  scrollback: 5000,
   allowProposedApi: true,
 };
 
