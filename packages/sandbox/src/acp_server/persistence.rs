@@ -11,6 +11,7 @@ use tracing::{debug, error};
 pub struct ConvexClient {
     http_client: Client,
     convex_url: String,
+    admin_key: String,
 }
 
 /// Content block types matching ACP ContentBlock.
@@ -113,10 +114,11 @@ struct ConvexMutationResponse {
 
 impl ConvexClient {
     /// Create a new Convex client.
-    pub fn new(convex_url: impl Into<String>) -> Self {
+    pub fn new(convex_url: impl Into<String>, admin_key: impl Into<String>) -> Self {
         Self {
             http_client: Client::new(),
             convex_url: convex_url.into(),
+            admin_key: admin_key.into(),
         }
     }
 
@@ -136,6 +138,7 @@ impl ConvexClient {
         let response = self
             .http_client
             .post(&url)
+            .header("Authorization", format!("Bearer {}", self.admin_key))
             .json(&json!({
                 "path": function_path,
                 "args": args,
