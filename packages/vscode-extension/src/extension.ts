@@ -310,7 +310,7 @@ async function setupDefaultTerminal() {
     log("cmux-pty is managing terminals, creating queued terminals");
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
-    createQueuedTerminals({ focus: !preserveFocus });
+    await createQueuedTerminals({ focus: !preserveFocus });
 
     // Also check for the specific "cmux" terminal (main agent)
     // If not present yet, it might still be created by the agent spawner

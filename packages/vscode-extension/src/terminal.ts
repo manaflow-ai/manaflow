@@ -1326,9 +1326,9 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
  * Create all queued terminals from cmux-pty state_sync.
  * This should be called after waitForCmuxPtyTerminal() confirms terminals exist.
  * Directly creates the vscode terminals without going through provideTerminalProfile.
- * Focuses the "cmux" terminal if found.
+ * Focuses the "cmux" terminal if found, or the first available terminal.
  */
-export function createQueuedTerminals(options?: { focus?: boolean }): void {
+export async function createQueuedTerminals(options?: { focus?: boolean }): Promise<void> {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
@@ -1340,9 +1340,35 @@ export function createQueuedTerminals(options?: { focus?: boolean }): void {
   }
 
   const terminals = terminalManager.getTerminals();
+  console.log(`[cmux] Have ${terminals.length} terminals after drain`);
+
+  // First try to focus the "cmux" terminal (main agent)
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {
     console.log('[cmux] Focusing cmux terminal');
     cmuxTerminal.terminal.show(false); // false = take focus
+    return;
+  }
+
+  // If no "cmux" terminal, try to focus the "dev" terminal (for cloud workspaces)
+  const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
+  if (devTerminal) {
+    console.log('[cmux] Focusing dev terminal');
+    devTerminal.terminal.show(false);
+    return;
+  }
+
+  // Otherwise focus the first terminal in panel location
+  const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
+  if (panelTerminal) {
+    console.log('[cmux] Focusing first panel terminal:', panelTerminal.info.name);
+    panelTerminal.terminal.show(false);
+    return;
+  }
+
+  // Last resort: focus any terminal
+  if (terminals.length > 0) {
+    console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
+    terminals[0].terminal.show(false);
   }
 }

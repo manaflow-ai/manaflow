@@ -362,6 +362,13 @@ async function createWindows(): Promise<void> {
       devPtyId = session.id;
       console.log(`[ORCHESTRATOR] ${config.devWindowName} PTY created: ${session.id}`);
     }
+
+    // Wait for shells to fully initialize before sending commands
+    // The PTY is created but the shell needs time to start and show prompt
+    if (maintenancePtyId || devPtyId) {
+      console.log("[ORCHESTRATOR] Waiting for shells to initialize...");
+      await delay(1000);
+    }
   } else {
     // tmux backend: create windows in the cmux session
     await ensureTmuxSession();

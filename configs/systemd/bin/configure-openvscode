@@ -20,9 +20,6 @@ esac
 BASE_SETTINGS=$(jq -n \
   --arg theme "$color" \
   '{
-    "settingsSync.enabled": false,
-    "extensions.autoUpdate": false,
-    "extensions.autoCheckUpdates": false,
     "workbench.startupEditor": "none",
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "terminal.integrated.shellIntegration.enabled": false,
