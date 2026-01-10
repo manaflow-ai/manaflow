@@ -1317,6 +1317,13 @@ async function createTerminal(
           pid: session.pid,
         });
 
+        // Wait for PTY reader loop to start before sending commands.
+        // This prevents race conditions where the agent sends terminal queries
+        // (like DSR cursor position) before the reader is ready to respond.
+        // Without this delay, Codex CLI may fail with:
+        // "The cursor position could not be read within a normal duration"
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
         // 3. Send startup commands as input
         for (const cmd of startupCommands) {
           log("INFO", `[createTerminal] Sending startup command: ${cmd}`);
