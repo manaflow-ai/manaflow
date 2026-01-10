@@ -389,6 +389,13 @@ export const DockerStatusSchema = z.object({
     .optional(),
 });
 
+// Docker pull image schemas
+export const DockerPullImageResponseSchema = z.object({
+  success: z.boolean(),
+  imageName: z.string().optional(),
+  error: z.string().optional(),
+});
+
 export const GitStatusSchema = z.object({
   isAvailable: z.boolean(),
   version: z.string().optional(),
@@ -470,6 +477,9 @@ export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export type DockerStatus = z.infer<typeof DockerStatusSchema>;
+export type DockerPullImageResponse = z.infer<
+  typeof DockerPullImageResponseSchema
+>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
@@ -562,6 +572,9 @@ export interface ClientToServerEvents {
   ) => void;
   "check-provider-status": (
     callback: (response: ProviderStatusResponse) => void
+  ) => void;
+  "docker-pull-image": (
+    callback: (response: DockerPullImageResponse) => void
   ) => void;
   "get-local-vscode-serve-web-origin": (
     callback: (response: { baseUrl: string | null; port: number | null }) => void
