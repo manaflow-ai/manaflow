@@ -11,6 +11,8 @@ use axum::Router;
 use clap::Parser;
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{acp_websocket_handler, AcpServerState};
 
@@ -45,19 +47,45 @@ struct Args {
 }
 
 /// Health check endpoint response.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, utoipa::ToSchema)]
 struct HealthResponse {
     status: &'static str,
     version: &'static str,
 }
 
 /// Health check handler.
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Server is healthy", body = HealthResponse)
+    ),
+    tag = "health"
+)]
 async fn health() -> axum::Json<HealthResponse> {
     axum::Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
     })
 }
+
+/// OpenAPI documentation for the ACP server.
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "cmux ACP Server",
+        description = "ACP (Agent Client Protocol) server for iOS app integration. \
+            Provides WebSocket endpoints for communicating with coding agents (Claude Code, Codex, etc.).",
+        version = "0.1.0"
+    ),
+    paths(health),
+    components(schemas(HealthResponse)),
+    tags(
+        (name = "health", description = "Health check endpoints"),
+        (name = "acp", description = "WebSocket endpoints for ACP protocol")
+    )
+)]
+struct ApiDoc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -99,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/conversations/{conversation_id}/ws",
             any(acp_websocket_handler),
         )
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(state);
 
     // Bind and serve
