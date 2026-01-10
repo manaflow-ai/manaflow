@@ -45,65 +45,39 @@ pub struct ConversationTokenPayload {
     pub user_id: Option<String>,
 }
 
-/// Verify a conversation JWT token.
-/// Note: This is a simplified verification. In production, use the jose crate.
+/// JWT claims for conversation tokens.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationTokenClaims {
+    conversation_id: String,
+    team_id: String,
+    user_id: Option<String>,
+}
+
+/// Verify a conversation JWT token with HMAC-SHA256 signature validation.
 fn verify_conversation_token(
     token: &str,
-    _secret: &str,
+    secret: &str,
 ) -> Result<ConversationTokenPayload, String> {
-    use base64::Engine;
+    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
-    // Simple JWT verification (HS256)
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err("Invalid JWT format".to_string());
-    }
+    // Create decoding key from secret
+    let key = DecodingKey::from_secret(secret.as_bytes());
 
-    // Decode payload
-    let payload_json = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| format!("Failed to decode payload: {}", e))?;
+    // Configure validation for HS256
+    let mut validation = Validation::new(Algorithm::HS256);
+    // Required claims are checked by serde deserialization
+    validation.required_spec_claims.clear();
+    validation.validate_exp = true;
 
-    let payload: serde_json::Value = serde_json::from_slice(&payload_json)
-        .map_err(|e| format!("Failed to parse payload: {}", e))?;
-
-    // Note: In production, verify the signature using HMAC-SHA256
-    // For now, we skip signature verification and just parse the payload
-    // The actual verification should use the jose crate like verifyConversationToken.ts
-
-    // Check expiration
-    if let Some(exp) = payload.get("exp").and_then(|v| v.as_i64()) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        if now > exp {
-            return Err("Token expired".to_string());
-        }
-    }
-
-    // Extract claims
-    let conversation_id = payload
-        .get("conversationId")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "Missing conversationId".to_string())?
-        .to_string();
-
-    let team_id = payload
-        .get("teamId")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "Missing teamId".to_string())?
-        .to_string();
-
-    let user_id = payload
-        .get("userId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    // Decode and verify the token
+    let token_data = decode::<ConversationTokenClaims>(token, &key, &validation)
+        .map_err(|e| format!("JWT verification failed: {}", e))?;
 
     Ok(ConversationTokenPayload {
-        conversation_id,
-        team_id,
-        user_id,
+        conversation_id: token_data.claims.conversation_id,
+        team_id: token_data.claims.team_id,
+        user_id: token_data.claims.user_id,
     })
 }
 
