@@ -31,7 +31,7 @@ for (const envPath of envPaths) {
     break;
   }
 }
-import { DockerConnector } from "./docker.js";
+import { LocalRunner, DEFAULT_MODEL } from "./local.js";
 import { type Task, type Question, type ActivityEntry } from "./types.js";
 import { extractQuestionsFromOutput } from "./extractor.js";
 import { runDashboard } from "./dashboard.js";
@@ -40,23 +40,23 @@ import { runDashboard } from "./dashboard.js";
 // State
 // ─────────────────────────────────────────────────────────────
 
-const docker = new DockerConnector();
+const runner = new LocalRunner();
 let tasks: Task[] = [];
 const questions: Map<string, { question: Question; taskId: string }> = new Map();
 const activity: ActivityEntry[] = [];
 let questionCounter = 0;
-let isRunning = true;
+const _isRunning = true;
 
 // ─────────────────────────────────────────────────────────────
 // Display Functions
 // ─────────────────────────────────────────────────────────────
 
-function clearScreen(): void {
+function _clearScreen(): void {
   process.stdout.write("\x1b[2J\x1b[H");
 }
 
-function printHeader(): void {
-  console.log(chalk.bold.cyan("\n  CMUX Local") + chalk.gray(" - Docker-based Claude Code Orchestrator"));
+function _printHeader(): void {
+  console.log(chalk.bold.cyan("\n  CMUX Local") + chalk.gray(" - Local Claude Code Orchestrator"));
   console.log(chalk.gray("  " + "─".repeat(55)));
 }
 
@@ -182,13 +182,13 @@ function printStatus(): void {
 
 async function refreshTasks(): Promise<void> {
   try {
-    tasks = await docker.listTasks();
+    tasks = await runner.listTasks();
 
     // Read output from each running task
     for (const task of tasks) {
       if (task.status === "running" || task.status === "starting") {
         try {
-          const output = await docker.readOutput(task.id);
+          const output = await runner.readOutput(task.id);
           const extracted = extractQuestionsFromOutput(output, task.id);
 
           // Add new questions
@@ -248,7 +248,7 @@ async function handleNew(rl: readline.Interface): Promise<void> {
 
         try {
           console.log(chalk.gray("  Starting task..."));
-          const task = await docker.startTask(repoPath, prompt.trim());
+          const task = await runner.startTask(repoPath, prompt.trim());
 
           activity.unshift({
             timestamp: new Date(),
@@ -272,7 +272,7 @@ async function handleNew(rl: readline.Interface): Promise<void> {
   });
 }
 
-async function handleCommand(input: string, rl: readline.Interface): Promise<void> {
+async function _handleCommand(input: string, rl: readline.Interface): Promise<void> {
   const parts = input.trim().split(/\s+/);
   const command = parts[0]?.toLowerCase();
 
@@ -295,7 +295,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
 
       try {
         console.log(chalk.gray("  Starting task..."));
-        const task = await docker.startTask(repoPath, prompt);
+        const task = await runner.startTask(repoPath, prompt);
         console.log(chalk.green(`  ✓ Started task #${task.number}`));
         console.log(chalk.gray(`    Terminal: `) + chalk.cyan(`http://localhost:${task.terminalPort}`));
         await refreshTasks();
@@ -324,7 +324,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
       }
 
       try {
-        await docker.openTerminal(task.id);
+        await runner.openTerminal(task.id);
         console.log(chalk.green(`  Opened http://localhost:${task.terminalPort}`));
       } catch (err) {
         console.error(chalk.red("  Failed to open:"), err);
@@ -342,7 +342,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
       }
 
       try {
-        await docker.stopTask(task.id);
+        await runner.stopTask(task.id);
         console.log(chalk.green(`  Stopped task #${taskNum}`));
         await refreshTasks();
       } catch (err) {
@@ -353,7 +353,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
 
     case "stop-all": {
       try {
-        await docker.stopAllTasks();
+        await runner.stopAllTasks();
         console.log(chalk.green("  Stopped all tasks."));
         await refreshTasks();
       } catch (err) {
@@ -372,7 +372,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
         break;
       }
 
-      const success = await docker.injectMessage(task.id, message);
+      const success = await runner.injectMessage(task.id, message);
       console.log(success ? chalk.green("  Sent.") : chalk.red("  Failed."));
       break;
     }
@@ -410,7 +410,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
           break;
         }
 
-        const success = await docker.injectMessage(task.id, answer);
+        const success = await runner.injectMessage(task.id, answer);
         if (success) {
           questions.delete(command);
           activity.unshift({
@@ -442,12 +442,11 @@ async function main(): Promise<void> {
   // Handle --help
   if (args.includes("--help") || args.includes("-h")) {
     console.log(`
-${chalk.bold.cyan("CMUX Local")} - Docker-based Claude Code Orchestrator
+${chalk.bold.cyan("CMUX Local")} - Local Claude Code Orchestrator
 
 ${chalk.bold("USAGE:")}
   cmux-local                       Start interactive mode
   cmux-local "<prompt>"            Start task in current directory
-  cmux-local setup                 Build Docker image (run once)
   cmux-local list                  List running tasks
   cmux-local stop-all              Stop all tasks
   cmux-local --help                Show this help
@@ -456,7 +455,7 @@ ${chalk.bold("INTERACTIVE COMMANDS:")}
   new                     Start new task (prompts for repo + task)
   start . <prompt>        Start task in current directory
   list                    Show all tasks and questions
-  open <n>                Open terminal for task n in browser
+  open <n>                Attach to terminal for task n
   q<n> <answer>           Answer question n
   tell <n> <message>      Send message to task n
   stop <n>                Stop task n
@@ -464,60 +463,34 @@ ${chalk.bold("INTERACTIVE COMMANDS:")}
   quit                    Exit
 
 ${chalk.bold("REQUIREMENTS:")}
-  - Docker must be running
+  - tmux must be installed
+  - claude CLI must be installed (npm i -g @anthropic-ai/claude-code)
   - CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY environment variable
 
 ${chalk.bold("QUICK START:")}
-  # One-time setup (builds Docker image)
-  cmux-local setup
-
   # Start a task in your project
   cd ~/myproject
   cmux-local "Add dark mode toggle"
 
   # Or interactive mode
   cmux-local
+
+${chalk.bold("MODEL:")}
+  Default: ${DEFAULT_MODEL} (Opus 4.5)
+  Override with: cmux-local "prompt" --model claude-sonnet-4-20250514
 `);
     process.exit(0);
   }
 
-  // Check Docker
-  const dockerOk = await docker.checkDocker();
-  if (!dockerOk) {
-    console.error(chalk.red("\n  Docker is not running. Please start Docker and try again.\n"));
+  // Check requirements
+  const { ok, missing } = await runner.checkRequirements();
+  if (!ok) {
+    console.error(chalk.red("\n  Missing requirements:"));
+    for (const m of missing) {
+      console.error(chalk.red(`    - ${m}`));
+    }
+    console.error();
     process.exit(1);
-  }
-
-  // Handle setup command
-  if (args[0] === "setup") {
-    console.log(chalk.cyan("\n  Setting up CMUX Local...\n"));
-
-    // Check for auth token - prefer OAuth token over API key
-    if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-      console.log(chalk.green("  ✓ CLAUDE_CODE_OAUTH_TOKEN is set\n"));
-    } else if (process.env.ANTHROPIC_API_KEY) {
-      console.log(chalk.green("  ✓ ANTHROPIC_API_KEY is set\n"));
-    } else {
-      console.log(chalk.yellow("  Warning: No API credentials found."));
-      console.log(chalk.gray("  Set one of:"));
-      console.log(chalk.gray("    export CLAUDE_CODE_OAUTH_TOKEN=your_token"));
-      console.log(chalk.gray("    export ANTHROPIC_API_KEY=your_key\n"));
-    }
-
-    // Build Docker image
-    console.log(chalk.gray("  Building Docker image..."));
-    try {
-      await docker.ensureImage();
-      console.log(chalk.green("\n  ✓ Setup complete!\n"));
-      console.log(chalk.gray("  Now you can run:"));
-      console.log(chalk.cyan('    cmux-local "Your task description"'));
-      console.log(chalk.gray("  Or for interactive mode:"));
-      console.log(chalk.cyan("    cmux-local\n"));
-    } catch (err) {
-      console.error(chalk.red("  Failed to build image:"), err);
-      process.exit(1);
-    }
-    process.exit(0);
   }
 
   // Handle direct task start: cmux-local "prompt" [--model <model>]
@@ -533,15 +506,14 @@ ${chalk.bold("QUICK START:")}
     const prompt = args.join(" ");
     const repoPath = process.cwd();
 
+    const actualModel = model || DEFAULT_MODEL;
     console.log(chalk.gray(`\n  Starting task in ${repoPath}...`));
-    if (model) {
-      console.log(chalk.gray(`  Using model: ${model}`));
-    }
+    console.log(chalk.gray(`  Using model: ${actualModel}`));
 
     try {
-      const task = await docker.startTask(repoPath, prompt, model);
+      const task = await runner.startTask(repoPath, prompt, actualModel);
       console.log(chalk.green(`\n  ✓ Started task #${task.number} (${task.id})`));
-      console.log(chalk.gray(`    Terminal: `) + chalk.cyan(`http://localhost:${task.terminalPort}`));
+      console.log(chalk.gray(`    Attach to session: `) + chalk.cyan(`tmux attach -t cmux-${task.id}`));
       console.log(chalk.gray(`\n  Run 'cmux-local' to monitor and answer questions.\n`));
     } catch (err) {
       console.error(chalk.red("  Failed:"), err);
@@ -552,7 +524,7 @@ ${chalk.bold("QUICK START:")}
 
   // Handle list
   if (args[0] === "list" || args[0] === "ls") {
-    tasks = await docker.listTasks();
+    tasks = await runner.listTasks();
     printTasks();
     process.exit(0);
   }
@@ -560,7 +532,7 @@ ${chalk.bold("QUICK START:")}
   // Handle stop-all
   if (args[0] === "stop-all") {
     try {
-      await docker.stopAllTasks();
+      await runner.stopAllTasks();
       console.log(chalk.green("  Stopped all tasks."));
     } catch (err) {
       console.error(chalk.red("  Failed:"), err);

@@ -6,11 +6,10 @@ import * as readline from "node:readline";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { execSync } from "node:child_process";
 import chalk from "chalk";
 import { search, input, confirm } from "@inquirer/prompts";
-import { DockerConnector } from "./docker.js";
-import { type Task, type Question, type ActivityEntry, type MCPQuestion } from "./types.js";
+import { LocalRunner, DEFAULT_MODEL } from "./local.js";
+import { type Task, type Question, type ActivityEntry } from "./types.js";
 import { extractQuestionsFromOutput, extractCurrentActivity, type Decision, type Assumption } from "./extractor.js";
 
 // Track MCP questions we've already seen (by their MCP ID)
@@ -22,8 +21,6 @@ const mcpQuestionIds: Map<string, { taskId: string; mcpId: string }> = new Map()
 // ─────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────
-
-const DEFAULT_MODEL = "claude-opus-4-5-20251101";
 
 const BOX = {
   topLeft: "╭",
@@ -58,7 +55,7 @@ const PROJECT_DIRS = [
 // State
 // ─────────────────────────────────────────────────────────────
 
-const docker = new DockerConnector();
+const runner = new LocalRunner();
 let tasks: Task[] = [];
 const questions: Map<string, { question: Question; taskId: string }> = new Map();
 const decisions: Map<string, { decision: Decision; taskId: string }> = new Map();
@@ -203,6 +200,7 @@ function clearScreen(): void {
 }
 
 function boxLine(content: string, width: number): string {
+  // eslint-disable-next-line no-control-regex
   const stripped = content.replace(/\x1b\[[0-9;]*m/g, "");
   const padding = width - stripped.length - 2;
   return `${BOX.vertical} ${content}${" ".repeat(Math.max(0, padding))}${BOX.vertical}`;
@@ -218,7 +216,7 @@ function printDashboard(): void {
   console.log();
   console.log(chalk.cyan(`  ${BOX.topLeft}${BOX.horizontal.repeat(width - 2)}${BOX.topRight}`));
   console.log(chalk.cyan(`  ${boxLine(chalk.bold("CMUX Local Dashboard"), width)}`));
-  console.log(chalk.cyan(`  ${boxLine(chalk.gray("Docker-based Claude Code Orchestrator"), width)}`));
+  console.log(chalk.cyan(`  ${boxLine(chalk.gray("Local Claude Code Orchestrator"), width)}`));
   console.log(chalk.cyan(`  ${BOX.bottomLeft}${BOX.horizontal.repeat(width - 2)}${BOX.bottomRight}`));
 
   // Categorize tasks
@@ -286,16 +284,14 @@ function printDashboard(): void {
 function printTaskRow(task: Task, dim = false): void {
   const color = dim ? chalk.gray : chalk.white;
   const icon = task.status === "running" ? chalk.green("●") : task.status === "starting" ? chalk.yellow("◌") : chalk.gray("○");
-  const port = chalk.cyan(`:${task.terminalPort}`);
   const time = task.startedAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   const currentActivity = taskCurrentActivity.get(task.id);
 
   console.log(
     `    ${chalk.gray(task.number.toString().padStart(2))} ${icon} ` +
       color(task.repoName.padEnd(15).slice(0, 15)) +
-      chalk.gray(` "${task.prompt.slice(0, 25)}${task.prompt.length > 25 ? "..." : ""}" `) +
-      port +
-      chalk.gray(` ${time}`)
+      chalk.gray(` "${task.prompt.slice(0, 30)}${task.prompt.length > 30 ? "..." : ""}" `) +
+      chalk.gray(`${time}`)
   );
 
   // Show current activity on next line if available
@@ -336,7 +332,7 @@ async function handleNewTask(): Promise<void> {
 
   try {
     // Build choices for the search prompt
-    const repoChoices = discoveredRepos.map((repo, index) => {
+    const repoChoices = discoveredRepos.map((repo) => {
       const timeAgo = formatTimeAgo(repo.lastModified);
       const isCurrent = repo.path === process.cwd();
       const isRecent = recentRepos.includes(repo.path);
@@ -387,7 +383,7 @@ async function handleNewTask(): Promise<void> {
       });
       selectedRepo = expandPath(selectedRepo);
     }
-  } catch (error) {
+  } catch {
     // User cancelled (Ctrl+C)
     console.log(chalk.yellow("\n  Cancelled."));
     return;
@@ -449,7 +445,7 @@ async function handleNewTask(): Promise<void> {
   // Start the task
   console.log(chalk.gray("\n  Starting task..."));
   try {
-    const task = await docker.startTask(selectedRepo, taskPrompt, DEFAULT_MODEL);
+    const task = await runner.startTask(selectedRepo, taskPrompt, DEFAULT_MODEL);
     addRecentRepo(selectedRepo);
 
     activity.unshift({
@@ -461,8 +457,8 @@ async function handleNewTask(): Promise<void> {
     });
 
     console.log(chalk.green(`\n  ✓ Started task #${task.number}`));
-    console.log(chalk.gray(`    Terminal: `) + chalk.cyan(`http://localhost:${task.terminalPort}`));
-    console.log(chalk.gray(`    Open in browser or run: `) + chalk.cyan(`open ${task.number}`));
+    console.log(chalk.gray(`    Attach to session: `) + chalk.cyan(`tmux attach -t cmux-${task.id}`));
+    console.log(chalk.gray(`    Or run: `) + chalk.cyan(`open ${task.number}`));
 
     await refreshTasks();
   } catch (err) {
@@ -476,12 +472,12 @@ async function handleNewTask(): Promise<void> {
 
 async function refreshTasks(): Promise<void> {
   try {
-    tasks = await docker.listTasks();
+    tasks = await runner.listTasks();
 
     for (const task of tasks) {
       if (task.status === "running" || task.status === "starting") {
         try {
-          const output = await docker.readOutput(task.id);
+          const output = await runner.readOutput(task.id);
           const extracted = extractQuestionsFromOutput(output, task.id);
 
           // Update current activity from tool usage
@@ -583,7 +579,7 @@ async function refreshTasks(): Promise<void> {
 
         // Poll MCP questions from the filesystem
         try {
-          const mcpQuestions = docker.readMCPQuestions(task);
+          const mcpQuestions = runner.readMCPQuestions(task);
           for (const mq of mcpQuestions) {
             // Skip questions we've already seen
             if (mcpQuestionsSeen.has(mq.id)) continue;
@@ -637,7 +633,7 @@ async function refreshTasks(): Promise<void> {
           }
 
           // Also read progress updates for activity log
-          const progressUpdates = docker.readMCPProgress(task);
+          const progressUpdates = runner.readMCPProgress(task);
           for (const p of progressUpdates) {
             if (p.type === "decision" && p.decision) {
               // Only log recent decisions (within last 30 seconds)
@@ -720,8 +716,12 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
         console.log(chalk.red(`  Task ${taskNum} not found.`));
         break;
       }
-      await docker.openTerminal(task.id);
-      console.log(chalk.green(`  Opened http://localhost:${task.terminalPort}`));
+      try {
+        await runner.openTerminal(task.id);
+        console.log(chalk.green(`  Opened terminal for task #${taskNum}`));
+      } catch (err) {
+        console.log(chalk.yellow(`  ${err instanceof Error ? err.message : String(err)}`));
+      }
       break;
     }
 
@@ -732,14 +732,14 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
         console.log(chalk.red(`  Task ${taskNum} not found.`));
         break;
       }
-      await docker.stopTask(task.id);
+      await runner.stopTask(task.id);
       console.log(chalk.green(`  Stopped task #${taskNum}`));
       await refreshTasks();
       break;
     }
 
     case "stop-all":
-      await docker.stopAllTasks();
+      await runner.stopAllTasks();
       console.log(chalk.green("  Stopped all tasks."));
       await refreshTasks();
       break;
@@ -752,7 +752,7 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
         console.log(chalk.red("  Usage: tell <task-number> <message>"));
         break;
       }
-      const success = await docker.injectMessage(task.id, message);
+      const success = await runner.injectMessage(task.id, message);
       console.log(success ? chalk.green("  Sent.") : chalk.red("  Failed."));
       break;
     }
@@ -797,7 +797,7 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
           break;
         }
 
-        const success = await docker.injectMessage(task.id, answer);
+        const success = await runner.injectMessage(task.id, answer);
         if (success) {
           questions.delete(command);
           activity.unshift({
@@ -824,7 +824,7 @@ function printHelp(): void {
   console.log(chalk.gray("  " + "─".repeat(55)));
   console.log(`  ${chalk.cyan("new")} / ${chalk.cyan("n")}              Start a new task (interactive wizard)`);
   console.log(`  ${chalk.cyan("list")} / ${chalk.cyan("d")}             Refresh dashboard`);
-  console.log(`  ${chalk.cyan("open <n>")}             Open terminal for task n in browser`);
+  console.log(`  ${chalk.cyan("open <n>")}             Attach to terminal for task n`);
   console.log(`  ${chalk.cyan("q<n> <answer>")}        Answer question n (e.g., q1 yes)`);
   console.log(`  ${chalk.cyan("tell <n> <msg>")}       Send message to task n`);
   console.log(`  ${chalk.cyan("stop <n>")}             Stop task n`);
@@ -833,6 +833,7 @@ function printHelp(): void {
   console.log(`  ${chalk.cyan("help")} / ${chalk.cyan("?")}             Show this help`);
   console.log(`  ${chalk.cyan("quit")} / ${chalk.cyan("q")}             Exit`);
   console.log();
+  console.log(chalk.gray("  Model: ") + chalk.cyan(DEFAULT_MODEL));
   console.log(chalk.gray("  Tip: Press Enter to refresh the dashboard"));
 }
 
@@ -844,10 +845,14 @@ export async function runDashboard(): Promise<void> {
   loadRecentRepos();
   discoveredRepos = discoverGitRepos();
 
-  // Check Docker
-  const dockerOk = await docker.checkDocker();
-  if (!dockerOk) {
-    console.error(chalk.red("\n  Docker is not running. Please start Docker and try again.\n"));
+  // Check requirements
+  const { ok, missing } = await runner.checkRequirements();
+  if (!ok) {
+    console.error(chalk.red("\n  Missing requirements:"));
+    for (const m of missing) {
+      console.error(chalk.red(`    - ${m}`));
+    }
+    console.error();
     process.exit(1);
   }
 
