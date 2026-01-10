@@ -13,10 +13,14 @@ import { nanoid } from "nanoid";
 import { type Task, type MCPQuestion, type MCPProgress } from "./types.js";
 
 /**
- * Default model - Claude Opus 4
- * Use just "opus" for CLI compatibility
+ * Default model - Claude Opus 4.5
+ * Full model name for compatibility with all CLI versions
  */
-export const DEFAULT_MODEL = "opus";
+export const DEFAULT_MODEL = "claude-opus-4-5-20250514";
+
+// Alternative model IDs to try if the above doesn't work:
+// - "opus" (alias, requires newer CLI)
+// - "claude-opus-4-5-20251101" (alternative date)
 
 /**
  * Orchestration Protocol - instructs Claude to write questions to inbox file
