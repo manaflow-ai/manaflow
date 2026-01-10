@@ -626,6 +626,13 @@ export async function runDashboard(): Promise<void> {
     if (key === "\r" || key === "\n") {
       if (runningTasks.length > 0 && runningTasks[selectedIndex]) {
         const task = runningTasks[selectedIndex];
+        // Show hint before attaching
+        process.stdout.write("\x1b[H\x1b[J");
+        console.log(chalk.cyan("\n  Attaching to task #" + task.number + "...\n"));
+        console.log(chalk.gray("  Windows: Ctrl+B, 0 (claude) | Ctrl+B, 1 (diff) | Ctrl+B, 2 (shell)"));
+        console.log(chalk.gray("  Detach:  Ctrl+B, D to return to ocmux\n"));
+        await new Promise(r => setTimeout(r, 800));
+
         if (process.stdin.isTTY) {
           process.stdin.setRawMode(false);
         }

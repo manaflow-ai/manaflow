@@ -270,19 +270,65 @@ unset AWS_DEFAULT_REGION
 unset AWS_PROFILE
 unset CLAUDE_CODE_USE_BEDROCK
 export CLAUDE_CODE_OAUTH_TOKEN="${oauthToken}"
+
+# Run Claude Code
 claude --dangerously-skip-permissions --model "${actualModel}" "$(cat "${promptFile}")"
+EXIT_CODE=$?
+
+# Show completion summary
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "  Task completed (exit code: $EXIT_CODE)"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "  Changes summary:"
+git diff --stat 2>/dev/null || echo "  (not a git repo)"
+echo ""
+echo "  Switch windows: Ctrl+B, 1 (diff) | Ctrl+B, 2 (shell)"
+echo "  Session stays open for review. Type 'exit' when done."
+echo ""
+
+# Keep session alive - drop to interactive shell
+exec bash
 `;
     fs.writeFileSync(startupScript, scriptContent);
     fs.chmodSync(startupScript, "755");
 
-    // Start tmux session
-    const result = await exec(
-      `tmux new-session -d -s "${sessionName}" -c "${absolutePath}" "${startupScript}"`
-    );
+    // Create diff watcher script
+    const diffScript = path.join(cmuxDir, "diff.sh");
+    const diffContent = `#!/bin/bash
+cd "${absolutePath}"
+# Use delta if available, otherwise fall back to git diff with color
+if command -v delta &> /dev/null; then
+  watch -c -n 2 'git diff --stat && echo "" && git diff | delta --paging=never 2>/dev/null || git diff'
+else
+  watch -c -n 2 'git diff --stat --color=always && echo "" && git diff --color=always'
+fi
+`;
+    fs.writeFileSync(diffScript, diffContent);
+    fs.chmodSync(diffScript, "755");
 
+    // Start tmux session with multiple windows
+    // Window 0: Claude Code (main)
+    let result = await exec(
+      `tmux new-session -d -s "${sessionName}" -n "claude" -c "${absolutePath}" "${startupScript}"`
+    );
     if (result.code !== 0) {
       throw new Error(`Failed to start tmux session: ${result.stderr}`);
     }
+
+    // Window 1: Git diff (live updating)
+    result = await exec(
+      `tmux new-window -t "${sessionName}" -n "diff" -c "${absolutePath}" "${diffScript}"`
+    );
+
+    // Window 2: Shell for manual commands
+    result = await exec(
+      `tmux new-window -t "${sessionName}" -n "shell" -c "${absolutePath}"`
+    );
+
+    // Select the claude window as default
+    await exec(`tmux select-window -t "${sessionName}:claude"`);
 
     const task: Task = {
       id: taskId,

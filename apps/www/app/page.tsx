@@ -299,7 +299,7 @@ export default function LandingPage() {
                 >
                   Universal AI coding agent manager for{" "}
                   <span className="bg-gradient-to-r from-cyan-400 to-blue-600 bg-clip-text text-transparent">
-                    10x engineers
+                    1000x engineers
                   </span>
                 </motion.h1>
                 <motion.div
