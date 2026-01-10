@@ -465,7 +465,7 @@ ${chalk.bold("INTERACTIVE COMMANDS:")}
 
 ${chalk.bold("REQUIREMENTS:")}
   - Docker must be running
-  - ANTHROPIC_API_KEY environment variable
+  - CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY environment variable
 
 ${chalk.bold("QUICK START:")}
   # One-time setup (builds Docker image)
@@ -492,12 +492,16 @@ ${chalk.bold("QUICK START:")}
   if (args[0] === "setup") {
     console.log(chalk.cyan("\n  Setting up CMUX Local...\n"));
 
-    // Check for ANTHROPIC_API_KEY
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.log(chalk.yellow("  Warning: ANTHROPIC_API_KEY not set."));
-      console.log(chalk.gray("  Set it with: export ANTHROPIC_API_KEY=your_key\n"));
-    } else {
+    // Check for auth token - prefer OAuth token over API key
+    if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+      console.log(chalk.green("  ✓ CLAUDE_CODE_OAUTH_TOKEN is set\n"));
+    } else if (process.env.ANTHROPIC_API_KEY) {
       console.log(chalk.green("  ✓ ANTHROPIC_API_KEY is set\n"));
+    } else {
+      console.log(chalk.yellow("  Warning: No API credentials found."));
+      console.log(chalk.gray("  Set one of:"));
+      console.log(chalk.gray("    export CLAUDE_CODE_OAUTH_TOKEN=your_token"));
+      console.log(chalk.gray("    export ANTHROPIC_API_KEY=your_key\n"));
     }
 
     // Build Docker image

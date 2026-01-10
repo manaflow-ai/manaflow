@@ -250,6 +250,16 @@ claude ${modelFlag} --dangerously-skip-permissions "\$PROMPT"
       `ttyd -W -p 7681 tmux new-session -s main /tmp/start.sh`,
     ].join(" && ");
 
+    // Build environment variables - prefer OAuth token over API key
+    const envVars: string[] = [];
+    if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+      envVars.push(`-e CLAUDE_CODE_OAUTH_TOKEN="${process.env.CLAUDE_CODE_OAUTH_TOKEN}"`);
+    }
+    if (process.env.ANTHROPIC_API_KEY) {
+      envVars.push(`-e ANTHROPIC_API_KEY="${process.env.ANTHROPIC_API_KEY}"`);
+    }
+    const envString = envVars.join(" \\\n      ");
+
     const dockerCmd = `docker run -d \\
       --name ${containerName} \\
       --label cmux.task=true \\
@@ -261,7 +271,7 @@ claude ${modelFlag} --dangerously-skip-permissions "\$PROMPT"
       -v "${absolutePath}":/workspace \\
       -p ${terminalPort}:7681 \\
       -w /workspace \\
-      -e ANTHROPIC_API_KEY="${process.env.ANTHROPIC_API_KEY || ""}" \\
+      ${envString} \\
       ${this.imageName} \\
       bash -c '${startScript}'
     `;

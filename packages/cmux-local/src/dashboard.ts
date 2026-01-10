@@ -6,7 +6,9 @@ import * as readline from "node:readline";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { execSync } from "node:child_process";
 import chalk from "chalk";
+import { search, input, confirm } from "@inquirer/prompts";
 import { DockerConnector } from "./docker.js";
 import { type Task, type Question, type ActivityEntry } from "./types.js";
 import { extractQuestionsFromOutput } from "./extractor.js";
@@ -15,12 +17,7 @@ import { extractQuestionsFromOutput } from "./extractor.js";
 // Constants
 // ─────────────────────────────────────────────────────────────
 
-const AVAILABLE_MODELS = [
-  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "Anthropic", default: true },
-  { id: "claude-opus-4-5-20251101", name: "Claude Opus 4", provider: "Anthropic" },
-  { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "Anthropic" },
-  { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: "Anthropic" },
-];
+const DEFAULT_MODEL = "claude-opus-4-5-20251101";
 
 const BOX = {
   topLeft: "╭",
@@ -30,6 +27,26 @@ const BOX = {
   horizontal: "─",
   vertical: "│",
 };
+
+// Common directories where developers keep their projects
+const PROJECT_DIRS = [
+  "~/Projects",
+  "~/projects",
+  "~/Code",
+  "~/code",
+  "~/Development",
+  "~/development",
+  "~/Dev",
+  "~/dev",
+  "~/repos",
+  "~/Repos",
+  "~/src",
+  "~/work",
+  "~/Work",
+  "~/github",
+  "~/GitHub",
+  "~/git",
+];
 
 // ─────────────────────────────────────────────────────────────
 // State
@@ -42,10 +59,18 @@ const activity: ActivityEntry[] = [];
 let questionCounter = 0;
 let isRunning = true;
 let recentRepos: string[] = [];
+let discoveredRepos: Array<{ path: string; name: string; lastModified: number }> = [];
 
 // ─────────────────────────────────────────────────────────────
 // Utility Functions
 // ─────────────────────────────────────────────────────────────
+
+function expandPath(p: string): string {
+  if (p.startsWith("~/")) {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return p;
+}
 
 function loadRecentRepos(): void {
   const configPath = path.join(os.homedir(), ".cmux-local", "recent-repos.json");
@@ -65,7 +90,7 @@ function saveRecentRepos(): void {
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true });
     }
-    fs.writeFileSync(configPath, JSON.stringify(recentRepos.slice(0, 10)));
+    fs.writeFileSync(configPath, JSON.stringify(recentRepos.slice(0, 20)));
   } catch {
     // Ignore save errors
   }
@@ -73,8 +98,94 @@ function saveRecentRepos(): void {
 
 function addRecentRepo(repoPath: string): void {
   const absolute = path.resolve(repoPath);
-  recentRepos = [absolute, ...recentRepos.filter((r) => r !== absolute)].slice(0, 10);
+  recentRepos = [absolute, ...recentRepos.filter((r) => r !== absolute)].slice(0, 20);
   saveRecentRepos();
+}
+
+/**
+ * Discover git repositories from common project directories
+ */
+function discoverGitRepos(): Array<{ path: string; name: string; lastModified: number }> {
+  const repos: Array<{ path: string; name: string; lastModified: number }> = [];
+  const seen = new Set<string>();
+
+  // Add current directory if it's a git repo
+  const cwd = process.cwd();
+  if (fs.existsSync(path.join(cwd, ".git"))) {
+    repos.push({
+      path: cwd,
+      name: path.basename(cwd),
+      lastModified: Date.now(), // Current dir gets priority
+    });
+    seen.add(cwd);
+  }
+
+  // Add recent repos first (they have higher priority)
+  for (const repoPath of recentRepos) {
+    if (!seen.has(repoPath) && fs.existsSync(repoPath)) {
+      try {
+        const stat = fs.statSync(repoPath);
+        repos.push({
+          path: repoPath,
+          name: path.basename(repoPath),
+          lastModified: stat.mtimeMs,
+        });
+        seen.add(repoPath);
+      } catch {
+        // Skip inaccessible paths
+      }
+    }
+  }
+
+  // Scan common project directories
+  for (const dir of PROJECT_DIRS) {
+    const expanded = expandPath(dir);
+    if (!fs.existsSync(expanded)) continue;
+
+    try {
+      const entries = fs.readdirSync(expanded, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith(".")) continue;
+
+        const fullPath = path.join(expanded, entry.name);
+        if (seen.has(fullPath)) continue;
+
+        // Check if it's a git repo
+        const gitPath = path.join(fullPath, ".git");
+        if (fs.existsSync(gitPath)) {
+          try {
+            const stat = fs.statSync(fullPath);
+            repos.push({
+              path: fullPath,
+              name: entry.name,
+              lastModified: stat.mtimeMs,
+            });
+            seen.add(fullPath);
+          } catch {
+            // Skip inaccessible
+          }
+        }
+      }
+    } catch {
+      // Skip inaccessible directories
+    }
+  }
+
+  // Sort by last modified (most recent first)
+  repos.sort((a, b) => b.lastModified - a.lastModified);
+
+  return repos;
+}
+
+function formatTimeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return `${Math.floor(seconds / 604800)}w ago`;
 }
 
 function clearScreen(): void {
@@ -189,48 +300,81 @@ function printQuickHelp(): void {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Interactive Task Creation (Dashboard-style)
+// Interactive Task Creation with Inquirer
 // ─────────────────────────────────────────────────────────────
 
-async function handleNewTask(rl: readline.Interface): Promise<void> {
+async function handleNewTask(): Promise<void> {
   console.log();
   console.log(chalk.bold.cyan("  ╭─────────────────────────────────────────────────────────────╮"));
   console.log(chalk.bold.cyan("  │                    Start New Task                           │"));
   console.log(chalk.bold.cyan("  ╰─────────────────────────────────────────────────────────────╯"));
 
-  // Step 1: Select Project/Repo
+  // Refresh discovered repos
+  discoveredRepos = discoverGitRepos();
+
+  // Step 1: Select Project with interactive search
   console.log(chalk.bold("\n  1. Select Project"));
   console.log(chalk.gray("  " + "─".repeat(60)));
 
-  if (recentRepos.length > 0) {
-    console.log(chalk.gray("     Recent:"));
-    recentRepos.slice(0, 5).forEach((repo, i) => {
-      const name = path.basename(repo);
-      console.log(chalk.cyan(`     [${i + 1}]`) + ` ${name}` + chalk.gray(` (${repo})`));
-    });
-  }
-  console.log(chalk.cyan("     [.]") + ` Current directory` + chalk.gray(` (${process.cwd()})`));
-  console.log(chalk.cyan("     [p]") + ` Enter custom path`);
-
-  const repoChoice = await question(rl, chalk.cyan("\n  Select project: "));
   let selectedRepo: string;
 
-  if (repoChoice === "." || repoChoice === "") {
-    selectedRepo = process.cwd();
-  } else if (repoChoice === "p") {
-    selectedRepo = await question(rl, chalk.cyan("  Enter path: "));
-    if (!selectedRepo) {
-      console.log(chalk.red("  Cancelled."));
-      return;
+  try {
+    // Build choices for the search prompt
+    const repoChoices = discoveredRepos.map((repo, index) => {
+      const timeAgo = formatTimeAgo(repo.lastModified);
+      const isCurrent = repo.path === process.cwd();
+      const isRecent = recentRepos.includes(repo.path);
+
+      let prefix = "  ";
+      if (isCurrent) prefix = chalk.green("→ ");
+      else if (isRecent) prefix = chalk.yellow("★ ");
+
+      return {
+        name: `${prefix}${repo.name}`,
+        value: repo.path,
+        description: `${repo.path} ${chalk.gray(`(${timeAgo})`)}`,
+      };
+    });
+
+    // Add option to enter custom path
+    repoChoices.push({
+      name: chalk.gray("  Enter custom path..."),
+      value: "__custom__",
+      description: "Type a path to a git repository",
+    });
+
+    selectedRepo = await search({
+      message: "Select project (type to filter):",
+      source: async (term) => {
+        if (!term) {
+          return repoChoices;
+        }
+        const lower = term.toLowerCase();
+        return repoChoices.filter((choice) => {
+          const searchable = `${choice.name} ${choice.value}`.toLowerCase();
+          return searchable.includes(lower);
+        });
+      },
+    });
+
+    if (selectedRepo === "__custom__") {
+      selectedRepo = await input({
+        message: "Enter path:",
+        default: process.cwd(),
+        validate: (value) => {
+          const expanded = expandPath(value);
+          if (!fs.existsSync(expanded)) {
+            return "Path does not exist";
+          }
+          return true;
+        },
+      });
+      selectedRepo = expandPath(selectedRepo);
     }
-  } else {
-    const idx = parseInt(repoChoice) - 1;
-    if (idx >= 0 && idx < recentRepos.length) {
-      selectedRepo = recentRepos[idx];
-    } else {
-      console.log(chalk.red("  Invalid selection."));
-      return;
-    }
+  } catch (error) {
+    // User cancelled (Ctrl+C)
+    console.log(chalk.yellow("\n  Cancelled."));
+    return;
   }
 
   // Validate repo exists
@@ -240,30 +384,26 @@ async function handleNewTask(rl: readline.Interface): Promise<void> {
   }
 
   const repoName = path.basename(selectedRepo);
-  console.log(chalk.green(`  ✓ Selected: ${repoName}`));
+  console.log(chalk.green(`  ✓ Selected: ${repoName}`) + chalk.gray(` (${selectedRepo})`));
 
-  // Step 2: Select Model
-  console.log(chalk.bold("\n  2. Select Model"));
-  console.log(chalk.gray("  " + "─".repeat(60)));
-
-  AVAILABLE_MODELS.forEach((model, i) => {
-    const defaultBadge = model.default ? chalk.green(" (default)") : "";
-    console.log(chalk.cyan(`     [${i + 1}]`) + ` ${model.name}` + chalk.gray(` - ${model.provider}`) + defaultBadge);
-  });
-
-  const modelChoice = await question(rl, chalk.cyan("\n  Select model [1]: "));
-  const modelIdx = modelChoice ? parseInt(modelChoice) - 1 : 0;
-  const selectedModel = AVAILABLE_MODELS[modelIdx] || AVAILABLE_MODELS[0];
-  console.log(chalk.green(`  ✓ Using: ${selectedModel.name}`));
-
-  // Step 3: Enter Task Description
-  console.log(chalk.bold("\n  3. Task Description"));
+  // Step 2: Enter Task Description
+  console.log(chalk.bold("\n  2. Task Description"));
   console.log(chalk.gray("  " + "─".repeat(60)));
   console.log(chalk.gray("     What should Claude do? Be specific."));
 
-  const taskPrompt = await question(rl, chalk.cyan("\n  > "));
-  if (!taskPrompt.trim()) {
-    console.log(chalk.red("  Task description is required."));
+  let taskPrompt: string;
+  try {
+    taskPrompt = await input({
+      message: ">",
+      validate: (value) => {
+        if (!value.trim()) {
+          return "Task description is required";
+        }
+        return true;
+      },
+    });
+  } catch {
+    console.log(chalk.yellow("\n  Cancelled."));
     return;
   }
 
@@ -271,11 +411,21 @@ async function handleNewTask(rl: readline.Interface): Promise<void> {
   console.log(chalk.bold("\n  Review"));
   console.log(chalk.gray("  " + "─".repeat(60)));
   console.log(`     Project: ${chalk.cyan(repoName)}`);
-  console.log(`     Model:   ${chalk.cyan(selectedModel.name)}`);
+  console.log(`     Model:   ${chalk.cyan("Claude Opus 4")}`);
   console.log(`     Task:    ${chalk.white(taskPrompt.slice(0, 50))}${taskPrompt.length > 50 ? "..." : ""}`);
 
-  const confirm = await question(rl, chalk.cyan("\n  Start task? [Y/n]: "));
-  if (confirm.toLowerCase() === "n") {
+  let shouldStart: boolean;
+  try {
+    shouldStart = await confirm({
+      message: "Start task?",
+      default: true,
+    });
+  } catch {
+    console.log(chalk.yellow("\n  Cancelled."));
+    return;
+  }
+
+  if (!shouldStart) {
     console.log(chalk.yellow("  Cancelled."));
     return;
   }
@@ -283,7 +433,7 @@ async function handleNewTask(rl: readline.Interface): Promise<void> {
   // Start the task
   console.log(chalk.gray("\n  Starting task..."));
   try {
-    const task = await docker.startTask(selectedRepo, taskPrompt, selectedModel.id);
+    const task = await docker.startTask(selectedRepo, taskPrompt, DEFAULT_MODEL);
     addRecentRepo(selectedRepo);
 
     activity.unshift({
@@ -302,12 +452,6 @@ async function handleNewTask(rl: readline.Interface): Promise<void> {
   } catch (err) {
     console.error(chalk.red("  Failed to start task:"), err);
   }
-}
-
-function question(rl: readline.Interface, prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(prompt, resolve);
-  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -365,8 +509,8 @@ async function refreshTasks(): Promise<void> {
 // Command Handler
 // ─────────────────────────────────────────────────────────────
 
-async function handleCommand(input: string, rl: readline.Interface): Promise<void> {
-  const parts = input.trim().split(/\s+/);
+async function handleCommand(inputStr: string, rl: readline.Interface): Promise<void> {
+  const parts = inputStr.trim().split(/\s+/);
   const command = parts[0]?.toLowerCase();
 
   if (!command) {
@@ -381,7 +525,18 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<voi
   switch (command) {
     case "new":
     case "n":
-      await handleNewTask(rl);
+      // Pause readline while inquirer takes over
+      rl.pause();
+      try {
+        await handleNewTask();
+      } finally {
+        rl.resume();
+      }
+      // Refresh dashboard after task creation
+      await refreshTasks();
+      clearScreen();
+      printDashboard();
+      printQuickHelp();
       break;
 
     case "list":
@@ -524,6 +679,7 @@ function printHelp(): void {
 
 export async function runDashboard(): Promise<void> {
   loadRecentRepos();
+  discoveredRepos = discoverGitRepos();
 
   // Check Docker
   const dockerOk = await docker.checkDocker();
@@ -557,13 +713,16 @@ export async function runDashboard(): Promise<void> {
       process.exit(0);
     }
 
-    rl.question(chalk.cyan("  > "), async (input) => {
+    // Ensure terminal is in a clean state before prompting
+    process.stdout.write(chalk.cyan("  > "));
+    rl.question("", async (inputStr) => {
       try {
-        await handleCommand(input, rl);
+        await handleCommand(inputStr, rl);
       } catch (err) {
         console.error(chalk.red("  Error:"), err);
       }
-      prompt();
+      // Small delay to let inquirer fully release stdin
+      setTimeout(() => prompt(), 10);
     });
   };
 
