@@ -2,7 +2,7 @@ name: cmux
 options:
   bundleIdPrefix: dev.cmux
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "17.0"
   xcodeVersion: "16.0"
 
 configs:
