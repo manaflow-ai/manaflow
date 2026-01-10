@@ -392,6 +392,72 @@ function printQuestionDetail(key: string, entry: { question: Question; taskId: s
 }
 
 // ─────────────────────────────────────────────────────────────
+// Watch Mode - View task output inline
+// ─────────────────────────────────────────────────────────────
+
+async function watchTaskOutput(task: Task, _rl: readline.Interface): Promise<void> {
+  return new Promise((resolve) => {
+    let running = true;
+
+    // Set up raw mode to capture single keystrokes
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+
+    const renderOutput = async (): Promise<void> => {
+      if (!running) return;
+
+      try {
+        const output = await runner.readOutput(task.id, 40); // Last 40 lines
+        clearScreen();
+
+        // Header
+        console.log(chalk.cyan.bold(`  ╭─ Task #${task.number}: ${task.repoName} ${"─".repeat(Math.max(0, 50 - task.repoName.length))}╮`));
+        console.log(chalk.gray(`  │ Press 'q' or Escape to return to dashboard ${" ".repeat(21)}│`));
+        console.log(chalk.cyan.bold(`  ╰${"─".repeat(66)}╯`));
+        console.log();
+
+        // Show tmux output
+        const lines = output.split("\n").slice(-35); // Fit in terminal
+        for (const line of lines) {
+          console.log(`  ${line}`);
+        }
+      } catch {
+        clearScreen();
+        console.log(chalk.yellow(`  Task #${task.number} has finished or is unavailable.`));
+        console.log(chalk.gray(`  Press any key to return...`));
+      }
+    };
+
+    // Initial render
+    renderOutput();
+
+    // Refresh every 500ms
+    const refreshInterval = setInterval(() => {
+      renderOutput();
+    }, 500);
+
+    // Handle keypress
+    const onKeypress = (key: Buffer): void => {
+      const char = key.toString();
+      // q, Q, or Escape (0x1b)
+      if (char === "q" || char === "Q" || key[0] === 0x1b) {
+        running = false;
+        clearInterval(refreshInterval);
+        process.stdin.removeListener("data", onKeypress);
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+        resolve();
+      }
+    };
+
+    process.stdin.on("data", onKeypress);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
 // Interactive Task Creation with Inquirer
 // ─────────────────────────────────────────────────────────────
 
@@ -655,12 +721,14 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
         console.log(chalk.red(`  Task ${taskNum} not found.`));
         break;
       }
-      try {
-        await runner.openTerminal(task.id);
-        console.log(chalk.green(`  Opened terminal for task #${taskNum}`));
-      } catch (err) {
-        console.log(chalk.yellow(`  ${err instanceof Error ? err.message : String(err)}`));
-      }
+      // Enter watch mode - show task output inline
+      rl.pause();
+      await watchTaskOutput(task, rl);
+      rl.resume();
+      // Refresh dashboard after exiting watch mode
+      clearScreen();
+      printDashboard();
+      printQuickHelp();
       break;
     }
 

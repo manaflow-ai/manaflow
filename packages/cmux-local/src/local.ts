@@ -373,28 +373,8 @@ claude --dangerously-skip-permissions --model "${actualModel}" "$(cat "${promptF
         throw new Error(`Failed to create split pane: ${result.stderr}`);
       }
     } else {
-      // Not in tmux - open in new terminal window (fallback)
-      const platform = process.platform;
-      let openCmd: string;
-
-      if (platform === "darwin") {
-        openCmd = `osascript -e 'tell application "Terminal" to do script "tmux attach-session -t ${sessionName}"'`;
-      } else if (platform === "linux") {
-        const terminals = [
-          `gnome-terminal -- tmux attach-session -t "${sessionName}"`,
-          `xterm -e tmux attach-session -t "${sessionName}"`,
-          `konsole -e tmux attach-session -t "${sessionName}"`,
-        ];
-        for (const cmd of terminals) {
-          const result = await exec(cmd);
-          if (result.code === 0) return;
-        }
-        throw new Error("Run: tmux attach-session -t " + sessionName);
-      } else {
-        throw new Error(`Run: tmux attach-session -t ${sessionName}`);
-      }
-
-      await exec(openCmd);
+      // Not in tmux - can't split, show instructions
+      throw new Error(`Run inside tmux for split view. Or: tmux attach -t ${sessionName}`);
     }
   }
 
