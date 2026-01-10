@@ -25,6 +25,10 @@ path = "src/bin/cli.rs"
 name = "cmux-bridge"
 path = "src/bin/cmux-bridge.rs"
 
+[[bin]]
+name = "cmux-acp-server"
+path = "src/bin/cmux-acp-server.rs"
+
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
