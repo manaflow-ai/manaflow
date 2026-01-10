@@ -14,13 +14,8 @@ import { type Task, type MCPQuestion, type MCPProgress } from "./types.js";
 
 /**
  * Default model - Claude Opus 4.5
- * Full model name for compatibility with all CLI versions
  */
-export const DEFAULT_MODEL = "claude-opus-4-5-20250514";
-
-// Alternative model IDs to try if the above doesn't work:
-// - "opus" (alias, requires newer CLI)
-// - "claude-opus-4-5-20251101" (alternative date)
+export const DEFAULT_MODEL = "claude-opus-4-5-20251101";
 
 /**
  * Orchestration Protocol - instructs Claude to write questions to inbox file
@@ -259,7 +254,7 @@ export CMUX_ANSWERS_FILE="${answersFile}"
 # Only use OAuth token - never prompt about API keys
 unset ANTHROPIC_API_KEY
 export CLAUDE_CODE_OAUTH_TOKEN="${oauthToken}"
-claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptFile}")"
+claude --dangerously-skip-permissions --model "${actualModel}" "$(cat "${promptFile}")"
 `;
     fs.writeFileSync(startupScript, scriptContent);
     fs.chmodSync(startupScript, "755");
