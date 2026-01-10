@@ -18,51 +18,46 @@ import { type Task, type MCPQuestion, type MCPProgress } from "./types.js";
 export const DEFAULT_MODEL = "claude-opus-4-5-20251101";
 
 /**
- * Orchestration Protocol - instructs Claude to output structured markers
+ * Orchestration Protocol - instructs Claude to write questions to inbox file
  */
 const ORCHESTRATION_PROTOCOL = `
-## Orchestration Protocol
+## Human-in-the-Loop Protocol
 
-You are being monitored by an orchestrator that helps humans stay in the loop.
-Use these lightweight markers in your output so the orchestrator can extract key information:
+You are being orchestrated. A human operator is monitoring your work through a dashboard.
+When you need human input, write to the inbox file so they can respond.
 
-**When you make a significant decision:**
-\`\`\`
-DECISION: [topic] -> [choice] because [rationale]
-\`\`\`
-Example: DECISION: [hashing algorithm] -> [bcrypt] because simpler and sufficient for our scale
+### Asking Questions
 
-**When you need human input (unclear requirements, multiple valid approaches, etc.):**
-\`\`\`
-QUESTION: [your question]
-OPTIONS: [option1] | [option2] | [option3]
-LEANING: [your suggestion] because [why]
-\`\`\`
-Example:
-QUESTION: Should sessions use JWT or cookies?
-OPTIONS: JWT (stateless) | Cookies (simpler)
-LEANING: Cookies because simpler for MVP, avoids refresh token complexity
+When you genuinely need human input (unclear requirements, significant decisions, multiple valid approaches):
 
-**When you make an assumption that the human should know about:**
-\`\`\`
-ASSUMING: [what you're assuming]
-\`\`\`
-Example: ASSUMING: 24 hour session expiry is acceptable
+1. Use the Write tool to APPEND to: $CMUX_INBOX_FILE
+2. Write valid JSON in this format:
 
-**When your focus changes to a new task area:**
-\`\`\`
-FOCUS: [what you're working on now]
-\`\`\`
-Example: FOCUS: Implementing password hashing
+{"id":"unique-id","question":"Your question here?","options":["Option A","Option B"],"suggestion":"Your recommendation","importance":"high"}
 
-**Guidelines:**
-- Use markers sparingly - only for significant decisions, not every tiny choice
-- Keep working even if you haven't heard back on a QUESTION - don't block yourself
-- If you're 80%+ confident on a decision, just note it with DECISION and continue
-- Use QUESTION only when genuinely uncertain about user intent or when there are multiple valid approaches
+- id: Use a unique string (timestamp or random)
+- question: Clear, specific question
+- options: Array of choices (optional)
+- suggestion: Your recommendation (optional)
+- importance: "high" (blocking) | "medium" (helpful) | "low" (nice to know)
 
-The orchestrator will surface important questions to the human and auto-answer trivial ones.
-Continue to work normally - these markers are just annotations on your natural workflow.
+**IMPORTANT**:
+- Only ask when genuinely uncertain - don't ask about things you can decide yourself
+- Keep working after asking - don't block waiting for answers
+- Check $CMUX_ANSWERS_FILE periodically for responses
+
+### When NOT to ask:
+- Implementation details you can figure out
+- Syntax questions
+- Decisions you're 80%+ confident about
+
+### Example:
+
+If unsure about authentication approach:
+Write to $CMUX_INBOX_FILE:
+{"id":"auth-q1","question":"Should user sessions use JWT tokens or HTTP-only cookies?","options":["JWT (stateless, good for APIs)","Cookies (simpler, better security defaults)"],"suggestion":"Cookies - simpler for MVP and avoids token refresh complexity","importance":"medium"}
+
+Then continue working with your best judgment while waiting for response.
 `;
 
 /**
@@ -176,11 +171,15 @@ export class LocalRunner {
     const missing: string[] = [];
 
     if (!(await checkTmux())) {
-      missing.push("tmux");
+      missing.push("tmux (brew install tmux)");
     }
 
     if (!(await checkClaude())) {
       missing.push("claude (npm install -g @anthropic-ai/claude-code)");
+    }
+
+    if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+      missing.push("CLAUDE_CODE_OAUTH_TOKEN environment variable");
     }
 
     return { ok: missing.length === 0, missing };
@@ -268,12 +267,25 @@ export class LocalRunner {
     const promptFile = path.join(cmuxDir, "prompt.txt");
     fs.writeFileSync(promptFile, orchestratedPrompt);
 
-    // Create startup script
+    // Create inbox and answers files
+    const inboxFile = path.join(cmuxDir, "inbox.jsonl");
+    const answersFile = path.join(cmuxDir, "answers.json");
+    fs.writeFileSync(inboxFile, ""); // Create empty inbox
+    fs.writeFileSync(answersFile, "[]"); // Create empty answers array
+
+    // Create startup script - pass through OAuth token and inbox paths
     const startupScript = path.join(cmuxDir, "start.sh");
+    const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || "";
     const scriptContent = `#!/bin/bash
 cd "${absolutePath}"
 export CMUX_TASK_ID="${taskId}"
 export CMUX_PROMPT_FILE="${promptFile}"
+# Inbox for human-in-the-loop communication
+export CMUX_INBOX_FILE="${inboxFile}"
+export CMUX_ANSWERS_FILE="${answersFile}"
+# Only use OAuth token - never prompt about API keys
+unset ANTHROPIC_API_KEY
+export CLAUDE_CODE_OAUTH_TOKEN="${oauthToken}"
 claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptFile}")"
 `;
     fs.writeFileSync(startupScript, scriptContent);
@@ -353,6 +365,13 @@ claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptF
    */
   async injectMessage(taskId: string, message: string): Promise<boolean> {
     const sessionName = this.getSessionName(taskId);
+
+    // Check if session still exists
+    const exists = await this.sessionExists(sessionName);
+    if (!exists) {
+      return false;
+    }
+
     // Escape special characters for tmux send-keys
     const escaped = message.replace(/'/g, "'\"'\"'");
     const result = await exec(
@@ -369,7 +388,7 @@ claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptF
     const exists = await this.sessionExists(sessionName);
 
     if (!exists) {
-      throw new Error(`Session ${sessionName} not found`);
+      throw new Error(`Task has finished or exited. Use 'new' to start a fresh task.`);
     }
 
     // Open in a new terminal window
@@ -409,7 +428,65 @@ claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptF
   }
 
   /**
-   * Read MCP questions from a task's communication directory
+   * Read inbox questions from a task's communication directory (JSONL format)
+   */
+  readInboxQuestions(task: Task): MCPQuestion[] {
+    const inboxFile = path.join(task.cmuxDir, "inbox.jsonl");
+    const answersFile = path.join(task.cmuxDir, "answers.json");
+
+    try {
+      if (!fs.existsSync(inboxFile)) return [];
+
+      const content = fs.readFileSync(inboxFile, "utf-8").trim();
+      if (!content) return [];
+
+      // Read answered question IDs
+      const answeredIds = new Set<string>();
+      try {
+        if (fs.existsSync(answersFile)) {
+          const answers = JSON.parse(fs.readFileSync(answersFile, "utf-8")) as Array<{ questionId: string }>;
+          answers.forEach((a) => answeredIds.add(a.questionId));
+        }
+      } catch {
+        // Ignore answer file errors
+      }
+
+      // Parse JSONL (one JSON object per line)
+      const questions: MCPQuestion[] = [];
+      for (const line of content.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const q = JSON.parse(line) as {
+            id: string;
+            question: string;
+            options?: string[];
+            suggestion?: string;
+            importance?: "high" | "medium" | "low";
+          };
+          if (q.id && q.question && !answeredIds.has(q.id)) {
+            questions.push({
+              id: q.id,
+              question: q.question,
+              options: q.options,
+              context: q.suggestion, // Use suggestion as context for display
+              importance: q.importance || "medium",
+              timestamp: new Date().toISOString(),
+              answered: false,
+            });
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+      return questions;
+    } catch {
+      // File doesn't exist or is invalid
+    }
+    return [];
+  }
+
+  /**
+   * Read MCP questions from a task's communication directory (legacy)
    */
   readMCPQuestions(task: Task): MCPQuestion[] {
     const questionsFile = path.join(task.cmuxDir, "questions.json");

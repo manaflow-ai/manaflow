@@ -237,18 +237,25 @@ function printDashboard(): void {
     }
   }
 
-  // Questions Section
-  if (withQuestions.length > 0 || questions.size > 0) {
-    console.log(chalk.bold.yellow(`\n  ? Needs Attention`) + chalk.gray(` (${questions.size} questions)`));
+  // Inbox Section - compact summary, non-blocking
+  if (questions.size > 0) {
+    console.log(chalk.bold.yellow(`\n  ✉ Inbox`) + chalk.gray(` (${questions.size} pending)`));
     console.log(chalk.gray("  " + "─".repeat(60)));
-    for (const [key, { question, taskId }] of questions.entries()) {
+    // Show compact list - just IDs and first few words
+    const questionList = Array.from(questions.entries()).slice(0, 5);
+    for (const [key, { question, taskId }] of questionList) {
       const task = tasks.find((t) => t.id === taskId);
+      const preview = question.question.slice(0, 40) + (question.question.length > 40 ? "..." : "");
       console.log(
         chalk.yellow(`    [${key}]`) +
-          chalk.gray(` ${task?.repoName || "unknown"}: `) +
-          chalk.white(question.question.slice(0, 40) + (question.question.length > 40 ? "..." : ""))
+        chalk.gray(` ${task?.repoName || "?"}: `) +
+        chalk.white(preview)
       );
     }
+    if (questions.size > 5) {
+      console.log(chalk.gray(`    ... and ${questions.size - 5} more`));
+    }
+    console.log(chalk.gray(`\n    Type 'inbox' to view all, 'view ${questionList[0]?.[0] || "q1"}' for details`));
   }
 
   // Completed Section
@@ -301,14 +308,87 @@ function printTaskRow(task: Task, dim = false): void {
 }
 
 function printQuickHelp(): void {
+  const inboxBadge = questions.size > 0 ? chalk.yellow(` [${questions.size} pending]`) : "";
   console.log(chalk.gray("  Commands: ") +
     chalk.cyan("new") + chalk.gray(" | ") +
+    chalk.cyan("inbox") + inboxBadge + chalk.gray(" | ") +
     chalk.cyan("open <n>") + chalk.gray(" | ") +
-    chalk.cyan("q<n> <ans>") + chalk.gray(" | ") +
     chalk.cyan("stop <n>") + chalk.gray(" | ") +
-    chalk.cyan("help") + chalk.gray(" | ") +
-    chalk.cyan("quit")
+    chalk.cyan("help")
   );
+}
+
+function printInbox(): void {
+  console.log(chalk.bold.yellow("\n  ✉ Inbox"));
+  console.log(chalk.gray("  " + "─".repeat(60)));
+
+  if (questions.size === 0) {
+    console.log(chalk.gray("    No pending questions."));
+    console.log();
+    return;
+  }
+
+  for (const [key, { question, taskId }] of questions.entries()) {
+    const task = tasks.find((t) => t.id === taskId);
+    const age = formatTimeAgo(question.askedAt.getTime());
+    const preview = question.question.slice(0, 50) + (question.question.length > 50 ? "..." : "");
+
+    console.log(
+      chalk.yellow(`  [${key}]`) +
+      chalk.gray(` ${task?.repoName || "unknown"} `) +
+      chalk.gray(`(${age})`)
+    );
+    console.log(chalk.white(`       ${preview}`));
+    if (question.suggestion) {
+      console.log(chalk.blue(`       → Suggestion: ${question.suggestion}`));
+    }
+  }
+
+  console.log(chalk.gray("\n  Commands:"));
+  console.log(chalk.gray("    view <q#>    - See full question details"));
+  console.log(chalk.gray("    q# <answer>  - Answer question (e.g., q1 yes)"));
+  console.log(chalk.gray("    dismiss <q#> - Dismiss without answering"));
+  console.log();
+}
+
+function printQuestionDetail(key: string, entry: { question: Question; taskId: string }): void {
+  const task = tasks.find((t) => t.id === entry.taskId);
+  const age = formatTimeAgo(entry.question.askedAt.getTime());
+
+  console.log(chalk.bold.yellow(`\n  ╭─────────────────────────────────────────────────────────────╮`));
+  console.log(chalk.bold.yellow(`  │`) + chalk.bold(` Question ${key}`) + chalk.gray(` from ${task?.repoName || "unknown"} (${age})`) + chalk.bold.yellow(`          │`));
+  console.log(chalk.bold.yellow(`  ╰─────────────────────────────────────────────────────────────╯`));
+
+  // Word wrap the question
+  console.log(chalk.bold("\n  Question:"));
+  const maxLen = 55;
+  const words = entry.question.question.split(" ");
+  let line = "    ";
+  for (const word of words) {
+    if (line.length + word.length + 1 > maxLen) {
+      console.log(chalk.white(line));
+      line = "    " + word;
+    } else {
+      line += (line.length > 4 ? " " : "") + word;
+    }
+  }
+  if (line.length > 4) console.log(chalk.white(line));
+
+  if (entry.question.options && entry.question.options.length > 0) {
+    console.log(chalk.bold("\n  Options:"));
+    for (const opt of entry.question.options) {
+      console.log(chalk.cyan(`    • ${opt}`));
+    }
+  }
+
+  if (entry.question.suggestion) {
+    console.log(chalk.bold("\n  Suggestion:"));
+    console.log(chalk.blue(`    → ${entry.question.suggestion}`));
+  }
+
+  console.log(chalk.gray("\n  Reply:"));
+  console.log(chalk.gray(`    ${key} <your answer>`) + chalk.gray("  or  ") + chalk.gray(`dismiss ${key}`));
+  console.log();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -476,137 +556,46 @@ async function refreshTasks(): Promise<void> {
 
     for (const task of tasks) {
       if (task.status === "running" || task.status === "starting") {
+        // Update current activity from tmux output
         try {
           const output = await runner.readOutput(task.id);
-          const extracted = extractQuestionsFromOutput(output, task.id);
-
-          // Update current activity from tool usage
           const currentAct = extractCurrentActivity(output);
           if (currentAct) {
             taskCurrentActivity.set(task.id, currentAct);
-          }
-
-          // Update focus from FOCUS: markers
-          if (extracted.focus) {
-            taskFocus.set(task.id, extracted.focus);
-            taskCurrentActivity.set(task.id, extracted.focus);
-          }
-
-          // Process decisions
-          for (const d of extracted.decisions) {
-            const exists = Array.from(decisions.values()).some(
-              (existing) =>
-                existing.decision.topic === d.topic &&
-                existing.decision.choice === d.choice
-            );
-            if (!exists) {
-              decisions.set(d.id, { decision: d, taskId: task.id });
-              activity.unshift({
-                timestamp: new Date(),
-                taskId: task.id,
-                taskName: task.repoName,
-                type: "decision",
-                message: `Decision: [${d.topic}] -> ${d.choice}`,
-              });
-              console.log(chalk.cyan(`\n  [DECISION] ${task.repoName}:`));
-              console.log(chalk.white(`       [${d.topic}] -> ${d.choice}`));
-              if (d.rationale) {
-                console.log(chalk.gray(`       because: ${d.rationale.slice(0, 60)}`));
-              }
-              console.log();
-            }
-          }
-
-          // Process assumptions
-          for (const a of extracted.assumptions) {
-            const exists = Array.from(assumptions.values()).some(
-              (existing) => existing.assumption.text === a.text
-            );
-            if (!exists) {
-              assumptions.set(a.id, { assumption: a, taskId: task.id });
-              activity.unshift({
-                timestamp: new Date(),
-                taskId: task.id,
-                taskName: task.repoName,
-                type: "assumption",
-                message: `Assuming: ${a.text.slice(0, 40)}`,
-              });
-              console.log(chalk.magenta(`\n  [ASSUMING] ${task.repoName}:`));
-              console.log(chalk.white(`       ${a.text}`));
-              console.log();
-            }
-          }
-
-          // Process questions
-          for (const q of extracted.questions) {
-            const alreadyExists = Array.from(questions.values()).some(
-              (existing) => existing.question.question === q.question
-            );
-
-            if (!alreadyExists) {
-              questionCounter++;
-              const key = `q${questionCounter}`;
-              questions.set(key, { question: q, taskId: task.id });
-
-              activity.unshift({
-                timestamp: new Date(),
-                taskId: task.id,
-                taskName: task.repoName,
-                type: "question",
-                message: `Question: "${q.question.slice(0, 40)}..."`,
-              });
-
-              // Alert user with formatted question
-              console.log(chalk.yellow(`\n  ╭─ [${key}] Question from ${task.repoName} ─╮`));
-              console.log(chalk.white(`  │ ${q.question}`));
-              if (q.options && q.options.length > 0) {
-                console.log(chalk.gray(`  │ Options: ${q.options.join(" | ")}`));
-              }
-              if (q.suggestion) {
-                console.log(chalk.blue(`  │ Suggestion: ${q.suggestion}`));
-              }
-              console.log(chalk.gray(`  ╰─ Reply: ${key} <your answer> ─╯\n`));
-            }
-          }
-
-          // Keep activity list manageable
-          while (activity.length > 30) {
-            activity.pop();
           }
         } catch {
           // Container might not be ready
         }
 
-        // Poll MCP questions from the filesystem
+        // Poll inbox questions from the filesystem (primary method)
         try {
-          const mcpQuestions = runner.readMCPQuestions(task);
-          for (const mq of mcpQuestions) {
+          const inboxQuestions = runner.readInboxQuestions(task);
+          for (const iq of inboxQuestions) {
             // Skip questions we've already seen
-            if (mcpQuestionsSeen.has(mq.id)) continue;
+            if (mcpQuestionsSeen.has(iq.id)) continue;
 
             // Only surface high and medium importance questions
-            // Low importance questions are auto-handled by orchestrator
-            if (mq.importance === "low") {
-              mcpQuestionsSeen.add(mq.id);
+            if (iq.importance === "low") {
+              mcpQuestionsSeen.add(iq.id);
               continue;
             }
 
-            mcpQuestionsSeen.add(mq.id);
+            mcpQuestionsSeen.add(iq.id);
             questionCounter++;
             const key = `q${questionCounter}`;
 
-            // Track this as an MCP question
-            mcpQuestionIds.set(key, { taskId: task.id, mcpId: mq.id });
+            // Track this as an inbox question
+            mcpQuestionIds.set(key, { taskId: task.id, mcpId: iq.id });
 
-            // Convert MCP question to our Question format
+            // Convert to our Question format
             const question: Question = {
-              id: mq.id,
+              id: iq.id,
               taskId: task.id,
-              question: mq.question,
-              suggestion: undefined,
-              options: mq.options,
+              question: iq.question,
+              suggestion: iq.context, // context contains suggestion
+              options: iq.options,
               status: "open",
-              askedAt: new Date(mq.timestamp),
+              askedAt: new Date(iq.timestamp),
             };
 
             questions.set(key, { question, taskId: task.id });
@@ -616,46 +605,22 @@ async function refreshTasks(): Promise<void> {
               taskId: task.id,
               taskName: task.repoName,
               type: "question",
-              message: `[MCP] Question: "${mq.question.slice(0, 40)}..."`,
+              message: `[${iq.importance.toUpperCase()}] ${iq.question.slice(0, 30)}...`,
             });
 
-            // Alert user with formatted MCP question
-            const importanceColor = mq.importance === "high" ? chalk.red : chalk.yellow;
-            console.log(importanceColor(`\n  ╭─ [${key}] ${mq.importance.toUpperCase()} PRIORITY Question from ${task.repoName} ─╮`));
-            console.log(chalk.white(`  │ ${mq.question}`));
-            if (mq.context) {
-              console.log(chalk.gray(`  │ Context: ${mq.context}`));
-            }
-            if (mq.options && mq.options.length > 0) {
-              console.log(chalk.gray(`  │ Options: ${mq.options.join(" | ")}`));
-            }
-            console.log(chalk.gray(`  ╰─ Reply: ${key} <your answer> ─╯\n`));
-          }
-
-          // Also read progress updates for activity log
-          const progressUpdates = runner.readMCPProgress(task);
-          for (const p of progressUpdates) {
-            if (p.type === "decision" && p.decision) {
-              // Only log recent decisions (within last 30 seconds)
-              const timestamp = new Date(p.timestamp);
-              if (Date.now() - timestamp.getTime() < 30000) {
-                const exists = activity.some(
-                  (a) => a.type === "decision" && a.message.includes(p.decision || "")
-                );
-                if (!exists) {
-                  activity.unshift({
-                    timestamp,
-                    taskId: task.id,
-                    taskName: task.repoName,
-                    type: "decision",
-                    message: `[MCP] Decision: ${p.decision}`,
-                  });
-                }
-              }
-            }
+            // Brief headline notification (non-blocking)
+            const urgencyColor = iq.importance === "high" ? chalk.red : chalk.yellow;
+            const urgencyLabel = iq.importance === "high" ? "URGENT " : "";
+            console.log(urgencyColor(`\n  ✉ ${urgencyLabel}New in inbox [${key}]: `) + chalk.white(iq.question.slice(0, 40) + (iq.question.length > 40 ? "..." : "")));
+            console.log(chalk.gray(`    → Type 'view ${key}' or '${key} <answer>'\n`));
           }
         } catch {
-          // MCP files might not exist yet
+          // Inbox files might not exist yet
+        }
+
+        // Keep activity list manageable
+        while (activity.length > 30) {
+          activity.pop();
         }
       }
     }
@@ -776,6 +741,43 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
       printQuickHelp();
       break;
 
+    case "inbox":
+    case "i":
+      printInbox();
+      break;
+
+    case "view":
+    case "v": {
+      const qKey = parts[1]?.toLowerCase();
+      if (!qKey) {
+        console.log(chalk.red("  Usage: view <q1>"));
+        break;
+      }
+      const entry = questions.get(qKey);
+      if (!entry) {
+        console.log(chalk.red(`  Question ${qKey} not found.`));
+        break;
+      }
+      printQuestionDetail(qKey, entry);
+      break;
+    }
+
+    case "dismiss":
+    case "skip": {
+      const qKey = parts[1]?.toLowerCase();
+      if (!qKey) {
+        console.log(chalk.red("  Usage: dismiss <q1>"));
+        break;
+      }
+      if (questions.has(qKey)) {
+        questions.delete(qKey);
+        console.log(chalk.gray(`  Dismissed ${qKey}`));
+      } else {
+        console.log(chalk.red(`  Question ${qKey} not found.`));
+      }
+      break;
+    }
+
     default: {
       // Check if answering a question
       if (/^q\d+$/.test(command)) {
@@ -809,7 +811,9 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
           });
           console.log(chalk.green("  Answer sent."));
         } else {
-          console.log(chalk.red("  Failed to send answer."));
+          // Task has ended, clean up the question
+          questions.delete(command);
+          console.log(chalk.yellow("  Task has ended. Question dismissed."));
         }
         break;
       }
@@ -822,19 +826,29 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
 function printHelp(): void {
   console.log(chalk.bold("\n  Dashboard Commands"));
   console.log(chalk.gray("  " + "─".repeat(55)));
-  console.log(`  ${chalk.cyan("new")} / ${chalk.cyan("n")}              Start a new task (interactive wizard)`);
-  console.log(`  ${chalk.cyan("list")} / ${chalk.cyan("d")}             Refresh dashboard`);
+
+  console.log(chalk.bold("\n  Tasks"));
+  console.log(`  ${chalk.cyan("new")} / ${chalk.cyan("n")}              Start a new task`);
   console.log(`  ${chalk.cyan("open <n>")}             Attach to terminal for task n`);
-  console.log(`  ${chalk.cyan("q<n> <answer>")}        Answer question n (e.g., q1 yes)`);
   console.log(`  ${chalk.cyan("tell <n> <msg>")}       Send message to task n`);
   console.log(`  ${chalk.cyan("stop <n>")}             Stop task n`);
   console.log(`  ${chalk.cyan("stop-all")}             Stop all tasks`);
-  console.log(`  ${chalk.cyan("clear")} / ${chalk.cyan("c")}            Clear screen and refresh`);
+
+  console.log(chalk.bold("\n  Inbox (Questions)"));
+  console.log(`  ${chalk.cyan("inbox")} / ${chalk.cyan("i")}            View all pending questions`);
+  console.log(`  ${chalk.cyan("view <q#>")}            See full question details`);
+  console.log(`  ${chalk.cyan("q# <answer>")}          Answer question (e.g., q1 yes)`);
+  console.log(`  ${chalk.cyan("dismiss <q#>")}         Dismiss question without answering`);
+
+  console.log(chalk.bold("\n  General"));
+  console.log(`  ${chalk.cyan("list")} / ${chalk.cyan("d")}             Refresh dashboard`);
+  console.log(`  ${chalk.cyan("clear")} / ${chalk.cyan("c")}            Clear screen`);
   console.log(`  ${chalk.cyan("help")} / ${chalk.cyan("?")}             Show this help`);
-  console.log(`  ${chalk.cyan("quit")} / ${chalk.cyan("q")}             Exit`);
-  console.log();
-  console.log(chalk.gray("  Model: ") + chalk.cyan(DEFAULT_MODEL));
+  console.log(`  ${chalk.cyan("quit")}                 Exit`);
+
+  console.log(chalk.gray("\n  Model: ") + chalk.cyan(DEFAULT_MODEL));
   console.log(chalk.gray("  Tip: Press Enter to refresh the dashboard"));
+  console.log();
 }
 
 // ─────────────────────────────────────────────────────────────

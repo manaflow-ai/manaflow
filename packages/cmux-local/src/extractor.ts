@@ -26,13 +26,50 @@ const ASSUMING_PATTERN =
 
 const FOCUS_PATTERN = /FOCUS:\s*(.+?)(?=\n|$)/gi;
 
+// ─────────────────────────────────────────────────────────────
+// Protocol example text to filter out (these are from the ORCHESTRATION_PROTOCOL)
+// ─────────────────────────────────────────────────────────────
+
+const PROTOCOL_EXAMPLES = [
+  // Template placeholders
+  "[your question]",
+  "[topic]",
+  "[choice]",
+  "[rationale]",
+  "[option1]",
+  "[option2]",
+  "[option3]",
+  "[your suggestion]",
+  "[why]",
+  "[what you're assuming]",
+  "[what you're working on now]",
+  // Actual examples from protocol
+  "should sessions use jwt or cookies",
+  "jwt (stateless) | cookies (simpler)",
+  "cookies because simpler for mvp",
+  "hashing algorithm",
+  "bcrypt",
+  "24 hour session expiry",
+  "implementing password hashing",
+  "simpler and sufficient for our scale",
+];
+
+/**
+ * Check if text is a protocol example that should be filtered out
+ */
+function isProtocolExample(text: string): boolean {
+  const lower = text.toLowerCase();
+  return PROTOCOL_EXAMPLES.some((example) => lower.includes(example));
+}
+
 // Natural language patterns (fallback detection)
+// These capture the FULL question including the prefix for proper context
 const NATURAL_QUESTION_PATTERNS = [
-  /(?:should\s+(?:I|we)\s+)(.+?\?)/gi,
-  /(?:do\s+you\s+(?:want|prefer)\s+)(.+?\?)/gi,
-  /(?:which\s+(?:approach|option|method)\s+)(.+?\?)/gi,
-  /(?:is\s+it\s+(?:okay|fine|acceptable)\s+(?:to|if)\s+)(.+?\?)/gi,
-  /(?:would\s+you\s+(?:like|prefer)\s+)(.+?\?)/gi,
+  /(should\s+(?:I|we)\s+.+?\?)/gi,
+  /(do\s+you\s+(?:want|prefer)\s+.+?\?)/gi,
+  /(which\s+(?:approach|option|method)\s+.+?\?)/gi,
+  /(is\s+it\s+(?:okay|fine|acceptable)\s+(?:to|if)\s+.+?\?)/gi,
+  /(would\s+you\s+(?:like|prefer)\s+.+?\?)/gi,
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -136,17 +173,18 @@ export function extractQuestionsFromOutput(
     for (const pattern of NATURAL_QUESTION_PATTERNS) {
       const naturalPattern = new RegExp(pattern.source, pattern.flags);
       while ((match = naturalPattern.exec(output)) !== null) {
-        const [fullMatch, question] = match;
-        if (question && question.length > 10 && question.length < 300) {
+        // match[1] now contains the full question including prefix
+        const fullQuestion = match[1];
+        if (fullQuestion && fullQuestion.length > 10 && fullQuestion.length < 300) {
           // Avoid duplicates
           const exists = questions.some(
-            (q) => q.question.toLowerCase() === question.trim().toLowerCase()
+            (q) => q.question.toLowerCase() === fullQuestion.trim().toLowerCase()
           );
           if (!exists && questions.length < 3) {
             questions.push({
               id: nanoid(8),
               taskId,
-              question: question.trim(),
+              question: fullQuestion.trim(),
               status: "open",
               askedAt: new Date(),
             });

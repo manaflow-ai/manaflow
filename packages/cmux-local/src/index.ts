@@ -386,7 +386,7 @@ async function _handleCommand(input: string, rl: readline.Interface): Promise<vo
     case "quit":
     case "exit":
     case "q":
-      isRunning = false;
+      // This function is now unused, using dashboard TUI instead
       break;
 
     default: {
@@ -463,9 +463,9 @@ ${chalk.bold("INTERACTIVE COMMANDS:")}
   quit                    Exit
 
 ${chalk.bold("REQUIREMENTS:")}
-  - tmux must be installed
-  - claude CLI must be installed (npm i -g @anthropic-ai/claude-code)
-  - CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY environment variable
+  - tmux (brew install tmux)
+  - claude CLI (npm i -g @anthropic-ai/claude-code)
+  - CLAUDE_CODE_OAUTH_TOKEN environment variable
 
 ${chalk.bold("QUICK START:")}
   # Start a task in your project
