@@ -10,9 +10,31 @@ export interface Task {
   repoName: string;
   prompt: string;
   terminalPort: number;
+  cmuxDir: string; // Host directory for MCP communication files
   status: "starting" | "running" | "question" | "done" | "error";
   startedAt: Date;
   questions: Question[];
+}
+
+export interface MCPQuestion {
+  id: string;
+  question: string;
+  context?: string;
+  importance: "high" | "medium" | "low";
+  options?: string[];
+  timestamp: string;
+  answered: boolean;
+}
+
+export interface MCPProgress {
+  type?: "decision";
+  status?: string;
+  summary?: string;
+  details?: string;
+  decision?: string;
+  reasoning?: string;
+  alternatives?: string[];
+  timestamp: string;
 }
 
 export interface Question {

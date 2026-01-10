@@ -1,5 +1,5 @@
 # cmux-local worker image
-# Minimal image with Claude Code + tmux + ttyd for web terminal
+# Minimal image with Claude Code + tmux + ttyd for web terminal + MCP orchestrator
 
 FROM ubuntu:22.04
 
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     git \
     tmux \
     ca-certificates \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20
@@ -29,6 +30,28 @@ RUN ARCH=$(uname -m) && \
 
 # Install Claude Code
 RUN npm install -g @anthropic-ai/claude-code
+
+# Install MCP SDK globally for the orchestrator server
+RUN npm install -g @modelcontextprotocol/sdk
+
+# Create directories
+RUN mkdir -p /opt/cmux /tmp/cmux /root/.claude
+
+# Copy MCP server
+COPY src/mcp-server.ts /opt/cmux/mcp-server.ts
+
+# Create Claude Code settings with MCP server configuration
+RUN echo '{\
+  "mcpServers": {\
+    "cmux-orchestrator": {\
+      "command": "npx",\
+      "args": ["tsx", "/opt/cmux/mcp-server.ts"]\
+    }\
+  }\
+}' > /root/.claude/settings.json
+
+# Create CLAUDE.md template that instructs Claude to use the MCP tools
+COPY claude-instructions.md /opt/cmux/CLAUDE.md
 
 # Create workspace
 WORKDIR /workspace

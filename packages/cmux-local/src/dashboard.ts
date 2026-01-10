@@ -10,8 +10,14 @@ import { execSync } from "node:child_process";
 import chalk from "chalk";
 import { search, input, confirm } from "@inquirer/prompts";
 import { DockerConnector } from "./docker.js";
-import { type Task, type Question, type ActivityEntry } from "./types.js";
-import { extractQuestionsFromOutput } from "./extractor.js";
+import { type Task, type Question, type ActivityEntry, type MCPQuestion } from "./types.js";
+import { extractQuestionsFromOutput, extractCurrentActivity, type Decision, type Assumption } from "./extractor.js";
+
+// Track MCP questions we've already seen (by their MCP ID)
+const mcpQuestionsSeen: Set<string> = new Set();
+
+// Track which questions are MCP-based (so we know to write answers to filesystem)
+const mcpQuestionIds: Map<string, { taskId: string; mcpId: string }> = new Map();
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -55,7 +61,11 @@ const PROJECT_DIRS = [
 const docker = new DockerConnector();
 let tasks: Task[] = [];
 const questions: Map<string, { question: Question; taskId: string }> = new Map();
+const decisions: Map<string, { decision: Decision; taskId: string }> = new Map();
+const assumptions: Map<string, { assumption: Assumption; taskId: string }> = new Map();
 const activity: ActivityEntry[] = [];
+const taskCurrentActivity: Map<string, string> = new Map(); // Track what each task is doing
+const taskFocus: Map<string, string> = new Map(); // Track current focus per task
 let questionCounter = 0;
 let isRunning = true;
 let recentRepos: string[] = [];
@@ -278,6 +288,7 @@ function printTaskRow(task: Task, dim = false): void {
   const icon = task.status === "running" ? chalk.green("●") : task.status === "starting" ? chalk.yellow("◌") : chalk.gray("○");
   const port = chalk.cyan(`:${task.terminalPort}`);
   const time = task.startedAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const currentActivity = taskCurrentActivity.get(task.id);
 
   console.log(
     `    ${chalk.gray(task.number.toString().padStart(2))} ${icon} ` +
@@ -286,6 +297,11 @@ function printTaskRow(task: Task, dim = false): void {
       port +
       chalk.gray(` ${time}`)
   );
+
+  // Show current activity on next line if available
+  if (currentActivity && !dim) {
+    console.log(chalk.gray(`       └─ ${chalk.blue(currentActivity)}`));
+  }
 }
 
 function printQuickHelp(): void {
@@ -468,6 +484,64 @@ async function refreshTasks(): Promise<void> {
           const output = await docker.readOutput(task.id);
           const extracted = extractQuestionsFromOutput(output, task.id);
 
+          // Update current activity from tool usage
+          const currentAct = extractCurrentActivity(output);
+          if (currentAct) {
+            taskCurrentActivity.set(task.id, currentAct);
+          }
+
+          // Update focus from FOCUS: markers
+          if (extracted.focus) {
+            taskFocus.set(task.id, extracted.focus);
+            taskCurrentActivity.set(task.id, extracted.focus);
+          }
+
+          // Process decisions
+          for (const d of extracted.decisions) {
+            const exists = Array.from(decisions.values()).some(
+              (existing) =>
+                existing.decision.topic === d.topic &&
+                existing.decision.choice === d.choice
+            );
+            if (!exists) {
+              decisions.set(d.id, { decision: d, taskId: task.id });
+              activity.unshift({
+                timestamp: new Date(),
+                taskId: task.id,
+                taskName: task.repoName,
+                type: "decision",
+                message: `Decision: [${d.topic}] -> ${d.choice}`,
+              });
+              console.log(chalk.cyan(`\n  [DECISION] ${task.repoName}:`));
+              console.log(chalk.white(`       [${d.topic}] -> ${d.choice}`));
+              if (d.rationale) {
+                console.log(chalk.gray(`       because: ${d.rationale.slice(0, 60)}`));
+              }
+              console.log();
+            }
+          }
+
+          // Process assumptions
+          for (const a of extracted.assumptions) {
+            const exists = Array.from(assumptions.values()).some(
+              (existing) => existing.assumption.text === a.text
+            );
+            if (!exists) {
+              assumptions.set(a.id, { assumption: a, taskId: task.id });
+              activity.unshift({
+                timestamp: new Date(),
+                taskId: task.id,
+                taskName: task.repoName,
+                type: "assumption",
+                message: `Assuming: ${a.text.slice(0, 40)}`,
+              });
+              console.log(chalk.magenta(`\n  [ASSUMING] ${task.repoName}:`));
+              console.log(chalk.white(`       ${a.text}`));
+              console.log();
+            }
+          }
+
+          // Process questions
           for (const q of extracted.questions) {
             const alreadyExists = Array.from(questions.values()).some(
               (existing) => existing.question.question === q.question
@@ -486,17 +560,106 @@ async function refreshTasks(): Promise<void> {
                 message: `Question: "${q.question.slice(0, 40)}..."`,
               });
 
-              // Alert user
-              console.log(chalk.yellow(`\n  [${key}] New question from ${task.repoName}:`));
-              console.log(chalk.white(`       "${q.question}"`));
-              if (q.suggestion) {
-                console.log(chalk.blue(`       → ${q.suggestion}`));
+              // Alert user with formatted question
+              console.log(chalk.yellow(`\n  ╭─ [${key}] Question from ${task.repoName} ─╮`));
+              console.log(chalk.white(`  │ ${q.question}`));
+              if (q.options && q.options.length > 0) {
+                console.log(chalk.gray(`  │ Options: ${q.options.join(" | ")}`));
               }
-              console.log(chalk.gray(`       Reply: ${key} <your answer>\n`));
+              if (q.suggestion) {
+                console.log(chalk.blue(`  │ Suggestion: ${q.suggestion}`));
+              }
+              console.log(chalk.gray(`  ╰─ Reply: ${key} <your answer> ─╯\n`));
             }
+          }
+
+          // Keep activity list manageable
+          while (activity.length > 30) {
+            activity.pop();
           }
         } catch {
           // Container might not be ready
+        }
+
+        // Poll MCP questions from the filesystem
+        try {
+          const mcpQuestions = docker.readMCPQuestions(task);
+          for (const mq of mcpQuestions) {
+            // Skip questions we've already seen
+            if (mcpQuestionsSeen.has(mq.id)) continue;
+
+            // Only surface high and medium importance questions
+            // Low importance questions are auto-handled by orchestrator
+            if (mq.importance === "low") {
+              mcpQuestionsSeen.add(mq.id);
+              continue;
+            }
+
+            mcpQuestionsSeen.add(mq.id);
+            questionCounter++;
+            const key = `q${questionCounter}`;
+
+            // Track this as an MCP question
+            mcpQuestionIds.set(key, { taskId: task.id, mcpId: mq.id });
+
+            // Convert MCP question to our Question format
+            const question: Question = {
+              id: mq.id,
+              taskId: task.id,
+              question: mq.question,
+              suggestion: undefined,
+              options: mq.options,
+              status: "open",
+              askedAt: new Date(mq.timestamp),
+            };
+
+            questions.set(key, { question, taskId: task.id });
+
+            activity.unshift({
+              timestamp: new Date(),
+              taskId: task.id,
+              taskName: task.repoName,
+              type: "question",
+              message: `[MCP] Question: "${mq.question.slice(0, 40)}..."`,
+            });
+
+            // Alert user with formatted MCP question
+            const importanceColor = mq.importance === "high" ? chalk.red : chalk.yellow;
+            console.log(importanceColor(`\n  ╭─ [${key}] ${mq.importance.toUpperCase()} PRIORITY Question from ${task.repoName} ─╮`));
+            console.log(chalk.white(`  │ ${mq.question}`));
+            if (mq.context) {
+              console.log(chalk.gray(`  │ Context: ${mq.context}`));
+            }
+            if (mq.options && mq.options.length > 0) {
+              console.log(chalk.gray(`  │ Options: ${mq.options.join(" | ")}`));
+            }
+            console.log(chalk.gray(`  ╰─ Reply: ${key} <your answer> ─╯\n`));
+          }
+
+          // Also read progress updates for activity log
+          const progressUpdates = docker.readMCPProgress(task);
+          for (const p of progressUpdates) {
+            if (p.type === "decision" && p.decision) {
+              // Only log recent decisions (within last 30 seconds)
+              const timestamp = new Date(p.timestamp);
+              if (Date.now() - timestamp.getTime() < 30000) {
+                const exists = activity.some(
+                  (a) => a.type === "decision" && a.message.includes(p.decision || "")
+                );
+                if (!exists) {
+                  activity.unshift({
+                    timestamp,
+                    taskId: task.id,
+                    taskName: task.repoName,
+                    type: "decision",
+                    message: `[MCP] Decision: ${p.decision}`,
+                  });
+                }
+              }
+            }
+          }
+        } catch {
+          // MCP files might not exist yet
         }
       }
     }

@@ -9,7 +9,68 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { nanoid } from "nanoid";
-import { type Task, BASE_PORT, getTaskPort } from "./types.js";
+import { type Task, type MCPQuestion, type MCPProgress, BASE_PORT, getTaskPort } from "./types.js";
+
+/**
+ * Orchestration Protocol - instructs Claude to output structured markers
+ */
+const ORCHESTRATION_PROTOCOL = `
+## Orchestration Protocol
+
+You are being monitored by an orchestrator that helps humans stay in the loop.
+Use these lightweight markers in your output so the orchestrator can extract key information:
+
+**When you make a significant decision:**
+\`\`\`
+DECISION: [topic] -> [choice] because [rationale]
+\`\`\`
+Example: DECISION: [hashing algorithm] -> [bcrypt] because simpler and sufficient for our scale
+
+**When you need human input (unclear requirements, multiple valid approaches, etc.):**
+\`\`\`
+QUESTION: [your question]
+OPTIONS: [option1] | [option2] | [option3]
+LEANING: [your suggestion] because [why]
+\`\`\`
+Example:
+QUESTION: Should sessions use JWT or cookies?
+OPTIONS: JWT (stateless) | Cookies (simpler)
+LEANING: Cookies because simpler for MVP, avoids refresh token complexity
+
+**When you make an assumption that the human should know about:**
+\`\`\`
+ASSUMING: [what you're assuming]
+\`\`\`
+Example: ASSUMING: 24 hour session expiry is acceptable
+
+**When your focus changes to a new task area:**
+\`\`\`
+FOCUS: [what you're working on now]
+\`\`\`
+Example: FOCUS: Implementing password hashing
+
+**Guidelines:**
+- Use markers sparingly - only for significant decisions, not every tiny choice
+- Keep working even if you haven't heard back on a QUESTION - don't block yourself
+- If you're 80%+ confident on a decision, just note it with DECISION and continue
+- Use QUESTION only when genuinely uncertain about user intent or when there are multiple valid approaches
+
+The orchestrator will surface important questions to the human and auto-answer trivial ones.
+Continue to work normally - these markers are just annotations on your natural workflow.
+`;
+
+/**
+ * Wrap a user prompt with the orchestration protocol
+ */
+function wrapPromptWithProtocol(userPrompt: string): string {
+  return `${ORCHESTRATION_PROTOCOL}
+
+---
+
+## Your Task
+
+${userPrompt}`;
+}
 
 /**
  * Execute a command and return stdout
@@ -163,7 +224,7 @@ CMD ["ttyd", "-p", "7681", "bash"]
    */
   async listTasks(): Promise<Task[]> {
     const result = await exec(
-      `docker ps -a --filter "label=cmux.task=true" --format '{{.ID}}\\t{{.Names}}\\t{{.Status}}\\t{{.Label "cmux.repo"}}\\t{{.Label "cmux.prompt"}}\\t{{.Label "cmux.port"}}\\t{{.Label "cmux.number"}}\\t{{.Label "cmux.startedAt"}}'`
+      `docker ps -a --filter "label=cmux.task=true" --format '{{.ID}}\\t{{.Names}}\\t{{.Status}}\\t{{.Label "cmux.repo"}}\\t{{.Label "cmux.prompt"}}\\t{{.Label "cmux.port"}}\\t{{.Label "cmux.number"}}\\t{{.Label "cmux.startedAt"}}\\t{{.Label "cmux.cmuxDir"}}'`
     );
 
     if (!result.stdout.trim()) {
@@ -173,20 +234,22 @@ CMD ["ttyd", "-p", "7681", "bash"]
     const tasks: Task[] = [];
 
     for (const line of result.stdout.trim().split("\n")) {
-      const [containerId, name, status, repo, prompt, port, number, startedAt] = line.split("\t");
+      const [containerId, name, status, repo, prompt, port, number, startedAt, cmuxDir] = line.split("\t");
 
       if (!containerId || !name) continue;
 
       const isRunning = status?.toLowerCase().includes("up");
+      const taskId = name.replace("cmux-", "");
 
       tasks.push({
-        id: name.replace("cmux-", ""),
+        id: taskId,
         number: parseInt(number || "0", 10),
         containerId,
         repoPath: repo || "",
         repoName: repo?.split("/").pop() || "unknown",
         prompt: prompt || "",
         terminalPort: parseInt(port || "0", 10),
+        cmuxDir: cmuxDir || `/tmp/cmux-${taskId}`,
         status: isRunning ? "running" : "done",
         startedAt: startedAt ? new Date(startedAt) : new Date(),
         questions: [],
@@ -195,6 +258,64 @@ CMD ["ttyd", "-p", "7681", "bash"]
 
     // Sort by number
     return tasks.sort((a, b) => a.number - b.number);
+  }
+
+  /**
+   * Read MCP questions from a task's communication directory
+   */
+  readMCPQuestions(task: Task): MCPQuestion[] {
+    const questionsFile = path.join(task.cmuxDir, "questions.json");
+    try {
+      if (fs.existsSync(questionsFile)) {
+        const content = fs.readFileSync(questionsFile, "utf-8");
+        const questions = JSON.parse(content) as MCPQuestion[];
+        // Filter to unanswered questions
+        return questions.filter((q) => !q.answered);
+      }
+    } catch {
+      // File doesn't exist or is invalid
+    }
+    return [];
+  }
+
+  /**
+   * Read MCP progress updates from a task's communication directory
+   */
+  readMCPProgress(task: Task): MCPProgress[] {
+    const progressFile = path.join(task.cmuxDir, "progress.json");
+    try {
+      if (fs.existsSync(progressFile)) {
+        const content = fs.readFileSync(progressFile, "utf-8");
+        return JSON.parse(content) as MCPProgress[];
+      }
+    } catch {
+      // File doesn't exist or is invalid
+    }
+    return [];
+  }
+
+  /**
+   * Write an answer to an MCP question
+   */
+  writeMCPAnswer(task: Task, questionId: string, answer: string): void {
+    const answersFile = path.join(task.cmuxDir, "answers.json");
+    let answers: Array<{ questionId: string; answer: string; timestamp: string }> = [];
+
+    try {
+      if (fs.existsSync(answersFile)) {
+        answers = JSON.parse(fs.readFileSync(answersFile, "utf-8"));
+      }
+    } catch {
+      // File doesn't exist or is invalid
+    }
+
+    answers.push({
+      questionId,
+      answer,
+      timestamp: new Date().toISOString(),
+    });
+
+    fs.writeFileSync(answersFile, JSON.stringify(answers, null, 2));
   }
 
   /**
@@ -225,6 +346,9 @@ CMD ["ttyd", "-p", "7681", "bash"]
 
     const repoName = absolutePath.split("/").pop() || "workspace";
 
+    // Wrap prompt with orchestration protocol so Claude outputs structured markers
+    const orchestratedPrompt = wrapPromptWithProtocol(prompt);
+
     // Escape prompt for shell
     const escapedPrompt = escapeShell(prompt);
 
@@ -233,7 +357,7 @@ CMD ["ttyd", "-p", "7681", "bash"]
 
     // Start container with tmux + Claude Code
     // Use base64 encoding to safely pass the prompt and a startup script
-    const promptBase64 = Buffer.from(prompt).toString("base64");
+    const promptBase64 = Buffer.from(orchestratedPrompt).toString("base64");
 
     // Create a startup script that will be base64 encoded
     const startupScript = `#!/bin/bash
@@ -260,6 +384,10 @@ claude ${modelFlag} --dangerously-skip-permissions "\$PROMPT"
     }
     const envString = envVars.join(" \\\n      ");
 
+    // Create a host directory for this task's communication files
+    const cmuxDir = `/tmp/cmux-${taskId}`;
+    await exec(`mkdir -p "${cmuxDir}"`);
+
     const dockerCmd = `docker run -d \\
       --name ${containerName} \\
       --label cmux.task=true \\
@@ -268,7 +396,9 @@ claude ${modelFlag} --dangerously-skip-permissions "\$PROMPT"
       --label cmux.port=${terminalPort} \\
       --label cmux.number=${taskNumber} \\
       --label cmux.startedAt="${startedAt}" \\
+      --label cmux.cmuxDir="${cmuxDir}" \\
       -v "${absolutePath}":/workspace \\
+      -v "${cmuxDir}":/tmp/cmux \\
       -p ${terminalPort}:7681 \\
       -w /workspace \\
       ${envString} \\
