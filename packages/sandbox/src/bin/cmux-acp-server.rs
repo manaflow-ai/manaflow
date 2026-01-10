@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/healthz", get(health))
         .route("/api/acp", any(acp_websocket_handler))
         .route(
-            "/api/conversations/:conversation_id/ws",
+            "/api/conversations/{conversation_id}/ws",
             any(acp_websocket_handler),
         )
         .with_state(state);
