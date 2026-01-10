@@ -91,7 +91,7 @@ export async function runTaskScreenshots(
   log("INFO", "Starting automated screenshot workflow", {
     taskId,
     taskRunId,
-    hasAnthropicKey: Boolean(anthropicApiKey ?? process.env.ANTHROPIC_API_KEY),
+    hasAnthropicKey: Boolean(anthropicApiKey),
   });
 
   const result = await startScreenshotCollection({

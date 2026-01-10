@@ -99,7 +99,7 @@ Respond with a JSON object containing:
 - "reason": a brief explanation of why this implementation was chosen
 
 Example response:
-{"winner": 0, "reason": "Model claude/sonnet-4 provided a more complete implementation with better error handling and cleaner code structure."}
+{"winner": 0, "reason": "Model claude/sonnet-4.5 provided a more complete implementation with better error handling and cleaner code structure."}
 
 IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 

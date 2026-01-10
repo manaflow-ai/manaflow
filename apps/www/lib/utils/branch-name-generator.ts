@@ -143,9 +143,6 @@ export function mergeApiKeysWithEnv(apiKeys: Record<string, string>): ApiKeys {
   if (!merged.GEMINI_API_KEY && env.GEMINI_API_KEY) {
     merged.GEMINI_API_KEY = env.GEMINI_API_KEY;
   }
-  if (!merged.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY) {
-    merged.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
-  }
 
   return merged;
 }

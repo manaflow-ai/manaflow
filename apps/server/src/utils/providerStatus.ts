@@ -91,6 +91,9 @@ export async function checkAllProvidersStatusWebMode(options: {
   }
 
   // Check each agent's required API keys (skip local file checks)
+  const hasBedrockToken = Boolean(
+    process.env.AWS_BEARER_TOKEN_BEDROCK?.trim()
+  );
   const providerChecks = AGENT_CONFIGS.map((agent) => {
     const missingRequirements: string[] = [];
 
@@ -109,7 +112,7 @@ export async function checkAllProvidersStatusWebMode(options: {
           apiKeys.CLAUDE_CODE_OAUTH_TOKEN.trim() !== "";
         const hasApiKey =
           apiKeys.ANTHROPIC_API_KEY && apiKeys.ANTHROPIC_API_KEY.trim() !== "";
-        if (!hasOAuthToken && !hasApiKey) {
+        if (!hasOAuthToken && !hasApiKey && !hasBedrockToken) {
           missingRequirements.push(
             "Claude OAuth Token or Anthropic API Key"
           );

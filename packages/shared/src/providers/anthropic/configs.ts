@@ -12,10 +12,8 @@ import {
  *
  * Priority:
  * 1. If CLAUDE_CODE_OAUTH_TOKEN is set, use it and unset ANTHROPIC_API_KEY
- * 2. Otherwise, fall back to ANTHROPIC_API_KEY
- *
- * The OAuth token is preferred because it uses the user's own Claude subscription
- * and bypasses the need for an API key entirely.
+ * 2. Otherwise, use ANTHROPIC_API_KEY from user settings if present
+ * 3. If neither is set, Claude will fall back to AWS Bedrock (handled elsewhere)
  */
 const applyClaudeApiKeys: NonNullable<AgentConfig["applyApiKeys"]> = async (
   keys,
@@ -52,63 +50,6 @@ const applyClaudeApiKeys: NonNullable<AgentConfig["applyApiKeys"]> = async (
   return {
     unsetEnv,
   };
-};
-
-export const CLAUDE_SONNET_4_CONFIG: AgentConfig = {
-  name: "claude/sonnet-4",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-sonnet-4-20250514",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
-export const CLAUDE_OPUS_4_CONFIG: AgentConfig = {
-  name: "claude/opus-4",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-opus-4-20250514",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
-export const CLAUDE_OPUS_4_1_CONFIG: AgentConfig = {
-  name: "claude/opus-4.1",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-opus-4-1-20250805",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
 };
 
 export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
