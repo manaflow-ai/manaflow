@@ -12,10 +12,29 @@
  */
 
 import * as readline from "node:readline";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { config } from "dotenv";
 import chalk from "chalk";
+
+// Load .env from multiple possible locations
+const envPaths = [
+  path.join(process.cwd(), ".env"),
+  path.join(process.cwd(), "..", "..", ".env"), // cmux root from packages/cmux-local
+  path.resolve(__dirname, "..", "..", "..", ".env"), // cmux root from src
+  path.join(process.env.HOME || "", ".env"),
+];
+
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    config({ path: envPath });
+    break;
+  }
+}
 import { DockerConnector } from "./docker.js";
 import { type Task, type Question, type ActivityEntry } from "./types.js";
 import { extractQuestionsFromOutput } from "./extractor.js";
+import { runDashboard } from "./dashboard.js";
 
 // ─────────────────────────────────────────────────────────────
 // State
@@ -497,15 +516,26 @@ ${chalk.bold("QUICK START:")}
     process.exit(0);
   }
 
-  // Handle direct task start: cmux-local "prompt"
+  // Handle direct task start: cmux-local "prompt" [--model <model>]
   if (args.length > 0 && !["list", "ls", "stop-all", "start"].includes(args[0])) {
+    // Parse --model flag
+    let model: string | undefined;
+    const modelIndex = args.indexOf("--model");
+    if (modelIndex !== -1 && args[modelIndex + 1]) {
+      model = args[modelIndex + 1];
+      args.splice(modelIndex, 2); // Remove --model and its value
+    }
+
     const prompt = args.join(" ");
     const repoPath = process.cwd();
 
     console.log(chalk.gray(`\n  Starting task in ${repoPath}...`));
+    if (model) {
+      console.log(chalk.gray(`  Using model: ${model}`));
+    }
 
     try {
-      const task = await docker.startTask(repoPath, prompt);
+      const task = await docker.startTask(repoPath, prompt, model);
       console.log(chalk.green(`\n  ✓ Started task #${task.number} (${task.id})`));
       console.log(chalk.gray(`    Terminal: `) + chalk.cyan(`http://localhost:${task.terminalPort}`));
       console.log(chalk.gray(`\n  Run 'cmux-local' to monitor and answer questions.\n`));
@@ -535,56 +565,8 @@ ${chalk.bold("QUICK START:")}
     process.exit(0);
   }
 
-  // Interactive mode
-  printHeader();
-  console.log(chalk.gray("  Type 'help' for commands, 'new' to start a task, 'quit' to exit.\n"));
-
-  // Check for ANTHROPIC_API_KEY
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.log(chalk.yellow("  Warning: ANTHROPIC_API_KEY not set. Claude Code may not work.\n"));
-  }
-
-  // Initial load
-  await refreshTasks();
-  printStatus();
-
-  // Set up polling
-  const pollInterval = setInterval(() => {
-    refreshTasks().catch(console.error);
-  }, 5000);
-
-  // Interactive prompt
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  const prompt = (): void => {
-    if (!isRunning) {
-      clearInterval(pollInterval);
-      rl.close();
-      console.log(chalk.gray("\n  Goodbye!\n"));
-      process.exit(0);
-    }
-
-    rl.question(chalk.cyan("  > "), async (input) => {
-      try {
-        await handleCommand(input, rl);
-      } catch (err) {
-        console.error(chalk.red("  Error:"), err);
-      }
-      prompt();
-    });
-  };
-
-  rl.on("close", () => {
-    isRunning = false;
-    clearInterval(pollInterval);
-    console.log(chalk.gray("\n  Goodbye!\n"));
-    process.exit(0);
-  });
-
-  prompt();
+  // Interactive mode - use new dashboard TUI
+  await runDashboard();
 }
 
 main().catch((err) => {

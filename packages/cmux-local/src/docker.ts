@@ -209,7 +209,7 @@ CMD ["ttyd", "-p", "7681", "bash"]
   /**
    * Start a new task
    */
-  async startTask(repoPath: string, prompt: string): Promise<Task> {
+  async startTask(repoPath: string, prompt: string, model?: string): Promise<Task> {
     await this.ensureImage();
 
     const taskId = nanoid(8);
@@ -228,7 +228,28 @@ CMD ["ttyd", "-p", "7681", "bash"]
     // Escape prompt for shell
     const escapedPrompt = escapeShell(prompt);
 
+    // Model flag (default to opus if specified)
+    const modelFlag = model ? `--model ${model}` : "";
+
     // Start container with tmux + Claude Code
+    // Use base64 encoding to safely pass the prompt and a startup script
+    const promptBase64 = Buffer.from(prompt).toString("base64");
+
+    // Create a startup script that will be base64 encoded
+    const startupScript = `#!/bin/bash
+PROMPT=$(echo '${promptBase64}' | base64 -d)
+claude ${modelFlag} --dangerously-skip-permissions "\$PROMPT"
+`.trim();
+    const startupScriptBase64 = Buffer.from(startupScript).toString("base64");
+
+    // Simple approach: ttyd starts tmux with Claude Code when browser connects
+    // This is more reliable than trying to pre-start tmux in a non-interactive shell
+    const startScript = [
+      `echo '${startupScriptBase64}' | base64 -d > /tmp/start.sh`,
+      `chmod +x /tmp/start.sh`,
+      `ttyd -W -p 7681 tmux new-session -s main /tmp/start.sh`,
+    ].join(" && ");
+
     const dockerCmd = `docker run -d \\
       --name ${containerName} \\
       --label cmux.task=true \\
@@ -242,7 +263,7 @@ CMD ["ttyd", "-p", "7681", "bash"]
       -w /workspace \\
       -e ANTHROPIC_API_KEY="${process.env.ANTHROPIC_API_KEY || ""}" \\
       ${this.imageName} \\
-      bash -c "ttyd -p 7681 tmux new-session -s main 'claude \\"${escapedPrompt}\\"'"
+      bash -c '${startScript}'
     `;
 
     const result = await exec(dockerCmd);
