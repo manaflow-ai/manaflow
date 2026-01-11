@@ -61,13 +61,14 @@ const questions: Map<string, { question: Question; taskId: string }> = new Map()
 const activity: ActivityEntry[] = [];
 const taskCurrentActivity: Map<string, string> = new Map();
 let questionCounter = 0;
-let isRunning = true;
+let _isRunning = true;
 let recentRepos: string[] = [];
 let discoveredRepos: Array<{ path: string; name: string; lastModified: number }> = [];
 
 // Interactive state
 let selectedIndex = 0;
 let inputMode = false; // True when in inquirer prompts
+let viewMode: "dashboard" | "inbox" | "attached" = "dashboard"; // Track current view
 
 // ─────────────────────────────────────────────────────────────
 // Utility Functions
@@ -211,8 +212,8 @@ function render(): void {
   if (selectedIndex > maxIndex) selectedIndex = Math.max(0, maxIndex);
   if (selectedIndex < 0) selectedIndex = 0;
 
-  // In Progress Section
-  console.log(chalk.bold.green(`\n  ● In Progress`) + chalk.gray(` (${runningTasks.length})`));
+  // In Progress Section (yellow = working)
+  console.log(chalk.bold.yellow(`\n  ● In Progress`) + chalk.gray(` (${runningTasks.length})`));
   console.log(chalk.gray("  " + "─".repeat(60)));
 
   if (runningTasks.length === 0) {
@@ -222,7 +223,8 @@ function render(): void {
       const isSelected = idx === selectedIndex;
       const prefix = isSelected ? chalk.cyan("▶ ") : "  ";
       const highlight = isSelected ? chalk.cyan.bold : chalk.white;
-      const icon = task.status === "running" ? chalk.green("●") : chalk.yellow("◌");
+      // Running = yellow/orange, starting = dim yellow
+      const icon = task.status === "running" ? chalk.yellow("●") : chalk.yellow.dim("◌");
       const time = task.startedAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
       const currentAct = taskCurrentActivity.get(task.id);
 
@@ -259,14 +261,14 @@ function render(): void {
     }
   }
 
-  // Completed Section (compact)
+  // Completed Section (green = done)
   if (completedTasks.length > 0) {
-    console.log(chalk.bold.gray(`\n  ○ Completed`) + chalk.gray(` (${completedTasks.length})`));
+    console.log(chalk.bold.green(`\n  ✓ Completed`) + chalk.gray(` (${completedTasks.length})`));
     console.log(chalk.gray("  " + "─".repeat(60)));
     for (const task of completedTasks.slice(0, 2)) {
       const time = task.startedAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
       console.log(
-        chalk.gray(`    ${task.number.toString().padStart(2)} ○ ${task.repoName.padEnd(15).slice(0, 15)} "${task.prompt.slice(0, 25)}..." ${time}`)
+        `    ${chalk.gray(task.number.toString().padStart(2))} ${chalk.green("✓")} ${chalk.gray(task.repoName.padEnd(15).slice(0, 15))} ${chalk.gray(`"${task.prompt.slice(0, 25)}..."`)} ${chalk.gray(time)}`
       );
     }
     if (completedTasks.length > 2) {
@@ -293,6 +295,7 @@ function render(): void {
 // ─────────────────────────────────────────────────────────────
 
 function showInbox(): void {
+  viewMode = "inbox";
   process.stdout.write("\x1b[H\x1b[J");
 
   console.log();
@@ -328,6 +331,7 @@ function showInbox(): void {
   // Wait for any keypress then return to dashboard
   const returnHandler = (): void => {
     process.stdin.removeListener("data", returnHandler);
+    viewMode = "dashboard";
     render();
   };
   process.stdin.once("data", returnHandler);
@@ -563,10 +567,13 @@ export async function runDashboard(): Promise<void> {
   // Initial render
   render();
 
-  // Set up polling
+  // Set up polling - only refresh data, don't render if not on dashboard
   const pollInterval = setInterval(async () => {
     await refreshTasks();
-    render();
+    // Only re-render if we're on the dashboard view
+    if (viewMode === "dashboard") {
+      render();
+    }
   }, 3000);
 
   // Handle keypresses
@@ -578,7 +585,7 @@ export async function runDashboard(): Promise<void> {
 
     // Ctrl+C or q to quit
     if (key === "\u0003" || key === "q" || key === "Q") {
-      isRunning = false;
+      _isRunning = false;
       clearInterval(pollInterval);
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(false);
@@ -626,6 +633,8 @@ export async function runDashboard(): Promise<void> {
     if (key === "\r" || key === "\n") {
       if (runningTasks.length > 0 && runningTasks[selectedIndex]) {
         const task = runningTasks[selectedIndex];
+        // Set viewMode to prevent polling from rendering
+        viewMode = "attached";
         // Show hint before attaching
         process.stdout.write("\x1b[H\x1b[J");
         console.log(chalk.cyan("\n  Attaching to task #" + task.number + "...\n"));
@@ -640,6 +649,8 @@ export async function runDashboard(): Promise<void> {
         if (process.stdin.isTTY) {
           process.stdin.setRawMode(true);
         }
+        // Reset viewMode when returning to dashboard
+        viewMode = "dashboard";
         await refreshTasks();
         render();
       }
