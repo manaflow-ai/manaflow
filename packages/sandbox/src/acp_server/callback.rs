@@ -112,8 +112,8 @@ enum CallbackPayload {
     SandboxReady {
         #[serde(rename = "sandboxId")]
         sandbox_id: String,
-        #[serde(rename = "acpServerUrl")]
-        acp_server_url: String,
+        #[serde(rename = "sandboxUrl")]
+        sandbox_url: String,
     },
 }
 
@@ -301,10 +301,10 @@ impl CallbackClient {
     }
 
     /// Notify Convex that the sandbox is ready.
-    pub async fn sandbox_ready(&self, sandbox_id: &str, acp_server_url: &str) -> Result<()> {
+    pub async fn sandbox_ready(&self, sandbox_id: &str, sandbox_url: &str) -> Result<()> {
         let payload = CallbackPayload::SandboxReady {
             sandbox_id: sandbox_id.to_string(),
-            acp_server_url: acp_server_url.to_string(),
+            sandbox_url: sandbox_url.to_string(),
         };
 
         self.post_callback(payload).await
@@ -382,11 +382,11 @@ mod tests {
     fn test_sandbox_ready_payload_serialization() {
         let payload = CallbackPayload::SandboxReady {
             sandbox_id: "sandbox123".to_string(),
-            acp_server_url: "http://localhost:39384".to_string(),
+            sandbox_url: "http://localhost:39384".to_string(),
         };
         let json = serde_json::to_string(&payload).expect("Serialization failed");
         assert!(json.contains("\"type\":\"sandbox_ready\""));
         assert!(json.contains("\"sandboxId\":\"sandbox123\""));
-        assert!(json.contains("\"acpServerUrl\":\"http://localhost:39384\""));
+        assert!(json.contains("\"sandboxUrl\":\"http://localhost:39384\""));
     }
 }

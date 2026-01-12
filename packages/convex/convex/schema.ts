@@ -1261,11 +1261,17 @@ const convexSchema = defineSchema({
     .index("by_conversation", ["conversationId", "createdAt"])
     .index("by_conversation_desc", ["conversationId"]), // For reverse chronological queries
 
-  // ACP Sandboxes - Morph instances hosting coding CLIs
-  // Many conversations can share a single sandbox (Many:1 model)
+  // ACP Sandboxes - Provider-agnostic sandbox instances hosting coding CLIs
+  // Supports Morph, Freestyle, Daytona. Many conversations can share a single sandbox (Many:1 model)
   acpSandboxes: defineTable({
     teamId: v.string(),
-    morphInstanceId: v.string(), // morphvm_xxx
+    // Provider type (morph, freestyle, daytona)
+    provider: v.union(
+      v.literal("morph"),
+      v.literal("freestyle"),
+      v.literal("daytona")
+    ),
+    instanceId: v.string(), // Provider-specific instance ID (e.g., morphvm_xxx)
     status: v.union(
       v.literal("starting"),
       v.literal("running"),
@@ -1274,7 +1280,7 @@ const convexSchema = defineSchema({
       v.literal("error")
     ),
     // Networking - URL to reach the ACP server
-    acpServerUrl: v.optional(v.string()), // http://morphvm_xxx.http.cloud.morph.so:39384
+    sandboxUrl: v.optional(v.string()), // e.g., http://morphvm_xxx.http.cloud.morph.so:39384
     // Security - hash of callback JWT for verification
     callbackJwtHash: v.string(), // SHA-256 hash
     // Lifecycle tracking
@@ -1285,7 +1291,7 @@ const convexSchema = defineSchema({
     createdAt: v.number(),
   })
     .index("by_team_status", ["teamId", "status", "lastActivityAt"])
-    .index("by_morph_instance", ["morphInstanceId"]),
+    .index("by_instance", ["instanceId"]),
 });
 
 export default convexSchema;

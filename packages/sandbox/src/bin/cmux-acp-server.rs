@@ -83,12 +83,12 @@ struct Args {
 
     /// JWT token for authenticating callbacks to Convex.
     /// Contains sandboxId and teamId claims. Provided by Convex at sandbox spawn time.
-    #[arg(long, env = "ACP_SANDBOX_JWT")]
+    #[arg(long, env = "SANDBOX_JWT")]
     sandbox_jwt: Option<String>,
 
     /// Sandbox ID (Convex document ID) for this instance.
     /// Used for sandbox_ready callback and logging.
-    #[arg(long, env = "ACP_SANDBOX_ID")]
+    #[arg(long, env = "SANDBOX_ID")]
     sandbox_id: Option<String>,
 }
 
@@ -286,12 +286,12 @@ async fn main() -> anyhow::Result<()> {
 
     // If in callback mode, notify Convex that sandbox is ready
     if let (Some(client), Some(sandbox_id)) = (&callback_client, &args.sandbox_id) {
-        // Construct the ACP server URL that Convex should use to reach us
+        // Construct the sandbox URL that Convex should use to reach us
         // In production, this would be the external URL; for now use localhost
-        let acp_server_url = format!("http://localhost:{}", args.port);
+        let sandbox_url = format!("http://localhost:{}", args.port);
         info!(
             sandbox_id = %sandbox_id,
-            acp_server_url = %acp_server_url,
+            sandbox_url = %sandbox_url,
             "Notifying Convex that sandbox is ready"
         );
 
@@ -300,7 +300,7 @@ async fn main() -> anyhow::Result<()> {
         let client = client.clone();
         let sandbox_id = sandbox_id.clone();
         tokio::spawn(async move {
-            if let Err(e) = client.sandbox_ready(&sandbox_id, &acp_server_url).await {
+            if let Err(e) = client.sandbox_ready(&sandbox_id, &sandbox_url).await {
                 tracing::error!(
                     error = %e,
                     "Failed to notify Convex that sandbox is ready"

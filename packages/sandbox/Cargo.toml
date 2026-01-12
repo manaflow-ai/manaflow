@@ -36,6 +36,7 @@ axum = { version = "0.8", features = ["macros", "json", "http1", "http2", "ws"] 
 chrono = { version = "0.4", features = ["serde", "clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
+dashmap = "6"
 futures = "0.3"
 ignore = "0.4.25"
 libc = "0.2"

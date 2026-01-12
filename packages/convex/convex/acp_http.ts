@@ -106,7 +106,7 @@ const errorPayload = z.object({
 const sandboxReadyPayload = z.object({
   type: z.literal("sandbox_ready"),
   sandboxId: z.string(),
-  acpServerUrl: z.string(),
+  sandboxUrl: z.string(),
 });
 
 const acpCallbackPayload = z.discriminatedUnion("type", [
@@ -227,7 +227,7 @@ export const acpCallback = httpAction(async (ctx, req) => {
       case "sandbox_ready": {
         await ctx.runMutation(internal.acp_callbacks.sandboxReady, {
           sandboxId: payload.sandboxId as Id<"acpSandboxes">,
-          acpServerUrl: payload.acpServerUrl,
+          sandboxUrl: payload.sandboxUrl,
         });
         break;
       }

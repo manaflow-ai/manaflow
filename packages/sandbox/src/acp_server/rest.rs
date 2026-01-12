@@ -3,15 +3,33 @@
 //! Provides HTTP endpoints for creating and managing conversations.
 //! The actual ACP protocol communication happens over WebSocket.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use dashmap::DashMap;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, error};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::ChildStdin;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
+
+use super::callback::{CallbackClient, StopReason};
+use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationMode};
+
+/// State for a single conversation.
+struct ConversationState {
+    /// CLI stdin handle for sending prompts
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// Current message ID being streamed (set when assistant starts responding)
+    current_message_id: Arc<Mutex<Option<String>>>,
+}
 
 /// State for REST API handlers.
 #[derive(Clone)]
@@ -22,6 +40,12 @@ pub struct RestApiState {
     convex_url: String,
     /// Convex admin key
     admin_key: String,
+    /// Active conversations: conversation_id -> ConversationState
+    conversations: Arc<DashMap<String, Arc<ConversationState>>>,
+    /// Callback client for sending updates to Convex (optional, only in callback mode)
+    callback_client: Option<Arc<CallbackClient>>,
+    /// Default working directory for CLIs
+    default_cwd: PathBuf,
 }
 
 impl RestApiState {
@@ -31,7 +55,22 @@ impl RestApiState {
             http_client: Client::new(),
             convex_url,
             admin_key,
+            conversations: Arc::new(DashMap::new()),
+            callback_client: None,
+            default_cwd: PathBuf::from("/workspace"),
         }
+    }
+
+    /// Set the callback client for Convex-centric mode.
+    pub fn with_callback_client(mut self, client: CallbackClient) -> Self {
+        self.callback_client = Some(Arc::new(client));
+        self
+    }
+
+    /// Set the default working directory.
+    pub fn with_default_cwd(mut self, cwd: PathBuf) -> Self {
+        self.default_cwd = cwd;
+        self
     }
 }
 
@@ -759,10 +798,10 @@ pub struct PromptResponse {
     tag = "acp"
 )]
 pub async fn init_conversation(
-    State(_state): State<RestApiState>,
+    State(state): State<RestApiState>,
     Json(request): Json<InitConversationRequest>,
 ) -> Result<Json<InitConversationResponse>, (StatusCode, Json<ErrorResponse>)> {
-    debug!(
+    info!(
         conversation_id = %request.conversation_id,
         session_id = %request.session_id,
         provider_id = %request.provider_id,
@@ -770,18 +809,10 @@ pub async fn init_conversation(
         "Initializing conversation on sandbox"
     );
 
-    // TODO: Implement actual CLI spawning and state management
-    // For now, just acknowledge the init request
-    // The actual implementation will:
-    // 1. Parse provider_id to AcpProvider
-    // 2. Spawn the CLI process
-    // 3. Store conversation state in a shared map
-    // 4. Return success
-
-    // Validate provider ID
-    match request.provider_id.to_lowercase().as_str() {
-        "claude" | "codex" | "gemini" | "opencode" => {}
-        _ => {
+    // Parse provider ID
+    let provider = match AcpProvider::from_str(&request.provider_id) {
+        Some(p) => p,
+        None => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
@@ -790,14 +821,130 @@ pub async fn init_conversation(
                 }),
             ));
         }
+    };
+
+    // Determine working directory
+    let cwd = if request.cwd.is_empty() {
+        state.default_cwd.clone()
+    } else {
+        PathBuf::from(&request.cwd)
+    };
+
+    // Spawn CLI process
+    let spawner = CliSpawner::new(provider, cwd, SpawnerIsolationMode::None);
+    let mut cli = match spawner.spawn().await {
+        Ok(cli) => cli,
+        Err(e) => {
+            error!(error = %e, "Failed to spawn CLI");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to spawn CLI: {}", e),
+                    code: Some("SPAWN_FAILED".to_string()),
+                }),
+            ));
+        }
+    };
+
+    let stdin = cli.stdin.take();
+    let stdout = cli.stdout.take();
+
+    // Create conversation state
+    let conversation_state = Arc::new(ConversationState {
+        stdin: Arc::new(Mutex::new(stdin)),
+        current_message_id: Arc::new(Mutex::new(None)),
+    });
+
+    // Store conversation state
+    state
+        .conversations
+        .insert(request.conversation_id.clone(), conversation_state.clone());
+
+    // Spawn stdout reader task if we have a callback client
+    if let (Some(stdout), Some(callback_client)) = (stdout, state.callback_client.clone()) {
+        let conversation_id = request.conversation_id.clone();
+        let current_message_id = conversation_state.current_message_id.clone();
+
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => {
+                        // EOF - CLI process ended
+                        debug!(conversation_id = %conversation_id, "CLI stdout EOF");
+                        break;
+                    }
+                    Ok(_) => {
+                        // Parse JSON-RPC response and extract text
+                        if let Some(text) = extract_text_from_jsonrpc(&line) {
+                            let msg_id = current_message_id.lock().await;
+                            callback_client
+                                .send_text_chunk(&conversation_id, msg_id.as_deref(), &text)
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            conversation_id = %conversation_id,
+                            error = %e,
+                            "Error reading CLI stdout"
+                        );
+                        break;
+                    }
+                }
+            }
+
+            // Send completion callback
+            let msg_id = current_message_id.lock().await;
+            if let Some(ref id) = *msg_id {
+                callback_client
+                    .complete_message(&conversation_id, id, StopReason::EndTurn)
+                    .await;
+            }
+        });
     }
 
-    // For now, just return success
-    // Real implementation will store conversation state and spawn CLI
+    info!(
+        conversation_id = %request.conversation_id,
+        provider = %provider.display_name(),
+        "Conversation initialized successfully"
+    );
+
     Ok(Json(InitConversationResponse {
         success: true,
         error: None,
     }))
+}
+
+/// Extract text content from a JSON-RPC response line.
+fn extract_text_from_jsonrpc(line: &str) -> Option<String> {
+    // Try to parse as JSON-RPC response
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+
+    // Look for text content in various places
+    // ACP responses typically have result.content[].text
+    if let Some(result) = value.get("result") {
+        if let Some(content) = result.get("content") {
+            if let Some(arr) = content.as_array() {
+                for block in arr {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            return Some(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        // Also check for direct text field
+        if let Some(text) = result.get("text").and_then(|t| t.as_str()) {
+            return Some(text.to_string());
+        }
+    }
+
+    None
 }
 
 /// Receive a prompt for a conversation.
@@ -819,7 +966,7 @@ pub async fn init_conversation(
     tag = "acp"
 )]
 pub async fn receive_prompt(
-    State(_state): State<RestApiState>,
+    State(state): State<RestApiState>,
     Json(request): Json<PromptRequest>,
 ) -> Result<Json<PromptResponse>, (StatusCode, Json<ErrorResponse>)> {
     debug!(
@@ -829,16 +976,106 @@ pub async fn receive_prompt(
         "Received prompt for conversation"
     );
 
-    // TODO: Implement actual prompt forwarding
-    // For now, just acknowledge the prompt
-    // The actual implementation will:
-    // 1. Look up conversation state by ID
-    // 2. Format content as ACP message
-    // 3. Send to CLI stdin
-    // 4. CLI responses flow back via callback client
-    // 5. Return immediately
+    // Look up conversation state
+    let conversation = match state.conversations.get(&request.conversation_id) {
+        Some(conv) => conv.clone(),
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Conversation not found: {}", request.conversation_id),
+                    code: Some("NOT_FOUND".to_string()),
+                }),
+            ));
+        }
+    };
 
-    // For now, just return accepted
+    // Format content as JSON-RPC message for ACP
+    let content: Vec<serde_json::Value> = request
+        .content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text { text } => {
+                json!({ "type": "text", "text": text })
+            }
+            ContentBlock::Image { data, mime_type } => {
+                json!({
+                    "type": "image",
+                    "data": data,
+                    "mimeType": mime_type
+                })
+            }
+            ContentBlock::ResourceLink {
+                uri,
+                name,
+                description,
+            } => {
+                json!({
+                    "type": "resource_link",
+                    "uri": uri,
+                    "name": name,
+                    "description": description
+                })
+            }
+        })
+        .collect();
+
+    // Create JSON-RPC request
+    let jsonrpc_request = json!({
+        "jsonrpc": "2.0",
+        "id": request.session_id,
+        "method": "sampling/createMessage",
+        "params": {
+            "messages": [{
+                "role": "user",
+                "content": content
+            }]
+        }
+    });
+
+    // Send to CLI stdin
+    let mut stdin = conversation.stdin.lock().await;
+    if let Some(ref mut stdin_handle) = *stdin {
+        let message = format!(
+            "{}\n",
+            serde_json::to_string(&jsonrpc_request).unwrap_or_default()
+        );
+        if let Err(e) = stdin_handle.write_all(message.as_bytes()).await {
+            error!(
+                conversation_id = %request.conversation_id,
+                error = %e,
+                "Failed to write to CLI stdin"
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to send prompt to CLI: {}", e),
+                    code: Some("STDIN_ERROR".to_string()),
+                }),
+            ));
+        }
+        if let Err(e) = stdin_handle.flush().await {
+            warn!(
+                conversation_id = %request.conversation_id,
+                error = %e,
+                "Failed to flush CLI stdin"
+            );
+        }
+    } else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "CLI stdin not available".to_string(),
+                code: Some("STDIN_UNAVAILABLE".to_string()),
+            }),
+        ));
+    }
+
+    debug!(
+        conversation_id = %request.conversation_id,
+        "Prompt forwarded to CLI"
+    );
+
     Ok(Json(PromptResponse {
         accepted: true,
         error: None,

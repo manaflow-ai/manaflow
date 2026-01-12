@@ -228,18 +228,18 @@ export const recordError = internalMutation({
 });
 
 /**
- * Mark a sandbox as ready with its ACP server URL.
+ * Mark a sandbox as ready with its URL.
  * Called when sandbox finishes starting up.
  */
 export const sandboxReady = internalMutation({
   args: {
     sandboxId: v.id("acpSandboxes"),
-    acpServerUrl: v.string(),
+    sandboxUrl: v.string(),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.sandboxId, {
       status: "running",
-      acpServerUrl: args.acpServerUrl,
+      sandboxUrl: args.sandboxUrl,
       lastActivityAt: Date.now(),
     });
   },

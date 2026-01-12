@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
+import { getDefaultSandboxProvider } from "../_shared/sandbox-providers";
 import { getTeamId } from "../_shared/team";
 import { internal, api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -151,10 +152,10 @@ export const startConversation = action({
       const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
         sandboxId,
       });
-      if (sandbox?.acpServerUrl) {
+      if (sandbox?.sandboxUrl) {
         try {
           await initConversationOnSandbox(
-            sandbox.acpServerUrl,
+            sandbox.sandboxUrl,
             conversationId,
             sessionId,
             args.providerId,
@@ -227,10 +228,10 @@ export const sendMessage = action({
         sandboxId: conversation.acpSandboxId,
       });
 
-      if (sandbox?.acpServerUrl && sandbox.status === "running") {
+      if (sandbox?.sandboxUrl && sandbox.status === "running") {
         try {
           await sendPromptToSandbox(
-            sandbox.acpServerUrl,
+            sandbox.sandboxUrl,
             args.conversationId,
             conversation.sessionId,
             args.content
@@ -422,25 +423,24 @@ export const updateConversationActivity = internalMutation({
 });
 
 /**
- * Spawn a new Morph sandbox for ACP.
+ * Spawn a new sandbox for ACP using the configured provider.
  */
 export const spawnSandbox = internalAction({
   args: {
     teamId: v.string(),
   },
   handler: async (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> => {
-    const morphApiKey = env.MORPH_API_KEY;
-    if (!morphApiKey) {
-      throw new Error("MORPH_API_KEY not configured");
-    }
+    // Get the sandbox provider (currently supports morph, freestyle, daytona)
+    const provider = getDefaultSandboxProvider();
 
-    // TODO: Get snapshot ID from config
+    // Get snapshot ID from config
     const snapshotId = env.ACP_SNAPSHOT_ID ?? "snap_default";
 
     // Create sandbox record first to get ID for JWT
     const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {
       teamId: args.teamId,
-      morphInstanceId: "pending",
+      provider: provider.name,
+      instanceId: "pending",
       snapshotId,
       callbackJwtHash: "pending",
     });
@@ -455,47 +455,25 @@ export const spawnSandbox = internalAction({
       callbackJwtHash,
     });
 
-    // Spawn Morph instance
-    const morphResponse = await fetch(
-      "https://cloud.morph.so/api/instance/start",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${morphApiKey}`,
-        },
-        body: JSON.stringify({
-          snapshot_id: snapshotId,
-          ttl_seconds: 3600, // 1 hour
-          ttl_action: "pause",
-          metadata: {
-            app: "cmux-acp",
-            teamId: args.teamId,
-            sandboxId,
-          },
-          setup: {
-            env: {
-              CONVEX_CALLBACK_URL: `${env.CONVEX_SITE_URL}/api/acp/callback`,
-              ACP_SANDBOX_JWT: callbackJwt,
-            },
-          },
-        }),
-      }
-    );
+    // Spawn sandbox instance via provider
+    const instance = await provider.spawn({
+      teamId: args.teamId,
+      snapshotId,
+      ttlSeconds: 3600, // 1 hour
+      ttlAction: "pause",
+      env: {
+        CONVEX_CALLBACK_URL: `${env.CONVEX_SITE_URL}/api/acp/callback`,
+        SANDBOX_JWT: callbackJwt,
+      },
+      metadata: {
+        sandboxId,
+      },
+    });
 
-    if (!morphResponse.ok) {
-      const text = await morphResponse.text();
-      console.error("[acp] Failed to spawn Morph instance:", text);
-      throw new Error(`Failed to spawn sandbox: ${morphResponse.status}`);
-    }
-
-    const morphData = await morphResponse.json();
-    const morphInstanceId = morphData.id;
-
-    // Update sandbox with Morph instance ID
-    await ctx.runMutation(internal.acp.updateSandboxMorphInstance, {
+    // Update sandbox with provider instance ID
+    await ctx.runMutation(internal.acp.updateSandboxInstanceId, {
       sandboxId,
-      morphInstanceId,
+      instanceId: instance.instanceId,
     });
 
     return { sandboxId };
@@ -518,16 +496,16 @@ export const updateSandboxJwtHash = internalMutation({
 });
 
 /**
- * Update sandbox Morph instance ID.
+ * Update sandbox instance ID.
  */
-export const updateSandboxMorphInstance = internalMutation({
+export const updateSandboxInstanceId = internalMutation({
   args: {
     sandboxId: v.id("acpSandboxes"),
-    morphInstanceId: v.string(),
+    instanceId: v.string(),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.sandboxId, {
-      morphInstanceId: args.morphInstanceId,
+      instanceId: args.instanceId,
     });
   },
 });

@@ -17,25 +17,34 @@ const sandboxStatusValidator = v.union(
   v.literal("error")
 );
 
+// Provider type for type safety
+const providerValidator = v.union(
+  v.literal("morph"),
+  v.literal("freestyle"),
+  v.literal("daytona")
+);
+
 /**
  * Create a new ACP sandbox record.
- * Called when spawning a new Morph instance for ACP.
+ * Called when spawning a new sandbox instance for ACP.
  */
 export const create = internalMutation({
   args: {
     teamId: v.string(),
-    morphInstanceId: v.string(),
+    provider: providerValidator,
+    instanceId: v.string(),
     snapshotId: v.string(),
     callbackJwtHash: v.string(),
-    acpServerUrl: v.optional(v.string()),
+    sandboxUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     return await ctx.db.insert("acpSandboxes", {
       teamId: args.teamId,
-      morphInstanceId: args.morphInstanceId,
+      provider: args.provider,
+      instanceId: args.instanceId,
       status: "starting",
-      acpServerUrl: args.acpServerUrl,
+      sandboxUrl: args.sandboxUrl,
       callbackJwtHash: args.callbackJwtHash,
       lastActivityAt: now,
       conversationCount: 0,
@@ -52,15 +61,15 @@ export const updateStatus = internalMutation({
   args: {
     sandboxId: v.id("acpSandboxes"),
     status: sandboxStatusValidator,
-    acpServerUrl: v.optional(v.string()),
+    sandboxUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const updates: Record<string, unknown> = {
       status: args.status,
       lastActivityAt: Date.now(),
     };
-    if (args.acpServerUrl !== undefined) {
-      updates.acpServerUrl = args.acpServerUrl;
+    if (args.sandboxUrl !== undefined) {
+      updates.sandboxUrl = args.sandboxUrl;
     }
     await ctx.db.patch(args.sandboxId, updates);
   },
@@ -152,18 +161,16 @@ export const getById = internalQuery({
 });
 
 /**
- * Get sandbox by Morph instance ID.
+ * Get sandbox by instance ID.
  */
-export const getByMorphInstanceId = internalQuery({
+export const getByInstanceId = internalQuery({
   args: {
-    morphInstanceId: v.string(),
+    instanceId: v.string(),
   },
   handler: async (ctx, args) => {
     return await ctx.db
       .query("acpSandboxes")
-      .withIndex("by_morph_instance", (q) =>
-        q.eq("morphInstanceId", args.morphInstanceId)
-      )
+      .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId))
       .first();
   },
 });
