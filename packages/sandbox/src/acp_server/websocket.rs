@@ -99,7 +99,43 @@ struct StreamingState {
     accumulated_text: String,
 }
 
-use super::api_proxy::ApiProxies;
+use super::api_proxy::{ApiProxies, ConversationApiProxies};
+
+/// Manager for per-conversation API proxies.
+#[derive(Default)]
+pub struct ConversationProxyManager {
+    /// Map of conversation ID to proxies
+    proxies: std::collections::HashMap<String, std::sync::Arc<ConversationApiProxies>>,
+}
+
+impl ConversationProxyManager {
+    /// Create a new manager.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register proxies for a conversation.
+    pub fn register(
+        &mut self,
+        conversation_id: String,
+        proxies: std::sync::Arc<ConversationApiProxies>,
+    ) {
+        self.proxies.insert(conversation_id, proxies);
+    }
+
+    /// Get proxies for a conversation.
+    pub fn get(&self, conversation_id: &str) -> Option<std::sync::Arc<ConversationApiProxies>> {
+        self.proxies.get(conversation_id).cloned()
+    }
+
+    /// Remove proxies for a conversation.
+    pub fn remove(&mut self, conversation_id: &str) {
+        self.proxies.remove(conversation_id);
+    }
+}
+
+/// Shared proxy manager state.
+pub type SharedProxyManager = Arc<tokio::sync::RwLock<ConversationProxyManager>>;
 
 /// State for the ACP server.
 #[derive(Clone)]
@@ -116,6 +152,10 @@ pub struct AcpServerState {
     pub api_keys: ApiKeys,
     /// API proxies for coding CLIs (preferred over direct API keys)
     pub api_proxies: Option<Arc<ApiProxies>>,
+    /// Outer proxy base URL (e.g., "https://cmux.sh/api")
+    pub api_proxy_url: Option<String>,
+    /// Shared proxy manager for per-conversation proxies
+    pub proxy_manager: SharedProxyManager,
 }
 
 /// API keys for different coding CLI providers.
@@ -144,6 +184,8 @@ impl AcpServerState {
             default_cwd,
             api_keys: ApiKeys::default(),
             api_proxies: None,
+            api_proxy_url: None,
+            proxy_manager: Arc::new(tokio::sync::RwLock::new(ConversationProxyManager::new())),
         }
     }
 
@@ -156,6 +198,12 @@ impl AcpServerState {
     /// Set API proxies (preferred over direct API keys).
     pub fn with_proxies(mut self, proxies: Arc<ApiProxies>) -> Self {
         self.api_proxies = Some(proxies);
+        self
+    }
+
+    /// Set outer proxy base URL for per-conversation proxies.
+    pub fn with_api_proxy_url(mut self, api_proxy_url: String) -> Self {
+        self.api_proxy_url = Some(api_proxy_url);
         self
     }
 }
@@ -249,6 +297,53 @@ fn extract_isolation(query: &str) -> IsolationMode {
         }
     }
     IsolationMode::None // Default for ACP server (running in sandbox already)
+}
+
+/// Request to set JWT for a conversation proxy.
+#[derive(Debug, serde::Deserialize)]
+pub struct SetJwtRequest {
+    /// JWT token to set
+    pub jwt: String,
+}
+
+/// Response from setting JWT.
+#[derive(Debug, serde::Serialize)]
+pub struct SetJwtResponse {
+    /// Whether the JWT was set successfully
+    pub success: bool,
+    /// Message (error or success)
+    pub message: String,
+}
+
+/// Set JWT for a conversation's API proxy.
+///
+/// This endpoint allows setting the JWT for a conversation's per-conversation proxy.
+/// The proxy will wait up to 5 seconds for the JWT to be set before rejecting requests.
+pub async fn set_conversation_jwt(
+    State(state): State<AcpServerState>,
+    axum::extract::Path(conversation_id): axum::extract::Path<String>,
+    axum::Json(request): axum::Json<SetJwtRequest>,
+) -> impl IntoResponse {
+    let manager = state.proxy_manager.read().await;
+
+    if let Some(proxies) = manager.get(&conversation_id) {
+        proxies.set_jwt(request.jwt).await;
+        (
+            axum::http::StatusCode::OK,
+            axum::Json(SetJwtResponse {
+                success: true,
+                message: "JWT set successfully".to_string(),
+            }),
+        )
+    } else {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(SetJwtResponse {
+                success: false,
+                message: format!("No proxy found for conversation {}", conversation_id),
+            }),
+        )
+    }
 }
 
 /// WebSocket handler for ACP connections.
@@ -357,17 +452,51 @@ async fn handle_acp_connection(
     };
 
     // Build environment variables for the CLI
-    // Prefer proxy base URLs over direct API keys for security
-    let env_vars = if let Some(ref proxies) = state.api_proxies {
-        // Use proxy base URLs - API keys are held by the proxy
+    // Priority: 1. Per-conversation proxies (outer proxy mode)
+    //           2. Shared API proxies (direct mode with local keys)
+    //           3. Direct API keys (deprecated)
+    let (env_vars, conversation_proxies) = if let Some(ref api_proxy_url) = state.api_proxy_url {
+        // Outer proxy mode: create per-conversation proxies that forward to Vercel
+        // JWT is passed from the WebSocket connection
+        let jwt_timeout = std::time::Duration::from_secs(5);
+
+        match ConversationApiProxies::start(api_proxy_url, jwt.clone(), jwt_timeout).await {
+            Ok(proxies) => {
+                let proxies = std::sync::Arc::new(proxies);
+                let vars = proxies.env_vars();
+                debug!(
+                    proxy_vars = ?vars,
+                    conversation_id = %token_payload.conversation_id,
+                    "Using per-conversation outer proxy for CLI"
+                );
+
+                // Register proxies in manager
+                {
+                    let mut manager = state.proxy_manager.write().await;
+                    manager.register(token_payload.conversation_id.clone(), proxies.clone());
+                }
+
+                (vars, Some(proxies))
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    conversation_id = %token_payload.conversation_id,
+                    "Failed to start per-conversation proxies"
+                );
+                return;
+            }
+        }
+    } else if let Some(ref proxies) = state.api_proxies {
+        // Direct mode: use shared proxy base URLs (API keys held by proxy)
         let vars = proxies.env_vars();
         debug!(
             proxy_vars = ?vars,
-            "Using API proxies for CLI"
+            "Using shared API proxies for CLI"
         );
-        vars
+        (vars, None)
     } else {
-        // Fall back to direct API keys (deprecated)
+        // Deprecated: fall back to direct API keys
         let mut vars = Vec::new();
         match provider {
             AcpProvider::Claude => {
@@ -395,8 +524,11 @@ async fn handle_acp_connection(
                 }
             }
         }
-        vars
+        (vars, None)
     };
+
+    // Track conversation proxies for cleanup
+    let _conversation_proxies = conversation_proxies;
 
     // Create wrapped agent
     let agent = Arc::new(WrappedAgent::new(
@@ -703,6 +835,12 @@ async fn handle_acp_connection(
         let _ = ws_write_task.await;
     })
     .await;
+
+    // Clean up per-conversation proxies from manager
+    {
+        let mut manager = state.proxy_manager.write().await;
+        manager.remove(&token_payload.conversation_id);
+    }
 
     info!(
         conversation_id = %token_payload.conversation_id,

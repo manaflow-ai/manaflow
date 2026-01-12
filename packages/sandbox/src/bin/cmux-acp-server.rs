@@ -17,8 +17,8 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
     acp_websocket_handler, create_conversation, get_conversation, get_conversation_messages,
-    list_conversations, refresh_conversation_jwt, AcpServerState, ApiKeys, ApiProxies, RestApiDoc,
-    RestApiState,
+    list_conversations, refresh_conversation_jwt, set_conversation_jwt, AcpServerState, ApiKeys,
+    ApiProxies, RestApiDoc, RestApiState,
 };
 
 /// ACP Server for iOS app integration.
@@ -66,6 +66,12 @@ struct Args {
     /// This is more secure as API keys are never exposed to CLI processes.
     #[arg(long, env = "ACP_USE_PROXY", default_value = "true")]
     use_proxy: bool,
+
+    /// API proxy URL (e.g., "https://cmux.sh/api") for production mode.
+    /// When set, per-conversation proxies forward to this URL with JWT authentication
+    /// instead of using local API keys. The proxy verifies the JWT and injects the real API key.
+    #[arg(long, env = "API_PROXY_URL")]
+    api_proxy_url: Option<String>,
 }
 
 /// Health check endpoint response.
@@ -140,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
         port = args.port,
         working_dir = %args.working_dir.display(),
         use_proxy = args.use_proxy,
+        api_proxy_url = ?args.api_proxy_url,
         "Starting cmux-acp-server"
     );
 
@@ -151,9 +158,18 @@ async fn main() -> anyhow::Result<()> {
         args.working_dir.clone(),
     );
 
-    if args.use_proxy {
-        // Start API proxies (preferred - API keys not exposed to CLIs)
-        info!("Starting API proxies...");
+    // Configure API proxy mode (production) or local proxy mode (development)
+    if let Some(ref api_proxy_url) = args.api_proxy_url {
+        // Production mode: use external API proxy (Vercel) for API calls
+        // Per-conversation proxies will forward to this URL with JWT auth
+        info!(
+            api_proxy_url = %api_proxy_url,
+            "Using API proxy mode (per-conversation JWT auth)"
+        );
+        state = state.with_api_proxy_url(api_proxy_url.clone());
+    } else if args.use_proxy {
+        // Development mode: start local API proxies with direct API keys
+        info!("Starting local API proxies...");
         let proxies = ApiProxies::start(
             args.anthropic_api_key.clone(),
             args.openai_api_key.clone(),
@@ -173,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
 
         state = state.with_proxies(Arc::new(proxies));
     } else {
-        // Fall back to direct API keys (deprecated)
+        // Deprecated: fall back to direct API keys
         info!("Using direct API keys (proxy disabled)");
         let api_keys = ApiKeys {
             anthropic_api_key: args.anthropic_api_key.clone(),
@@ -214,6 +230,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/conversations/{conversation_id}/ws",
             any(acp_websocket_handler),
+        )
+        .route(
+            "/api/conversations/{conversation_id}/proxy-jwt",
+            post(set_conversation_jwt),
         )
         .with_state(state)
         .merge(rest_router)

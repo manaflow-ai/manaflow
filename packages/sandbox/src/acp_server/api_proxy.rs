@@ -1,17 +1,15 @@
-//! Internal API proxy for forwarding coding CLI requests to real API providers.
+//! Internal API proxy for forwarding coding CLI requests to API providers.
 //!
-//! Instead of passing API keys directly to CLI processes, we run a local proxy
-//! that holds the API keys and forwards authenticated requests. CLIs are configured
-//! to use the proxy via base URL environment variables like ANTHROPIC_BASE_URL.
+//! Two modes of operation:
 //!
-//! Architecture:
-//! ```
-//! CLI (no API key) → http://127.0.0.1:39385/v1/messages
-//!                          ↓
-//!                   API Proxy (has API key)
-//!                          ↓
-//!              https://api.anthropic.com/v1/messages
-//! ```
+//! 1. Direct mode (local development):
+//!    CLI → Local Proxy (has API key) → api.anthropic.com
+//!
+//! 2. Outer proxy mode (production with Vercel):
+//!    CLI → Local Proxy (has JWT) → cmux.sh/api/proxy/anthropic (has API key) → api.anthropic.com
+//!
+//! In outer proxy mode, the local proxy injects the conversation JWT, and the
+//! Vercel proxy verifies it and adds the real API key.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -74,6 +72,26 @@ impl ProviderConfig {
             api_key,
             auth_header: "x-goog-api-key".to_string(),
             auth_format: AuthFormat::Plain,
+        }
+    }
+
+    /// Create Anthropic outer proxy config (forwards to Vercel proxy with JWT).
+    pub fn anthropic_outer(outer_proxy_url: String, conversation_jwt: String) -> Self {
+        Self {
+            upstream_url: outer_proxy_url,
+            api_key: conversation_jwt,
+            auth_header: "authorization".to_string(),
+            auth_format: AuthFormat::Bearer,
+        }
+    }
+
+    /// Create OpenAI outer proxy config (forwards to Vercel proxy with JWT).
+    pub fn openai_outer(outer_proxy_url: String, conversation_jwt: String) -> Self {
+        Self {
+            upstream_url: outer_proxy_url,
+            api_key: conversation_jwt,
+            auth_header: "authorization".to_string(),
+            auth_format: AuthFormat::Bearer,
         }
     }
 
@@ -324,6 +342,332 @@ impl ApiProxies {
     }
 }
 
+/// Shared JWT holder that can be set dynamically.
+#[derive(Clone)]
+pub struct JwtHolder {
+    jwt: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl JwtHolder {
+    /// Create a new JWT holder, optionally with an initial JWT.
+    pub fn new(initial_jwt: Option<String>) -> Self {
+        Self {
+            jwt: std::sync::Arc::new(tokio::sync::RwLock::new(initial_jwt)),
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    /// Set the JWT, waking any waiters.
+    pub async fn set(&self, jwt: String) {
+        let mut guard = self.jwt.write().await;
+        *guard = Some(jwt);
+        self.notify.notify_waiters();
+    }
+
+    /// Get the JWT, waiting up to timeout if not set.
+    pub async fn get_with_timeout(&self, timeout: std::time::Duration) -> Option<String> {
+        // Check if already set
+        {
+            let guard = self.jwt.read().await;
+            if let Some(ref jwt) = *guard {
+                return Some(jwt.clone());
+            }
+        }
+
+        // Wait for notification with timeout
+        let wait_result = tokio::time::timeout(timeout, self.notify.notified()).await;
+
+        // Check again after waiting
+        if wait_result.is_ok() {
+            let guard = self.jwt.read().await;
+            guard.clone()
+        } else {
+            // Timeout - check one more time
+            let guard = self.jwt.read().await;
+            guard.clone()
+        }
+    }
+
+    /// Get the JWT immediately without waiting.
+    #[allow(dead_code)]
+    pub async fn get(&self) -> Option<String> {
+        self.jwt.read().await.clone()
+    }
+}
+
+/// State for the outer proxy handler that waits for JWT.
+#[derive(Clone)]
+struct OuterProxyState {
+    /// HTTP client for forwarding requests
+    client: Client,
+    /// Outer proxy URL (e.g., "https://cmux.sh/api/proxy/anthropic")
+    outer_proxy_url: String,
+    /// JWT holder for dynamic JWT setting
+    jwt_holder: JwtHolder,
+    /// Timeout for waiting for JWT
+    jwt_timeout: std::time::Duration,
+}
+
+/// Handle requests by waiting for JWT and forwarding to outer proxy.
+async fn outer_proxy_handler(
+    State(state): State<OuterProxyState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> impl IntoResponse {
+    // Wait for JWT with timeout
+    let jwt = match state.jwt_holder.get_with_timeout(state.jwt_timeout).await {
+        Some(jwt) => jwt,
+        None => {
+            error!("JWT not set within timeout, rejecting request");
+            return Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::from("JWT not configured"))
+                .unwrap();
+        }
+    };
+
+    // Build upstream URL
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    let upstream_url = format!("{}{}", state.outer_proxy_url, path_and_query);
+
+    debug!(
+        method = %method,
+        path = %path_and_query,
+        upstream = %upstream_url,
+        "Proxying request to outer proxy"
+    );
+
+    // Build request to upstream
+    let mut request_builder = state.client.request(method.clone(), &upstream_url);
+
+    // Copy headers, excluding host and content-length (will be recalculated)
+    for (name, value) in headers.iter() {
+        let name_str = name.as_str().to_lowercase();
+        // Skip hop-by-hop headers and auth (we add our own)
+        if name_str == "host"
+            || name_str == "content-length"
+            || name_str == "transfer-encoding"
+            || name_str == "connection"
+            || name_str == "authorization"
+            || name_str == "x-api-key"
+        {
+            continue;
+        }
+        if let Ok(header_value) = value.to_str() {
+            request_builder = request_builder.header(name.as_str(), header_value);
+        }
+    }
+
+    // Add JWT as Bearer token
+    request_builder = request_builder.header("Authorization", format!("Bearer {}", jwt));
+
+    // Get body bytes
+    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!(error = %e, "Failed to read request body");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("Failed to read request body"))
+                .unwrap();
+        }
+    };
+
+    // Send request
+    let response = match request_builder.body(body_bytes).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!(error = %e, upstream = %upstream_url, "Outer proxy request failed");
+            return Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from(format!("Outer proxy request failed: {}", e)))
+                .unwrap();
+        }
+    };
+
+    // Build response
+    let status = response.status();
+    let response_headers = response.headers().clone();
+
+    // Get response body
+    let response_bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!(error = %e, "Failed to read outer proxy response");
+            return Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from("Failed to read outer proxy response"))
+                .unwrap();
+        }
+    };
+
+    // Build axum response
+    let mut builder = Response::builder().status(status);
+
+    // Copy response headers
+    for (name, value) in response_headers.iter() {
+        let name_str = name.as_str().to_lowercase();
+        // Skip hop-by-hop headers
+        if name_str == "transfer-encoding" || name_str == "connection" {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+
+    builder.body(Body::from(response_bytes)).unwrap()
+}
+
+/// Per-conversation proxy that injects JWT and forwards to outer proxy (Vercel).
+/// Supports dynamic JWT setting - if JWT isn't set before first request, waits up to timeout.
+pub struct ConversationApiProxy {
+    /// Address the proxy is listening on
+    pub addr: SocketAddr,
+    /// JWT holder for setting JWT dynamically
+    jwt_holder: JwtHolder,
+    /// Shutdown signal sender
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl ConversationApiProxy {
+    /// Start a per-conversation proxy that forwards to outer proxy with JWT.
+    ///
+    /// # Arguments
+    /// * `outer_proxy_url` - Full URL of the outer proxy endpoint (e.g., "https://cmux.sh/api/proxy/anthropic")
+    /// * `initial_jwt` - Optional initial JWT (can be set later via `set_jwt`)
+    /// * `jwt_timeout` - How long to wait for JWT if not set when request arrives
+    pub async fn start(
+        outer_proxy_url: String,
+        initial_jwt: Option<String>,
+        jwt_timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
+        let jwt_holder = JwtHolder::new(initial_jwt);
+
+        let state = OuterProxyState {
+            client: Client::new(),
+            outer_proxy_url,
+            jwt_holder: jwt_holder.clone(),
+            jwt_timeout,
+        };
+
+        let app = Router::new()
+            .route("/{*path}", any(outer_proxy_handler))
+            .route("/", any(outer_proxy_handler))
+            .with_state(state);
+
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let listener = TcpListener::bind(addr).await?;
+        let actual_addr = listener.local_addr()?;
+
+        info!(addr = %actual_addr, "Per-conversation API proxy started");
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+        // Spawn server task
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .ok();
+        });
+
+        Ok(Self {
+            addr: actual_addr,
+            jwt_holder,
+            shutdown_tx: Some(shutdown_tx),
+        })
+    }
+
+    /// Set the JWT for this proxy.
+    pub async fn set_jwt(&self, jwt: String) {
+        self.jwt_holder.set(jwt).await;
+    }
+
+    /// Get the base URL for this proxy.
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Stop the proxy server.
+    pub fn stop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+impl Drop for ConversationApiProxy {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Collection of per-conversation API proxies.
+pub struct ConversationApiProxies {
+    /// Anthropic proxy
+    pub anthropic: Option<ConversationApiProxy>,
+    /// OpenAI proxy (future)
+    pub openai: Option<ConversationApiProxy>,
+}
+
+impl ConversationApiProxies {
+    /// Start per-conversation proxies that forward to outer proxy.
+    ///
+    /// # Arguments
+    /// * `api_proxy_url` - Base URL of the API proxy (e.g., "https://cmux.sh/api")
+    /// * `initial_jwt` - Optional initial JWT (can be set later)
+    /// * `jwt_timeout` - How long to wait for JWT if not set when request arrives
+    pub async fn start(
+        api_proxy_url: &str,
+        initial_jwt: Option<String>,
+        jwt_timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
+        // Anthropic proxy URL
+        let anthropic_outer_url = format!("{}/proxy/anthropic", api_proxy_url);
+        let anthropic =
+            ConversationApiProxy::start(anthropic_outer_url, initial_jwt.clone(), jwt_timeout)
+                .await?;
+
+        // OpenAI would go here when we add it
+        // let openai_url = format!("{}/proxy/openai", api_proxy_url);
+        // let openai = ConversationApiProxy::start(openai_outer_url, initial_jwt, jwt_timeout).await?;
+
+        Ok(Self {
+            anthropic: Some(anthropic),
+            openai: None,
+        })
+    }
+
+    /// Set JWT on all proxies.
+    pub async fn set_jwt(&self, jwt: String) {
+        if let Some(ref proxy) = self.anthropic {
+            proxy.set_jwt(jwt.clone()).await;
+        }
+        if let Some(ref proxy) = self.openai {
+            proxy.set_jwt(jwt).await;
+        }
+    }
+
+    /// Get environment variables to set for CLI processes.
+    pub fn env_vars(&self) -> Vec<(String, String)> {
+        let mut vars = Vec::new();
+
+        if let Some(ref proxy) = self.anthropic {
+            vars.push(("ANTHROPIC_BASE_URL".to_string(), proxy.base_url()));
+        }
+
+        if let Some(ref proxy) = self.openai {
+            vars.push(("OPENAI_BASE_URL".to_string(), proxy.base_url()));
+        }
+
+        vars
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +679,74 @@ mod tests {
 
         let openai = ProviderConfig::openai("sk-test".to_string());
         assert_eq!(openai.auth_value(), "Bearer sk-test");
+    }
+
+    #[tokio::test]
+    async fn test_jwt_holder_immediate() {
+        // Test that JWT is returned immediately when already set
+        let holder = JwtHolder::new(Some("test-jwt".to_string()));
+        let jwt = holder
+            .get_with_timeout(std::time::Duration::from_millis(100))
+            .await;
+        assert_eq!(jwt, Some("test-jwt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_holder_timeout() {
+        // Test that timeout works when JWT is not set
+        let holder = JwtHolder::new(None);
+        let start = std::time::Instant::now();
+        let jwt = holder
+            .get_with_timeout(std::time::Duration::from_millis(100))
+            .await;
+        let elapsed = start.elapsed();
+
+        assert!(jwt.is_none());
+        assert!(elapsed >= std::time::Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_holder_set_after_wait() {
+        // Test that JWT is returned when set during wait
+        let holder = JwtHolder::new(None);
+        let holder_clone = holder.clone();
+
+        // Spawn task to set JWT after a delay
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            holder_clone.set("delayed-jwt".to_string()).await;
+        });
+
+        // This should wait and receive the JWT
+        let jwt = holder
+            .get_with_timeout(std::time::Duration::from_millis(200))
+            .await;
+        assert_eq!(jwt, Some("delayed-jwt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_holder_set_before_timeout() {
+        // Test the exact scenario: JWT set AFTER wait starts but BEFORE timeout
+        // This simulates the real use case where:
+        // 1. LLM request comes in (starts waiting for JWT)
+        // 2. REST API sets JWT
+        // 3. LLM request continues with the JWT
+        let holder = JwtHolder::new(None);
+        let holder_for_setter = holder.clone();
+
+        // Start waiting in background - wait up to 5 seconds
+        let waiter = tokio::spawn(async move {
+            holder
+                .get_with_timeout(std::time::Duration::from_secs(5))
+                .await
+        });
+
+        // Wait a bit, then set the JWT (simulating REST API call)
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        holder_for_setter.set("api-jwt".to_string()).await;
+
+        // The waiter should have received the JWT
+        let result = waiter.await.unwrap();
+        assert_eq!(result, Some("api-jwt".to_string()));
     }
 }
