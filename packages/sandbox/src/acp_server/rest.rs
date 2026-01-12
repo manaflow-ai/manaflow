@@ -688,6 +688,163 @@ pub async fn refresh_conversation_jwt(
     }))
 }
 
+// ============================================================================
+// ACP Prompt/Init Endpoints (for Convex -> Sandbox communication)
+// ============================================================================
+
+/// Request to initialize a conversation on this sandbox.
+/// Called by Convex when assigning a conversation to this sandbox.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct InitConversationRequest {
+    /// Convex conversation ID
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
+    /// Session ID for the conversation
+    #[serde(rename = "session_id")]
+    pub session_id: String,
+    /// Provider to use (claude, codex, gemini, opencode)
+    #[serde(rename = "provider_id")]
+    pub provider_id: String,
+    /// Working directory for the CLI
+    pub cwd: String,
+}
+
+/// Response from init conversation.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InitConversationResponse {
+    /// Whether initialization succeeded
+    pub success: bool,
+    /// Error message if failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Request to send a prompt to an active conversation.
+/// Called by Convex when a user sends a message.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PromptRequest {
+    /// Convex conversation ID
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
+    /// Session ID for the conversation
+    #[serde(rename = "session_id")]
+    pub session_id: String,
+    /// Content blocks for the prompt
+    pub content: Vec<ContentBlock>,
+}
+
+/// Response from receiving a prompt.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PromptResponse {
+    /// Whether the prompt was accepted
+    pub accepted: bool,
+    /// Error message if not accepted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Initialize a conversation on this sandbox.
+///
+/// Called by Convex to assign a new conversation to this sandbox.
+/// The sandbox will spawn the appropriate CLI and prepare for prompts.
+#[utoipa::path(
+    post,
+    path = "/api/acp/init",
+    request_body = InitConversationRequest,
+    responses(
+        (status = 200, description = "Conversation initialized", body = InitConversationResponse),
+        (status = 400, description = "Bad request", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "acp"
+)]
+pub async fn init_conversation(
+    State(_state): State<RestApiState>,
+    Json(request): Json<InitConversationRequest>,
+) -> Result<Json<InitConversationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    debug!(
+        conversation_id = %request.conversation_id,
+        session_id = %request.session_id,
+        provider_id = %request.provider_id,
+        cwd = %request.cwd,
+        "Initializing conversation on sandbox"
+    );
+
+    // TODO: Implement actual CLI spawning and state management
+    // For now, just acknowledge the init request
+    // The actual implementation will:
+    // 1. Parse provider_id to AcpProvider
+    // 2. Spawn the CLI process
+    // 3. Store conversation state in a shared map
+    // 4. Return success
+
+    // Validate provider ID
+    match request.provider_id.to_lowercase().as_str() {
+        "claude" | "codex" | "gemini" | "opencode" => {}
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown provider: {}", request.provider_id),
+                    code: Some("UNKNOWN_PROVIDER".to_string()),
+                }),
+            ));
+        }
+    }
+
+    // For now, just return success
+    // Real implementation will store conversation state and spawn CLI
+    Ok(Json(InitConversationResponse {
+        success: true,
+        error: None,
+    }))
+}
+
+/// Receive a prompt for a conversation.
+///
+/// Called by Convex when a user sends a message. The sandbox will:
+/// 1. Forward the prompt to the CLI process
+/// 2. Return immediately (async processing)
+/// 3. Send responses back to Convex via callback URL
+#[utoipa::path(
+    post,
+    path = "/api/acp/prompt",
+    request_body = PromptRequest,
+    responses(
+        (status = 200, description = "Prompt accepted", body = PromptResponse),
+        (status = 400, description = "Bad request", body = ErrorResponse),
+        (status = 404, description = "Conversation not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "acp"
+)]
+pub async fn receive_prompt(
+    State(_state): State<RestApiState>,
+    Json(request): Json<PromptRequest>,
+) -> Result<Json<PromptResponse>, (StatusCode, Json<ErrorResponse>)> {
+    debug!(
+        conversation_id = %request.conversation_id,
+        session_id = %request.session_id,
+        content_blocks = %request.content.len(),
+        "Received prompt for conversation"
+    );
+
+    // TODO: Implement actual prompt forwarding
+    // For now, just acknowledge the prompt
+    // The actual implementation will:
+    // 1. Look up conversation state by ID
+    // 2. Format content as ACP message
+    // 3. Send to CLI stdin
+    // 4. CLI responses flow back via callback client
+    // 5. Return immediately
+
+    // For now, just return accepted
+    Ok(Json(PromptResponse {
+        accepted: true,
+        error: None,
+    }))
+}
+
 /// OpenAPI documentation for REST API endpoints.
 #[derive(OpenApi)]
 #[openapi(
@@ -697,6 +854,8 @@ pub async fn refresh_conversation_jwt(
         get_conversation,
         get_conversation_messages,
         refresh_conversation_jwt,
+        init_conversation,
+        receive_prompt,
     ),
     components(schemas(
         CreateConversationRequest,
@@ -712,9 +871,14 @@ pub async fn refresh_conversation_jwt(
         IsolationMode,
         ErrorResponse,
         ConversationStatus,
+        InitConversationRequest,
+        InitConversationResponse,
+        PromptRequest,
+        PromptResponse,
     )),
     tags(
-        (name = "conversations", description = "Conversation management endpoints")
+        (name = "conversations", description = "Conversation management endpoints"),
+        (name = "acp", description = "ACP sandbox control endpoints")
     )
 )]
 pub struct RestApiDoc;

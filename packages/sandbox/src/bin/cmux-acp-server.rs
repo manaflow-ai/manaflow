@@ -17,8 +17,9 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
     acp_websocket_handler, create_conversation, get_conversation, get_conversation_messages,
-    list_conversations, refresh_conversation_jwt, set_conversation_jwt, AcpServerState, ApiKeys,
-    ApiProxies, RestApiDoc, RestApiState,
+    init_conversation, list_conversations, receive_prompt, refresh_conversation_jwt,
+    set_conversation_jwt, AcpServerState, ApiKeys, ApiProxies, CallbackClient, RestApiDoc,
+    RestApiState,
 };
 
 /// ACP Server for iOS app integration.
@@ -72,6 +73,23 @@ struct Args {
     /// instead of using local API keys. The proxy verifies the JWT and injects the real API key.
     #[arg(long, env = "API_PROXY_URL")]
     api_proxy_url: Option<String>,
+
+    // === Callback mode environment variables (set by Convex when spawning sandbox) ===
+    /// Convex callback URL for posting state updates.
+    /// When set, the sandbox uses callback mode instead of direct persistence.
+    /// Example: https://polite-canary-804.convex.site/api/acp/callback
+    #[arg(long, env = "CONVEX_CALLBACK_URL")]
+    callback_url: Option<String>,
+
+    /// JWT token for authenticating callbacks to Convex.
+    /// Contains sandboxId and teamId claims. Provided by Convex at sandbox spawn time.
+    #[arg(long, env = "ACP_SANDBOX_JWT")]
+    sandbox_jwt: Option<String>,
+
+    /// Sandbox ID (Convex document ID) for this instance.
+    /// Used for sandbox_ready callback and logging.
+    #[arg(long, env = "ACP_SANDBOX_ID")]
+    sandbox_id: Option<String>,
 }
 
 /// Health check endpoint response.
@@ -142,13 +160,33 @@ async fn main() -> anyhow::Result<()> {
         .with_target(true)
         .init();
 
+    // Check if we're in callback mode
+    let callback_mode = args.callback_url.is_some() && args.sandbox_jwt.is_some();
+
     info!(
         port = args.port,
         working_dir = %args.working_dir.display(),
         use_proxy = args.use_proxy,
         api_proxy_url = ?args.api_proxy_url,
+        callback_mode = callback_mode,
+        sandbox_id = ?args.sandbox_id,
         "Starting cmux-acp-server"
     );
+
+    // Initialize callback client if in callback mode
+    let callback_client =
+        if let (Some(callback_url), Some(sandbox_jwt)) = (&args.callback_url, &args.sandbox_jwt) {
+            info!(
+                callback_url = %callback_url,
+                "Callback mode enabled"
+            );
+            Some(CallbackClient::new(
+                callback_url.clone(),
+                sandbox_jwt.clone(),
+            ))
+        } else {
+            None
+        };
 
     // Create ACP server state
     let mut state = AcpServerState::new(
@@ -220,6 +258,9 @@ async fn main() -> anyhow::Result<()> {
             "/api/conversations/{conversation_id}/jwt",
             post(refresh_conversation_jwt),
         )
+        // ACP callback mode endpoints (Convex -> Sandbox)
+        .route("/api/acp/init", post(init_conversation))
+        .route("/api/acp/prompt", post(receive_prompt))
         .with_state(rest_state);
 
     // Build main router with WebSocket routes
@@ -242,6 +283,33 @@ async fn main() -> anyhow::Result<()> {
     // Bind and serve
     let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
     info!("Listening on {}", addr);
+
+    // If in callback mode, notify Convex that sandbox is ready
+    if let (Some(client), Some(sandbox_id)) = (&callback_client, &args.sandbox_id) {
+        // Construct the ACP server URL that Convex should use to reach us
+        // In production, this would be the external URL; for now use localhost
+        let acp_server_url = format!("http://localhost:{}", args.port);
+        info!(
+            sandbox_id = %sandbox_id,
+            acp_server_url = %acp_server_url,
+            "Notifying Convex that sandbox is ready"
+        );
+
+        // Spawn the sandbox_ready notification as a background task
+        // so it doesn't block server startup
+        let client = client.clone();
+        let sandbox_id = sandbox_id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = client.sandbox_ready(&sandbox_id, &acp_server_url).await {
+                tracing::error!(
+                    error = %e,
+                    "Failed to notify Convex that sandbox is ready"
+                );
+            } else {
+                tracing::info!("Successfully notified Convex that sandbox is ready");
+            }
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

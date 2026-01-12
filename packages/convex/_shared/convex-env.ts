@@ -16,6 +16,10 @@ export const env = createEnv({
     BASE_APP_URL: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
     CMUX_CONVERSATION_JWT_SECRET: z.string().min(1).optional(),
+    // ACP (Agent Client Protocol) settings
+    ACP_CALLBACK_SECRET: z.string().min(1).optional(),
+    ACP_SNAPSHOT_ID: z.string().min(1).optional(),
+    CONVEX_SITE_URL: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     MORPH_API_KEY: z.string().min(1).optional(),

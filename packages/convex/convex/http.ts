@@ -26,6 +26,7 @@ import {
   syncRelease as syncHostScreenshotCollectorRelease,
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
+import { acpCallback } from "./acp_http";
 
 const http = httpRouter();
 
@@ -147,6 +148,12 @@ http.route({
   path: "/api/host-screenshot-collector/latest",
   method: "GET",
   handler: getLatestHostScreenshotCollector,
+});
+
+http.route({
+  path: "/api/acp/callback",
+  method: "POST",
+  handler: acpCallback,
 });
 
 export default http;

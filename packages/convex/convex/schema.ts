@@ -1181,6 +1181,9 @@ const convexSchema = defineSchema({
         title: v.optional(v.string()),
       })
     ),
+    // Link to ACP sandbox (for callback-based architecture)
+    acpSandboxId: v.optional(v.id("acpSandboxes")),
+    lastMessageAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1189,7 +1192,8 @@ const convexSchema = defineSchema({
     .index("by_session", ["sessionId"])
     .index("by_namespace", ["namespaceId"])
     .index("by_sandbox", ["sandboxInstanceId"])
-    .index("by_team_status", ["teamId", "status", "updatedAt"]),
+    .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_acp_sandbox", ["acpSandboxId", "status"]),
 
   // Messages within ACP conversations
   conversationMessages: defineTable({
@@ -1256,6 +1260,32 @@ const convexSchema = defineSchema({
   })
     .index("by_conversation", ["conversationId", "createdAt"])
     .index("by_conversation_desc", ["conversationId"]), // For reverse chronological queries
+
+  // ACP Sandboxes - Morph instances hosting coding CLIs
+  // Many conversations can share a single sandbox (Many:1 model)
+  acpSandboxes: defineTable({
+    teamId: v.string(),
+    morphInstanceId: v.string(), // morphvm_xxx
+    status: v.union(
+      v.literal("starting"),
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("stopped"),
+      v.literal("error")
+    ),
+    // Networking - URL to reach the ACP server
+    acpServerUrl: v.optional(v.string()), // http://morphvm_xxx.http.cloud.morph.so:39384
+    // Security - hash of callback JWT for verification
+    callbackJwtHash: v.string(), // SHA-256 hash
+    // Lifecycle tracking
+    lastActivityAt: v.number(),
+    conversationCount: v.number(), // Active conversations using this sandbox
+    // Configuration
+    snapshotId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_team_status", ["teamId", "status", "lastActivityAt"])
+    .index("by_morph_instance", ["morphInstanceId"]),
 });
 
 export default convexSchema;

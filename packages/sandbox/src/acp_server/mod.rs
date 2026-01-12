@@ -12,6 +12,7 @@
 
 mod agent;
 mod api_proxy;
+pub mod callback;
 mod persistence;
 pub mod rest;
 mod spawner;
@@ -21,12 +22,15 @@ pub use agent::WrappedAgent;
 pub use api_proxy::{
     ApiProxies, ApiProxy, ConversationApiProxies, ConversationApiProxy, JwtHolder, ProviderConfig,
 };
+pub use callback::{
+    CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
+};
 pub use persistence::{ConversationData, ConvexClient};
 pub use rest::{
-    create_conversation, get_conversation, get_conversation_messages, list_conversations,
-    refresh_conversation_jwt, RestApiDoc, RestApiState,
+    create_conversation, get_conversation, get_conversation_messages, init_conversation,
+    list_conversations, receive_prompt, refresh_conversation_jwt, RestApiDoc, RestApiState,
 };
-pub use spawner::{CliSpawner, IsolationMode};
+pub use spawner::{AcpProvider, CliSpawner, IsolationMode};
 pub use websocket::{
     acp_websocket_handler, set_conversation_jwt, AcpServerState, ApiKeys, ConversationProxyManager,
     SetJwtRequest, SetJwtResponse, SharedProxyManager,
