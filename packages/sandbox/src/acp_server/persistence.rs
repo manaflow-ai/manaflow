@@ -138,7 +138,7 @@ impl ConvexClient {
         let response = self
             .http_client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.admin_key))
+            .header("Authorization", format!("Convex {}", self.admin_key))
             .json(&json!({
                 "path": function_path,
                 "args": args,

@@ -7,11 +7,97 @@ use axum::extract::{State, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use tracing::{debug, error, info};
+use serde::Deserialize;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
 
 use super::agent::WrappedAgent;
 use super::persistence::ConvexClient;
 use super::spawner::{AcpProvider, IsolationMode};
+
+/// JSON-RPC request structure.
+#[derive(Debug, Deserialize)]
+struct JsonRpcRequest {
+    #[allow(dead_code)]
+    jsonrpc: String,
+    #[allow(dead_code)]
+    id: Option<serde_json::Value>,
+    method: String,
+    params: Option<serde_json::Value>,
+}
+
+/// JSON-RPC notification (no id).
+#[derive(Debug, Deserialize)]
+struct JsonRpcNotification {
+    #[allow(dead_code)]
+    jsonrpc: String,
+    method: String,
+    params: Option<serde_json::Value>,
+}
+
+/// session/prompt params
+#[derive(Debug, Deserialize)]
+struct SessionPromptParams {
+    #[serde(rename = "sessionId")]
+    #[allow(dead_code)]
+    session_id: String,
+    prompt: Vec<AcpContentBlock>,
+}
+
+/// ACP ContentBlock (for parsing)
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum AcpContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image {
+        #[allow(dead_code)]
+        data: Option<String>,
+        #[serde(rename = "mimeType")]
+        #[allow(dead_code)]
+        mime_type: Option<String>,
+    },
+    #[serde(rename = "resource_link")]
+    ResourceLink {
+        #[allow(dead_code)]
+        uri: String,
+        #[allow(dead_code)]
+        name: Option<String>,
+        #[allow(dead_code)]
+        description: Option<String>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// session/update params
+#[derive(Debug, Deserialize)]
+struct SessionUpdateParams {
+    #[serde(rename = "sessionId")]
+    #[allow(dead_code)]
+    session_id: String,
+    update: SessionUpdate,
+}
+
+/// Session update types
+#[derive(Debug, Deserialize)]
+#[serde(tag = "sessionUpdate")]
+enum SessionUpdate {
+    #[serde(rename = "agent_message_chunk")]
+    AgentMessageChunk { content: AcpContentBlock },
+    #[serde(other)]
+    Other,
+}
+
+/// State for tracking current assistant message during streaming.
+#[derive(Default)]
+struct StreamingState {
+    /// Current assistant message ID (if streaming)
+    current_message_id: Option<String>,
+    /// Accumulated text content
+    accumulated_text: String,
+}
 
 /// State for the ACP server.
 #[derive(Clone)]
@@ -210,7 +296,7 @@ async fn handle_acp_connection(
         "ACP connection established"
     );
 
-    // Create Convex client
+    // Create Convex client for persistence
     let convex_client = ConvexClient::new(&state.convex_url, &state.convex_admin_key);
 
     // Build environment variables for the CLI based on provider
@@ -290,9 +376,12 @@ async fn handle_acp_connection(
         }
     });
 
-    // Spawn task to read from CLI stdout and forward to WebSocket
+    // Spawn task to read from CLI stdout, persist messages, and forward to WebSocket
     let tx_clone = tx.clone();
     let conversation_id_clone = token_payload.conversation_id.clone();
+    let agent_clone = Arc::clone(&agent);
+    let streaming_state = Arc::new(Mutex::new(StreamingState::default()));
+    let streaming_state_clone = Arc::clone(&streaming_state);
     let cli_read_task = tokio::spawn(async move {
         use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -318,6 +407,98 @@ async fn handle_acp_connection(
                             message = %trimmed,
                             "Forwarding CLI response to WebSocket"
                         );
+
+                        // Try to parse as JSON-RPC and persist assistant messages
+                        if let Ok(notification) =
+                            serde_json::from_str::<JsonRpcNotification>(trimmed)
+                        {
+                            if notification.method == "session/update" {
+                                if let Some(params) = notification.params {
+                                    if let Ok(update_params) =
+                                        serde_json::from_value::<SessionUpdateParams>(params)
+                                    {
+                                        if let SessionUpdate::AgentMessageChunk { content } =
+                                            update_params.update
+                                        {
+                                            // Persist streaming content
+                                            let mut state = streaming_state_clone.lock().await;
+
+                                            // Start new message if needed
+                                            if state.current_message_id.is_none() {
+                                                match agent_clone.start_assistant_message().await {
+                                                    Ok(id) => {
+                                                        state.current_message_id = Some(id);
+                                                        state.accumulated_text.clear();
+                                                    }
+                                                    Err(e) => {
+                                                        warn!(
+                                                            error = %e,
+                                                            "Failed to start assistant message"
+                                                        );
+                                                    }
+                                                }
+                                            }
+
+                                            // Accumulate and append text
+                                            if let AcpContentBlock::Text { text } = content {
+                                                if !text.is_empty() {
+                                                    state.accumulated_text.push_str(&text);
+                                                    // Persist periodically (every 100 chars or so)
+                                                    if state.accumulated_text.len() >= 100 {
+                                                        if let Err(e) = agent_clone
+                                                            .append_assistant_text(
+                                                                &state.accumulated_text,
+                                                            )
+                                                            .await
+                                                        {
+                                                            warn!(
+                                                                error = %e,
+                                                                "Failed to append assistant text"
+                                                            );
+                                                        }
+                                                        state.accumulated_text.clear();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Check for end of turn (final response with id)
+                        if let Ok(response) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                            if response.get("id").is_some()
+                                && response.get("result").is_some()
+                                && response["result"].get("stopReason").is_some()
+                            {
+                                // Final response - flush remaining text
+                                let mut state = streaming_state_clone.lock().await;
+                                if !state.accumulated_text.is_empty() {
+                                    if let Err(e) = agent_clone
+                                        .append_assistant_text(&state.accumulated_text)
+                                        .await
+                                    {
+                                        warn!(error = %e, "Failed to append final assistant text");
+                                    }
+                                    state.accumulated_text.clear();
+                                }
+                                // Reset for next message
+                                state.current_message_id = None;
+
+                                // Update conversation status
+                                let stop_reason = response["result"]["stopReason"]
+                                    .as_str()
+                                    .unwrap_or("end_turn");
+                                if let Err(e) = agent_clone
+                                    .update_status("completed", Some(stop_reason))
+                                    .await
+                                {
+                                    warn!(error = %e, "Failed to update conversation status");
+                                }
+                            }
+                        }
+
                         // Forward as text message (JSON-RPC is text-based)
                         if let Err(e) = tx_clone.send(Message::Text(trimmed.to_string().into())) {
                             error!(error = %e, "Failed to queue CLI response");
@@ -370,6 +551,40 @@ async fn handle_acp_connection(
                     message = %text,
                     "Forwarding text message to CLI"
                 );
+
+                // Try to parse as JSON-RPC request and persist user prompts
+                if let Ok(request) = serde_json::from_str::<JsonRpcRequest>(&text) {
+                    if request.method == "session/prompt" {
+                        if let Some(params) = request.params {
+                            if let Ok(prompt_params) =
+                                serde_json::from_value::<SessionPromptParams>(params)
+                            {
+                                // Extract text content from prompt
+                                let text_content: String = prompt_params
+                                    .prompt
+                                    .iter()
+                                    .filter_map(|block| match block {
+                                        AcpContentBlock::Text { text } => Some(text.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+
+                                if !text_content.is_empty() {
+                                    // Persist user message
+                                    if let Err(e) = agent.persist_user_text(&text_content).await {
+                                        warn!(error = %e, "Failed to persist user message");
+                                    } else {
+                                        debug!(
+                                            conversation_id = %token_payload.conversation_id,
+                                            "Persisted user prompt"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Forward to CLI stdin with newline
                 if let Err(e) = cli_stdin.write_all(text.as_bytes()).await {

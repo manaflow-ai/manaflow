@@ -268,6 +268,48 @@ export const updateAgentInfo = internalMutation({
   },
 });
 
+// Create a conversation without authentication (for internal use/testing)
+export const createInternal = internalMutation({
+  args: {
+    teamId: v.id("teams"),
+    sessionId: v.string(),
+    providerId: providerIdValidator,
+    cwd: v.string(),
+    isolationMode: v.optional(isolationModeValidator),
+    namespaceId: v.optional(v.string()),
+    sandboxInstanceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    const conversationId = await ctx.db.insert("conversations", {
+      teamId: args.teamId,
+      sessionId: args.sessionId,
+      providerId: args.providerId,
+      cwd: args.cwd,
+      status: "active",
+      isolationMode: args.isolationMode,
+      namespaceId: args.namespaceId,
+      sandboxInstanceId: args.sandboxInstanceId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Generate JWT for this conversation
+    const secret = env.CMUX_CONVERSATION_JWT_SECRET ?? env.CMUX_TASK_RUN_JWT_SECRET;
+    const jwt = await new SignJWT({
+      conversationId,
+      teamId: args.teamId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("12h")
+      .sign(new TextEncoder().encode(secret));
+
+    return { conversationId, jwt };
+  },
+});
+
 // Generate a new JWT for an existing conversation
 export const generateJwt = internalMutation({
   args: {
