@@ -378,9 +378,15 @@ export type GithubBranch = {
     isDefault?: boolean;
 };
 
+export type GithubBranchesPageInfo = {
+    endCursor: string | null;
+    hasNextPage: boolean;
+};
+
 export type GithubBranchesResponse = {
     branches: Array<GithubBranch>;
     defaultBranch: string | null;
+    pageInfo: GithubBranchesPageInfo;
     error: string | null;
 };
 
@@ -422,7 +428,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_m0lw91ep' | 'snapshot_hnwrt0re' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_phq07yhf' | 'snapshot_qrql1trf' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -1853,6 +1859,10 @@ export type GetApiIntegrationsGithubBranchesData = {
          * Optional search term to filter branches by name
          */
         search?: string;
+        /**
+         * Pagination cursor to continue listing branches
+         */
+        cursor?: string;
         /**
          * Max branches to return (default 30, max 100)
          */

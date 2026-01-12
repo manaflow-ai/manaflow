@@ -23,10 +23,14 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
+import {
+  getApiIntegrationsGithubBranches,
+  getApiIntegrationsGithubBranchesQueryKey,
+} from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
 import type {
   ProviderStatusResponse,
   TaskAcknowledged,
@@ -35,7 +39,12 @@ import type {
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  type InfiniteData,
+  useInfiniteQuery,
+  useQuery,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
@@ -211,17 +220,48 @@ function DashboardComponent() {
   // This prevents delay when user clears the search
   const effectiveBranchSearch = branchSearch === "" ? "" : debouncedBranchSearch;
 
+  const branchPageSize = 30;
+  const branchesQueryKey = getApiIntegrationsGithubBranchesQueryKey({
+    query: {
+      repo: selectedProject[0] || "",
+      limit: branchPageSize,
+      search: effectiveBranchSearch || undefined,
+    },
+  });
+
   // Branches query - uses GraphQL to get default branch AND branches in a single API call
-  // Server-side search via GitHub GraphQL API (prefix match)
+  // Server-side search via GitHub GraphQL API (name contains match)
   // Each search term is cached separately by React Query
-  const branchesQuery = useQuery({
-    ...getApiIntegrationsGithubBranchesOptions({
-      query: {
-        repo: selectedProject[0] || "",
-        limit: 5,
-        search: effectiveBranchSearch || undefined,
-      },
-    }),
+  const branchesQuery = useInfiniteQuery<
+    GithubBranchesResponse,
+    Error,
+    InfiniteData<GithubBranchesResponse>,
+    typeof branchesQueryKey,
+    string | undefined
+  >({
+    queryKey: branchesQueryKey,
+    queryFn: async ({ pageParam, signal }) => {
+      const cursor =
+        typeof pageParam === "string" && pageParam.length > 0
+          ? pageParam
+          : undefined;
+      const { data } = await getApiIntegrationsGithubBranches({
+        query: {
+          repo: selectedProject[0] || "",
+          limit: branchPageSize,
+          search: effectiveBranchSearch || undefined,
+          cursor,
+        },
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    initialPageParam: undefined,
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.pageInfo?.hasNextPage) return undefined;
+      return lastPage.pageInfo.endCursor ?? undefined;
+    },
     staleTime: 30_000,
     enabled: !!selectedProject[0] && !isEnvSelected,
     // Keep previous data visible while fetching new search results
@@ -232,20 +272,42 @@ function DashboardComponent() {
   // Show loading in search input when search is pending or fetching
   const isBranchSearchLoading =
     branchSearch !== "" &&
-    (branchSearch !== effectiveBranchSearch || branchesQuery.isFetching);
+    (branchSearch !== effectiveBranchSearch ||
+      (branchesQuery.isFetching && !branchesQuery.isFetchingNextPage));
 
   // Extract branch names and default branch from the query
   const branchNames = useMemo(
-    () => branchesQuery.data?.branches?.map((branch) => branch.name) ?? [],
+    () => {
+      const names: string[] = [];
+      const seen = new Set<string>();
+      for (const page of branchesQuery.data?.pages ?? []) {
+        for (const branch of page.branches ?? []) {
+          if (seen.has(branch.name)) continue;
+          seen.add(branch.name);
+          names.push(branch.name);
+        }
+      }
+      return names;
+    },
     [branchesQuery.data]
   );
 
-  const defaultBranchName = branchesQuery.data?.defaultBranch ?? null;
+  const defaultBranchName =
+    branchesQuery.data?.pages?.[0]?.defaultBranch ?? null;
 
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
     setBranchSearch(search);
   }, []);
+
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = branchesQuery;
+
+  const handleBranchLoadMore = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) {
+      return;
+    }
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   // Show toast if branches query fails
   useEffect(() => {
@@ -1059,12 +1121,17 @@ function DashboardComponent() {
               onBranchChange={handleBranchChange}
               onBranchSearchChange={handleBranchSearchChange}
               isBranchSearchLoading={isBranchSearchLoading}
+              onBranchLoadMore={handleBranchLoadMore}
+              hasMoreBranches={hasNextPage ?? false}
+              isLoadingMoreBranches={isFetchingNextPage}
               selectedAgents={selectedAgents}
               onAgentChange={handleAgentChange}
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isFetching && effectiveSelectedBranch.length === 0}
+              isLoadingBranches={
+                branchesQuery.isLoading && effectiveSelectedBranch.length === 0
+              }
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
@@ -1139,6 +1206,9 @@ type DashboardMainCardProps = {
   onBranchChange: (newBranches: string[]) => void;
   onBranchSearchChange: (search: string) => void;
   isBranchSearchLoading: boolean;
+  onBranchLoadMore: () => void;
+  hasMoreBranches: boolean;
+  isLoadingMoreBranches: boolean;
   selectedAgents: string[];
   onAgentChange: (newAgents: string[]) => void;
   isCloudMode: boolean;
@@ -1170,6 +1240,9 @@ function DashboardMainCard({
   onBranchChange,
   onBranchSearchChange,
   isBranchSearchLoading,
+  onBranchLoadMore,
+  hasMoreBranches,
+  isLoadingMoreBranches,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -1208,6 +1281,9 @@ function DashboardMainCard({
           onBranchChange={onBranchChange}
           onBranchSearchChange={onBranchSearchChange}
           isBranchSearchLoading={isBranchSearchLoading}
+          onBranchLoadMore={onBranchLoadMore}
+          hasMoreBranches={hasMoreBranches}
+          isLoadingMoreBranches={isLoadingMoreBranches}
           selectedAgents={selectedAgents}
           onAgentChange={onAgentChange}
           isCloudMode={isCloudMode}

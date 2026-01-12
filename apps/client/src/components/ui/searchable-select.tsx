@@ -105,6 +105,12 @@ export interface SearchableSelectProps {
   searchLoading?: boolean;
   // Disable client-side filtering (use when server handles filtering)
   disableClientFilter?: boolean;
+  // Triggered when the virtualized list is near the end
+  onEndReached?: () => void;
+  // Whether more results are available
+  hasMore?: boolean;
+  // Whether a fetch for more results is in flight
+  isFetchingMore?: boolean;
 }
 
 interface WarningIndicatorProps {
@@ -263,6 +269,9 @@ const SearchableSelect = forwardRef<
     onSearchChange,
     searchLoading = false,
     disableClientFilter = false,
+    onEndReached,
+    hasMore = false,
+    isFetchingMore = false,
   },
   ref
 ) {
@@ -457,6 +466,39 @@ const SearchableSelect = forwardRef<
     // even before ResizeObserver kicks in.
     initialRect: { width: 300, height: 300 },
   });
+  const loadMoreTriggerRef = useRef<number | null>(null);
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
+  useEffect(() => {
+    if (!open) {
+      loadMoreTriggerRef.current = null;
+    }
+  }, [open]);
+
+  useEffect(() => {
+    loadMoreTriggerRef.current = null;
+  }, [search]);
+
+  useEffect(() => {
+    if (!open || !onEndReached || !hasMore || isFetchingMore) return;
+    if (filteredOptions.length === 0) return;
+    const lastItem = virtualItems[virtualItems.length - 1];
+    if (!lastItem) return;
+    const threshold = 5;
+    if (lastItem.index >= filteredOptions.length - 1 - threshold) {
+      if (loadMoreTriggerRef.current !== filteredOptions.length) {
+        loadMoreTriggerRef.current = filteredOptions.length;
+        onEndReached();
+      }
+    }
+  }, [
+    filteredOptions.length,
+    hasMore,
+    isFetchingMore,
+    onEndReached,
+    open,
+    virtualItems,
+  ]);
 
   useEffect(() => {
     if (open) {
@@ -702,7 +744,7 @@ const SearchableSelect = forwardRef<
                 ) : (
                   <CommandGroup className={classNames.commandGroup}>
                     {(() => {
-                      const vItems = rowVirtualizer.getVirtualItems();
+                      const vItems = virtualItems;
                       if (vItems.length === 0 && filteredOptions.length > 0) {
                         const fallback = filteredOptions.slice(0, 12);
                         return (
