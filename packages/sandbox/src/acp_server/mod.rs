@@ -26,10 +26,7 @@ pub use callback::{
     CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
 pub use persistence::{ConversationData, ConvexClient};
-pub use rest::{
-    create_conversation, get_conversation, get_conversation_messages, init_conversation,
-    list_conversations, receive_prompt, refresh_conversation_jwt, RestApiDoc, RestApiState,
-};
+pub use rest::{init_conversation, receive_prompt, RestApiDoc, RestApiState};
 pub use spawner::{AcpProvider, CliSpawner, IsolationMode};
 pub use websocket::{
     acp_websocket_handler, set_conversation_jwt, AcpServerState, ApiKeys, ConversationProxyManager,

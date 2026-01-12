@@ -10,16 +10,14 @@ use std::sync::Arc;
 use axum::routing::{any, get, post};
 use axum::Router;
 use clap::Parser;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    acp_websocket_handler, create_conversation, get_conversation, get_conversation_messages,
-    init_conversation, list_conversations, receive_prompt, refresh_conversation_jwt,
-    set_conversation_jwt, AcpServerState, ApiKeys, ApiProxies, CallbackClient, RestApiDoc,
-    RestApiState,
+    acp_websocket_handler, init_conversation, receive_prompt, set_conversation_jwt, AcpServerState,
+    ApiKeys, ApiProxies, CallbackClient, RestApiDoc, RestApiState,
 };
 
 /// ACP Server for iOS app integration.
@@ -237,28 +235,22 @@ async fn main() -> anyhow::Result<()> {
         state = state.with_api_keys(api_keys);
     }
 
-    // Create REST API state
-    let rest_state = RestApiState::new(args.convex_url.clone(), args.convex_admin_key.clone());
+    // Create REST API state for ACP endpoints (Convex -> Sandbox communication)
+    // SECURITY: RestApiState only has callback access, not direct Convex query/mutation access
+    let mut rest_state = RestApiState::new().with_default_cwd(args.working_dir.clone());
 
-    // Build REST API router (separate state)
+    if let Some(ref client) = callback_client {
+        rest_state = rest_state.with_callback_client(client.clone());
+        info!("REST API configured with callback client for Convex persistence");
+    } else {
+        warn!("REST API started WITHOUT callback client - no Convex persistence!");
+    }
+
+    // Build REST API router for ACP endpoints only
+    // These endpoints allow Convex to control the sandbox:
+    // - /api/acp/init: Initialize a conversation (spawn CLI)
+    // - /api/acp/prompt: Send prompts to an active conversation
     let rest_router = Router::new()
-        .route(
-            "/api/conversations",
-            get(list_conversations).post(create_conversation),
-        )
-        .route(
-            "/api/conversations/{conversation_id}",
-            get(get_conversation),
-        )
-        .route(
-            "/api/conversations/{conversation_id}/messages",
-            get(get_conversation_messages),
-        )
-        .route(
-            "/api/conversations/{conversation_id}/jwt",
-            post(refresh_conversation_jwt),
-        )
-        // ACP callback mode endpoints (Convex -> Sandbox)
         .route("/api/acp/init", post(init_conversation))
         .route("/api/acp/prompt", post(receive_prompt))
         .with_state(rest_state);
