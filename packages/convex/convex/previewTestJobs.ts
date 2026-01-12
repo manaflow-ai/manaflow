@@ -329,17 +329,38 @@ export const listTestRuns = authQuery({
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const take = Math.max(1, Math.min(args.limit ?? 50, 100));
 
-    // Get recent preview runs for the team
-    const runs = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
-      .order("desc")
-      .take(take * 2);
+    const isTestRun = (run: Doc<"previewRuns">) =>
+      run.stateReason === "Test preview run" || !run.repoInstallationId;
 
-    // Filter to only test runs (identified by stateReason or missing repoInstallationId for legacy runs)
-    const testRuns = runs
-      .filter((run) => run.stateReason === "Test preview run" || !run.repoInstallationId)
-      .slice(0, take);
+    const testRuns: Array<Doc<"previewRuns">> = [];
+    const pageSize = Math.min(100, Math.max(10, take * 2));
+    let cursor: string | null = null;
+
+    while (testRuns.length < take) {
+      const page = await ctx.db
+        .query("previewRuns")
+        .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+        .order("desc")
+        .paginate({ cursor, numItems: pageSize });
+
+      for (const run of page.page) {
+        if (isTestRun(run)) {
+          testRuns.push(run);
+          if (testRuns.length >= take) {
+            break;
+          }
+        }
+      }
+
+      if (page.isDone) {
+        break;
+      }
+
+      cursor = page.continueCursor;
+      if (!cursor) {
+        break;
+      }
+    }
 
     // Enrich with config info and screenshot data
     const enrichedRuns = await Promise.all(
