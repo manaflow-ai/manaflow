@@ -69,8 +69,7 @@ if command -v systemd-detect-virt >/dev/null 2>&1; then
   if [ "$container_type" = "none" ]; then
     container_type=""
   fi
-fi
-if [ -z "$container_type" ]; then
+else
   if [ -f /run/.containerenv ]; then
     container_type="podman"
   elif [ -f /.dockerenv ]; then
