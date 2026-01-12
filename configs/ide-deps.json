@@ -30,9 +30,9 @@
     "@openai/codex": "0.80.0",
     "@anthropic-ai/claude-code": "2.1.5",
     "@google/gemini-cli": "0.23.0",
-    "opencode-ai": "1.1.13",
+    "opencode-ai": "1.1.14",
     "codebuff": "1.0.579",
-    "@devcontainers/cli": "0.81.0",
-    "@sourcegraph/amp": "0.0.1768176116-ged0d88"
+    "@devcontainers/cli": "0.81.1",
+    "@sourcegraph/amp": "0.0.1768233920-g2a8222"
   }
 }
