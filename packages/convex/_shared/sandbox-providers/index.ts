@@ -47,15 +47,15 @@ export function getSandboxProvider(name: SandboxProviderName): SandboxProvider {
 /**
  * Get the default sandbox provider.
  *
- * Tries Freestyle first (if configured), then Morph.
+ * Defaults to Morph, falls back to Freestyle.
  */
 export function getDefaultSandboxProvider(): SandboxProvider {
   // Try providers in order of preference
-  if (env.FREESTYLE_API_KEY) {
-    return new FreestyleSandboxProvider(env.FREESTYLE_API_KEY);
-  }
   if (env.MORPH_API_KEY) {
     return new MorphSandboxProvider(env.MORPH_API_KEY);
+  }
+  if (env.FREESTYLE_API_KEY) {
+    return new FreestyleSandboxProvider(env.FREESTYLE_API_KEY);
   }
 
   throw new Error("No sandbox provider configured");

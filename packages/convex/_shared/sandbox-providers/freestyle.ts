@@ -1,16 +1,16 @@
 /**
  * Freestyle sandbox provider implementation.
  *
- * Uses Freestyle v2 API to spawn and manage sandboxes.
+ * Uses Freestyle API to spawn and manage sandboxes.
  * https://freestyle.sh
  *
  * API Reference:
- * - POST /vms/v1/vms - Create VM
- * - GET /vms/v1/vms/{vmId} - Get VM status
- * - POST /vms/v1/vms/{vmId}/suspend - Suspend VM
- * - POST /vms/v1/vms/{vmId}/resume - Resume VM
- * - DELETE /vms/v1/vms/{vmId} - Delete VM
- * - POST /vms/v1/vms/{vmId}/snapshot - Create snapshot
+ * - POST /v1/vms - Create VM
+ * - GET /v1/vms/{vmId} - Get VM status
+ * - POST /v1/vms/{vmId}/suspend - Suspend VM
+ * - POST /v1/vms/{vmId}/start - Resume/start VM
+ * - DELETE /v1/vms/{vmId} - Delete VM
+ * - POST /v1/vms/{vmId}/snapshot - Create snapshot
  */
 
 import type {
@@ -45,8 +45,8 @@ export class FreestyleSandboxProvider implements SandboxProvider {
   }
 
   async spawn(options: SandboxSpawnOptions): Promise<SandboxInstance> {
-    // Use the v2 API endpoint: POST /vms/v1/vms
-    const response = await fetch(`${this.baseUrl}/vms/v1/vms`, {
+    // Use POST /v1/vms
+    const response = await fetch(`${this.baseUrl}/v1/vms`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -57,15 +57,14 @@ export class FreestyleSandboxProvider implements SandboxProvider {
         snapshotId: options.snapshotId,
         // Idle timeout in seconds (similar to Morph's TTL)
         idleTimeoutSeconds: options.ttlSeconds,
-        // Environment variables are passed via systemd services
-        // For now, we'll configure the ACP server to read from env
+        // cmux-acp-server runs via systemd and is configured via /api/acp/configure
+        // endpoint after spawn (since env vars don't work with memory snapshots)
         systemd: {
           services: [
             {
               name: "cmux-acp",
               mode: "service",
               exec: ["/usr/local/bin/cmux-acp-server"],
-              env: options.env,
               wantedBy: ["multi-user.target"],
               restartPolicy: {
                 policy: "on-failure",
@@ -108,9 +107,9 @@ export class FreestyleSandboxProvider implements SandboxProvider {
   }
 
   async stop(instanceId: string): Promise<void> {
-    // Use DELETE /vms/v1/vms/{vmId}
+    // Use DELETE /v1/vms/{vmId}
     const response = await fetch(
-      `${this.baseUrl}/vms/v1/vms/${instanceId}`,
+      `${this.baseUrl}/v1/vms/${instanceId}`,
       {
         method: "DELETE",
         headers: {
@@ -127,9 +126,9 @@ export class FreestyleSandboxProvider implements SandboxProvider {
   }
 
   async pause(instanceId: string): Promise<void> {
-    // Use POST /vms/v1/vms/{vmId}/suspend
+    // Use POST /v1/vms/{vmId}/suspend
     const response = await fetch(
-      `${this.baseUrl}/vms/v1/vms/${instanceId}/suspend`,
+      `${this.baseUrl}/v1/vms/${instanceId}/suspend`,
       {
         method: "POST",
         headers: {
@@ -146,9 +145,9 @@ export class FreestyleSandboxProvider implements SandboxProvider {
   }
 
   async resume(instanceId: string): Promise<void> {
-    // Use POST /vms/v1/vms/{vmId}/resume
+    // Use POST /v1/vms/{vmId}/start to resume a suspended VM
     const response = await fetch(
-      `${this.baseUrl}/vms/v1/vms/${instanceId}/resume`,
+      `${this.baseUrl}/v1/vms/${instanceId}/start`,
       {
         method: "POST",
         headers: {
@@ -165,9 +164,9 @@ export class FreestyleSandboxProvider implements SandboxProvider {
   }
 
   async getStatus(instanceId: string): Promise<SandboxStatusInfo> {
-    // Use GET /vms/v1/vms/{vmId}
+    // Use GET /v1/vms/{vmId}
     const response = await fetch(
-      `${this.baseUrl}/vms/v1/vms/${instanceId}`,
+      `${this.baseUrl}/v1/vms/${instanceId}`,
       {
         method: "GET",
         headers: {

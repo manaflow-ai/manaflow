@@ -19,7 +19,8 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    init_conversation, receive_prompt, ApiProxies, CallbackClient, RestApiDoc, RestApiState,
+    configure, init_conversation, receive_prompt, ApiProxies, CallbackClient, RestApiDoc,
+    RestApiState,
 };
 
 /// ACP Server for sandbox integration.
@@ -31,9 +32,9 @@ struct Args {
     #[arg(short, long, env = "ACP_PORT", default_value = "39384")]
     port: u16,
 
-    /// JWT secret for conversation token verification
+    /// JWT secret for conversation token verification (optional when using /api/acp/configure)
     #[arg(long, env = "CMUX_CONVERSATION_JWT_SECRET")]
-    jwt_secret: String,
+    jwt_secret: Option<String>,
 
     /// Default working directory for spawned CLIs
     #[arg(long, env = "ACP_WORKING_DIR", default_value = "/workspace")]
@@ -221,11 +222,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Build REST API router for ACP endpoints
     // These endpoints allow Convex to control the sandbox:
+    // - /api/acp/configure: Inject callback settings (required after spawn)
     // - /api/acp/init: Initialize a conversation (spawn CLI)
     // - /api/acp/prompt: Send prompts to an active conversation
     let app = Router::new()
         .route("/health", get(health))
         .route("/healthz", get(health))
+        .route("/api/acp/configure", post(configure))
         .route("/api/acp/init", post(init_conversation))
         .route("/api/acp/prompt", post(receive_prompt))
         .with_state(rest_state)

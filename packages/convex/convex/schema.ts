@@ -1280,7 +1280,7 @@ const convexSchema = defineSchema({
       v.literal("error")
     ),
     // Networking - URL to reach the ACP server
-    sandboxUrl: v.optional(v.string()), // e.g., http://morphvm_xxx.http.cloud.morph.so:39384
+    sandboxUrl: v.optional(v.string()), // e.g., https://port-39384-morphvm_xxx.http.cloud.morph.so
     // Security - hash of callback JWT for verification
     callbackJwtHash: v.string(), // SHA-256 hash
     // Lifecycle tracking

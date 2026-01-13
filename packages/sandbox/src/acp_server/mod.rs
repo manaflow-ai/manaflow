@@ -22,5 +22,5 @@ pub use api_proxy::{
 pub use callback::{
     CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
-pub use rest::{init_conversation, receive_prompt, RestApiDoc, RestApiState};
+pub use rest::{configure, init_conversation, receive_prompt, RestApiDoc, RestApiState};
 pub use spawner::{AcpProvider, CliSpawner, IsolationMode};

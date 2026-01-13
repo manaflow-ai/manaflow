@@ -3,7 +3,7 @@ import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getDefaultSandboxProvider } from "../_shared/sandbox-providers";
 import { getTeamId } from "../_shared/team";
-import { internal, api } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
   action,
@@ -456,25 +456,39 @@ export const spawnSandbox = internalAction({
     });
 
     // Spawn sandbox instance via provider
+    // NOTE: We don't pass env vars here because Morph uses memory snapshots,
+    // so the cmux-acp-server process won't see them. Instead, we call the
+    // /api/acp/configure endpoint after spawn to inject the configuration.
     const instance = await provider.spawn({
       teamId: args.teamId,
       snapshotId,
       ttlSeconds: 3600, // 1 hour
       ttlAction: "pause",
-      env: {
-        CONVEX_CALLBACK_URL: `${env.CONVEX_SITE_URL}/api/acp/callback`,
-        SANDBOX_JWT: callbackJwt,
-      },
       metadata: {
         sandboxId,
       },
     });
 
-    // Update sandbox with provider instance ID
+    // Update sandbox with provider instance ID and URL
     await ctx.runMutation(internal.acp.updateSandboxInstanceId, {
       sandboxId,
       instanceId: instance.instanceId,
+      sandboxUrl: instance.sandboxUrl,
     });
+
+    // Configure the sandbox with callback settings
+    // This is necessary because Morph uses memory snapshots - processes running
+    // in the snapshot don't receive env vars passed at spawn time.
+    if (instance.sandboxUrl) {
+      await configureSandbox(instance.sandboxUrl, {
+        callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
+        sandboxJwt: callbackJwt,
+        sandboxId,
+        // API proxy URL routes CLI requests through our proxy which validates
+        // the JWT and injects the real API key
+        apiProxyUrl: env.BASE_APP_URL,
+      });
+    }
 
     return { sandboxId };
   },
@@ -496,16 +510,18 @@ export const updateSandboxJwtHash = internalMutation({
 });
 
 /**
- * Update sandbox instance ID.
+ * Update sandbox instance ID and URL.
  */
 export const updateSandboxInstanceId = internalMutation({
   args: {
     sandboxId: v.id("acpSandboxes"),
     instanceId: v.string(),
+    sandboxUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.sandboxId, {
       instanceId: args.instanceId,
+      ...(args.sandboxUrl && { sandboxUrl: args.sandboxUrl, status: "running" }),
     });
   },
 });
@@ -513,6 +529,43 @@ export const updateSandboxInstanceId = internalMutation({
 // ============================================================================
 // HTTP helpers for sandbox communication
 // ============================================================================
+
+/**
+ * Configure a sandbox with callback settings.
+ * Called immediately after spawn because Morph uses memory snapshots,
+ * so env vars passed at spawn time aren't available to running processes.
+ */
+async function configureSandbox(
+  sandboxUrl: string,
+  config: {
+    callbackUrl: string;
+    sandboxJwt: string;
+    sandboxId: string;
+    apiProxyUrl?: string;
+  }
+): Promise<void> {
+  console.log(`[acp] Configuring sandbox at ${sandboxUrl}`);
+
+  const response = await fetch(`${sandboxUrl}/api/acp/configure`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      callback_url: config.callbackUrl,
+      sandbox_jwt: config.sandboxJwt,
+      sandbox_id: config.sandboxId,
+      api_proxy_url: config.apiProxyUrl,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Sandbox configure failed: ${response.status} - ${text}`);
+  }
+
+  console.log(`[acp] Sandbox configured successfully`);
+}
 
 /**
  * Initialize a conversation on a sandbox.

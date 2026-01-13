@@ -39,23 +39,23 @@ export class MorphSandboxProvider implements SandboxProvider {
   }
 
   async spawn(options: SandboxSpawnOptions): Promise<SandboxInstance> {
-    const response = await fetch(`${this.baseUrl}/instance/start`, {
+    // Morph API: POST /instance?snapshot_id=xxx with body for metadata/ttl/setup
+    const url = new URL(`${this.baseUrl}/instance`);
+    url.searchParams.set("snapshot_id", options.snapshotId ?? "");
+
+    const response = await fetch(url.toString(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        snapshot_id: options.snapshotId,
         ttl_seconds: options.ttlSeconds,
         ttl_action: options.ttlAction ?? "pause",
         metadata: {
           app: "cmux-acp",
           teamId: options.teamId,
           ...options.metadata,
-        },
-        setup: {
-          env: options.env,
         },
       }),
     });
@@ -68,20 +68,44 @@ export class MorphSandboxProvider implements SandboxProvider {
 
     const data = (await response.json()) as MorphStartResponse;
 
+    // Expose HTTP service for the ACP server
+    const exposeResponse = await fetch(
+      `${this.baseUrl}/instance/${data.id}/http`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ name: "acp", port: 39384 }),
+      }
+    );
+
+    if (!exposeResponse.ok) {
+      const text = await exposeResponse.text();
+      console.error("[morph] Failed to expose HTTP service:", text);
+      // Don't fail spawn, just log the error
+    }
+
+    // Morph VMs are accessible at {service-name}-{instanceId}.http.cloud.morph.so
+    // Instance ID uses underscore (morphvm_xxx) but URL uses hyphen (morphvm-xxx)
+    // We expose the ACP server as service name "acp"
+    const urlSafeId = data.id.replace(/_/g, "-");
+    const sandboxUrl = `https://acp-${urlSafeId}.http.cloud.morph.so`;
+
     return {
       instanceId: data.id,
       provider: "morph",
+      sandboxUrl,
     };
   }
 
   async stop(instanceId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/instance/stop`, {
-      method: "POST",
+    const response = await fetch(`${this.baseUrl}/instance/${instanceId}`, {
+      method: "DELETE",
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({ id: instanceId }),
     });
 
     if (!response.ok) {
@@ -92,14 +116,15 @@ export class MorphSandboxProvider implements SandboxProvider {
   }
 
   async pause(instanceId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/instance/pause`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ id: instanceId }),
-    });
+    const response = await fetch(
+      `${this.baseUrl}/instance/${instanceId}/pause`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      }
+    );
 
     if (!response.ok) {
       const text = await response.text();
@@ -109,14 +134,15 @@ export class MorphSandboxProvider implements SandboxProvider {
   }
 
   async resume(instanceId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/instance/resume`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ id: instanceId }),
-    });
+    const response = await fetch(
+      `${this.baseUrl}/instance/${instanceId}/resume`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      }
+    );
 
     if (!response.ok) {
       const text = await response.text();

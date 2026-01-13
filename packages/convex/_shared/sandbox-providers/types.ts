@@ -15,8 +15,6 @@ export interface SandboxSpawnOptions {
   ttlSeconds: number;
   /** TTL action (e.g., "pause", "stop") */
   ttlAction?: string;
-  /** Environment variables to inject */
-  env: Record<string, string>;
   /** Metadata for tracking */
   metadata: Record<string, unknown>;
 }

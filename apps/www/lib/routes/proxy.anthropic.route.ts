@@ -16,7 +16,10 @@ async function verifyConversationJwt(token: string): Promise<{
     const secret = new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET);
     const { payload } = await jwtVerify(token, secret);
 
-    if (typeof payload.conversationId === "string" && typeof payload.teamId === "string") {
+    if (
+      typeof payload.conversationId === "string" &&
+      typeof payload.teamId === "string"
+    ) {
       return {
         conversationId: payload.conversationId,
         teamId: payload.teamId,
@@ -52,9 +55,11 @@ proxyAnthropicRouter.all("/proxy/anthropic/*", async (c) => {
     return c.json({ error: "Invalid conversation token" }, 401);
   }
 
-  console.log(`[proxy.anthropic] Authenticated request for conversation ${jwtPayload.conversationId}`);
+  console.log(
+    `[proxy.anthropic] Authenticated request for conversation ${jwtPayload.conversationId}`,
+  );
 
-  const path = c.req.path.replace("/api/proxy/anthropic", "");
+  const path = c.req.path.replace("/proxy/anthropic", "");
   const queryString = c.req.raw.url.includes("?")
     ? "?" + c.req.raw.url.split("?")[1]
     : "";
@@ -67,14 +72,16 @@ proxyAnthropicRouter.all("/proxy/anthropic/*", async (c) => {
   for (const [key, value] of c.req.raw.headers.entries()) {
     const lowerKey = key.toLowerCase();
     // Skip hop-by-hop headers and auth (we add our own)
-    if ([
-      "host",
-      "content-length",
-      "transfer-encoding",
-      "connection",
-      "x-api-key",
-      "authorization",
-    ].includes(lowerKey)) {
+    if (
+      [
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "x-api-key",
+        "authorization",
+      ].includes(lowerKey)
+    ) {
       continue;
     }
     headers.set(key, value);
@@ -87,9 +94,10 @@ proxyAnthropicRouter.all("/proxy/anthropic/*", async (c) => {
   const response = await fetch(upstreamUrl, {
     method: c.req.method,
     headers,
-    body: c.req.method !== "GET" && c.req.method !== "HEAD"
-      ? await c.req.raw.arrayBuffer()
-      : undefined,
+    body:
+      c.req.method !== "GET" && c.req.method !== "HEAD"
+        ? await c.req.raw.arrayBuffer()
+        : undefined,
   });
 
   // Build response headers, filtering hop-by-hop

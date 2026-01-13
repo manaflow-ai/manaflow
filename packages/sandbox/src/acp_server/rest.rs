@@ -15,10 +15,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
 
+use super::api_proxy::ConversationApiProxies;
 use super::callback::{CallbackClient, StopReason};
 use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationMode};
 
@@ -41,9 +42,15 @@ pub struct RestApiState {
     /// Active conversations: conversation_id -> ConversationState
     conversations: Arc<DashMap<String, Arc<ConversationState>>>,
     /// Callback client for sending updates to Convex (required for persistence)
-    callback_client: Option<Arc<CallbackClient>>,
+    /// Uses RwLock to allow runtime configuration via /api/acp/configure endpoint
+    callback_client: Arc<RwLock<Option<Arc<CallbackClient>>>>,
     /// Default working directory for CLIs
     default_cwd: PathBuf,
+    /// Sandbox ID (Convex document ID) - set via configure endpoint
+    sandbox_id: Arc<RwLock<Option<String>>>,
+    /// Per-conversation API proxies (set via configure endpoint)
+    /// Routes CLI API requests through outer proxy with JWT authentication
+    api_proxies: Arc<RwLock<Option<Arc<ConversationApiProxies>>>>,
 }
 
 impl RestApiState {
@@ -51,15 +58,25 @@ impl RestApiState {
     pub fn new() -> Self {
         Self {
             conversations: Arc::new(DashMap::new()),
-            callback_client: None,
+            callback_client: Arc::new(RwLock::new(None)),
             default_cwd: PathBuf::from("/workspace"),
+            sandbox_id: Arc::new(RwLock::new(None)),
+            api_proxies: Arc::new(RwLock::new(None)),
         }
     }
 
-    /// Set the callback client for Convex persistence.
+    /// Set the callback client for Convex persistence (at startup).
     /// This is the ONLY way the sandbox can communicate back to Convex.
-    pub fn with_callback_client(mut self, client: CallbackClient) -> Self {
-        self.callback_client = Some(Arc::new(client));
+    pub fn with_callback_client(self, client: CallbackClient) -> Self {
+        // Synchronously set (at startup)
+        let client_lock = self.callback_client.clone();
+        tokio::task::block_in_place(|| {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                let mut guard = client_lock.write().await;
+                *guard = Some(Arc::new(client));
+            });
+        });
         self
     }
 
@@ -67,6 +84,63 @@ impl RestApiState {
     pub fn with_default_cwd(mut self, cwd: PathBuf) -> Self {
         self.default_cwd = cwd;
         self
+    }
+
+    /// Configure the server with callback settings at runtime.
+    /// Called via /api/acp/configure endpoint after spawn.
+    pub async fn configure(
+        &self,
+        callback_url: String,
+        sandbox_jwt: String,
+        sandbox_id: String,
+        api_proxy_url: Option<String>,
+    ) -> Result<(), String> {
+        // Set callback client
+        let client = CallbackClient::new(callback_url, sandbox_jwt.clone());
+        {
+            let mut guard = self.callback_client.write().await;
+            *guard = Some(Arc::new(client));
+        }
+        // Set sandbox ID
+        {
+            let mut guard = self.sandbox_id.write().await;
+            *guard = Some(sandbox_id);
+        }
+        // Start API proxies if proxy URL is provided
+        if let Some(proxy_url) = api_proxy_url {
+            info!(api_proxy_url = %proxy_url, "Starting per-conversation API proxies");
+            let proxies = ConversationApiProxies::start(
+                &proxy_url,
+                Some(sandbox_jwt),
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .map_err(|e| format!("Failed to start API proxies: {}", e))?;
+
+            if let Some(ref proxy) = proxies.anthropic {
+                info!(base_url = %proxy.base_url(), "Anthropic proxy started");
+            }
+
+            let mut guard = self.api_proxies.write().await;
+            *guard = Some(Arc::new(proxies));
+        }
+        Ok(())
+    }
+
+    /// Get environment variables to set for spawned CLIs.
+    /// Returns proxy URLs if proxies are configured.
+    pub async fn get_cli_env_vars(&self) -> Vec<(String, String)> {
+        let guard = self.api_proxies.read().await;
+        if let Some(ref proxies) = *guard {
+            proxies.env_vars()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get the callback client (if configured).
+    pub async fn get_callback_client(&self) -> Option<Arc<CallbackClient>> {
+        self.callback_client.read().await.clone()
     }
 }
 
@@ -285,6 +359,82 @@ pub struct PromptResponse {
     pub error: Option<String>,
 }
 
+/// Request to configure the sandbox after spawn.
+/// Called by Convex to inject callback settings into a running sandbox.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ConfigureRequest {
+    /// Convex callback URL for posting state updates.
+    #[serde(rename = "callback_url")]
+    pub callback_url: String,
+    /// JWT token for authenticating callbacks to Convex AND API proxy requests.
+    #[serde(rename = "sandbox_jwt")]
+    pub sandbox_jwt: String,
+    /// Sandbox ID (Convex document ID) for this instance.
+    #[serde(rename = "sandbox_id")]
+    pub sandbox_id: String,
+    /// API proxy base URL (e.g., "https://cmux.sh/api").
+    /// If provided, spawned CLIs will route API requests through this proxy.
+    #[serde(rename = "api_proxy_url")]
+    pub api_proxy_url: Option<String>,
+}
+
+/// Response from configure endpoint.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigureResponse {
+    /// Whether configuration succeeded
+    pub success: bool,
+}
+
+/// Configure the sandbox with Convex callback settings.
+///
+/// Called by Convex immediately after spawning the sandbox. This is necessary
+/// because Morph uses memory snapshots - environment variables passed at spawn
+/// time are not available to processes that were already running in the snapshot.
+#[utoipa::path(
+    post,
+    path = "/api/acp/configure",
+    request_body = ConfigureRequest,
+    responses(
+        (status = 200, description = "Configuration accepted", body = ConfigureResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "acp"
+)]
+pub async fn configure(
+    State(state): State<RestApiState>,
+    Json(request): Json<ConfigureRequest>,
+) -> Result<Json<ConfigureResponse>, (StatusCode, Json<ErrorResponse>)> {
+    info!(
+        sandbox_id = %request.sandbox_id,
+        callback_url = %request.callback_url,
+        api_proxy_url = ?request.api_proxy_url,
+        "Configuring sandbox"
+    );
+
+    if let Err(e) = state
+        .configure(
+            request.callback_url.clone(),
+            request.sandbox_jwt.clone(),
+            request.sandbox_id.clone(),
+            request.api_proxy_url.clone(),
+        )
+        .await
+    {
+        error!(error = %e, "Failed to configure sandbox");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: Some("CONFIGURE_FAILED".to_string()),
+            }),
+        ));
+    }
+
+    info!(sandbox_id = %request.sandbox_id, "Sandbox configured");
+
+    Ok(Json(ConfigureResponse { success: true }))
+}
+
 /// Initialize a conversation on this sandbox.
 ///
 /// Called by Convex to assign a new conversation to this sandbox.
@@ -333,8 +483,15 @@ pub async fn init_conversation(
         PathBuf::from(&request.cwd)
     };
 
-    // Spawn CLI process
-    let spawner = CliSpawner::new(provider, cwd.clone(), SpawnerIsolationMode::None);
+    // Get env vars for CLI (proxy URLs if configured)
+    let env_vars = state.get_cli_env_vars().await;
+    info!(env_vars = ?env_vars, env_count = env_vars.len(), "CLI environment variables for API proxy");
+
+    // Spawn CLI process with env vars
+    let mut spawner = CliSpawner::new(provider, cwd.clone(), SpawnerIsolationMode::None);
+    for (key, value) in env_vars {
+        spawner = spawner.with_env(key, value);
+    }
     let mut cli = match spawner.spawn().await {
         Ok(cli) => cli,
         Err(e) => {
@@ -407,7 +564,7 @@ pub async fn init_conversation(
 
     // Always spawn stdout reader task to consume CLI output (prevents EPIPE)
     // In callback mode, send updates to Convex; otherwise just log
-    let callback_client = state.callback_client.clone();
+    let callback_client = state.get_callback_client().await;
     let conversation_id = request.conversation_id.clone();
     let current_message_id = conversation_state.current_message_id.clone();
 

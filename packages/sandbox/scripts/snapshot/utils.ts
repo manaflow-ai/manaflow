@@ -10,7 +10,7 @@ import path from "node:path";
 // Path to the unified manifest
 export const MANIFEST_PATH = path.join(
   import.meta.dirname,
-  "../../packages/shared/src/sandbox-snapshots.json"
+  "../../../shared/src/sandbox-snapshots.json"
 );
 
 export interface SnapshotPreset {
@@ -96,41 +96,6 @@ export function getSnapshotId(
   const manifest = loadManifest();
   return manifest.providers[provider]?.presets[preset]?.snapshotId;
 }
-
-/**
- * Common provisioning commands for ACP sandbox setup.
- */
-export const PROVISIONING_COMMANDS = [
-  // Basic system setup
-  "apt-get update",
-  "DEBIAN_FRONTEND=noninteractive apt-get install -y curl git build-essential pkg-config libssl-dev ca-certificates",
-
-  // Install Node.js 22 (for Claude Code ACP)
-  "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
-  "apt-get install -y nodejs",
-  "node --version && npm --version",
-
-  // Install Bun
-  "curl -fsSL https://bun.sh/install | bash",
-  'export BUN_INSTALL="$HOME/.bun" && export PATH="$BUN_INSTALL/bin:$PATH" && bun --version',
-
-  // Install Rust (for cmux-acp-server)
-  "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
-  'source "$HOME/.cargo/env" && rustc --version',
-
-  // Install uv/Python
-  "curl -LsSf https://astral.sh/uv/install.sh | sh",
-  'export PATH="$HOME/.local/bin:$PATH" && uv --version',
-
-  // Install Claude Code ACP
-  "npm install -g @zed-industries/claude-code-acp@latest",
-
-  // Create cmux directories
-  "mkdir -p /etc/cmux /var/log/cmux /workspace",
-
-  // Verify installations
-  "echo '=== Installation Summary ===' && node --version && npm --version",
-];
 
 /**
  * Print a section header.

@@ -618,7 +618,7 @@ impl ConversationApiProxies {
     /// Start per-conversation proxies that forward to outer proxy.
     ///
     /// # Arguments
-    /// * `api_proxy_url` - Base URL of the API proxy (e.g., "https://cmux.sh/api")
+    /// * `api_proxy_url` - Base URL of the API proxy (e.g., "https://cmux.sh")
     /// * `initial_jwt` - Optional initial JWT (can be set later)
     /// * `jwt_timeout` - How long to wait for JWT if not set when request arrives
     pub async fn start(
@@ -626,8 +626,8 @@ impl ConversationApiProxies {
         initial_jwt: Option<String>,
         jwt_timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
-        // Anthropic proxy URL
-        let anthropic_outer_url = format!("{}/proxy/anthropic", api_proxy_url);
+        // Anthropic proxy URL - note the /api/ prefix for Hono basePath
+        let anthropic_outer_url = format!("{}/api/proxy/anthropic", api_proxy_url);
         let anthropic =
             ConversationApiProxy::start(anthropic_outer_url, initial_jwt.clone(), jwt_timeout)
                 .await?;
@@ -653,15 +653,27 @@ impl ConversationApiProxies {
     }
 
     /// Get environment variables to set for CLI processes.
+    /// Sets both the base URL (to route through proxy) and a placeholder API key
+    /// (so the CLI doesn't reject requests before they reach the proxy).
     pub fn env_vars(&self) -> Vec<(String, String)> {
         let mut vars = Vec::new();
 
         if let Some(ref proxy) = self.anthropic {
             vars.push(("ANTHROPIC_BASE_URL".to_string(), proxy.base_url()));
+            // Set a placeholder API key - the proxy will inject the real one
+            vars.push((
+                "ANTHROPIC_API_KEY".to_string(),
+                "sk-ant-proxy-placeholder".to_string(),
+            ));
         }
 
         if let Some(ref proxy) = self.openai {
             vars.push(("OPENAI_BASE_URL".to_string(), proxy.base_url()));
+            // Set a placeholder API key - the proxy will inject the real one
+            vars.push((
+                "OPENAI_API_KEY".to_string(),
+                "sk-openai-proxy-placeholder".to_string(),
+            ));
         }
 
         vars
