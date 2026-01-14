@@ -12,4 +12,4 @@ export const ANTHROPIC_MODEL_OPUS_45 =
   "global.anthropic.claude-opus-4-5-20251101-v1:0";
 export const ANTHROPIC_MODEL_HAIKU_45 =
   "us.anthropic.claude-haiku-4-5-20251001-v1:0";
-export const BEDROCK_AWS_REGION = "us-west-1";
+export const BEDROCK_AWS_REGION = "us-east-1";

@@ -18,6 +18,7 @@ export const env = createEnv({
     OPENAI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     VERTEX_PRIVATE_KEY: z.string().min(1).optional(),
+    AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
     MORPH_API_KEY: z.string().min(1).optional(),
     CMUX_IS_STAGING: z.string().optional(),
     CONVEX_IS_PRODUCTION: z.string().optional(),

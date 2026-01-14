@@ -26,7 +26,12 @@ import {
   syncRelease as syncHostScreenshotCollectorRelease,
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
-import { anthropicProxy } from "./anthropic_http";
+import {
+  anthropicProxy,
+  anthropicProxyVertex,
+  anthropicCountTokens,
+  anthropicEventLogging,
+} from "./anthropic_http";
 
 const http = httpRouter();
 
@@ -154,6 +159,25 @@ http.route({
   path: "/api/anthropic/v1/messages",
   method: "POST",
   handler: anthropicProxy,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages/count_tokens",
+  method: "POST",
+  handler: anthropicCountTokens,
+});
+
+http.route({
+  path: "/api/anthropic/api/event_logging/batch",
+  method: "POST",
+  handler: anthropicEventLogging,
+});
+
+// DEPRECATED: Vertex AI proxy - kept for reference, always returns 503
+http.route({
+  path: "/api/anthropic-vertex/v1/messages",
+  method: "POST",
+  handler: anthropicProxyVertex,
 });
 
 export default http;
