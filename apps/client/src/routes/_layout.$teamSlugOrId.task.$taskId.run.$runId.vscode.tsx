@@ -15,6 +15,7 @@ import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "../lib/preloadTaskRunIframes";
+import { persistentIframeManager } from "@/lib/persistentIframeManager";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 import {
   localVSCodeServeWebQueryOptions,
@@ -90,6 +91,7 @@ function VSCodeComponent() {
   const rawWorkspaceUrl = taskRun?.vscode?.workspaceUrl;
   const vsCodeProvider = taskRun?.vscode?.provider;
   const vsCodeStatusMessage = taskRun?.vscode?.statusMessage;
+  const vsCodeStatus = taskRun?.vscode?.status ?? null;
   const taskRunStatus = taskRun?.status;
   const taskRunErrorMessage = taskRun?.errorMessage;
   const localServeWebBaseUrl = localServeWeb.data?.baseUrl;
@@ -117,6 +119,8 @@ function VSCodeComponent() {
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
   const prevWorkspaceUrlRef = useRef<string | null>(null);
+  const prevVSCodeStatusRef = useRef<string | null>(null);
+  const hasSeenVSCodeStatusRef = useRef(false);
 
   // Only reset to loading when the URL actually changes to a different value
   // This prevents flickering when the URL reference changes but the value is the same
@@ -130,6 +134,20 @@ function VSCodeComponent() {
       prevWorkspaceUrlRef.current = workspaceUrl;
     }
   }, [workspaceUrl]);
+
+  useEffect(() => {
+    if (!hasSeenVSCodeStatusRef.current) {
+      hasSeenVSCodeStatusRef.current = true;
+      prevVSCodeStatusRef.current = vsCodeStatus;
+      return;
+    }
+    const prevStatus = prevVSCodeStatusRef.current;
+    if (prevStatus !== "running" && vsCodeStatus === "running" && workspaceUrl) {
+      // Reload once after hydration to ensure SCM providers register reliably.
+      persistentIframeManager.reloadIframe(persistKey);
+    }
+    prevVSCodeStatusRef.current = vsCodeStatus;
+  }, [persistKey, vsCodeStatus, workspaceUrl]);
 
   // Stable callback for status changes - setIframeStatus is already stable
   const handleStatusChange = useCallback(
