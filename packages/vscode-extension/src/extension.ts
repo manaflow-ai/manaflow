@@ -47,6 +47,51 @@ function log(message: string, ...args: unknown[]) {
   }
 }
 
+/**
+ * Wait for the Git extension to discover repositories.
+ * The Git extension activates before repository discovery completes,
+ * so we need to wait for repositories to appear.
+ */
+async function waitForGitRepository(
+  api: { repositories: Array<{ rootUri: { fsPath: string } }>; onDidOpenRepository: (cb: (repo: unknown) => void) => { dispose: () => void } },
+  maxWaitMs: number = 10000
+): Promise<{ rootUri: { fsPath: string } } | null> {
+  // Check if repository is already available
+  if (api.repositories.length > 0) {
+    return api.repositories[0];
+  }
+
+  // Wait for repository to be discovered
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      disposable.dispose();
+      log("Timed out waiting for Git repository discovery");
+      resolve(null);
+    }, maxWaitMs);
+
+    const disposable = api.onDidOpenRepository((repo) => {
+      clearTimeout(timeout);
+      disposable.dispose();
+      log("Git repository discovered via onDidOpenRepository");
+      resolve(repo as { rootUri: { fsPath: string } });
+    });
+
+    // Also poll in case the event was missed
+    const pollInterval = setInterval(() => {
+      if (api.repositories.length > 0) {
+        clearTimeout(timeout);
+        clearInterval(pollInterval);
+        disposable.dispose();
+        log("Git repository discovered via polling");
+        resolve(api.repositories[0]);
+      }
+    }, 500);
+
+    // Clean up poll interval on timeout
+    setTimeout(() => clearInterval(pollInterval), maxWaitMs);
+  });
+}
+
 async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   try {
     const out = execSync(
@@ -123,12 +168,14 @@ async function openMultiDiffEditor(
   const git = gitExtension.exports;
   const api = git.getAPI(1);
 
-  // Get the first repository (or you can select a specific one)
-  const repository = api.repositories[0];
+  // Wait for repository to be discovered (Git extension activates before discovery completes)
+  log("Waiting for Git repository to be discovered...");
+  const repository = await waitForGitRepository(api);
   if (!repository) {
-    vscode.window.showErrorMessage("No Git repository found");
+    vscode.window.showErrorMessage("No Git repository found (timed out waiting for discovery)");
     return;
   }
+  log("Git repository found:", repository.rootUri.fsPath);
 
   const repoPath = repository.rootUri.fsPath;
   log("Repository path:", repoPath);
@@ -462,7 +509,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (gitExtension) {
           const git = gitExtension.exports;
           const api = git.getAPI(1);
-          const repository = api.repositories[0];
+          // Repository should already be discovered since openMultiDiffEditor was just called,
+          // but use waitForGitRepository for consistency
+          const repository = await waitForGitRepository(api, 5000);
 
           if (repository) {
             const repoPath = repository.rootUri.fsPath;
