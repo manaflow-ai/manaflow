@@ -67,7 +67,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
     const requestedModel = body.model;
 
     if (useUserApiKey) {
-      // Pass through all original headers like WWW does
+      // User provided their own Anthropic API key - proxy directly to Anthropic
       const headers: Record<string, string> = {};
       req.headers.forEach((value, key) => {
         // Skip hop-by-hop headers and internal headers
@@ -87,23 +87,11 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         }
       );
 
-      // If auth fails, fall back to Bedrock
-      if (response.status === 401) {
-        const errorData = await response.json();
-        console.log(
-          "[anthropic-proxy] Invalid API key, falling back to AWS Bedrock",
-          {
-            model: requestedModel,
-            error: errorData,
-          }
-        );
-        // Continue to Bedrock path below
-      } else {
-        return handleResponse(response, body.stream);
-      }
+      // Return response directly to user (including any errors)
+      return handleResponse(response, body.stream);
     }
 
-    // AWS Bedrock path: either placeholder key or fallback from invalid user key
+    // AWS Bedrock path: using platform credits (placeholder key)
     {
       const bedrockToken = env.AWS_BEARER_TOKEN_BEDROCK;
       if (!bedrockToken) {
