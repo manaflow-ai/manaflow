@@ -28,12 +28,20 @@ fi
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
+# Read review guidelines
+REVIEW_GUIDELINES=""
+if [ -f "$CLAUDE_PROJECT_DIR/REVIEW.md" ]; then
+  REVIEW_GUIDELINES=$(cat "$CLAUDE_PROJECT_DIR/REVIEW.md")
+fi
+
 # Run codex with unbuffer to capture TTY output (script doesn't work without real TTY)
 unbuffer codex \
   --dangerously-bypass-approvals-and-sandbox \
   --model gpt-5.2-codex \
   -c model_reasoning_effort="high" \
-  review --base "Review compared to main, including including staged, unstaged, and untracked changes." > "$TMPFILE" 2>&1 || true
+  review --base "Review compared to main, including including staged, unstaged, and untracked changes.
+
+$REVIEW_GUIDELINES" > "$TMPFILE" 2>&1 || true
 
 # Strip ANSI codes first, then extract final codex response
 CLEAN=$(sed 's/\x1b\[[0-9;]*m//g' "$TMPFILE")
