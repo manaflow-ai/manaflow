@@ -1111,6 +1111,7 @@ COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-pro
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
 COPY configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+COPY configs/systemd/cmux-swap-activate.service /usr/lib/systemd/system/cmux-swap-activate.service
 COPY configs/systemd/cmux-ide.service.template /usr/lib/systemd/system/cmux-ide.service.template
 COPY configs/systemd/cmux.target.docker.drop-in.conf /usr/lib/systemd/system/cmux.target.docker.drop-in.conf
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
@@ -1172,6 +1173,8 @@ ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.t
 ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/multi-user.target.wants/${IDE_SERVICE}
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
+ln -sf /usr/lib/systemd/system/cmux-swap-activate.service /etc/systemd/system/swap.target.wants/cmux-swap-activate.service
+ln -sf /usr/lib/systemd/system/cmux-swap-activate.service /etc/systemd/system/cmux.target.wants/cmux-swap-activate.service
 mkdir -p /opt/app/overlay/upper /opt/app/overlay/work
 printf 'CMUX_ROOTFS=/\nCMUX_RUNTIME_ROOT=/\nCMUX_OVERLAY_UPPER=/opt/app/overlay/upper\nCMUX_OVERLAY_WORK=/opt/app/overlay/work\n' > /opt/app/app.env
 EOF

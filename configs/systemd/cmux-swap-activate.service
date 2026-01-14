@@ -1,0 +1,15 @@
+[Unit]
+Description=Activate swap devices on instance resume
+DefaultDependencies=no
+After=local-fs.target
+Before=swap.target cmux.target
+ConditionPathExists=/var/swap/cmux-swapfile
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'swapon -a 2>/dev/null || true; sysctl -q -p /etc/sysctl.d/99-cmux-memory.conf 2>/dev/null || true'
+RemainAfterExit=no
+
+[Install]
+WantedBy=swap.target
+WantedBy=cmux.target

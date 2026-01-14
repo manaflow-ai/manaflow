@@ -1784,6 +1784,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+        install -Dm0644 {repo}/configs/systemd/cmux-swap-activate.service /usr/lib/systemd/system/cmux-swap-activate.service
         install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
         install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
         install -Dm0755 {repo}/configs/systemd/bin/code /usr/local/bin/code
@@ -1806,6 +1807,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
+        ln -sf /usr/lib/systemd/system/cmux-swap-activate.service /etc/systemd/system/swap.target.wants/cmux-swap-activate.service
+        ln -sf /usr/lib/systemd/system/cmux-swap-activate.service /etc/systemd/system/cmux.target.wants/cmux-swap-activate.service
         {{ systemctl daemon-reload || true; }}
         {{ systemctl enable cmux.target || true; }}
         chown root:root /usr/local
