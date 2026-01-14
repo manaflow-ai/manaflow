@@ -95,7 +95,18 @@ before_free="$(capture_output free -h || true)"
 before_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
 before_zram="$(capture_output zramctl || true)"
 
-declare -a candidate_units=(ssh.service sshd.service cmux-ide.service cmux-openvscode.service code-server.service openvscode-server.service)
+declare -a candidate_units=(
+  ssh.service
+  sshd.service
+  cmux-ide.service
+  cmux-openvscode.service
+  cmux-coder.service
+  cmux-cmux-code.service
+  code-server.service
+  openvscode-server.service
+  cmux-worker.service
+  cmux-pty.service
+)
 declare -a report_units=()
 
 for unit in "${candidate_units[@]}"; do
@@ -401,12 +412,14 @@ declare -A memory_low_map=(
   [sshd.service]="256M"
   [cmux-ide.service]="2G"
   [cmux-openvscode.service]="2G"
+  [cmux-coder.service]="2G"
+  [cmux-cmux-code.service]="2G"
   [code-server.service]="2G"
   [openvscode-server.service]="2G"
 )
 
 managed_units=()
-dropin_content_template=$'[Service]\nMemoryLow=%s\nCPUWeight=200\nIOWeight=200\n'
+dropin_content_template=$'[Service]\nMemoryLow=%s\nMemorySwapMax=infinity\nCPUWeight=200\nIOWeight=200\n'
 
 for unit in "${!memory_low_map[@]}"; do
   if ! systemctl cat "$unit" >/dev/null 2>&1; then
@@ -425,12 +438,33 @@ for unit in "${!memory_low_map[@]}"; do
   fi
 done
 
+swap_only_units=(
+  cmux-worker.service
+  cmux-pty.service
+)
+swap_dropin_content=$'[Service]\nMemorySwapMax=infinity\n'
+for unit in "${swap_only_units[@]}"; do
+  if ! systemctl cat "$unit" >/dev/null 2>&1; then
+    log "Unit ${unit} not present; skipping swap drop-in."
+    continue
+  fi
+  add_unique "$unit" report_units
+  add_unique "$unit" managed_units
+  dropin_dir="/etc/systemd/system/${unit}.d"
+  mkdir -p "$dropin_dir"
+  if write_file_if_changed "${dropin_dir}/95-cmux-swap.conf" "0644" "$swap_dropin_content"; then
+    log "Updated swap drop-in for ${unit}"
+  else
+    log "Swap drop-in for ${unit} already up to date"
+  fi
+done
+
 if [ "${#managed_units[@]}" -gt 0 ]; then
   systemctl daemon-reload || true
   for unit in "${managed_units[@]}"; do
     systemctl try-restart "$unit" || true
   done
-  summary+=("Applied MemoryLow and CPU/IO weights to ${#managed_units[@]} systemd units.")
+  summary+=("Applied memory protections to ${#managed_units[@]} systemd units (MemoryLow/CPU/IO and swap limits).")
 else
   log "No systemd units required drop-ins."
 fi
