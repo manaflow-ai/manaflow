@@ -497,36 +497,34 @@ export const spawnSandbox = internalAction({
       callbackJwtHash: "pending",
     });
 
-    // Generate callback JWT
-    const { jwt: callbackJwt, hash: callbackJwtHash } =
-      await generateSandboxJwt(sandboxId, args.teamId);
+    // Parallelize: JWT generation + Morph spawn (both only need sandboxId)
+    const [jwtResult, instance] = await Promise.all([
+      generateSandboxJwt(sandboxId, args.teamId),
+      provider.spawn({
+        teamId: args.teamId,
+        snapshotId,
+        ttlSeconds: 3600, // 1 hour
+        ttlAction: "pause",
+        metadata: {
+          sandboxId,
+        },
+      }),
+    ]);
 
-    // Update sandbox with JWT hash
-    await ctx.runMutation(internal.acp.updateSandboxJwtHash, {
-      sandboxId,
-      callbackJwtHash,
-    });
+    const { jwt: callbackJwt, hash: callbackJwtHash } = jwtResult;
 
-    // Spawn sandbox instance via provider
-    // NOTE: We don't pass env vars here because Morph uses memory snapshots,
-    // so the cmux-acp-server process won't see them. Instead, we call the
-    // /api/acp/configure endpoint after spawn to inject the configuration.
-    const instance = await provider.spawn({
-      teamId: args.teamId,
-      snapshotId,
-      ttlSeconds: 3600, // 1 hour
-      ttlAction: "pause",
-      metadata: {
+    // Update sandbox with JWT hash and instance ID (parallel mutations)
+    await Promise.all([
+      ctx.runMutation(internal.acp.updateSandboxJwtHash, {
         sandboxId,
-      },
-    });
-
-    // Update sandbox with provider instance ID and URL
-    await ctx.runMutation(internal.acp.updateSandboxInstanceId, {
-      sandboxId,
-      instanceId: instance.instanceId,
-      sandboxUrl: instance.sandboxUrl,
-    });
+        callbackJwtHash,
+      }),
+      ctx.runMutation(internal.acp.updateSandboxInstanceId, {
+        sandboxId,
+        instanceId: instance.instanceId,
+        sandboxUrl: instance.sandboxUrl,
+      }),
+    ]);
 
     // Configure the sandbox with callback settings
     // This is necessary because Morph uses memory snapshots - processes running

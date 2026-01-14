@@ -145,7 +145,7 @@ async function runTests() {
       teamId: TEST_TEAM_ID,
       userId: "e2e-test-user",
       sessionId,
-      providerId: "codex",
+      providerId: "claude",
       cwd: "/workspace",
       acpSandboxId: sandboxId,
       initializedOnSandbox: false,
@@ -218,7 +218,7 @@ async function runTests() {
         content: [
           {
             type: "text",
-            text: "Say 'E2E test successful'. Respond with just that phrase.",
+            text: "1+1",
           },
         ],
       }),
