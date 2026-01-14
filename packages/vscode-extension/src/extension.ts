@@ -270,6 +270,50 @@ async function waitForTmuxSession(
   return false;
 }
 
+/**
+ * Wait for the Git extension to be activated AND have at least one SCM provider registered.
+ * This addresses the flaky "No Source Control Providers Registered" error that occurs
+ * when the SCM view is opened before the Git extension has finished registering its providers.
+ */
+async function waitForGitScmProvider(
+  maxAttempts: number = 10,
+  delayMs: number = 500
+): Promise<boolean> {
+  const gitExtension = vscode.extensions.getExtension("vscode.git");
+  if (!gitExtension) {
+    log("Git extension not found");
+    return false;
+  }
+
+  // First, ensure the git extension is activated
+  if (!gitExtension.isActive) {
+    log("Activating git extension...");
+    await gitExtension.activate();
+    log("Git extension activated");
+  }
+
+  // Now wait for the git extension to have at least one repository registered
+  // The SCM provider is registered once the Git extension discovers a repository
+  const git = gitExtension.exports;
+  const api = git.getAPI(1);
+
+  for (let i = 1; i <= maxAttempts; i++) {
+    // Check if there are any repositories registered
+    if (api.repositories.length > 0) {
+      log(`Git SCM provider ready with ${api.repositories.length} repository(s) on attempt ${i}`);
+      return true;
+    }
+
+    log(`Waiting for Git SCM provider... (attempt ${i}/${maxAttempts})`);
+    if (i < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  log(`Git SCM provider not ready after ${maxAttempts} attempts`);
+  return false;
+}
+
 async function setupDefaultTerminal() {
   log("Setting up default terminal");
 
@@ -347,12 +391,26 @@ async function setupDefaultTerminal() {
   }
 
   if (!preserveFocus) {
-    // Run all UI setup in parallel
-    log("Setting up SCM view, multi-diff editor in parallel...");
-    await Promise.all([
-      vscode.commands.executeCommand("workbench.view.scm"),
-      openMultiDiffEditor(),
-    ]);
+    // Wait for Git SCM provider to be ready before opening the SCM view
+    // This prevents the "No Source Control Providers Registered" error
+    log("Waiting for Git SCM provider before opening SCM view...");
+    const gitReady = await waitForGitScmProvider();
+
+    if (gitReady) {
+      // Now it's safe to open SCM view and multi-diff editor in parallel
+      log("Setting up SCM view, multi-diff editor in parallel...");
+      await Promise.all([
+        vscode.commands.executeCommand("workbench.view.scm"),
+        openMultiDiffEditor(),
+      ]);
+    } else {
+      // Git provider not ready - still try to open the view but log the issue
+      log("Git SCM provider not ready, attempting to open views anyway...");
+      await Promise.all([
+        vscode.commands.executeCommand("workbench.view.scm"),
+        openMultiDiffEditor(),
+      ]);
+    }
   } else {
     log("Skipping SCM/multi-diff setup due to existing tabs");
   }
