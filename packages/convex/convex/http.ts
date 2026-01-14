@@ -177,4 +177,10 @@ http.route({
   handler: openaiProxy,
 });
 
+http.route({
+  path: "/api/openai/v1/responses/compact",
+  method: "POST",
+  handler: openaiProxy,
+});
+
 export default http;
