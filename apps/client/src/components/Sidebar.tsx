@@ -243,6 +243,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           "--sidebar-width": `${width}px`,
         } as CSSProperties
       }
+      data-tour="sidebar"
     >
       <div
         className={`h-[38px] flex items-center pr-0.5 shrink-0 ${isElectron ? "" : "pl-3"}`}

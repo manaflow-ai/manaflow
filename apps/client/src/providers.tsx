@@ -1,3 +1,4 @@
+import { OnboardingTourProvider } from "@/components/onboarding-tour";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HeroUIProvider } from "@heroui/react";
@@ -29,7 +30,11 @@ export function Providers({ children }: ProvidersProps) {
               <TooltipProvider delayDuration={700} skipDelayDuration={300}>
                 <HeroUIProvider>
                   <RootErrorBoundary>
-                    <AntdProvider>{children}</AntdProvider>
+                    <AntdProvider>
+                      <OnboardingTourProvider>
+                        {children}
+                      </OnboardingTourProvider>
+                    </AntdProvider>
                   </RootErrorBoundary>
                 </HeroUIProvider>
               </TooltipProvider>

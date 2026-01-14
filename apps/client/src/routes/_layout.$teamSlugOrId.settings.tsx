@@ -2,10 +2,11 @@ import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { EditorSettingsSection } from "@/components/EditorSettingsSection";
 import { FloatingPane } from "@/components/floating-pane";
+import { useOnboardingTour } from "@/components/onboarding-tour";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, GraduationCap } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -907,6 +908,9 @@ function SettingsComponent() {
               </div>
             </div>
 
+            {/* Onboarding Tour */}
+            <OnboardingSection />
+
             {/* Crown Evaluator */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
               <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
@@ -1596,5 +1600,55 @@ function SettingsComponent() {
         </div>
       </div>
     </FloatingPane>
+  );
+}
+
+function OnboardingSection() {
+  const { startTour, hasCompletedOnboarding, resetOnboarding } =
+    useOnboardingTour();
+
+  return (
+    <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+      <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+          Getting Started
+        </h2>
+      </div>
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 bg-blue-50 dark:bg-blue-950/30 rounded-lg flex items-center justify-center">
+              <GraduationCap className="w-4.5 h-4.5 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                Product Tour
+              </p>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                {hasCompletedOnboarding
+                  ? "You've completed the tour. Restart it anytime to refresh your memory."
+                  : "Take a quick tour to learn how to use cmux effectively."}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {hasCompletedOnboarding && (
+              <button
+                onClick={resetOnboarding}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
+              >
+                Reset
+              </button>
+            )}
+            <button
+              onClick={startTour}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 dark:bg-blue-500 rounded-md hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
+            >
+              {hasCompletedOnboarding ? "Restart Tour" : "Start Tour"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

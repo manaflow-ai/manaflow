@@ -1186,16 +1186,18 @@ function DashboardMainCard({
 }: DashboardMainCardProps) {
   return (
     <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
-      <DashboardInput
-        ref={editorApiRef}
-        onTaskDescriptionChange={onTaskDescriptionChange}
-        onSubmit={onSubmit}
-        repoUrl={lexicalRepoUrl}
-        environmentId={lexicalEnvironmentId}
-        branch={lexicalBranch}
-        persistenceKey="dashboard-task-description"
-        maxHeight="300px"
-      />
+      <div data-tour="task-input">
+        <DashboardInput
+          ref={editorApiRef}
+          onTaskDescriptionChange={onTaskDescriptionChange}
+          onSubmit={onSubmit}
+          repoUrl={lexicalRepoUrl}
+          environmentId={lexicalEnvironmentId}
+          branch={lexicalBranch}
+          persistenceKey="dashboard-task-description"
+          maxHeight="300px"
+        />
+      </div>
 
       <DashboardInputFooter>
         <DashboardInputControls
