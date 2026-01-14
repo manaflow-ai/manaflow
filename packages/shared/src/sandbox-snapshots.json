@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-01-14T05:54:06.723Z",
+  "providers": {
+    "morph": {
+      "presets": {
+        "standard": {
+          "label": "standard",
+          "snapshotId": "snapshot_9adv964y",
+          "capturedAt": "2026-01-14T05:54:06.723Z"
+        },
+        "performance": {
+          "label": "Performance",
+          "snapshotId": "snapshot_whbzjn0r",
+          "capturedAt": "2025-12-26T06:32:46Z"
+        }
+      }
+    },
+    "freestyle": {
+      "presets": {}
+    }
+  }
+}

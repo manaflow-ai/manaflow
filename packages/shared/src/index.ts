@@ -9,6 +9,7 @@ export * from "./codeReview/callback-schemas";
 export * from "./socket-schemas";
 export * from "./terminal-config";
 export * from "./verifyTaskRunToken";
+export * from "./verifyConversationToken";
 export * from "./utils/normalize-origin";
 export * from "./utils/normalize-browser-url";
 export * from "./utils/reserved-cmux-ports";
@@ -25,6 +26,7 @@ export * from "./worker-schemas";
 export * from "./pull-request-state";
 export * from "./iframe-preflight";
 export * from "./morph-snapshots";
+export * from "./sandbox-snapshots";
 export * from "./screenshots/types";
 export * from "./config/host-config";
 // Note: useNetwork hook is NOT exported here to avoid SSR issues.

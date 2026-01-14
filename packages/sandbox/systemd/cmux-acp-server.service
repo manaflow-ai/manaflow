@@ -1,0 +1,17 @@
+[Unit]
+Description=cmux ACP server for sandbox integration
+After=network.target
+
+[Service]
+Type=simple
+# Server starts without config and waits for /api/acp/configure call
+# Include paths for bun-installed CLIs, cargo, uv, and local bins
+Environment="PATH=/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/local/bin/cmux-acp-server
+Restart=always
+RestartSec=5
+KillMode=process
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

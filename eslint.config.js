@@ -54,6 +54,7 @@ export default tseslint.config(
     'evals/**',
     'configs/**',
     'crates/**',
+    'dev-docs/**',
   ]),
 
   // Base configs for all TypeScript files

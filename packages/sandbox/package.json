@@ -1,0 +1,23 @@
+{
+  "name": "@cmux/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "snapshot": "bun run scripts/snapshot/snapshot.ts",
+    "snapshot:morph": "bun run scripts/snapshot/snapshot.ts --provider morph",
+    "snapshot:freestyle": "bun run scripts/snapshot/snapshot.ts --provider freestyle",
+    "snapshot:graph": "bun run scripts/snapshot/snapshot.ts --show-graph",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@freestyle-sh/with-bun": "^0.2.0",
+    "freestyle-sandboxes": "^0.1.6",
+    "morphcloud": "^0.0.20"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "vitest": "^4.0.16"
+  }
+}

@@ -8,14 +8,23 @@
  * @module
  */
 
+import type * as acp from "../acp.js";
+import type * as acpSandboxes from "../acpSandboxes.js";
+import type * as acp_callbacks from "../acp_callbacks.js";
+import type * as acp_http from "../acp_http.js";
+import type * as admin from "../admin.js";
 import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
 import type * as codeReview from "../codeReview.js";
 import type * as codeReviewActions from "../codeReviewActions.js";
 import type * as codeReview_http from "../codeReview_http.js";
+import type * as codexTokens from "../codexTokens.js";
+import type * as codex_oauth_http from "../codex_oauth_http.js";
 import type * as comments from "../comments.js";
 import type * as containerSettings from "../containerSettings.js";
+import type * as conversationMessages from "../conversationMessages.js";
+import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as crown from "../crown.js";
 import type * as crown_actions from "../crown/actions.js";
@@ -44,6 +53,7 @@ import type * as migrations from "../migrations.js";
 import type * as morphInstanceMaintenance from "../morphInstanceMaintenance.js";
 import type * as morphInstances from "../morphInstances.js";
 import type * as notifications_http from "../notifications_http.js";
+import type * as openai_http from "../openai_http.js";
 import type * as previewConfigs from "../previewConfigs.js";
 import type * as previewRuns from "../previewRuns.js";
 import type * as previewScreenshots from "../previewScreenshots.js";
@@ -80,14 +90,23 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  acp: typeof acp;
+  acpSandboxes: typeof acpSandboxes;
+  acp_callbacks: typeof acp_callbacks;
+  acp_http: typeof acp_http;
+  admin: typeof admin;
   anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
   codeReview: typeof codeReview;
   codeReviewActions: typeof codeReviewActions;
   codeReview_http: typeof codeReview_http;
+  codexTokens: typeof codexTokens;
+  codex_oauth_http: typeof codex_oauth_http;
   comments: typeof comments;
   containerSettings: typeof containerSettings;
+  conversationMessages: typeof conversationMessages;
+  conversations: typeof conversations;
   crons: typeof crons;
   crown: typeof crown;
   "crown/actions": typeof crown_actions;
@@ -116,6 +135,7 @@ declare const fullApi: ApiFromModules<{
   morphInstanceMaintenance: typeof morphInstanceMaintenance;
   morphInstances: typeof morphInstances;
   notifications_http: typeof notifications_http;
+  openai_http: typeof openai_http;
   previewConfigs: typeof previewConfigs;
   previewRuns: typeof previewRuns;
   previewScreenshots: typeof previewScreenshots;
