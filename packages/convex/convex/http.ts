@@ -28,7 +28,6 @@ import {
 } from "./hostScreenshotCollector_http";
 import {
   anthropicProxy,
-  anthropicProxyVertex,
   anthropicCountTokens,
   anthropicEventLogging,
 } from "./anthropic_http";
@@ -171,13 +170,6 @@ http.route({
   path: "/api/anthropic/api/event_logging/batch",
   method: "POST",
   handler: anthropicEventLogging,
-});
-
-// DEPRECATED: Vertex AI proxy - kept for reference, always returns 503
-http.route({
-  path: "/api/anthropic-vertex/v1/messages",
-  method: "POST",
-  handler: anthropicProxyVertex,
 });
 
 export default http;

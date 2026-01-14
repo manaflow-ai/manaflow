@@ -111,6 +111,52 @@ export function base64Decode(base64: string): string {
 }
 
 /**
+ * Parse AWS event stream headers.
+ * Headers format: [name-length (1 byte)][name][type (1 byte)][value-length (2 bytes)][value]
+ * Type 7 = string
+ */
+function parseEventStreamHeaders(
+  headerBytes: Uint8Array
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  let offset = 0;
+
+  while (offset < headerBytes.length) {
+    // Name length (1 byte)
+    const nameLength = headerBytes[offset];
+    offset += 1;
+
+    // Name
+    const name = new TextDecoder().decode(
+      headerBytes.slice(offset, offset + nameLength)
+    );
+    offset += nameLength;
+
+    // Type (1 byte) - we only handle type 7 (string)
+    const type = headerBytes[offset];
+    offset += 1;
+
+    if (type === 7) {
+      // String type: 2-byte length + value
+      const valueLength =
+        (headerBytes[offset] << 8) | headerBytes[offset + 1];
+      offset += 2;
+      const value = new TextDecoder().decode(
+        headerBytes.slice(offset, offset + valueLength)
+      );
+      offset += valueLength;
+      headers[name] = value;
+    } else {
+      // Skip unknown types - this is a simplification
+      // In practice, Bedrock mainly uses string headers
+      break;
+    }
+  }
+
+  return headers;
+}
+
+/**
  * Parse a single Bedrock event message and convert to SSE format.
  *
  * Bedrock event format:
@@ -120,6 +166,9 @@ export function base64Decode(base64: string): string {
  * - headers (key-value pairs)
  * - payload (JSON with "bytes" field containing base64-encoded Anthropic event)
  * - 4 bytes: message CRC
+ *
+ * For exception events, headers contain `:exception-type` and `:message-type` = "exception".
+ * We convert these to Anthropic-compatible error events.
  */
 export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null {
   try {
@@ -139,12 +188,32 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     const payloadStart = headersEnd;
     const payloadEnd = totalLength - 4;
 
+    // Parse headers to detect exception events
+    const headerBytes = messageBytes.slice(12, headersEnd);
+    const headers = parseEventStreamHeaders(headerBytes);
+
     if (payloadEnd <= payloadStart) {
       return null;
     }
 
     const payloadBytes = messageBytes.slice(payloadStart, payloadEnd);
     const payloadText = new TextDecoder().decode(payloadBytes);
+
+    // Check if this is an exception event
+    if (headers[":message-type"] === "exception" || headers[":exception-type"]) {
+      const exceptionType = headers[":exception-type"] || "UnknownException";
+      console.error("[bedrock-utils] Bedrock exception:", exceptionType, payloadText);
+
+      // Convert to Anthropic-compatible error event
+      const errorEvent = {
+        type: "error",
+        error: {
+          type: "api_error",
+          message: `Bedrock error: ${exceptionType} - ${payloadText}`,
+        },
+      };
+      return `data: ${JSON.stringify(errorEvent)}\n\n`;
+    }
 
     // Parse the JSON payload
     const payload = JSON.parse(payloadText);
@@ -156,6 +225,8 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
       return `data: ${decodedBytes}\n\n`;
     }
 
+    // Log unexpected payload format for debugging
+    console.warn("[bedrock-utils] Unexpected payload format:", payloadText);
     return null;
   } catch (error) {
     console.error("[bedrock-utils] Error parsing Bedrock event:", error);
