@@ -117,11 +117,11 @@ impl RestApiState {
             .await
             .map_err(|e| format!("Failed to start API proxies: {}", e))?;
 
-            if let Some(ref proxy) = proxies.anthropic {
-                info!(base_url = %proxy.base_url(), "Anthropic proxy started");
+            if let Some(proxy) = proxies.anthropic() {
+                info!(base_url = %proxy.provider_url("anthropic"), "Anthropic proxy route configured");
             }
-            if let Some(ref proxy) = proxies.openai {
-                info!(base_url = %proxy.base_url(), "OpenAI proxy started");
+            if let Some(proxy) = proxies.openai() {
+                info!(base_url = %proxy.provider_url("openai"), "OpenAI proxy route configured");
             }
 
             let mut guard = self.api_proxies.write().await;

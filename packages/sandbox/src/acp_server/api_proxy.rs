@@ -396,7 +396,36 @@ impl JwtHolder {
     }
 }
 
-/// State for the outer proxy handler that waits for JWT.
+/// Provider route configuration.
+#[derive(Clone)]
+struct ProviderRoute {
+    /// Path prefix (e.g., "/anthropic")
+    path_prefix: String,
+    /// Outer proxy URL (e.g., "https://cmux.sh/api/anthropic")
+    outer_proxy_url: String,
+}
+
+/// State for the unified outer proxy handler that routes by path prefix.
+#[derive(Clone)]
+struct UnifiedProxyState {
+    /// HTTP client for forwarding requests
+    client: Client,
+    /// Provider routes indexed by path prefix
+    routes: Vec<ProviderRoute>,
+    /// JWT holder for dynamic JWT setting
+    jwt_holder: JwtHolder,
+    /// Timeout for waiting for JWT
+    jwt_timeout: std::time::Duration,
+}
+
+impl UnifiedProxyState {
+    /// Find the matching route for a path.
+    fn find_route(&self, path: &str) -> Option<&ProviderRoute> {
+        self.routes.iter().find(|r| path.starts_with(&r.path_prefix))
+    }
+}
+
+/// State for the outer proxy handler that waits for JWT (legacy, for single-provider proxy).
 #[derive(Clone)]
 struct OuterProxyState {
     /// HTTP client for forwarding requests
@@ -520,6 +549,238 @@ async fn outer_proxy_handler(
     builder.body(Body::from(response_bytes)).unwrap()
 }
 
+/// Handle requests by routing based on path prefix and forwarding to outer proxy.
+async fn unified_proxy_handler(
+    State(state): State<UnifiedProxyState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> impl IntoResponse {
+    // Wait for JWT with timeout
+    let jwt = match state.jwt_holder.get_with_timeout(state.jwt_timeout).await {
+        Some(jwt) => jwt,
+        None => {
+            error!("JWT not set within timeout, rejecting request");
+            return Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::from("JWT not configured"))
+                .unwrap();
+        }
+    };
+
+    // Get path and find matching route
+    let path = uri.path();
+    let route = match state.find_route(path) {
+        Some(route) => route,
+        None => {
+            error!(path = %path, "No matching route for path");
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from(format!("No route for path: {}", path)))
+                .unwrap();
+        }
+    };
+
+    // Strip the path prefix to get the actual API path
+    let api_path = path.strip_prefix(&route.path_prefix).unwrap_or(path);
+    let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let upstream_url = format!("{}{}{}", route.outer_proxy_url, api_path, query);
+
+    debug!(
+        method = %method,
+        path = %path,
+        api_path = %api_path,
+        upstream = %upstream_url,
+        "Proxying request to outer proxy"
+    );
+
+    // Build request to upstream
+    let mut request_builder = state.client.request(method.clone(), &upstream_url);
+
+    // Copy headers, excluding host and content-length (will be recalculated)
+    for (name, value) in headers.iter() {
+        let name_str = name.as_str().to_lowercase();
+        // Skip hop-by-hop headers and auth (we add our own)
+        if name_str == "host"
+            || name_str == "content-length"
+            || name_str == "transfer-encoding"
+            || name_str == "connection"
+            || name_str == "authorization"
+            || name_str == "x-api-key"
+        {
+            continue;
+        }
+        if let Ok(header_value) = value.to_str() {
+            request_builder = request_builder.header(name.as_str(), header_value);
+        }
+    }
+
+    // Add JWT as Bearer token
+    request_builder = request_builder.header("Authorization", format!("Bearer {}", jwt));
+
+    // Get body bytes
+    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!(error = %e, "Failed to read request body");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("Failed to read request body"))
+                .unwrap();
+        }
+    };
+
+    // Send request
+    let response = match request_builder.body(body_bytes).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!(error = %e, upstream = %upstream_url, "Outer proxy request failed");
+            return Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from(format!("Outer proxy request failed: {}", e)))
+                .unwrap();
+        }
+    };
+
+    // Build response
+    let status = response.status();
+    let response_headers = response.headers().clone();
+
+    // Get response body
+    let response_bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!(error = %e, "Failed to read outer proxy response");
+            return Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Body::from("Failed to read outer proxy response"))
+                .unwrap();
+        }
+    };
+
+    // Build axum response
+    let mut builder = Response::builder().status(status);
+
+    // Copy response headers
+    for (name, value) in response_headers.iter() {
+        let name_str = name.as_str().to_lowercase();
+        // Skip hop-by-hop headers
+        if name_str == "transfer-encoding" || name_str == "connection" {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+
+    builder.body(Body::from(response_bytes)).unwrap()
+}
+
+/// Unified API proxy that routes multiple providers through a single server.
+pub struct UnifiedApiProxy {
+    /// Address the proxy is listening on
+    pub addr: SocketAddr,
+    /// JWT holder for setting JWT dynamically
+    jwt_holder: JwtHolder,
+    /// Shutdown signal sender
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl UnifiedApiProxy {
+    /// Start a unified proxy that routes by path prefix.
+    ///
+    /// # Arguments
+    /// * `api_proxy_url` - Base URL of the outer API proxy (e.g., "https://cmux.sh")
+    /// * `providers` - List of provider path prefixes to route (e.g., ["anthropic", "openai"])
+    /// * `initial_jwt` - Optional initial JWT (can be set later via `set_jwt`)
+    /// * `jwt_timeout` - How long to wait for JWT if not set when request arrives
+    pub async fn start(
+        api_proxy_url: &str,
+        providers: &[&str],
+        initial_jwt: Option<String>,
+        jwt_timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
+        let jwt_holder = JwtHolder::new(initial_jwt);
+
+        // Build routes for each provider
+        let routes: Vec<ProviderRoute> = providers
+            .iter()
+            .map(|provider| ProviderRoute {
+                path_prefix: format!("/{}", provider),
+                outer_proxy_url: format!("{}/api/{}", api_proxy_url, provider),
+            })
+            .collect();
+
+        info!(
+            routes = ?routes.iter().map(|r| &r.path_prefix).collect::<Vec<_>>(),
+            "Setting up unified proxy routes"
+        );
+
+        let state = UnifiedProxyState {
+            client: Client::new(),
+            routes,
+            jwt_holder: jwt_holder.clone(),
+            jwt_timeout,
+        };
+
+        let app = Router::new()
+            .route("/{*path}", any(unified_proxy_handler))
+            .route("/", any(unified_proxy_handler))
+            .with_state(state);
+
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let listener = TcpListener::bind(addr).await?;
+        let actual_addr = listener.local_addr()?;
+
+        info!(addr = %actual_addr, "Unified API proxy started");
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+        // Spawn server task
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .ok();
+        });
+
+        Ok(Self {
+            addr: actual_addr,
+            jwt_holder,
+            shutdown_tx: Some(shutdown_tx),
+        })
+    }
+
+    /// Set the JWT for this proxy.
+    pub async fn set_jwt(&self, jwt: String) {
+        self.jwt_holder.set(jwt).await;
+    }
+
+    /// Get the base URL for this proxy.
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Get the base URL for a specific provider.
+    pub fn provider_url(&self, provider: &str) -> String {
+        format!("http://{}/{}", self.addr, provider)
+    }
+
+    /// Stop the proxy server.
+    pub fn stop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+impl Drop for UnifiedApiProxy {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// Per-conversation proxy that injects JWT and forwards to outer proxy (Vercel).
 /// Supports dynamic JWT setting - if JWT isn't set before first request, waits up to timeout.
 pub struct ConversationApiProxy {
@@ -606,12 +867,10 @@ impl Drop for ConversationApiProxy {
     }
 }
 
-/// Collection of per-conversation API proxies.
+/// Collection of per-conversation API proxies using a unified server.
 pub struct ConversationApiProxies {
-    /// Anthropic proxy
-    pub anthropic: Option<ConversationApiProxy>,
-    /// OpenAI proxy (future)
-    pub openai: Option<ConversationApiProxy>,
+    /// Unified proxy handling all providers
+    proxy: UnifiedApiProxy,
 }
 
 impl ConversationApiProxies {
@@ -626,58 +885,59 @@ impl ConversationApiProxies {
         initial_jwt: Option<String>,
         jwt_timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
-        // Anthropic proxy URL - uses Convex HTTP endpoint (has Vertex AI fallback)
-        let anthropic_outer_url = format!("{}/api/anthropic", api_proxy_url);
-        let anthropic =
-            ConversationApiProxy::start(anthropic_outer_url, initial_jwt.clone(), jwt_timeout)
-                .await?;
+        // Start unified proxy with routes for both Anthropic and OpenAI
+        let proxy = UnifiedApiProxy::start(
+            api_proxy_url,
+            &["anthropic", "openai"],
+            initial_jwt,
+            jwt_timeout,
+        )
+        .await?;
 
-        // OpenAI proxy URL - uses Convex HTTP endpoint (with Cloudflare AI Gateway)
-        let openai_outer_url = format!("{}/api/openai", api_proxy_url);
-        let openai =
-            ConversationApiProxy::start(openai_outer_url, initial_jwt, jwt_timeout).await?;
-
-        Ok(Self {
-            anthropic: Some(anthropic),
-            openai: Some(openai),
-        })
+        Ok(Self { proxy })
     }
 
-    /// Set JWT on all proxies.
+    /// Set JWT on the unified proxy.
     pub async fn set_jwt(&self, jwt: String) {
-        if let Some(ref proxy) = self.anthropic {
-            proxy.set_jwt(jwt.clone()).await;
-        }
-        if let Some(ref proxy) = self.openai {
-            proxy.set_jwt(jwt).await;
-        }
+        self.proxy.set_jwt(jwt).await;
+    }
+
+    /// Get the Anthropic proxy (for logging/compatibility).
+    /// Returns the unified proxy since it handles Anthropic routes.
+    pub fn anthropic(&self) -> Option<&UnifiedApiProxy> {
+        Some(&self.proxy)
+    }
+
+    /// Get the OpenAI proxy (for logging/compatibility).
+    /// Returns the unified proxy since it handles OpenAI routes.
+    pub fn openai(&self) -> Option<&UnifiedApiProxy> {
+        Some(&self.proxy)
     }
 
     /// Get environment variables to set for CLI processes.
     /// Sets both the base URL (to route through proxy) and a placeholder API key
     /// (so the CLI doesn't reject requests before they reach the proxy).
     pub fn env_vars(&self) -> Vec<(String, String)> {
-        let mut vars = Vec::new();
-
-        if let Some(ref proxy) = self.anthropic {
-            vars.push(("ANTHROPIC_BASE_URL".to_string(), proxy.base_url()));
-            // Set a placeholder API key - the proxy will inject the real one
-            vars.push((
+        vec![
+            // Anthropic - route through unified proxy with /anthropic prefix
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                self.proxy.provider_url("anthropic"),
+            ),
+            (
                 "ANTHROPIC_API_KEY".to_string(),
                 "sk-ant-proxy-placeholder".to_string(),
-            ));
-        }
-
-        if let Some(ref proxy) = self.openai {
-            vars.push(("OPENAI_BASE_URL".to_string(), proxy.base_url()));
-            // Set a placeholder API key - the proxy will inject the real one
-            vars.push((
+            ),
+            // OpenAI - route through unified proxy with /openai prefix
+            (
+                "OPENAI_BASE_URL".to_string(),
+                self.proxy.provider_url("openai"),
+            ),
+            (
                 "OPENAI_API_KEY".to_string(),
                 "sk-openai-proxy-placeholder".to_string(),
-            ));
-        }
-
-        vars
+            ),
+        ]
     }
 }
 
