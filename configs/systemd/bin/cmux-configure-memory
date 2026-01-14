@@ -385,15 +385,36 @@ else
   fi
 fi
 
-# Swappiness
-sysctl_conf=$'# Managed by cmux-configure-memory\nvm.swappiness = 70\n'
+# Kernel memory tuning for aggressive swap usage
+# vm.swappiness=70: Higher value (default 60) to prefer swap over killing processes
+# vm.vfs_cache_pressure=50: Lower value (default 100) to keep more dentries/inodes cached
+# vm.watermark_scale_factor=200: Higher value (default 10) to start reclamation earlier
+# vm.min_free_kbytes: Keep enough free memory for kernel operations
+mem_total_kib_sysctl="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+# Set min_free_kbytes to ~1% of RAM, clamped between 65536 (64MB) and 262144 (256MB)
+min_free_kib=$((mem_total_kib_sysctl / 100))
+if [ "$min_free_kib" -lt 65536 ]; then
+  min_free_kib=65536
+fi
+if [ "$min_free_kib" -gt 262144 ]; then
+  min_free_kib=262144
+fi
+sysctl_conf="$(cat <<EOF
+# Managed by cmux-configure-memory
+# Aggressive swap usage to prevent OOM kills
+vm.swappiness = 70
+vm.vfs_cache_pressure = 50
+vm.watermark_scale_factor = 200
+vm.min_free_kbytes = ${min_free_kib}
+EOF
+)"
 if write_file_if_changed "/etc/sysctl.d/99-cmux-memory.conf" "0644" "$sysctl_conf"; then
   log "Updated /etc/sysctl.d/99-cmux-memory.conf"
 else
-  log "vm.swappiness already set to 70"
+  log "sysctl memory settings already up to date"
 fi
 sysctl -q -p /etc/sysctl.d/99-cmux-memory.conf >/dev/null 2>&1 || true
-summary+=("Set vm.swappiness to 70.")
+summary+=("Configured vm.swappiness=70, vm.vfs_cache_pressure=50, vm.watermark_scale_factor=200, vm.min_free_kbytes=${min_free_kib}.")
 
 # Systemd drop-ins
 declare -A memory_low_map=(
