@@ -68,8 +68,8 @@ function watchPopupClosed(win: Window | null, onClose: () => void): void {
         window.clearInterval(timer);
         onClose();
       }
-    } catch (_error) {
-      void 0;
+    } catch (err) {
+      console.error("[GitHubOAuthFlow] Popup window failed to close:", err);
     }
   }, 600);
 }

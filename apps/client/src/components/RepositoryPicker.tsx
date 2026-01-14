@@ -10,7 +10,8 @@ import {
 } from "@/lib/github-oauth-flow";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { useUser } from "@stackframe/react";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Check, Loader2, X } from "lucide-react";
 import {
@@ -113,8 +114,8 @@ export function RepositoryPicker({
   topAccessory,
   autoContinue,
 }: RepositoryPickerProps) {
-  const router = useRouter();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
@@ -142,9 +143,9 @@ export function RepositoryPicker({
   }, [initialSnapshotId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
-    router.options.context?.queryClient?.invalidateQueries();
+    void queryClient.invalidateQueries();
     window.focus?.();
-  }, [router]);
+  }, [queryClient]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -368,7 +369,7 @@ export function RepositoryPicker({
           onToggleRepo={toggleRepo}
           onAddRepo={addRepo}
           hasConnections={connectionContext.hasConnections}
-          onInstallGitHubApp={installGitHubAppHandler ?? (() => { })}
+          onInstallGitHubApp={installGitHubAppHandler ?? (() => {})}
         />
 
         {selectedRepos.length > 0 ? (
@@ -499,8 +500,8 @@ function RepositoryConnectionsSection({
             window.clearInterval(timer);
             onClose();
           }
-        } catch (_error) {
-          void 0;
+        } catch (err) {
+          console.error("[GitHubOAuthFlow] Popup window failed to close:", err);
         }
       }, 600);
     },

@@ -136,7 +136,7 @@ export class RepositoryManager {
       if (
         candidate &&
         typeof (candidate as { toString?: () => string }).toString ===
-          "function"
+        "function"
       ) {
         try {
           return (candidate as { toString: () => string }).toString();
@@ -478,9 +478,8 @@ export class RepositoryManager {
       this.config.pullStrategy === "ff-only"
         ? "only"
         : this.config.pullStrategy;
-    const cmd = `git config pull.${
-      this.config.pullStrategy === "ff-only" ? "ff" : this.config.pullStrategy
-    } ${strategy === "only" ? "only" : "true"}`;
+    const cmd = `git config pull.${this.config.pullStrategy === "ff-only" ? "ff" : this.config.pullStrategy
+      } ${strategy === "only" ? "only" : "true"}`;
 
     // Retry a few times to avoid transient .git/config lock contention
     const maxAttempts = 3;
@@ -794,7 +793,7 @@ export class RepositoryManager {
           : "";
 
     // Use authenticated URL if provided to support private repos
-    const fetchSource = authenticatedUrl ? `"${authenticatedUrl}"` : "origin";
+    const fetchSource = this.getFetchSource;
 
     try {
       // Clear any stale shallow.lock before invoking a pull (pull may fetch)

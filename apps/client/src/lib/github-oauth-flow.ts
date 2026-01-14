@@ -57,7 +57,8 @@ export function consumeGitHubAppInstallIntent(): GitHubAppInstallIntent | null {
 export function hasGitHubAppInstallIntent(): boolean {
   try {
     return sessionStorage.getItem(GITHUB_APP_INSTALL_INTENT_KEY) !== null;
-  } catch {
+  } catch (err) {
+    console.error("[GitHubOAuthFlow] Failed to check install intent:", err);
     return false;
   }
 }
@@ -89,7 +90,8 @@ export function getGitHubAppInstallIntent(): GitHubAppInstallIntent | null {
     }
 
     return intent;
-  } catch {
+  } catch (err) {
+    console.error("[GitHubOAuthFlow] Failed to get install intent:", err);
     return null;
   }
 }
@@ -100,7 +102,7 @@ export function getGitHubAppInstallIntent(): GitHubAppInstallIntent | null {
 export function clearGitHubAppInstallIntent(): void {
   try {
     sessionStorage.removeItem(GITHUB_APP_INSTALL_INTENT_KEY);
-  } catch {
-    // Ignore errors
+  } catch (err) {
+    console.error("[GitHubOAuthFlow] Failed to clear install intent:", err);
   }
 }
