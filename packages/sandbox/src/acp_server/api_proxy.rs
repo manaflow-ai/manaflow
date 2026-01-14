@@ -919,6 +919,8 @@ impl ConversationApiProxies {
     /// (so the CLI doesn't reject requests before they reach the proxy).
     pub fn env_vars(&self) -> Vec<(String, String)> {
         vec![
+            // HOME is required for CLIs to find their config files (e.g., ~/.codex/config.toml)
+            ("HOME".to_string(), "/root".to_string()),
             // Anthropic - route through unified proxy with /anthropic prefix
             (
                 "ANTHROPIC_BASE_URL".to_string(),
