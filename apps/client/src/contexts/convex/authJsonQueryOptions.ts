@@ -20,7 +20,11 @@ export function authJsonQueryOptions() {
       const authJson = await user.getAuthJson();
       return authJson ?? null;
     },
-    refetchInterval: defaultAuthJsonRefreshInterval,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data?.accessToken) return 1000;
+      return defaultAuthJsonRefreshInterval;
+    },
     refetchIntervalInBackground: true,
   });
 }

@@ -10,6 +10,7 @@ import { setGlobalSocket, socketBoot } from "./socket-boot";
 import { WebSocketContext } from "./socket-context";
 import type { SocketContextType } from "./types";
 import { env } from "@/client-env";
+import { CmuxLoadingOverlay } from "@/components/cmux-loading-overlay";
 
 interface SocketProviderProps {
   children: React.ReactNode;
@@ -162,8 +163,11 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     [socket, isConnected, availableEditors],
   );
 
+  const showAuthOverlay = Boolean(teamSlugOrId) && !authToken;
+
   return (
     <WebSocketContext.Provider value={contextValue}>
+      <CmuxLoadingOverlay visible={showAuthOverlay} />
       {children}
     </WebSocketContext.Provider>
   );

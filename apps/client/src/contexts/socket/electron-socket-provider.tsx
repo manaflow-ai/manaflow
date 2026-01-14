@@ -9,6 +9,7 @@ import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
 import { ElectronSocketContext } from "./socket-context";
 import type { SocketContextType } from "./types";
+import { CmuxLoadingOverlay } from "@/components/cmux-loading-overlay";
 
 export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
   children,
@@ -109,8 +110,11 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
     [socket, isConnected, availableEditors]
   );
 
+  const showAuthOverlay = Boolean(teamSlugOrId) && !authToken;
+
   return (
     <ElectronSocketContext.Provider value={contextValue}>
+      <CmuxLoadingOverlay visible={showAuthOverlay} />
       {children}
     </ElectronSocketContext.Provider>
   );
