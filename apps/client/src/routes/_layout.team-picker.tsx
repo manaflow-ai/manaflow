@@ -121,7 +121,12 @@ function TeamPicker() {
   );
 
   return (
-    <div className="min-h-dvh w-full bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center p-6">
+    <div
+      className="min-h-dvh w-full flex items-center justify-center p-6"
+      style={{
+        background: "linear-gradient(135deg, #ff0000 0%, #ff7f00 16.67%, #ffff00 33.33%, #00ff00 50%, #0000ff 66.67%, #4b0082 83.33%, #9400d3 100%)",
+      }}
+    >
       {isElectron ? (
         <div
           className="fixed top-0 left-0 right-0 h-[24px]"
