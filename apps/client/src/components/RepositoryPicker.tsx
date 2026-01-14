@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
+import { useUser } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Check, Loader2, X } from "lucide-react";
@@ -436,6 +437,7 @@ function RepositoryConnectionsSection({
   onConnectionsInvalidated,
   onInstallHandlerReady,
 }: RepositoryConnectionsSectionProps) {
+  const user = useUser({ or: "return-null" });
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
   });
@@ -562,8 +564,33 @@ function RepositoryConnectionsSection({
     onConnectionsInvalidated();
   }, [onConnectionsInvalidated]);
 
+  const ensureGitHubConnected = useCallback(async (): Promise<boolean> => {
+    if (!user) {
+      alert("Sign in required to connect GitHub.");
+      return false;
+    }
+    try {
+      const account = await user.getConnectedAccount("github", {
+        or: "return-null",
+      });
+      if (account) return true;
+      const shouldConnect = window.confirm(
+        "Connect your GitHub account to add repositories. Continue to GitHub sign-in?",
+      );
+      if (!shouldConnect) return false;
+      await user.getConnectedAccount("github", { or: "redirect" });
+      return false;
+    } catch (error) {
+      console.error("Failed to start GitHub connection:", error);
+      alert("Unable to connect GitHub right now. Please try again.");
+      return false;
+    }
+  }, [user]);
+
   const handleInstallApp = useCallback(async () => {
     if (!installNewUrl) return;
+    const canInstall = await ensureGitHubConnected();
+    if (!canInstall) return;
     try {
       const { state } = await mintState({ teamSlugOrId });
       const sep = installNewUrl.includes("?") ? "&" : "?";
@@ -583,6 +610,7 @@ function RepositoryConnectionsSection({
     mintState,
     openCenteredPopup,
     teamSlugOrId,
+    ensureGitHubConnected,
   ]);
 
   // Expose the install handler to parent component

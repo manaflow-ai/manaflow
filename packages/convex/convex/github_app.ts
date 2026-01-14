@@ -110,6 +110,33 @@ export const deactivateProviderConnection = internalMutation({
   },
 });
 
+export const attachInstallationToUser = internalMutation({
+  args: { userId: v.string(), installationId: v.number() },
+  handler: async (ctx, { userId, installationId }) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+    if (!user) {
+      return { ok: false, reason: "user_not_found" };
+    }
+    const isEmailAuthUser =
+      user.hasPassword === true || user.primaryEmailAuthEnabled === true;
+    if (!isEmailAuthUser) {
+      return { ok: true, skipped: true };
+    }
+    const existing = user.githubAppInstallationIds ?? [];
+    if (existing.includes(installationId)) {
+      return { ok: true, already: true };
+    }
+    await ctx.db.patch(user._id, {
+      githubAppInstallationIds: [...existing, installationId],
+      updatedAt: Date.now(),
+    });
+    return { ok: true, updated: true };
+  },
+});
+
 // Mint a signed, single-use install state token for mapping installation -> team
 export const mintInstallState = authMutation({
   args: {

@@ -152,6 +152,18 @@ export const githubSetup = httpAction(async (ctx, req) => {
     }
   );
 
+  try {
+    await ctx.runMutation(internal.github_app.attachInstallationToUser, {
+      userId: payload.userId,
+      installationId,
+    });
+  } catch (error) {
+    console.error(
+      `[github_setup] Failed to attach installation ${installationId} to user`,
+      error
+    );
+  }
+
   if (connectionId) {
     try {
       const alreadySynced = await ctx.runQuery(

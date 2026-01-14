@@ -82,6 +82,7 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    githubAppInstallationIds: v.optional(v.array(v.number())),
     // Anonymous flag
     isAnonymous: v.optional(v.boolean()),
     // Local bookkeeping

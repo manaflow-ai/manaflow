@@ -17,6 +17,7 @@ import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { parseGithubRepoUrl } from "@cmux/shared";
+import { useUser } from "@stackframe/react";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
@@ -79,6 +80,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
+  const user = useUser({ or: "return-null" });
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -86,6 +88,28 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     });
     return map;
   }, [providerStatus?.providers]);
+  const ensureGitHubConnected = useCallback(async (): Promise<boolean> => {
+    if (!user) {
+      toast.error("Sign in required to connect GitHub.");
+      return false;
+    }
+    try {
+      const account = await user.getConnectedAccount("github", {
+        or: "return-null",
+      });
+      if (account) return true;
+      const shouldConnect = window.confirm(
+        "Connect your GitHub account to add repositories. Continue to GitHub sign-in?",
+      );
+      if (!shouldConnect) return false;
+      await user.getConnectedAccount("github", { or: "redirect" });
+      return false;
+    } catch (error) {
+      console.error("Failed to start GitHub connection:", error);
+      toast.error("Unable to connect GitHub right now. Please try again.");
+      return false;
+    }
+  }, [user]);
   const handleOpenSettings = useCallback(() => {
     void router.navigate({
       to: "/$teamSlugOrId/settings",
@@ -558,10 +582,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                 type="button"
                 onClick={async (e) => {
                   e.preventDefault();
+                  const canInstall = await ensureGitHubConnected();
+                  if (!canInstall) {
+                    return;
+                  }
                   try {
                     const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
                     if (!slug) {
-                      alert("GitHub App not configured. Please contact support.");
+                      toast.error("GitHub App is not configured for this environment.");
                       return;
                     }
                     const baseUrl = `https://github.com/apps/${slug}/installations/new`;
