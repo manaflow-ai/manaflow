@@ -57,6 +57,29 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
         limit: SIDEBAR_PRS_DEFAULT_LIMIT,
       },
     });
+
+    // Prewarm task runs for local workspaces to reduce flicker when opening workspaces page.
+    // We do this asynchronously to not block the route transition.
+    if (!env.NEXT_PUBLIC_WEB_MODE) {
+      void (async () => {
+        try {
+          const tasks = await convexQueryClient.convexClient.query(
+            api.tasks.getWithNotificationOrder,
+            { teamSlugOrId: params.teamSlugOrId }
+          );
+          // Prewarm task runs for the first few local workspaces
+          const localTasks = tasks.filter((t) => t.isLocalWorkspace).slice(0, 5);
+          for (const task of localTasks) {
+            convexQueryClient.convexClient.prewarmQuery({
+              query: api.taskRuns.getByTask,
+              args: { teamSlugOrId: params.teamSlugOrId, taskId: task._id },
+            });
+          }
+        } catch (error) {
+          console.error("[Layout] Failed to prewarm local workspace task runs", error);
+        }
+      })();
+    }
   },
 });
 

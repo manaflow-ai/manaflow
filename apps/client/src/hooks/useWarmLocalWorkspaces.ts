@@ -19,7 +19,9 @@ type WarmTarget = {
   pinned: boolean;
 };
 
-const MAX_ACTIVE_LOCAL_WARMUPS = 2;
+// Number of non-pinned active local workspaces to prewarm iframes for
+const MAX_ACTIVE_LOCAL_WARMUPS = 5;
+// Total maximum number of local workspaces to keep warmed (pinned + active)
 const MAX_WARM_LOCAL_WORKSPACES = 10;
 
 export function useWarmLocalWorkspaces({

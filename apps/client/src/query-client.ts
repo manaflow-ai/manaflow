@@ -1,4 +1,5 @@
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { env } from "@/client-env";
 import { QueryClient } from "@tanstack/react-query";
 
 export const queryClient = new QueryClient({
@@ -50,4 +51,17 @@ try {
   }
 } catch {
   // Non-fatal if cmux or window is not available (e.g., SSR, tests)
+}
+
+// Prewarm local VSCode serve web info early for faster local workspace loading.
+// This query depends on socket connection, so starting it early reduces latency
+// when opening local workspaces.
+if (!env.NEXT_PUBLIC_WEB_MODE) {
+  import("@/queries/local-vscode-serve-web")
+    .then(({ localVSCodeServeWebQueryOptions }) => {
+      void queryClient.prefetchQuery(localVSCodeServeWebQueryOptions());
+    })
+    .catch((error) => {
+      console.error("[QueryClient] Failed to prewarm local VSCode serve web", error);
+    });
 }
