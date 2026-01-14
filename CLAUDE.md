@@ -51,6 +51,15 @@ Use crypto.subtle instead of node:crypto
 Exception is if the file defines only actions and includes a "use node" directive at the top of the file
 To query Convex data during development, first cd into packages/convex, and run `bunx convex data <table> --format jsonl | rg "pattern"` (e.g., `bunx convex data sessions --format jsonl | rg "mn7abc123"`).
 
+### Swift type generation (experimental)
+
+Use `tools/convex-swift-gen/generate-swift.ts` to emit Swift `Decodable` structs from the Convex schema.
+
+- Default output: `tools/convex-swift-gen/out/ConvexTables.swift` (plus `schema-ir.json` and `schema-report.json` in the same folder).
+- Custom output example:
+  `bun run tools/convex-swift-gen/generate-swift.ts --out ios-app/Sources/Generated/ConvexTables.swift`
+- If you commit the generated Swift, run `swift-format` on it first.
+
 ## Sandboxes
 
 This project uses Morph sandboxes for running Claude Code/Codex/other coding CLIs inside.
