@@ -667,6 +667,69 @@ EOF
     },
   });
 
+  // =========================================================================
+  // Expose HTTP and Verify Public Access
+  // =========================================================================
+
+  registry.register({
+    name: "expose-http",
+    description: "Expose ACP server HTTP port and verify public access",
+    deps: ["final-test"],
+    func: async (ctx) => {
+      // Expose the ACP server port to the public internet
+      if (!ctx.vm.exposeHttp) {
+        ctx.log("⚠ Provider does not support exposeHttp, skipping public access test");
+        return;
+      }
+
+      ctx.log("Exposing port 39384 as 'acp'...");
+      const { url } = await ctx.vm.exposeHttp("acp", 39384);
+      ctx.log(`✓ Exposed at: ${url}`);
+
+      // Verify the endpoint is accessible from the public internet
+      // We do this from within the VM using curl to an external endpoint
+      // This confirms the Morph HTTP proxy is routing correctly
+      await ctx.run(
+        "verify-public-access",
+        `
+        set -e
+
+        PUBLIC_URL="${url}"
+        echo "Testing public URL: $PUBLIC_URL"
+
+        # Wait a moment for the HTTP service to be fully routed
+        sleep 2
+
+        # Test health endpoint from within VM (goes out to internet and back)
+        RESPONSE=$(curl -sf "$PUBLIC_URL/health" || echo "FAILED")
+        echo "Response: $RESPONSE"
+
+        if echo "$RESPONSE" | grep -q '"status":"ok"'; then
+          echo "✓ Public health endpoint accessible!"
+        else
+          echo "✗ Public health endpoint NOT accessible"
+          echo "This means instances from this snapshot won't have working HTTP"
+          exit 1
+        fi
+
+        # Also test the configure endpoint returns expected error (proves routing works)
+        CONFIGURE_RESPONSE=$(curl -sf -X POST "$PUBLIC_URL/api/acp/configure" \
+          -H "Content-Type: application/json" \
+          -d '{"test":true}' 2>&1 || true)
+        echo "Configure response: $CONFIGURE_RESPONSE"
+
+        if echo "$CONFIGURE_RESPONSE" | grep -q "callback_url"; then
+          echo "✓ ACP configure endpoint responding correctly"
+        else
+          echo "⚠ Unexpected configure response (may still be ok)"
+        fi
+
+        echo "Public HTTP access verified!"
+        `
+      );
+    },
+  });
+
   return registry;
 }
 

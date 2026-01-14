@@ -31,6 +31,8 @@ export interface VmHandle {
   syncFiles?(localPath: string, remotePath: string): Promise<void>;
   /** Upload a single file via SSH */
   uploadFile?(localPath: string, remotePath: string): Promise<void>;
+  /** Expose an HTTP service on a port, returns the public URL */
+  exposeHttp?(name: string, port: number): Promise<{ url: string }>;
 }
 
 /**
@@ -221,6 +223,11 @@ class MorphVmHandle implements VmHandle {
     } finally {
       ssh.dispose();
     }
+  }
+
+  async exposeHttp(name: string, port: number): Promise<{ url: string }> {
+    const service = await this.instance.exposeHttpService(name, port);
+    return { url: service.url };
   }
 }
 
