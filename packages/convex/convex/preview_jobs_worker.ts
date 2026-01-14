@@ -1827,7 +1827,7 @@ export async function runPreviewJob(
         `CMUX_TASK_RUN_JWT="${previewJwt}"`,
         `CONVEX_SITE_URL="${convexUrl}"`,
         `CONVEX_URL="${convexUrl}"`,
-        `CMUX_IS_STAGING="${env.CMUX_IS_STAGING ?? "true"}"`,
+        `CMUX_IS_STAGING="${env.CMUX_IS_STAGING ?? "false"}"`,
       ];
       const envVarsContent = envLines.join("\n");
       if (envVarsContent.length === 0) {
@@ -1867,7 +1867,7 @@ export async function runPreviewJob(
         previewRunId,
         taskRunId,
         convexUrl,
-        cmuxIsStaging: env.CMUX_IS_STAGING ?? "true",
+        cmuxIsStaging: env.CMUX_IS_STAGING ?? "false",
         envctlStdout: sliceOutput(envctlResponse.data?.stdout),
         envctlStderr: sliceOutput(envctlResponse.data?.stderr),
       });

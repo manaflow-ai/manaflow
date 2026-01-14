@@ -41,14 +41,10 @@ export interface ScreenshotCollectorModule {
 
 /**
  * Determines if we're running in staging mode.
- * Defaults to true in development (NODE_ENV !== "production") unless explicitly set.
+ * Defaults to false (production) unless explicitly set to "true".
  */
 export function isStaging(): boolean {
-  if (process.env.CMUX_IS_STAGING !== undefined) {
-    return process.env.CMUX_IS_STAGING === "true";
-  }
-  // Default to staging in development
-  return process.env.NODE_ENV !== "production";
+  return process.env.CMUX_IS_STAGING === "true";
 }
 
 /**
@@ -89,12 +85,11 @@ async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<
     );
   }
 
-  const staging = isStaging();
-  const endpoint = `${convexUrl}/api/host-screenshot-collector/latest?staging=${staging}`;
+  // Always fetch production releases (staging releases are not currently uploaded)
+  const endpoint = `${convexUrl}/api/host-screenshot-collector/latest?staging=false`;
 
   log("INFO", "Fetching screenshot collector from Convex", {
     endpoint,
-    isStaging: staging,
   });
 
   const response = await fetch(endpoint);
