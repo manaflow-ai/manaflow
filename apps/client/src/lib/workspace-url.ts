@@ -21,6 +21,9 @@ export function getWorkspaceUrl(
   // Only use local serve-web for truly local workspaces (provider === "other")
   // Docker and Morph workspaces should use their URLs directly
   const shouldUseLocalServeWeb = provider === "other";
+  if (shouldUseLocalServeWeb && !localServeWebBaseUrl) {
+    return null;
+  }
   const preferredOrigin = shouldUseLocalServeWeb ? localServeWebBaseUrl : null;
 
   return toProxyWorkspaceUrl(rawWorkspaceUrl, preferredOrigin);

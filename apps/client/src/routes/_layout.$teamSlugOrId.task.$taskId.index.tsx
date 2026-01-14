@@ -55,7 +55,10 @@ import {
   MessageCircle,
 } from "lucide-react";
 import z from "zod";
-import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
@@ -107,12 +110,15 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
     });
 
     void (async () => {
-      const taskRuns = await queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.getByTask, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-        })
-      );
+      const [taskRuns, localServeWeb] = await Promise.all([
+        queryClient.ensureQueryData(
+          convexQuery(api.taskRuns.getByTask, {
+            teamSlugOrId: opts.params.teamSlugOrId,
+            taskId: opts.params.taskId,
+          })
+        ),
+        queryClient.ensureQueryData(localVSCodeServeWebQueryOptions()),
+      ]);
 
       if (!taskRuns?.length) {
         return;
@@ -137,7 +143,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         const workspaceUrl = getWorkspaceUrl(
           rawWorkspaceUrl,
           selectedRun.vscode?.provider,
-          undefined // localServeWeb not available in loader
+          localServeWeb.baseUrl
         );
         if (workspaceUrl) {
           void preloadTaskRunIframes([

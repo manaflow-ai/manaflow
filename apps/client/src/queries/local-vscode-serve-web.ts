@@ -1,5 +1,6 @@
 import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { normalizeWorkspaceOrigin } from "@/lib/toProxyWorkspaceUrl";
+import { env } from "@/client-env";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export type LocalVSCodeServeWebInfo = {
@@ -10,6 +11,8 @@ export type LocalVSCodeServeWebInfo = {
 const LOCAL_VSCODE_SERVE_WEB_QUERY_KEY = ["local-vscode-serve-web-origin"];
 
 export function localVSCodeServeWebQueryOptions() {
+  const shouldPoll = !env.NEXT_PUBLIC_WEB_MODE;
+
   return queryOptions({
     queryKey: LOCAL_VSCODE_SERVE_WEB_QUERY_KEY,
     queryFn: async (): Promise<LocalVSCodeServeWebInfo> => {
@@ -60,6 +63,9 @@ export function localVSCodeServeWebQueryOptions() {
     },
     staleTime: 30_000,
     gcTime: 5 * 60 * 1000,
+    refetchInterval: (query) =>
+      shouldPoll && !query.state.data?.baseUrl ? 2_000 : false,
+    refetchIntervalInBackground: shouldPoll,
   });
 }
 

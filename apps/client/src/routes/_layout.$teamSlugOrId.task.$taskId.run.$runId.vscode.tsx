@@ -67,12 +67,14 @@ export const Route = createFileRoute(
           result.vscode?.provider,
           localServeWeb.baseUrl
         );
-        await preloadTaskRunIframes([
-          {
-            url: workspaceUrl ?? "",
-            taskRunId: opts.params.runId,
-          },
-        ]);
+        if (workspaceUrl) {
+          await preloadTaskRunIframes([
+            {
+              url: workspaceUrl,
+              taskRunId: opts.params.runId,
+            },
+          ]);
+        }
       }
     })();
   },
