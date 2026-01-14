@@ -1,12 +1,30 @@
 #!/bin/bash
 # Monitors Morph instances and alerts if any user has > 50 active instances
+# Usage: ./morph-instance-monitor.sh [--once] [--threshold N]
 
-THRESHOLD=50
+THRESHOLD=${MORPH_MONITOR_THRESHOLD:-50}
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --threshold)
+      THRESHOLD="$2"
+      shift 2
+      ;;
+    --once)
+      RUN_ONCE=1
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
 
 check_instances() {
   # Fetch all instances (paginated) into temp files
+  local temp_dir
   temp_dir=$(mktemp -d)
-  trap "rm -rf $temp_dir" EXIT
 
   for page in {1..30}; do
     uvx morphcloud instance list --json --limit 100 --page "$page" 2>/dev/null > "$temp_dir/page_$page.json"
@@ -17,12 +35,12 @@ check_instances() {
     fi
   done
 
-  # Count instances per user
+  # Count instances per user (ignoring instances without userId)
   offenders=$(jq -s --argjson threshold "$THRESHOLD" '
     [.[].instances[]] |
-    map(select(.status == "ready")) |
-    group_by(.metadata.userId // "no-user") |
-    map({userId: (.[0].metadata.userId // "no-user"), count: length}) |
+    map(select(.status == "ready" and .metadata.userId != null)) |
+    group_by(.metadata.userId) |
+    map({userId: .[0].metadata.userId, count: length}) |
     map(select(.count > $threshold))
   ' "$temp_dir"/page_*.json 2>/dev/null)
 
@@ -42,10 +60,13 @@ check_instances() {
   else
     echo "[$(date)] OK: No users exceed $THRESHOLD instances"
   fi
+
+  # Cleanup temp dir
+  rm -rf "$temp_dir"
 }
 
 # Run once if called with --once, otherwise loop
-if [ "$1" = "--once" ]; then
+if [ "$RUN_ONCE" = "1" ]; then
   check_instances
 else
   echo "Starting Morph instance monitor (threshold: $THRESHOLD instances per user)"
