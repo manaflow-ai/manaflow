@@ -620,43 +620,58 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                 "border-emerald-400/70 dark:border-emerald-400/60 shadow-[0_0_0_1px_rgba(16,185,129,0.25)]"
               )}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={cn(
-                    "px-2 py-0.5 text-xs font-medium rounded-full",
-                    STATUS_STYLES[set.status]
-                  )}
-                >
-                  {STATUS_LABELS[set.status]}
-                </span>
-                {isHighlighted && (
-                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100/80 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
-                    Latest
-                  </span>
-                )}
-                <span
-                  className="text-xs text-neutral-600 dark:text-neutral-400"
-                  title={capturedAtDate.toLocaleString()}
-                >
-                  {relativeCapturedAt}
-                </span>
-                {shortCommit && (
-                  <span className="text-xs font-mono text-neutral-600 dark:text-neutral-400">
-                    {shortCommit.toLowerCase()}
-                  </span>
-                )}
-                {set.images.length > 0 && (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-500">
-                    {set.images.length}{" "}
-                    {set.images.length === 1 ? "image" : "images"}
-                  </span>
-                )}
-              </div>
-              {set.error && (
-                <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
-                  {set.error}
-                </p>
-              )}
+              {(() => {
+                // Check if this is a "no UI changes" case (success but no files returned)
+                const isNoUiChanges =
+                  set.status === "failed" &&
+                  set.error?.includes("returned no files");
+                const effectiveStatus = isNoUiChanges ? "skipped" : set.status;
+                const effectiveLabel = isNoUiChanges
+                  ? "No UI Changes"
+                  : STATUS_LABELS[set.status];
+
+                return (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 text-xs font-medium rounded-full",
+                          STATUS_STYLES[effectiveStatus]
+                        )}
+                      >
+                        {effectiveLabel}
+                      </span>
+                      {isHighlighted && (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100/80 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                          Latest
+                        </span>
+                      )}
+                      <span
+                        className="text-xs text-neutral-600 dark:text-neutral-400"
+                        title={capturedAtDate.toLocaleString()}
+                      >
+                        {relativeCapturedAt}
+                      </span>
+                      {shortCommit && (
+                        <span className="text-xs font-mono text-neutral-600 dark:text-neutral-400">
+                          {shortCommit.toLowerCase()}
+                        </span>
+                      )}
+                      {set.images.length > 0 && (
+                        <span className="text-xs text-neutral-500 dark:text-neutral-500">
+                          {set.images.length}{" "}
+                          {set.images.length === 1 ? "image" : "images"}
+                        </span>
+                      )}
+                    </div>
+                    {set.error && !isNoUiChanges && (
+                      <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
+                        {set.error}
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
               {set.images.length > 0 ? (
                 <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
                   {set.images.map((image, indexInSet) => {
@@ -707,9 +722,12 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                 </div>
               ) : (
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                  {set.status === "failed"
-                    ? "Screenshot capture failed before any images were saved."
-                    : "No screenshots were captured for this attempt."}
+                  {set.status === "failed" &&
+                  set.error?.includes("returned no files")
+                    ? "No UI changes were detected in this diff."
+                    : set.status === "failed"
+                      ? "Screenshot capture failed before any images were saved."
+                      : "No screenshots were captured for this attempt."}
                 </p>
               )}
             </article>
