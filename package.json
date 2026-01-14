@@ -61,6 +61,7 @@
     "generate-routes": "cd apps/client && bun run generate-routes",
     "generate-openapi-client": "cd apps/www && bun run generate-openapi-client",
     "generate-morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run generate",
+    "gen:swift-types": "bun run tools/convex-swift-gen/generate-swift.ts --out ios-app/Sources/Generated/ConvexTables.swift",
     "build:mac-arm64-prod": "bash scripts/build-prod-mac-arm64.sh",
     "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)",
     "convex:setup": "bun run --env-file .env --cwd packages/convex setup"
