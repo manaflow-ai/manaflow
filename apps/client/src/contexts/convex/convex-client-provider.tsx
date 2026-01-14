@@ -7,6 +7,7 @@ import { ConvexProvider } from "convex/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { convexAuthReadyPromise } from "./convex-auth-ready";
 import { convexQueryClient } from "./convex-query-client";
+import { authJsonQueryOptions } from "./authJsonQueryOptions";
 import clsx from "clsx";
 
 function BootLoader({ children }: { children: ReactNode }) {
@@ -16,6 +17,10 @@ function BootLoader({ children }: { children: ReactNode }) {
     queryFn: () => convexAuthReadyPromise,
   });
 
+  // Also wait for auth token to be available so socket can connect
+  const authJsonQuery = useQuery(authJsonQueryOptions());
+  const hasAuthToken = Boolean(authJsonQuery.data?.accessToken);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setMinimumDelayPassed(true);
@@ -23,7 +28,7 @@ function BootLoader({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, []);
 
-  const isReady = convexAuthReadyQuery.data && minimumDelayPassed;
+  const isReady = convexAuthReadyQuery.data && hasAuthToken && minimumDelayPassed;
   return (
     <>
       <div
