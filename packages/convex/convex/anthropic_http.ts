@@ -7,12 +7,6 @@ import {
   convertBedrockStreamToSSE,
 } from "./bedrock_utils";
 
-/**
- * Cloudflare AI Gateway configuration.
- */
-const CLOUDFLARE_ACCOUNT_ID = "0c1675e0def6de1ab3a50a4e17dc5656";
-const CLOUDFLARE_GATEWAY_ID = "cmux-ai-proxy";
-
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
 
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =

@@ -11,6 +11,7 @@
 import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
+import type * as bedrock_utils from "../bedrock_utils.js";
 import type * as codeReview from "../codeReview.js";
 import type * as codeReviewActions from "../codeReviewActions.js";
 import type * as codeReview_http from "../codeReview_http.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
+  bedrock_utils: typeof bedrock_utils;
   codeReview: typeof codeReview;
   codeReviewActions: typeof codeReviewActions;
   codeReview_http: typeof codeReview_http;
