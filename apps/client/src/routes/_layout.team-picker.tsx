@@ -121,7 +121,7 @@ function TeamPicker() {
   );
 
   return (
-    <div className="min-h-dvh w-full bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center p-6">
+    <div className="min-h-dvh w-full flex items-center justify-center p-6 bg-gradient-to-br from-red-400 via-purple-400 to-blue-400 dark:from-red-600 dark:via-purple-600 dark:to-blue-600">
       {isElectron ? (
         <div
           className="fixed top-0 left-0 right-0 h-[24px]"
