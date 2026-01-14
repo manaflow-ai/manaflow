@@ -1222,6 +1222,19 @@ async def task_install_openvscode(ctx: TaskContext) -> None:
           curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/openvscode-server.tar.gz "${url}"
         tar xf /tmp/openvscode-server.tar.gz -C /app/openvscode-server --strip-components=1
         rm -f /tmp/openvscode-server.tar.gz
+
+        # Create openvscode user settings to disable workspace trust and Copilot prompts
+        mkdir -p /root/.openvscode-server/data/User
+        cat > /root/.openvscode-server/data/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none",
+  "security.workspace.trust.enabled": false,
+  "github.copilot.nextEditSuggestions.enabled": false,
+  "github.copilot.chat.agent.enabled": false,
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none"
+}
+EOF
         """
     )
     await ctx.run("install-openvscode", cmd)
