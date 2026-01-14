@@ -76,6 +76,13 @@ const messageChunkPayload = z.object({
   content: contentBlockSchema,
 });
 
+const reasoningChunkPayload = z.object({
+  type: z.literal("reasoning_chunk"),
+  conversationId: z.string(),
+  messageId: z.string().optional(),
+  text: z.string(),
+});
+
 const messageCompletePayload = z.object({
   type: z.literal("message_complete"),
   conversationId: z.string(),
@@ -111,6 +118,7 @@ const sandboxReadyPayload = z.object({
 
 const acpCallbackPayload = z.discriminatedUnion("type", [
   messageChunkPayload,
+  reasoningChunkPayload,
   messageCompletePayload,
   toolCallPayload,
   errorPayload,
@@ -193,6 +201,15 @@ export const acpCallback = httpAction(async (ctx, req) => {
           conversationId: payload.conversationId as Id<"conversations">,
           messageId: payload.messageId as Id<"conversationMessages"> | undefined,
           content: payload.content,
+        });
+        break;
+      }
+
+      case "reasoning_chunk": {
+        await ctx.runMutation(internal.acp_callbacks.appendReasoningChunk, {
+          conversationId: payload.conversationId as Id<"conversations">,
+          messageId: payload.messageId as Id<"conversationMessages"> | undefined,
+          text: payload.text,
         });
         break;
       }

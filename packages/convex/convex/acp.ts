@@ -161,6 +161,10 @@ export const startConversation = action({
             args.providerId,
             args.cwd
           );
+          // Mark as initialized
+          await ctx.runMutation(internal.acp.markConversationInitialized, {
+            conversationId,
+          });
         } catch (error) {
           console.error("[acp] Failed to init conversation on sandbox:", error);
           // Don't fail the whole operation, sandbox might not be ready yet
@@ -230,6 +234,22 @@ export const sendMessage = action({
 
       if (sandbox?.sandboxUrl && sandbox.status === "running") {
         try {
+          // Ensure conversation is initialized on sandbox before sending prompt.
+          // This handles the case where sandbox was spawning during startConversation.
+          if (!conversation.initializedOnSandbox) {
+            await initConversationOnSandbox(
+              sandbox.sandboxUrl,
+              args.conversationId,
+              conversation.sessionId,
+              conversation.providerId,
+              conversation.cwd
+            );
+            // Mark as initialized
+            await ctx.runMutation(internal.acp.markConversationInitialized, {
+              conversationId: args.conversationId,
+            });
+          }
+
           await sendPromptToSandbox(
             sandbox.sandboxUrl,
             args.conversationId,
@@ -351,6 +371,7 @@ export const createConversationInternal = internalMutation({
     providerId: providerIdValidator,
     cwd: v.string(),
     acpSandboxId: v.id("acpSandboxes"),
+    initializedOnSandbox: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -362,8 +383,23 @@ export const createConversationInternal = internalMutation({
       cwd: args.cwd,
       status: "active",
       acpSandboxId: args.acpSandboxId,
+      initializedOnSandbox: args.initializedOnSandbox ?? false,
       createdAt: now,
       updatedAt: now,
+    });
+  },
+});
+
+/**
+ * Mark conversation as initialized on sandbox.
+ */
+export const markConversationInitialized = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.conversationId, {
+      initializedOnSandbox: true,
     });
   },
 });
@@ -377,6 +413,22 @@ export const getConversationInternal = internalQuery({
   },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.conversationId);
+  },
+});
+
+/**
+ * Get messages for a conversation (internal).
+ */
+export const getMessagesInternal = internalQuery({
+  args: {
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("conversationMessages")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", args.conversationId))
+      .order("asc")
+      .collect();
   },
 });
 
@@ -721,6 +773,37 @@ export const subscribeNewMessages = authQuery({
         q.eq("conversationId", args.conversationId)
       )
       .filter((q) => q.gt(q.field("createdAt"), args.afterTimestamp))
+      .order("asc")
+      .collect();
+  },
+});
+
+/**
+ * Get all messages for a conversation (non-paginated).
+ * Useful for E2E testing and simpler clients.
+ */
+export const getMessages = authQuery({
+  args: {
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) {
+      return [];
+    }
+
+    // Verify team access
+    try {
+      await getTeamId(ctx, conversation.teamId);
+    } catch {
+      return [];
+    }
+
+    return await ctx.db
+      .query("conversationMessages")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId)
+      )
       .order("asc")
       .collect();
   },

@@ -101,6 +101,59 @@ export const appendMessageChunk = internalMutation({
 });
 
 /**
+ * Append a reasoning/thought chunk to a message.
+ * Called by sandbox during extended thinking responses.
+ */
+export const appendReasoningChunk = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    messageId: v.optional(v.id("conversationMessages")),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    // If no messageId, create a new assistant message with reasoning
+    if (!args.messageId) {
+      const newMessageId = await ctx.db.insert("conversationMessages", {
+        conversationId: args.conversationId,
+        role: "assistant",
+        content: [],
+        reasoning: args.text,
+        createdAt: now,
+      });
+
+      // Update conversation activity
+      await ctx.db.patch(args.conversationId, {
+        lastMessageAt: now,
+        updatedAt: now,
+      });
+
+      return newMessageId;
+    }
+
+    // Append to existing message's reasoning
+    const message = await ctx.db.get(args.messageId);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    const existingReasoning = message.reasoning ?? "";
+    await ctx.db.patch(args.messageId, {
+      reasoning: existingReasoning + args.text,
+    });
+
+    // Update conversation activity
+    await ctx.db.patch(args.conversationId, {
+      lastMessageAt: now,
+      updatedAt: now,
+    });
+
+    return args.messageId;
+  },
+});
+
+/**
  * Mark a message as complete with stop reason.
  */
 export const completeMessage = internalMutation({

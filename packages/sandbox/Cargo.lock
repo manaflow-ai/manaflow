@@ -575,6 +575,7 @@ dependencies = [
  "pulldown-cmark 0.12.2",
  "ratatui",
  "rcgen",
+ "regex",
  "reqwest",
  "rustls",
  "rustls-pki-types",

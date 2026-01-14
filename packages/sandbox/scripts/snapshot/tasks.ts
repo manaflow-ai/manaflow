@@ -389,12 +389,14 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
 
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
-model_provider_name = "cmux-proxy"
+model_provider = "cmux-proxy"
 
 [model_providers.cmux-proxy]
 name = "cmux-proxy"
 env_key = "OPENAI_API_KEY"
 wire_api = "responses"
+# CRITICAL: This must be inside the provider section to skip auth
+requires_openai_auth = false
 EOF
 
         echo "Created /root/.codex/config.toml"

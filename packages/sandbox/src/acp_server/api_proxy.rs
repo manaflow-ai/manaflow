@@ -421,7 +421,9 @@ struct UnifiedProxyState {
 impl UnifiedProxyState {
     /// Find the matching route for a path.
     fn find_route(&self, path: &str) -> Option<&ProviderRoute> {
-        self.routes.iter().find(|r| path.starts_with(&r.path_prefix))
+        self.routes
+            .iter()
+            .find(|r| path.starts_with(&r.path_prefix))
     }
 }
 
@@ -702,13 +704,24 @@ impl UnifiedApiProxy {
         let jwt_holder = JwtHolder::new(initial_jwt);
 
         // Build routes for each provider
-        let routes: Vec<ProviderRoute> = providers
+        let mut routes: Vec<ProviderRoute> = providers
             .iter()
             .map(|provider| ProviderRoute {
                 path_prefix: format!("/{}", provider),
                 outer_proxy_url: format!("{}/api/{}", api_proxy_url, provider),
             })
             .collect();
+
+        // Add fallback routes for OpenAI paths that Codex may use directly.
+        // Codex ignores the path portion of base_url and calls these paths directly.
+        routes.push(ProviderRoute {
+            path_prefix: "/v1".to_string(),
+            outer_proxy_url: format!("{}/api/openai/v1", api_proxy_url),
+        });
+        routes.push(ProviderRoute {
+            path_prefix: "/responses".to_string(),
+            outer_proxy_url: format!("{}/api/openai/v1/responses", api_proxy_url),
+        });
 
         info!(
             routes = ?routes.iter().map(|r| &r.path_prefix).collect::<Vec<_>>(),

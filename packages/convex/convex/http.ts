@@ -29,6 +29,7 @@ import {
 import { acpCallback } from "./acp_http";
 import { anthropicProxy } from "./anthropic_http";
 import { openaiProxy } from "./openai_http";
+import { codexOAuthRefresh } from "./codex_oauth_http";
 
 const http = httpRouter();
 
@@ -181,6 +182,14 @@ http.route({
   path: "/api/openai/v1/responses/compact",
   method: "POST",
   handler: openaiProxy,
+});
+
+// Codex OAuth refresh proxy endpoint
+// Codex CLI can use CODEX_REFRESH_TOKEN_URL_OVERRIDE to point here
+http.route({
+  path: "/api/oauth/codex/token",
+  method: "POST",
+  handler: codexOAuthRefresh,
 });
 
 export default http;

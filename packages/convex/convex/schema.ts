@@ -1207,6 +1207,8 @@ const convexSchema = defineSchema({
     ),
     // Link to ACP sandbox (for callback-based architecture)
     acpSandboxId: v.optional(v.id("acpSandboxes")),
+    // Whether conversation has been initialized on the sandbox (CLI spawned)
+    initializedOnSandbox: v.optional(v.boolean()),
     lastMessageAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1280,6 +1282,8 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    // Reasoning/thinking content from extended thinking models
+    reasoning: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId", "createdAt"])
@@ -1316,6 +1320,25 @@ const convexSchema = defineSchema({
   })
     .index("by_team_status", ["teamId", "status", "lastActivityAt"])
     .index("by_instance", ["instanceId"]),
+
+  // OpenAI Codex OAuth tokens for users
+  // Stores tokens from OpenAI Codex OAuth flow, enabling Codex CLI integration
+  codexTokens: defineTable({
+    userId: v.string(), // Stack Auth user ID
+    teamId: v.string(), // Team context
+    accessToken: v.string(), // OpenAI access token
+    refreshToken: v.string(), // OpenAI refresh token (real one, rotates on each use)
+    idToken: v.optional(v.string()), // OpenAI ID token
+    accountId: v.optional(v.string()), // chatgpt_account_id from JWT claims
+    planType: v.optional(v.string()), // chatgpt_plan_type (pro, plus, free, etc)
+    email: v.optional(v.string()), // Email from OpenAI account
+    expiresAt: v.number(), // Token expiration timestamp (milliseconds)
+    lastRefresh: v.number(), // Last refresh timestamp (milliseconds)
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user_team", ["userId", "teamId"]) // Primary lookup: user's tokens for a team
+    .index("by_user", ["userId"]), // List all teams where user has Codex linked
 });
 
 export default convexSchema;

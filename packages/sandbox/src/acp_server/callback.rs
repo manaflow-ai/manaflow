@@ -82,6 +82,14 @@ enum CallbackPayload {
         message_id: Option<String>,
         content: CallbackContentBlock,
     },
+    #[serde(rename = "reasoning_chunk")]
+    ReasoningChunk {
+        #[serde(rename = "conversationId")]
+        conversation_id: String,
+        #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+        text: String,
+    },
     #[serde(rename = "message_complete")]
     MessageComplete {
         #[serde(rename = "conversationId")]
@@ -211,6 +219,31 @@ impl CallbackClient {
                 conversation_id = %conversation_id,
                 error = %e,
                 "Failed to send text chunk callback"
+            );
+        }
+    }
+
+    /// Send a reasoning/thought chunk for a message (extended thinking).
+    ///
+    /// This captures the agent's reasoning/thinking process.
+    /// Returns without error even on failure to avoid blocking the agent.
+    pub async fn send_reasoning_chunk(
+        &self,
+        conversation_id: &str,
+        message_id: Option<&str>,
+        text: &str,
+    ) {
+        let payload = CallbackPayload::ReasoningChunk {
+            conversation_id: conversation_id.to_string(),
+            message_id: message_id.map(|s| s.to_string()),
+            text: text.to_string(),
+        };
+
+        if let Err(e) = self.post_callback(payload).await {
+            warn!(
+                conversation_id = %conversation_id,
+                error = %e,
+                "Failed to send reasoning chunk callback"
             );
         }
     }

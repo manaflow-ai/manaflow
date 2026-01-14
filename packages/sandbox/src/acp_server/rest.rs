@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
 
 use super::api_proxy::ConversationApiProxies;
-use super::callback::{CallbackClient, StopReason};
+use super::callback::{CallbackClient, CallbackToolCall, CallbackToolCallStatus, StopReason};
 use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationMode};
 
 /// State for a single conversation.
@@ -107,10 +107,10 @@ impl RestApiState {
             *guard = Some(sandbox_id);
         }
         // Start API proxies if proxy URL is provided
-        if let Some(proxy_url) = api_proxy_url {
+        if let Some(ref proxy_url) = api_proxy_url {
             info!(api_proxy_url = %proxy_url, "Starting per-conversation API proxies");
             let proxies = ConversationApiProxies::start(
-                &proxy_url,
+                proxy_url,
                 Some(sandbox_jwt),
                 std::time::Duration::from_secs(30),
             )
@@ -122,6 +122,14 @@ impl RestApiState {
             }
             if let Some(proxy) = proxies.openai() {
                 info!(base_url = %proxy.provider_url("openai"), "OpenAI proxy route configured");
+
+                // Update Codex config with the local proxy URL (without /openai path).
+                // Codex ignores the path portion of base_url, so we provide just host:port.
+                // The unified proxy will handle /v1/* as a fallback to OpenAI.
+                let local_proxy_url = proxy.base_url();
+                if let Err(e) = update_codex_config_base_url(&local_proxy_url).await {
+                    warn!(error = %e, "Failed to update Codex config base_url (non-fatal)");
+                }
             }
 
             let mut guard = self.api_proxies.write().await;
@@ -131,14 +139,19 @@ impl RestApiState {
     }
 
     /// Get environment variables to set for spawned CLIs.
+    /// Always includes HOME for config file discovery.
     /// Returns proxy URLs if proxies are configured.
     pub async fn get_cli_env_vars(&self) -> Vec<(String, String)> {
+        // Always include HOME so CLIs can find their config files
+        // (e.g., ~/.codex/config.toml)
+        let mut env_vars = vec![("HOME".to_string(), "/root".to_string())];
+
         let guard = self.api_proxies.read().await;
         if let Some(ref proxies) = *guard {
-            proxies.env_vars()
-        } else {
-            Vec::new()
+            env_vars.extend(proxies.env_vars());
         }
+
+        env_vars
     }
 
     /// Get the callback client (if configured).
@@ -574,6 +587,12 @@ pub async fn init_conversation(
     tokio::spawn(async move {
         let mut line = String::new();
 
+        // Buffer for accumulating message and reasoning chunks
+        // We only persist to Convex at message boundaries, not on every token
+        let mut message_buffer = String::new();
+        let mut reasoning_buffer = String::new();
+        let mut pending_tool_calls: Vec<CallbackToolCall> = Vec::new();
+
         loop {
             line.clear();
             match reader.read_line(&mut line).await {
@@ -583,16 +602,114 @@ pub async fn init_conversation(
                     break;
                 }
                 Ok(_) => {
-                    debug!(conversation_id = %conversation_id, line = %line.trim(), "CLI output");
+                    debug!(conversation_id = %conversation_id, line = %line.trim(), "CLI stdout output");
 
-                    // Parse JSON-RPC response and extract text
-                    if let Some(text) = extract_text_from_jsonrpc(&line) {
-                        if let Some(ref client) = callback_client {
-                            let msg_id = current_message_id.lock().await;
-                            client
-                                .send_text_chunk(&conversation_id, msg_id.as_deref(), &text)
-                                .await;
+                    // Parse ACP event and handle appropriately
+                    if let Some(event) = parse_acp_event(&line) {
+                        match event {
+                            AcpEvent::MessageChunk(text) => {
+                                // Buffer text - only persist at message boundaries
+                                debug!(conversation_id = %conversation_id, text_len = %text.len(), "Buffering message chunk");
+                                message_buffer.push_str(&text);
+                            }
+                            AcpEvent::ReasoningChunk(text) => {
+                                // Buffer reasoning - only persist at message boundaries
+                                debug!(conversation_id = %conversation_id, text_len = %text.len(), "Buffering reasoning chunk");
+                                reasoning_buffer.push_str(&text);
+                            }
+                            AcpEvent::ToolCall { id, name, arguments } => {
+                                // Buffer tool calls - persist with message complete
+                                debug!(
+                                    conversation_id = %conversation_id,
+                                    tool_id = %id,
+                                    tool_name = %name,
+                                    "Buffering tool call"
+                                );
+                                pending_tool_calls.push(CallbackToolCall {
+                                    id,
+                                    name,
+                                    arguments,
+                                    status: CallbackToolCallStatus::Pending,
+                                    result: None,
+                                });
+                            }
+                            AcpEvent::ToolCallUpdate { id, status, result } => {
+                                // Update buffered tool call status
+                                debug!(
+                                    conversation_id = %conversation_id,
+                                    tool_id = %id,
+                                    status = %status,
+                                    "Updating buffered tool call"
+                                );
+                                let tool_status = match status.as_str() {
+                                    "running" => CallbackToolCallStatus::Running,
+                                    "completed" => CallbackToolCallStatus::Completed,
+                                    "failed" => CallbackToolCallStatus::Failed,
+                                    _ => CallbackToolCallStatus::Pending,
+                                };
+                                if let Some(tc) = pending_tool_calls.iter_mut().find(|tc| tc.id == id) {
+                                    tc.status = tool_status;
+                                    if result.is_some() {
+                                        tc.result = result;
+                                    }
+                                }
+                            }
+                            AcpEvent::MessageComplete(stop_reason) => {
+                                // MESSAGE BOUNDARY: Persist all buffered content to Convex
+                                info!(
+                                    conversation_id = %conversation_id,
+                                    stop_reason = %stop_reason,
+                                    message_len = %message_buffer.len(),
+                                    reasoning_len = %reasoning_buffer.len(),
+                                    tool_calls = %pending_tool_calls.len(),
+                                    "Message complete - persisting to Convex"
+                                );
+
+                                if let Some(ref client) = callback_client {
+                                    let msg_id = current_message_id.lock().await;
+
+                                    // Send buffered reasoning if any
+                                    if !reasoning_buffer.is_empty() {
+                                        client
+                                            .send_reasoning_chunk(&conversation_id, msg_id.as_deref(), &reasoning_buffer)
+                                            .await;
+                                    }
+
+                                    // Send buffered message text if any
+                                    if !message_buffer.is_empty() {
+                                        client
+                                            .send_text_chunk(&conversation_id, msg_id.as_deref(), &message_buffer)
+                                            .await;
+                                    }
+
+                                    // Send buffered tool calls
+                                    for tool_call in &pending_tool_calls {
+                                        if let Some(ref msg) = *msg_id {
+                                            client.record_tool_call(&conversation_id, msg, tool_call.clone()).await;
+                                        }
+                                    }
+
+                                    // Send completion
+                                    let reason = match stop_reason.as_str() {
+                                        "end_turn" => StopReason::EndTurn,
+                                        "max_tokens" => StopReason::MaxTokens,
+                                        "refusal" => StopReason::Refusal,
+                                        "cancelled" => StopReason::Cancelled,
+                                        _ => StopReason::EndTurn,
+                                    };
+                                    if let Some(ref id) = *msg_id {
+                                        client.complete_message(&conversation_id, id, reason).await;
+                                    }
+                                }
+
+                                // Clear buffers for next message turn
+                                message_buffer.clear();
+                                reasoning_buffer.clear();
+                                pending_tool_calls.clear();
+                            }
                         }
+                    } else {
+                        debug!(conversation_id = %conversation_id, "No ACP event parsed from line");
                     }
                 }
                 Err(e) => {
@@ -606,13 +723,29 @@ pub async fn init_conversation(
             }
         }
 
-        // Send completion callback if in callback mode
-        if let Some(ref client) = callback_client {
-            let msg_id = current_message_id.lock().await;
-            if let Some(ref id) = *msg_id {
-                client
-                    .complete_message(&conversation_id, id, StopReason::EndTurn)
-                    .await;
+        // Send any remaining buffered content on EOF (process ended)
+        if !message_buffer.is_empty() || !reasoning_buffer.is_empty() {
+            info!(
+                conversation_id = %conversation_id,
+                message_len = %message_buffer.len(),
+                reasoning_len = %reasoning_buffer.len(),
+                "EOF - flushing remaining buffers"
+            );
+            if let Some(ref client) = callback_client {
+                let msg_id = current_message_id.lock().await;
+                if !reasoning_buffer.is_empty() {
+                    client
+                        .send_reasoning_chunk(&conversation_id, msg_id.as_deref(), &reasoning_buffer)
+                        .await;
+                }
+                if !message_buffer.is_empty() {
+                    client
+                        .send_text_chunk(&conversation_id, msg_id.as_deref(), &message_buffer)
+                        .await;
+                }
+                if let Some(ref id) = *msg_id {
+                    client.complete_message(&conversation_id, id, StopReason::EndTurn).await;
+                }
             }
         }
     });
@@ -629,28 +762,163 @@ pub async fn init_conversation(
     }))
 }
 
-/// Extract text content from a JSON-RPC response line.
-fn extract_text_from_jsonrpc(line: &str) -> Option<String> {
-    // Try to parse as JSON-RPC response
+/// Parsed ACP event from CLI stdout.
+#[derive(Debug)]
+enum AcpEvent {
+    /// Agent message text chunk
+    MessageChunk(String),
+    /// Agent reasoning/thought text chunk
+    ReasoningChunk(String),
+    /// Tool call event
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    /// Tool call status update
+    ToolCallUpdate {
+        id: String,
+        status: String,
+        result: Option<String>,
+    },
+    /// Message completion with stop reason
+    MessageComplete(String), // stop_reason
+}
+
+/// Parse ACP events from a JSON-RPC line.
+///
+/// Handles multiple formats from both Claude Code and Codex:
+/// - Session update notifications (agent_message_chunk, agent_thought_chunk, tool_call, etc.)
+/// - Standard JSON-RPC responses with result.content
+/// - Codex session event format
+fn parse_acp_event(line: &str) -> Option<AcpEvent> {
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
 
-    // Look for text content in various places
-    // ACP responses typically have result.content[].text
+    // Check for JSON-RPC result with stopReason (message complete)
     if let Some(result) = value.get("result") {
-        if let Some(content) = result.get("content") {
-            if let Some(arr) = content.as_array() {
-                for block in arr {
-                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                            return Some(text.to_string());
-                        }
-                    }
+        if let Some(stop_reason) = result.get("stopReason").and_then(|s| s.as_str()) {
+            return Some(AcpEvent::MessageComplete(stop_reason.to_string()));
+        }
+        // Check for text in result.content (standard response)
+        if let Some(text) = extract_text_from_result(result) {
+            return Some(AcpEvent::MessageChunk(text));
+        }
+    }
+
+    // Check for Codex event format (type: "event_msg")
+    if value.get("type").and_then(|t| t.as_str()) == Some("event_msg") {
+        if let Some(payload) = value.get("payload") {
+            if payload.get("type").and_then(|t| t.as_str()) == Some("agent_message") {
+                if let Some(message) = payload.get("message").and_then(|m| m.as_str()) {
+                    return Some(AcpEvent::MessageChunk(message.to_string()));
                 }
             }
         }
-        // Also check for direct text field
-        if let Some(text) = result.get("text").and_then(|t| t.as_str()) {
-            return Some(text.to_string());
+    }
+
+    // Check for session/update notifications (params.update)
+    if let Some(params) = value.get("params") {
+        if let Some(update) = params.get("update") {
+            let session_update = update.get("sessionUpdate").and_then(|s| s.as_str());
+
+            match session_update {
+                Some("agent_message_chunk") => {
+                    if let Some(text) = extract_text_from_content(update.get("content")) {
+                        return Some(AcpEvent::MessageChunk(text));
+                    }
+                }
+                Some("agent_thought_chunk") => {
+                    if let Some(text) = extract_text_from_content(update.get("content")) {
+                        return Some(AcpEvent::ReasoningChunk(text));
+                    }
+                }
+                Some("tool_call") => {
+                    // Parse tool call from update
+                    if let Some(id) = update.get("id").and_then(|v| v.as_str()) {
+                        let name = update
+                            .get("title")
+                            .or_else(|| update.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let arguments = update
+                            .get("input")
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "{}".to_string());
+                        return Some(AcpEvent::ToolCall {
+                            id: id.to_string(),
+                            name,
+                            arguments,
+                        });
+                    }
+                }
+                Some("tool_call_update") => {
+                    if let Some(fields) = update.get("fields") {
+                        if let Some(id) = update.get("id").and_then(|v| v.as_str()) {
+                            let status = fields
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let result = fields.get("result").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            return Some(AcpEvent::ToolCallUpdate {
+                                id: id.to_string(),
+                                status,
+                                result,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Fallback: params.content[].text (direct content blocks)
+        if let Some(text) = extract_text_from_content(params.get("content")) {
+            return Some(AcpEvent::MessageChunk(text));
+        }
+        // params.text directly
+        if let Some(text) = params.get("text").and_then(|t| t.as_str()) {
+            return Some(AcpEvent::MessageChunk(text.to_string()));
+        }
+    }
+
+    None
+}
+
+/// Extract text from a result object.
+fn extract_text_from_result(result: &serde_json::Value) -> Option<String> {
+    // Check result.content[].text
+    if let Some(content) = result.get("content") {
+        if let Some(text) = extract_text_from_content(Some(content)) {
+            return Some(text);
+        }
+    }
+    // Check result.text directly
+    result.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+}
+
+/// Extract text from a content value (can be object or array).
+fn extract_text_from_content(content: Option<&serde_json::Value>) -> Option<String> {
+    let content = content?;
+
+    // If content is a direct object with type: "text"
+    if content.is_object() {
+        let content_type = content.get("type").and_then(|t| t.as_str());
+        if matches!(content_type, Some("text") | Some("output_text")) {
+            return content.get("text").and_then(|t| t.as_str()).map(|s| s.to_string());
+        }
+    }
+
+    // If content is an array of blocks
+    if let Some(arr) = content.as_array() {
+        for block in arr {
+            let block_type = block.get("type").and_then(|t| t.as_str());
+            if matches!(block_type, Some("text") | Some("output_text")) {
+                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                    return Some(text.to_string());
+                }
+            }
         }
     }
 
@@ -803,6 +1071,60 @@ pub async fn receive_prompt(
         accepted: true,
         error: None,
     }))
+}
+
+/// Update Codex config.toml with the proxy base_url.
+///
+/// Codex custom providers require `base_url` in the config file - they don't
+/// use the OPENAI_BASE_URL environment variable. Since the proxy port is
+/// assigned dynamically, we need to patch the config after the proxy starts.
+async fn update_codex_config_base_url(openai_base_url: &str) -> Result<(), String> {
+    use tokio::fs;
+    use tokio::io::AsyncReadExt;
+
+    let config_path = std::path::Path::new("/root/.codex/config.toml");
+
+    // Read existing config
+    let mut config_content = String::new();
+    if config_path.exists() {
+        let mut file = fs::File::open(config_path)
+            .await
+            .map_err(|e| format!("Failed to open config: {}", e))?;
+        file.read_to_string(&mut config_content)
+            .await
+            .map_err(|e| format!("Failed to read config: {}", e))?;
+    } else {
+        return Err("Codex config file not found".to_string());
+    }
+
+    // Check if base_url is already set
+    if config_content.contains("base_url") {
+        // Replace existing base_url
+        let re = regex::Regex::new(r#"base_url\s*=\s*"[^"]*""#)
+            .map_err(|e| format!("Regex error: {}", e))?;
+        config_content = re
+            .replace_all(&config_content, &format!(r#"base_url = "{}""#, openai_base_url))
+            .to_string();
+    } else {
+        // Add base_url after [model_providers.cmux-proxy] section
+        let insertion_point = "[model_providers.cmux-proxy]";
+        if let Some(pos) = config_content.find(insertion_point) {
+            let insert_pos = pos + insertion_point.len();
+            let base_url_line = format!("\nbase_url = \"{}\"", openai_base_url);
+            config_content.insert_str(insert_pos, &base_url_line);
+        } else {
+            warn!("Could not find [model_providers.cmux-proxy] section in Codex config");
+            return Err("Config section not found".to_string());
+        }
+    }
+
+    // Write updated config
+    fs::write(config_path, &config_content)
+        .await
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    info!(base_url = %openai_base_url, "Updated Codex config with proxy base_url");
+    Ok(())
 }
 
 /// OpenAPI documentation for REST API endpoints.
