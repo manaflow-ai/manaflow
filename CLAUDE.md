@@ -51,6 +51,29 @@ Use crypto.subtle instead of node:crypto
 Exception is if the file defines only actions and includes a "use node" directive at the top of the file
 To query Convex data during development, first cd into packages/convex, and run `bunx convex data <table> --format jsonl | rg "pattern"` (e.g., `bunx convex data sessions --format jsonl | rg "mn7abc123"`).
 
+### Swift type generation (experimental)
+
+Use `tools/convex-swift-gen/generate-swift.ts` to emit Swift `Decodable` structs from the Convex schema.
+
+- How it works:
+  - Parses `packages/convex/convex/schema.ts` with the TypeScript compiler API.
+  - Walks `defineSchema`/`defineTable` + `v.*` validators to build a schema IR.
+  - Maps validators to Swift types and Convex property wrappers.
+  - Emits enums for string-literal unions; falls back to `ConvexValue` for unknown/any shapes.
+  - Writes `schema-ir.json` and `schema-report.json` alongside the Swift output for debugging.
+- Scope: this generates Swift types for Convex tables in `schema.ts` (not query/mutation return types yet).
+- Default output: `tools/convex-swift-gen/out/ConvexTables.swift` (plus `schema-ir.json` and `schema-report.json` in the same folder).
+- Custom output example (recommended for app code):
+  `bun run tools/convex-swift-gen/generate-swift.ts --out ios-app/Sources/Generated/ConvexTables.swift`
+- Convenience script (same output, formatted by default):
+  `bun run gen:swift-types`
+- Formatting: `swift-format` runs by default (requires it on PATH). Use `--no-format` to skip.
+- API feasibility report (args/return types from generated Convex API types):
+  `bun run gen:swift-api-report`
+- API types PoC (tasks.get + related task queries, emits to `ios-app/Sources/Generated/ConvexApiTypes.swift`):
+  `bun run gen:swift-api-types`
+- The PoC maps Convex `Id<"table">` return fields to `ConvexId<ConvexTable*>` wrappers and keeps args as primitives.
+
 ## Sandboxes
 
 This project uses Morph sandboxes for running Claude Code/Codex/other coding CLIs inside.
