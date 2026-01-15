@@ -61,9 +61,11 @@ interface EnvironmentWorkspaceConfigProps {
   vncWebsocketUrl?: string;
   isSaving: boolean;
   errorMessage?: string | null;
+  initialConfigStep?: ConfigStep;
   onMaintenanceScriptChange: (value: string) => void;
   onDevScriptChange: (value: string) => void;
   onEnvVarsChange: (updater: (prev: EnvVar[]) => EnvVar[]) => void;
+  onConfigStepChange?: (step: ConfigStep) => void;
   onSave: () => void;
   onBack: () => void;
 }
@@ -92,19 +94,54 @@ export function EnvironmentWorkspaceConfig({
   vncWebsocketUrl,
   isSaving,
   errorMessage,
+  initialConfigStep,
   onMaintenanceScriptChange,
   onDevScriptChange,
   onEnvVarsChange,
+  onConfigStepChange,
   onSave,
   onBack,
 }: EnvironmentWorkspaceConfigProps) {
-  // Current step (starts at run-scripts since scripts and env-vars were done in initial setup)
-  const [currentConfigStep, setCurrentConfigStep] = useState<ConfigStep>("run-scripts");
+  // Compute completed steps: all steps before the given step, plus base completed steps
+  const computeCompletedSteps = useCallback((step: ConfigStep | undefined): Set<ConfigStep> => {
+    const completed = new Set<ConfigStep>(["scripts", "env-vars"]);
+    if (step) {
+      const stepIndex = ALL_CONFIG_STEPS.indexOf(step);
+      for (let i = 0; i < stepIndex; i++) {
+        completed.add(ALL_CONFIG_STEPS[i]);
+      }
+    }
+    return completed;
+  }, []);
 
-  // Track which steps have been completed (scripts and env-vars are pre-completed from initial setup)
-  const [completedSteps, setCompletedSteps] = useState<Set<ConfigStep>>(
-    () => new Set(["scripts", "env-vars"] as ConfigStep[])
+  // Current step (starts at run-scripts since scripts and env-vars were done in initial setup)
+  const [currentConfigStep, setCurrentConfigStep] = useState<ConfigStep>(
+    () => initialConfigStep ?? "run-scripts"
   );
+
+  // Track which steps have been completed
+  const [completedSteps, setCompletedSteps] = useState<Set<ConfigStep>>(
+    () => computeCompletedSteps(initialConfigStep)
+  );
+
+  // Track previous initialConfigStep to detect external changes (e.g., draft loading after navigation)
+  const prevInitialConfigStepRef = useRef(initialConfigStep);
+  useEffect(() => {
+    // Only sync when initialConfigStep actually changes from outside (not from our own updates)
+    if (initialConfigStep && initialConfigStep !== prevInitialConfigStepRef.current) {
+      prevInitialConfigStepRef.current = initialConfigStep;
+      setCurrentConfigStep(initialConfigStep);
+      setCompletedSteps(computeCompletedSteps(initialConfigStep));
+    }
+  }, [initialConfigStep, computeCompletedSteps]);
+
+  // Notify parent when config step changes
+  // Use ref to avoid infinite loop if parent doesn't memoize the callback
+  const onConfigStepChangeRef = useRef(onConfigStepChange);
+  onConfigStepChangeRef.current = onConfigStepChange;
+  useEffect(() => {
+    onConfigStepChangeRef.current?.(currentConfigStep);
+  }, [currentConfigStep]);
 
   const [commandsCopied, setCommandsCopied] = useState(false);
   const copyResetTimeoutRef = useRef<number | null>(null);
