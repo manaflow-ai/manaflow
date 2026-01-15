@@ -1,6 +1,6 @@
-import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { PreviewConfigureClient } from "@/components/preview/preview-configure-client";
+import { PreviewConfigureConnectGithub } from "@/components/preview/preview-configure-connect-github";
 import { getConvex } from "@/lib/utils/get-convex";
 import { stackServerApp } from "@/lib/utils/stack";
 import { api } from "@cmux/convex/api";
@@ -105,27 +105,14 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
   );
 
   if (!hasGithubAppInstallation) {
-    const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-    if (!githubAppSlug) {
-      throw new Error("GitHub App slug is not configured");
-    }
-
-    const headerList = await headers();
-    const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
-    const protocol = headerList.get("x-forwarded-proto") ?? "https";
-    const returnUrl =
-      host && configurePath.startsWith("/")
-        ? `${protocol}://${host}${configurePath}`
-        : configurePath;
-
-    const { state } = await convex.mutation(api.github_app.mintInstallState, {
-      teamSlugOrId: selectedTeamSlugOrId,
-      returnUrl,
-    });
-
-    const url = new URL(`https://github.com/apps/${githubAppSlug}/installations/new`);
-    url.searchParams.set("state", state);
-    return redirect(url.toString());
+    // Show a nice UI to connect GitHub instead of redirecting immediately
+    return (
+      <PreviewConfigureConnectGithub
+        teamSlugOrId={selectedTeamSlugOrId}
+        repo={repo}
+        returnPath={configurePath}
+      />
+    );
   }
 
   const clientTeams = teams.map((team) => ({
