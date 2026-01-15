@@ -5,6 +5,48 @@
  * - Model name mapping (Anthropic API → Bedrock model IDs)
  * - Bedrock streaming format conversion (AWS event stream → SSE)
  * - Base64 decode for Convex runtime (no atob/Buffer)
+ * - Prompt caching support utilities
+ *
+ * ## Prompt Caching
+ *
+ * Bedrock supports prompt caching for Claude models via the InvokeModel API.
+ * To enable caching, add `cache_control: { type: "ephemeral" }` to content blocks
+ * in your request. The static content before the cache_control marker gets cached.
+ *
+ * Example request with caching:
+ * ```json
+ * {
+ *   "messages": [
+ *     {
+ *       "role": "user",
+ *       "content": [
+ *         { "type": "text", "text": "Long static context here...", "cache_control": { "type": "ephemeral" } },
+ *         { "type": "text", "text": "Dynamic user question" }
+ *       ]
+ *     }
+ *   ]
+ * }
+ * ```
+ *
+ * Or for system prompts:
+ * ```json
+ * {
+ *   "system": [
+ *     { "type": "text", "text": "Long system prompt...", "cache_control": { "type": "ephemeral" } }
+ *   ],
+ *   "messages": [...]
+ * }
+ * ```
+ *
+ * Cache metrics are returned in the response:
+ * - `cache_creation_input_tokens`: Tokens written to cache (cache miss)
+ * - `cache_read_input_tokens`: Tokens read from cache (cache hit)
+ *
+ * Notes:
+ * - Minimum token threshold: 1,024 tokens (2,048 for some models)
+ * - Cache TTL: ~5 minutes (refreshed on cache hit)
+ * - Up to 4 cache checkpoints per request
+ * - Supported on Claude 3.5 Sonnet, Claude 3.7 Sonnet, Claude 4 models
  */
 
 /**
@@ -13,6 +55,33 @@
  */
 export const BEDROCK_AWS_REGION = "us-east-1";
 export const BEDROCK_BASE_URL = `https://bedrock-runtime.${BEDROCK_AWS_REGION}.amazonaws.com`;
+
+/**
+ * Cache metrics extracted from Bedrock/Anthropic responses.
+ */
+export type CacheMetrics = {
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+};
+
+/**
+ * Extract cache metrics from an Anthropic API response (usage object).
+ * Works with both streaming message_start events and non-streaming responses.
+ */
+export function extractCacheMetrics(usage: Record<string, unknown>): CacheMetrics | null {
+  const cacheCreation = usage.cache_creation_input_tokens;
+  const cacheRead = usage.cache_read_input_tokens;
+
+  // Only return metrics if at least one cache field is present
+  if (typeof cacheCreation === "number" || typeof cacheRead === "number") {
+    return {
+      cacheCreationInputTokens: typeof cacheCreation === "number" ? cacheCreation : 0,
+      cacheReadInputTokens: typeof cacheRead === "number" ? cacheRead : 0,
+    };
+  }
+
+  return null;
+}
 
 /**
  * Model name mapping from Anthropic API model IDs to AWS Bedrock model IDs.
@@ -221,6 +290,24 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     // The payload has a "bytes" field with base64-encoded Anthropic event
     if (payload.bytes) {
       const decodedBytes = base64Decode(payload.bytes);
+
+      // Log cache metrics from message_start events
+      try {
+        const event = JSON.parse(decodedBytes);
+        if (event.type === "message_start" && event.message?.usage) {
+          const cacheMetrics = extractCacheMetrics(event.message.usage);
+          if (cacheMetrics) {
+            console.log("[bedrock-utils] Streaming cache metrics:", {
+              cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+              cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
+              cacheHit: cacheMetrics.cacheReadInputTokens > 0,
+            });
+          }
+        }
+      } catch {
+        // Ignore JSON parse errors - just pass through the event
+      }
+
       // Return as SSE format
       return `data: ${decodedBytes}\n\n`;
     }

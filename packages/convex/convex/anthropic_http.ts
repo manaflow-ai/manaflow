@@ -5,6 +5,7 @@ import {
   BEDROCK_BASE_URL,
   toBedrockModelId,
   convertBedrockStreamToSSE,
+  extractCacheMetrics,
 } from "./bedrock_utils";
 
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
@@ -382,6 +383,18 @@ async function handleResponse(
   if (!response.ok) {
     console.error("[anthropic-proxy] API error:", data);
     return jsonResponse(data, response.status);
+  }
+
+  // Log cache metrics if present (non-streaming response)
+  if (isBedrock && isRecord(data) && isRecord(data.usage)) {
+    const cacheMetrics = extractCacheMetrics(data.usage as Record<string, unknown>);
+    if (cacheMetrics) {
+      console.log("[anthropic-proxy] Cache metrics:", {
+        cacheCreationInputTokens: cacheMetrics.cacheCreationInputTokens,
+        cacheReadInputTokens: cacheMetrics.cacheReadInputTokens,
+        cacheHit: cacheMetrics.cacheReadInputTokens > 0,
+      });
+    }
   }
 
   return jsonResponse(data);
