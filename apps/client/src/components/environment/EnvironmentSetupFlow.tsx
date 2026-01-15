@@ -11,6 +11,7 @@
  */
 
 import type {
+  ConfigStep,
   EnvVar,
   LayoutPhase,
 } from "@cmux/shared/components/environment";
@@ -20,6 +21,7 @@ import {
   ensureInitialEnvVars,
 } from "@cmux/shared/components/environment";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
+import type { Id } from "@cmux/convex/dataModel";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import {
   postApiEnvironmentsMutation,
@@ -35,7 +37,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { updateEnvironmentDraftConfig } from "@/state/environment-draft-store";
+import {
+  updateEnvironmentDraftConfig,
+  updateEnvironmentDraftConfigStep,
+  updateEnvironmentDraftLayoutPhase,
+} from "@/state/environment-draft-store";
 import { toast } from "sonner";
 import { EnvironmentInitialSetup } from "./EnvironmentInitialSetup";
 import { EnvironmentWorkspaceConfig } from "./EnvironmentWorkspaceConfig";
@@ -49,6 +55,8 @@ interface EnvironmentSetupFlowProps {
   initialDevScript?: string;
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
+  initialLayoutPhase?: LayoutPhase;
+  initialConfigStep?: ConfigStep;
   onEnvironmentSaved?: () => void;
   onBack?: () => void;
 }
@@ -62,13 +70,27 @@ export function EnvironmentSetupFlow({
   initialDevScript = "",
   initialExposedPorts = "",
   initialEnvVars,
+  initialLayoutPhase,
+  initialConfigStep,
   onEnvironmentSaved,
   onBack,
 }: EnvironmentSetupFlowProps) {
   const navigate = useNavigate();
 
-  // Layout phase state
-  const [layoutPhase, setLayoutPhase] = useState<LayoutPhase>("initial-setup");
+  // Layout phase state - restore from draft if available
+  const [layoutPhase, setLayoutPhase] = useState<LayoutPhase>(
+    () => initialLayoutPhase ?? "initial-setup"
+  );
+
+  // Track previous initialLayoutPhase to detect external changes (e.g., draft loading after navigation)
+  const prevInitialLayoutPhaseRef = useRef(initialLayoutPhase);
+  useEffect(() => {
+    // Only sync when initialLayoutPhase actually changes from outside (not from our own updates)
+    if (initialLayoutPhase && initialLayoutPhase !== prevInitialLayoutPhaseRef.current) {
+      prevInitialLayoutPhaseRef.current = initialLayoutPhase;
+      setLayoutPhase(initialLayoutPhase);
+    }
+  }, [initialLayoutPhase]);
 
   // Configuration state - blank by default, placeholder shows the default pattern
   const [envName, setEnvName] = useState(initialEnvName);
@@ -281,11 +303,23 @@ export function EnvironmentSetupFlow({
 
   const handleContinueToWorkspaceConfig = useCallback(() => {
     setLayoutPhase("workspace-config");
-  }, []);
+    // Persist layoutPhase to draft so it survives navigation
+    updateEnvironmentDraftLayoutPhase(teamSlugOrId, "workspace-config");
+  }, [teamSlugOrId]);
 
   const handleBackToInitialSetup = useCallback(() => {
     setLayoutPhase("initial-setup");
-  }, []);
+    // Persist layoutPhase to draft so it survives navigation
+    updateEnvironmentDraftLayoutPhase(teamSlugOrId, "initial-setup");
+  }, [teamSlugOrId]);
+
+  const handleConfigStepChange = useCallback(
+    (step: ConfigStep) => {
+      // Persist configStep to draft so it survives navigation
+      updateEnvironmentDraftConfigStep(teamSlugOrId, step);
+    },
+    [teamSlugOrId]
+  );
 
   const handleSaveEnvironment = useCallback(async () => {
     if (!instanceId) {
@@ -345,14 +379,18 @@ export function EnvironmentSetupFlow({
         },
       },
       {
-        onSuccess: async () => {
+        onSuccess: async (data) => {
           // Mark as saved to prevent draft re-creation from useEffect
           hasSavedRef.current = true;
           toast.success("Environment saved");
           onEnvironmentSaved?.();
+          // Navigate to the newly created environment's details page
           await navigate({
-            to: "/$teamSlugOrId/environments",
-            params: { teamSlugOrId },
+            to: "/$teamSlugOrId/environments/$environmentId",
+            params: {
+              teamSlugOrId,
+              environmentId: data.id as Id<"environments">,
+            },
             search: {
               step: undefined,
               selectedRepos: undefined,
@@ -416,9 +454,11 @@ export function EnvironmentSetupFlow({
       vncWebsocketUrl={vncWebsocketUrl}
       isSaving={createEnvironmentMutation.isPending}
       errorMessage={errorMessage}
+      initialConfigStep={initialConfigStep}
       onMaintenanceScriptChange={handleMaintenanceScriptChange}
       onDevScriptChange={handleDevScriptChange}
       onEnvVarsChange={handleEnvVarsChange}
+      onConfigStepChange={handleConfigStepChange}
       onSave={handleSaveEnvironment}
       onBack={handleBackToInitialSetup}
     />
