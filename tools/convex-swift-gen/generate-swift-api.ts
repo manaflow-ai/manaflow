@@ -168,7 +168,10 @@ try {
     );
 
     const optionalSuffix = returnSchema.optional && !returnType.type.endsWith("?") ? "?" : "";
-    returnAliases.push(`typealias ${returnName} = ${stripOptional(returnType.type)}${optionalSuffix}`);
+    const resolvedReturn = `${stripOptional(returnType.type)}${optionalSuffix}`;
+    if (resolvedReturn != returnName) {
+      returnAliases.push(`typealias ${returnName} = ${resolvedReturn}`);
+    }
   }
 
   const content = renderSwiftFile(defs, swiftArgStructs, returnAliases, options.apiPath, selected);
@@ -371,15 +374,17 @@ function buildArgsStruct(
   }
 
   const dictLines: string[] = [];
-  dictLines.push("    func asDictionary() -> [String: Any] {");
-  dictLines.push("        var result: [String: Any] = [:]");
+  dictLines.push("    func asDictionary() -> [String: ConvexEncodable?] {");
+  dictLines.push("        var result: [String: ConvexEncodable?] = [:]");
   for (const field of fields) {
     const name = escapeSwiftIdentifier(field.name);
     const key = field.name;
+    const valueExpr = renderConvexValueExpression(field.schema, "value");
+    const directExpr = renderConvexValueExpression(field.schema, name);
     if (field.optional) {
-      dictLines.push(`        if let value = ${name} { result["${key}"] = value }`);
+      dictLines.push(`        if let value = ${name} { result["${key}"] = ${valueExpr} }`);
     } else {
-      dictLines.push(`        result["${key}"] = ${name}`);
+      dictLines.push(`        result["${key}"] = ${directExpr}`);
     }
   }
   dictLines.push("        return result");
@@ -394,6 +399,17 @@ function buildArgsStruct(
   ].join("\n");
 
   return { name: `${baseName}Args`, body };
+}
+
+function renderConvexValueExpression(schema: Schema, valueExpr: string): string {
+  switch (schema.kind) {
+    case "array":
+      return `convexEncodeArray(${valueExpr})`;
+    case "record":
+      return `convexEncodeRecord(${valueExpr})`;
+    default:
+      return valueExpr;
+  }
 }
 
 function renderSwiftType(
@@ -469,7 +485,7 @@ function renderSwiftType(
       return { type: enumName, wrapper: null };
     }
     default:
-      return { type: "ConvexValue", wrapper: null };
+      return { type: "String", wrapper: null };
   }
 }
 
@@ -487,8 +503,14 @@ function renderSwiftArgType(
       return { type: "Bool", wrapper: null };
     case "number":
       return { type: "Double", wrapper: null };
-    case "id":
-      return { type: "String", wrapper: null };
+    case "id": {
+      if (!schema.table) {
+        return { type: "String", wrapper: null };
+      }
+      const marker = `ConvexTable${pascalCase(schema.table)}`;
+      defs.idTables.add(marker);
+      return { type: `ConvexId<${marker}>`, wrapper: null };
+    }
     case "record": {
       const valueType = renderSwiftArgType(checker, defs, schema.value, path.concat("Value"), sourceFile);
       return { type: `[String: ${stripOptional(valueType.type)}]`, wrapper: null };
@@ -507,7 +529,30 @@ function renderSwiftArgType(
           const typeName = `${stripOptional(swift.type)}${optionalSuffix}`;
           return `    let ${fieldName}: ${typeName}`;
         });
-        const body = `struct ${structName}: Encodable {\n${fields.join("\n")}\n}`;
+        const encodeLines: string[] = [];
+        encodeLines.push("    func convexEncode() throws -> String {");
+        encodeLines.push("        var result: [String: ConvexEncodable?] = [:]");
+        for (const field of schema.fields) {
+          const fieldName = escapeSwiftIdentifier(field.name);
+          const key = field.name;
+          const valueExpr = renderConvexValueExpression(field.schema, "value");
+          const directExpr = renderConvexValueExpression(field.schema, fieldName);
+          if (field.optional) {
+            encodeLines.push(`        if let value = ${fieldName} { result["${key}"] = ${valueExpr} }`);
+          } else {
+            encodeLines.push(`        result["${key}"] = ${directExpr}`);
+          }
+        }
+        encodeLines.push("        return try result.convexEncode()");
+        encodeLines.push("    }");
+
+        const body = [
+          `struct ${structName}: ConvexEncodable {`,
+          ...fields,
+          "",
+          ...encodeLines,
+          "}",
+        ].join("\n");
         defs.structs.set(structName, body);
       }
       return { type: structName, wrapper: null };
@@ -525,7 +570,7 @@ function renderSwiftArgType(
       return { type: enumName, wrapper: null };
     }
     default:
-      return { type: "Any", wrapper: null };
+      return { type: "String", wrapper: null };
   }
 }
 
@@ -678,13 +723,13 @@ function renderSwiftFile(
   selected: FunctionShape[]
 ): string {
   const header = [
-    "import Foundation",
     "import ConvexMobile",
+    "import Foundation",
     "",
     `// Generated from ${apiPath}`,
     `// Functions: ${selected.map((fn) => fn.path.replace(/^api\./, "")).join(", ")}`,
     "",
-    "struct ConvexId<Table>: Decodable, Hashable, Sendable {",
+    "struct ConvexId<Table>: Decodable, Hashable, Sendable, ConvexEncodable {",
     "  let rawValue: String",
     "",
     "  init(rawValue: String) {",
@@ -695,6 +740,22 @@ function renderSwiftFile(
     "    let container = try decoder.singleValueContainer()",
     "    rawValue = try container.decode(String.self)",
     "  }",
+    "",
+    "  func convexEncode() throws -> String {",
+    "    try rawValue.convexEncode()",
+    "  }",
+    "}",
+    "",
+    "private func convexEncodeArray<T: ConvexEncodable>(_ values: [T]) -> [ConvexEncodable?] {",
+    "  values.map { $0 }",
+    "}",
+    "",
+    "private func convexEncodeRecord<T: ConvexEncodable>(_ values: [String: T]) -> [String: ConvexEncodable?] {",
+    "  var result: [String: ConvexEncodable?] = [:]",
+    "  for (key, value) in values {",
+    "    result[key] = value",
+    "  }",
+    "  return result",
     "}",
     "",
   ];

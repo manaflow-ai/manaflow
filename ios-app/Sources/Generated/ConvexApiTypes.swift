@@ -5,7 +5,7 @@ import Foundation
 
 // Functions: tasks.get, tasks.getArchivedPaginated, tasks.getWithNotificationOrder, tasks.getPreviewTasks
 
-struct ConvexId<Table>: Decodable, Hashable, Sendable {
+struct ConvexId<Table>: Decodable, Hashable, Sendable, ConvexEncodable {
 
   let rawValue: String
 
@@ -22,6 +22,34 @@ struct ConvexId<Table>: Decodable, Hashable, Sendable {
     rawValue = try container.decode(String.self)
 
   }
+
+  func convexEncode() throws -> String {
+
+    try rawValue.convexEncode()
+
+  }
+
+}
+
+private func convexEncodeArray<T: ConvexEncodable>(_ values: [T]) -> [ConvexEncodable?] {
+
+  values.map { $0 }
+
+}
+
+private func convexEncodeRecord<T: ConvexEncodable>(_ values: [String: T]) -> [String:
+  ConvexEncodable?]
+{
+
+  var result: [String: ConvexEncodable?] = [:]
+
+  for (key, value) in values {
+
+    result[key] = value
+
+  }
+
+  return result
 
 }
 
@@ -187,13 +215,24 @@ struct TasksGetItem: Decodable {
   let isCompleted: Bool
 }
 
-struct TasksGetArchivedPaginatedArgsPaginationOpts: Encodable {
+struct TasksGetArchivedPaginatedArgsPaginationOpts: ConvexEncodable {
   let id: Double?
   let endCursor: String?
   let maximumRowsRead: Double?
   let maximumBytesRead: Double?
   let numItems: Double
   let cursor: String?
+
+  func convexEncode() throws -> String {
+    var result: [String: ConvexEncodable?] = [:]
+    if let value = id { result["id"] = value }
+    if let value = endCursor { result["endCursor"] = value }
+    if let value = maximumRowsRead { result["maximumRowsRead"] = value }
+    if let value = maximumBytesRead { result["maximumBytesRead"] = value }
+    result["numItems"] = numItems
+    if let value = cursor { result["cursor"] = value }
+    return try result.convexEncode()
+  }
 }
 
 struct TasksGetArchivedPaginatedReturnPageItemImagesItem: Decodable {
@@ -350,8 +389,8 @@ struct TasksGetArgs {
   let excludeLocalWorkspaces: Bool?
   let teamSlugOrId: String
 
-  func asDictionary() -> [String: Any] {
-    var result: [String: Any] = [:]
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
     if let value = projectFullName { result["projectFullName"] = value }
     if let value = archived { result["archived"] = value }
     if let value = excludeLocalWorkspaces { result["excludeLocalWorkspaces"] = value }
@@ -365,8 +404,8 @@ struct TasksGetArchivedPaginatedArgs {
   let teamSlugOrId: String
   let paginationOpts: TasksGetArchivedPaginatedArgsPaginationOpts
 
-  func asDictionary() -> [String: Any] {
-    var result: [String: Any] = [:]
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
     if let value = excludeLocalWorkspaces { result["excludeLocalWorkspaces"] = value }
     result["teamSlugOrId"] = teamSlugOrId
     result["paginationOpts"] = paginationOpts
@@ -380,8 +419,8 @@ struct TasksGetWithNotificationOrderArgs {
   let excludeLocalWorkspaces: Bool?
   let teamSlugOrId: String
 
-  func asDictionary() -> [String: Any] {
-    var result: [String: Any] = [:]
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
     if let value = projectFullName { result["projectFullName"] = value }
     if let value = archived { result["archived"] = value }
     if let value = excludeLocalWorkspaces { result["excludeLocalWorkspaces"] = value }
@@ -394,8 +433,8 @@ struct TasksGetPreviewTasksArgs {
   let limit: Double?
   let teamSlugOrId: String
 
-  func asDictionary() -> [String: Any] {
-    var result: [String: Any] = [:]
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
     if let value = limit { result["limit"] = value }
     result["teamSlugOrId"] = teamSlugOrId
     return result
@@ -403,8 +442,6 @@ struct TasksGetPreviewTasksArgs {
 }
 
 typealias TasksGetReturn = [TasksGetItem]
-
-typealias TasksGetArchivedPaginatedReturn = TasksGetArchivedPaginatedReturn
 
 typealias TasksGetWithNotificationOrderReturn = [TasksGetWithNotificationOrderItem]
 
