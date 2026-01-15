@@ -5,6 +5,7 @@ import {
   BEDROCK_BASE_URL,
   toBedrockModelId,
   convertBedrockStreamToSSE,
+  injectCacheControl,
 } from "./bedrock_utils";
 
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
@@ -317,8 +318,12 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
       // Bedrock uses the same format as Anthropic API but with anthropic_version
       // Remove model (it's in URL) and stream (determined by endpoint suffix)
       const { model: _model, stream: _stream, ...bodyWithoutModelAndStream } = body;
+
+      // Inject cache_control markers for prompt caching on supported models
+      const bodyWithCaching = injectCacheControl(bodyWithoutModelAndStream, requestedModel);
+
       const bedrockBody = {
-        ...bodyWithoutModelAndStream,
+        ...bodyWithCaching,
         anthropic_version: "bedrock-2023-05-31",
       };
 
