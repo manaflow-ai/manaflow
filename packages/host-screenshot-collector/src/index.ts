@@ -478,13 +478,26 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         }
       }
     } catch (error) {
-      await logToScreenshotCollector(
-        `Failed to capture screenshots with Claude Agent: ${error instanceof Error ? error.message : String(error)}`
-      );
-      log("ERROR", "Failed to capture screenshots with Claude Agent", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+      // If we already captured a valid structured output indicating no UI changes,
+      // don't treat this as a failure - the agent successfully determined there
+      // were no UI changes before any error occurred
+      if (structuredOutput && structuredOutput.hasUiChanges === false) {
+        await logToScreenshotCollector(
+          `Claude Agent reported error but already determined no UI changes - treating as success`
+        );
+        log("INFO", "Claude Agent error ignored - no UI changes determined", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Don't throw - fall through to return the result
+      } else {
+        await logToScreenshotCollector(
+          `Failed to capture screenshots with Claude Agent: ${error instanceof Error ? error.message : String(error)}`
+        );
+        log("ERROR", "Failed to capture screenshots with Claude Agent", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     } finally {
       if (hadOriginalApiKey) {
         if (originalApiKey !== undefined) {
