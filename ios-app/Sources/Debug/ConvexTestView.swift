@@ -9,6 +9,9 @@ struct ConvexTestView: View {
     @State private var result: String = "Not tested yet"
     @State private var isLoading = false
     @State private var logs: [String] = []
+    @State private var tasksResult: String = "Not tested yet"
+    @State private var isTasksLoading = false
+    @State private var tasksTeamSlugOrId = "manaflow"
 
     // Debug login
     @State private var email = "l@l.com"
@@ -88,6 +91,28 @@ struct ConvexTestView: View {
                 Text(result)
                     .font(.caption)
                     .foregroundStyle(result.contains("Error") ? .red : .secondary)
+            }
+
+            Section("Generated API Types") {
+                TextField("Team Slug or ID", text: $tasksTeamSlugOrId)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    Task { await testTasksGet() }
+                } label: {
+                    HStack {
+                        Text("Call tasks:get")
+                        Spacer()
+                        if isTasksLoading {
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isTasksLoading)
+
+                Text(tasksResult)
+                    .font(.caption)
+                    .foregroundStyle(tasksResult.contains("Error") ? .red : .secondary)
             }
 
             Section("Actions") {
@@ -190,6 +215,53 @@ struct ConvexTestView: View {
                 receiveValue: { memberships in
                     self.result = "Success! Found \(memberships.count) team(s)"
                     self.addLog("Query success: \(memberships.count) teams")
+                }
+            )
+    }
+
+    func testTasksGet() async {
+        let trimmed = tasksTeamSlugOrId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            tasksResult = "Error: Provide a team slug or ID"
+            return
+        }
+
+        isTasksLoading = true
+        addLog("Calling tasks:get for \(trimmed)...")
+
+        let args = TasksGetArgs(
+            projectFullName: nil,
+            archived: nil,
+            excludeLocalWorkspaces: nil,
+            teamSlugOrId: trimmed
+        )
+
+        var cancellable: AnyCancellable?
+
+        cancellable = convex.client
+            .subscribe(to: "tasks:get", with: args.asDictionary(), yielding: TasksGetReturn.self)
+            .first()
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { completion in
+                    switch completion {
+                    case .finished:
+                        break
+                    case .failure(let error):
+                        let errorMsg = parseConvexError(error)
+                        self.tasksResult = "Error: \(errorMsg)"
+                        self.addLog("tasks:get failed: \(errorMsg)")
+                    }
+                    self.isTasksLoading = false
+                    cancellable?.cancel()
+                },
+                receiveValue: { tasks in
+                    self.tasksResult = "Success! Found \(tasks.count) task(s)"
+                    if let firstTask = tasks.first {
+                        self.addLog("tasks:get first task: \(firstTask.text)")
+                    } else {
+                        self.addLog("tasks:get returned 0 tasks")
+                    }
                 }
             )
     }
