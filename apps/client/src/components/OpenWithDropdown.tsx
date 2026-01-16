@@ -6,6 +6,7 @@ import { EllipsisVertical, ExternalLink, GitBranch, Globe } from "lucide-react";
 
 interface OpenWithDropdownProps {
   vscodeUrl?: string | null;
+  vscodeProvider?: "docker" | "morph" | "daytona" | "other";
   worktreePath?: string | null;
   branch?: string | null;
   networking?: Parameters<typeof useOpenWithActions>[0]["networking"];
@@ -15,6 +16,7 @@ interface OpenWithDropdownProps {
 
 export function OpenWithDropdown({
   vscodeUrl,
+  vscodeProvider,
   worktreePath,
   branch,
   networking,
@@ -29,6 +31,7 @@ export function OpenWithDropdown({
     executePortAction,
   } = useOpenWithActions({
     vscodeUrl,
+    vscodeProvider,
     worktreePath,
     branch,
     networking,

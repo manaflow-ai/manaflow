@@ -1,6 +1,7 @@
 export type PanelType = "chat" | "workspace" | "terminal" | "browser" | "gitDiff";
 
 export type LayoutMode =
+  | "single-panel"    // Single full-width panel
   | "four-panel"      // 2x2 grid
   | "two-horizontal"  // Two panels side-by-side
   | "two-vertical"    // Two panels stacked
@@ -33,8 +34,9 @@ const DEFAULT_LAYOUT_PANELS: LayoutPanels = {
 export const DEFAULT_PANEL_CONFIG: PanelConfig = {
   layoutMode: "three-left",
   layouts: {
+    "single-panel": { topLeft: "workspace", topRight: null, bottomLeft: null, bottomRight: null },
     "four-panel": { ...DEFAULT_LAYOUT_PANELS },
-    "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
+    "two-horizontal": { topLeft: "workspace", topRight: "browser", bottomLeft: null, bottomRight: null },
     "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
     "three-left": { topLeft: "workspace", topRight: "browser", bottomLeft: null, bottomRight: "gitDiff" },
     "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
@@ -60,6 +62,7 @@ export const PANEL_ICONS: Record<PanelType, string> = {
 };
 
 export const LAYOUT_LABELS: Record<LayoutMode, string> = {
+  "single-panel": "Single Panel",
   "four-panel": "Four Panel Grid",
   "two-horizontal": "Two Panels (Side-by-Side)",
   "two-vertical": "Two Panels (Stacked)",
@@ -70,6 +73,7 @@ export const LAYOUT_LABELS: Record<LayoutMode, string> = {
 };
 
 export const LAYOUT_DESCRIPTIONS: Record<LayoutMode, string> = {
+  "single-panel": "Single full-width panel",
   "four-panel": "2×2 grid with four equal panels",
   "two-horizontal": "Two panels side-by-side",
   "two-vertical": "Two panels stacked vertically",
@@ -195,6 +199,8 @@ export type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight
  */
 export function getActivePanelPositions(layoutMode: LayoutMode): PanelPosition[] {
   switch (layoutMode) {
+    case "single-panel":
+      return ["topLeft"];
     case "four-panel":
       return ["topLeft", "topRight", "bottomLeft", "bottomRight"];
     case "two-horizontal":

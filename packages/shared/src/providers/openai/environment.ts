@@ -3,6 +3,51 @@ import type {
   EnvironmentResult,
 } from "../common/environment-result";
 
+/**
+ * Apply API keys for OpenAI Codex.
+ *
+ * Priority order:
+ * 1. CODEX_AUTH_JSON - If provided, inject as ~/.codex/auth.json (OAuth tokens from `codex auth`)
+ * 2. OPENAI_API_KEY - Fallback if no auth.json, injected as environment variable
+ *
+ * When CODEX_AUTH_JSON is provided, OPENAI_API_KEY is ignored since auth.json
+ * contains OAuth tokens that Codex CLI prefers over API keys.
+ */
+export function applyCodexApiKeys(
+  keys: Record<string, string>
+): Partial<EnvironmentResult> {
+  const files: EnvironmentResult["files"] = [];
+  const env: Record<string, string> = {};
+
+  const authJson = keys.CODEX_AUTH_JSON;
+  if (authJson) {
+    // Validate that it's valid JSON before injecting
+    try {
+      JSON.parse(authJson);
+      files.push({
+        destinationPath: "$HOME/.codex/auth.json",
+        contentBase64: Buffer.from(authJson).toString("base64"),
+        mode: "600",
+      });
+      // Don't inject OPENAI_API_KEY when auth.json is provided
+      return { files, env };
+    } catch {
+      console.warn("CODEX_AUTH_JSON is not valid JSON, skipping injection");
+    }
+  }
+
+  // Fallback: inject OPENAI_API_KEY as environment variable
+  // Also set CODEX_API_KEY to the same value to skip the sign-in screen
+  // (OPENAI_API_KEY only pre-fills the input, CODEX_API_KEY bypasses it entirely)
+  const openaiKey = keys.OPENAI_API_KEY;
+  if (openaiKey) {
+    env.OPENAI_API_KEY = openaiKey;
+    env.CODEX_API_KEY = openaiKey;
+  }
+
+  return { files, env };
+}
+
 export async function getOpenAIEnvironment(
   _ctx: EnvironmentContext
 ): Promise<EnvironmentResult> {

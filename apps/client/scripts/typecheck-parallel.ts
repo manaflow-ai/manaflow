@@ -9,13 +9,13 @@ type TypeCheck = {
 const checks: TypeCheck[] = [
   {
     label: "renderer",
-    command: "tsc",
-    args: ["--noEmit", "-p", "tsconfig.json"],
+    command: "bunx",
+    args: ["tsgo", "--noEmit", "-p", "tsconfig.json"],
   },
   {
     label: "electron",
-    command: "tsc",
-    args: ["--noEmit", "-p", "electron/tsconfig.json"],
+    command: "bunx",
+    args: ["tsgo", "--noEmit", "-p", "electron/tsconfig.json"],
   },
 ];
 

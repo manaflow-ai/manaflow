@@ -31,7 +31,6 @@ import {
 } from "../../_components/review-diff-content";
 import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
-import { env } from "@/lib/utils/www-env";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
 import { parseModelConfigFromRecord } from "@/lib/services/code-review/model-config";
 
@@ -221,7 +220,6 @@ export default async function PullRequestPage({ params, searchParams }: PageProp
               teamSlugOrId={selectedTeam.id}
               repo={repo}
               githubOwner={githubOwner}
-              githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
             />
           );
         }

@@ -65,25 +65,62 @@ export const clearTaskRunsLog = migrations.define({
   },
 });
 
-// Remove deprecated createdByUserId from previewConfigs (quota now team-based)
-export const dropPreviewConfigsCreatedByUserId = migrations.define({
-  table: "previewConfigs",
+// Remove deprecated crownModel and crownSystemPrompt fields from workspaceSettings
+export const dropWorkspaceSettingsCrownFields = migrations.define({
+  table: "workspaceSettings",
   migrateOne: (_ctx, doc) => {
-    const d = doc as unknown as { createdByUserId?: string } & Record<string, unknown>;
-    if (d.createdByUserId !== undefined) {
-      return { createdByUserId: undefined } as Partial<typeof doc>;
+    const d = doc as unknown as Record<string, unknown>;
+    if (d.crownModel !== undefined || d.crownSystemPrompt !== undefined) {
+      return { crownModel: undefined, crownSystemPrompt: undefined } as Partial<
+        typeof doc
+      >;
     }
   },
 });
 
-// Remove deprecated createdByUserId from previewRuns (quota now team-based)
-export const dropPreviewRunsCreatedByUserId = migrations.define({
-  table: "previewRuns",
-  migrateOne: (_ctx, doc) => {
-    const d = doc as unknown as { createdByUserId?: string } & Record<string, unknown>;
-    if (d.createdByUserId !== undefined) {
-      return { createdByUserId: undefined } as Partial<typeof doc>;
+// Backfill tasks.lastActivityAt from createdAt (or latest taskRun createdAt)
+// Run with: bunx convex run migrations:backfillTasksLastActivityAt
+export const backfillTasksLastActivityAt = migrations.define({
+  table: "tasks",
+  migrateOne: async (ctx, doc) => {
+    if (doc.lastActivityAt !== undefined) {
+      return; // Already set
     }
+
+    // Find the latest taskRun for this task to get more accurate lastActivityAt
+    const latestRun = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", doc._id))
+      .order("desc")
+      .first();
+
+    // Use latest run's createdAt if available, otherwise task's createdAt
+    const lastActivityAt = latestRun?.createdAt ?? doc.createdAt ?? Date.now();
+
+    return { lastActivityAt };
+  },
+});
+
+// Backfill unreadTaskRuns.taskId from the taskRunId's taskId
+// Run with: bunx convex run migrations:backfillUnreadTaskRunsTaskId
+export const backfillUnreadTaskRunsTaskId = migrations.define({
+  table: "unreadTaskRuns",
+  migrateOne: async (ctx, doc) => {
+    // Check if taskId is already set (using type assertion since schema now requires it)
+    const d = doc as unknown as { taskId?: unknown };
+    if (d.taskId !== undefined) {
+      return; // Already set
+    }
+
+    // Look up the taskRun to get taskId
+    const taskRun = await ctx.db.get(doc.taskRunId);
+    if (!taskRun) {
+      // TaskRun was deleted, delete this orphaned unread row
+      await ctx.db.delete(doc._id);
+      return;
+    }
+
+    return { taskId: taskRun.taskId };
   },
 });
 

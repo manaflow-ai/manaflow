@@ -157,7 +157,7 @@ export function ElectronWebContentsView({
   borderRadius,
   suspended = false,
   persistKey,
-  retainOnUnmount: _retainOnUnmount,
+  retainOnUnmount,
   onNativeViewReady,
   onNativeViewDestroyed,
 }: ElectronWebContentsViewProps) {
@@ -172,6 +172,7 @@ export function ElectronWebContentsView({
   const syncBoundsRef = useRef<() => void>(() => {});
   const latestSrcRef = useRef(src);
   const latestRequestUrlRef = useRef(requestUrl);
+  const retainOnUnmountRef = useRef(retainOnUnmount ?? true);
   const lastLoadedSrcRef = useRef<string | null>(null);
   const latestStyleRef = useRef<{
     backgroundColor?: string;
@@ -194,6 +195,10 @@ export function ElectronWebContentsView({
   useEffect(() => {
     latestRequestUrlRef.current = requestUrl;
   }, [requestUrl]);
+
+  useEffect(() => {
+    retainOnUnmountRef.current = retainOnUnmount ?? true;
+  }, [retainOnUnmount]);
 
   useEffect(() => {
     latestStyleRef.current = { backgroundColor, borderRadius };
@@ -389,20 +394,22 @@ export function ElectronWebContentsView({
   }, [unregisterActions]);
 
   const releaseNativeView = useCallback(
-    (id: number, key: string | undefined) => {
+    (id: number, key: string | undefined, persist: boolean) => {
       const bridge = getWebContentsBridge();
       if (!bridge) return;
 
       const persistKey =
         typeof key === "string" && key.length > 0 ? key : undefined;
+      const shouldPersist = persist && Boolean(persistKey);
 
       debugLog("release-native-view", {
         id,
         persistKey,
+        persist: shouldPersist,
       });
 
       const releaseTask = (async () => {
-        if (typeof bridge.release === "function") {
+        if (shouldPersist && typeof bridge.release === "function") {
           try {
             debugLog("requesting-release", { id, persistKey });
             const result = await bridge.release({ id, persist: true });
@@ -456,7 +463,11 @@ export function ElectronWebContentsView({
     lastLoadedSrcRef.current = null;
     hasStableAttachmentRef.current = false;
     lastTransformStateRef.current = false;
-    releaseNativeView(id, persistKeyRef.current);
+    const shouldPersist =
+      retainOnUnmountRef.current &&
+      typeof persistKeyRef.current === "string" &&
+      persistKeyRef.current.length > 0;
+    releaseNativeView(id, persistKeyRef.current, shouldPersist);
     onNativeViewDestroyed?.();
   }, [
     cancelScheduledSync,
@@ -528,7 +539,7 @@ export function ElectronWebContentsView({
               id: result.id,
               persistKey: key,
             });
-            releaseNativeView(result.id, persistKeyRef.current);
+            releaseNativeView(result.id, persistKeyRef.current, false);
             return;
           }
           debugLog("create-result", {

@@ -520,3 +520,290 @@ pre,
     max-width: var(--sidebar-width) !important;
   }
 }
+
+/* ======================================
+   Heatmap Diff Viewer Styles
+   ====================================== */
+
+/* System monospace font stack */
+.system-mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace !important;
+}
+
+/* Diff syntax highlighting tokens - Light mode */
+.diff-syntax {
+  --diff-token-comment: hsl(215 12% 48%);
+  --diff-token-punctuation: hsl(222 10% 32%);
+  --diff-token-operator: hsl(222 88% 48%);
+  --diff-token-string: hsl(148 46% 38%);
+  --diff-token-number: hsl(13 74% 46%);
+  --diff-token-keyword: hsl(265 67% 46%);
+  --diff-token-function: hsl(200 76% 40%);
+  --diff-token-variable: hsl(215 30% 40%);
+  --diff-token-attr: hsl(31 85% 42%);
+  --diff-token-boolean: hsl(14 70% 47%);
+  --diff-token-builtin: hsl(205 75% 38%);
+  --diff-token-inserted: hsl(150 55% 38%);
+  --diff-token-deleted: hsl(356 70% 48%);
+
+  /* Diff gutter/code backgrounds - Light mode */
+  --diff-gutter-insert-background-color: rgb(226 252 237);
+  --diff-gutter-insert-text-color: rgb(21 128 61);
+  --diff-code-insert-background-color: rgb(240 253 244);
+  --diff-code-insert-text-color: rgb(22 101 52);
+  --diff-gutter-delete-background-color: rgb(252 208 204);
+  --diff-gutter-delete-text-color: rgb(115 115 115);
+  --diff-code-delete-background-color: transparent;
+  --diff-code-delete-text-color: rgb(82 82 82);
+}
+
+/* Diff syntax highlighting tokens - Dark mode */
+.dark .diff-syntax {
+  --diff-token-comment: hsl(215 20% 55%);
+  --diff-token-punctuation: hsl(222 15% 60%);
+  --diff-token-operator: hsl(222 80% 70%);
+  --diff-token-string: hsl(148 50% 55%);
+  --diff-token-number: hsl(13 80% 65%);
+  --diff-token-keyword: hsl(265 70% 70%);
+  --diff-token-function: hsl(200 80% 65%);
+  --diff-token-variable: hsl(215 35% 65%);
+  --diff-token-attr: hsl(31 90% 60%);
+  --diff-token-boolean: hsl(14 75% 65%);
+  --diff-token-builtin: hsl(205 80% 60%);
+  --diff-token-inserted: hsl(150 60% 55%);
+  --diff-token-deleted: hsl(356 75% 65%);
+
+  /* Diff gutter/code backgrounds - Dark mode */
+  --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.22);
+  --diff-gutter-insert-text-color: rgb(134 239 172);
+  --diff-code-insert-background-color: rgba(0, 0, 0, 0.073);
+  --diff-code-insert-text-color: rgb(187 247 208);
+  --diff-gutter-delete-background-color: rgba(248, 81, 73, 0.25);
+  --diff-gutter-delete-text-color: rgb(163 163 163);
+  --diff-code-delete-background-color: transparent;
+  --diff-code-delete-text-color: rgb(212 212 212);
+}
+
+.diff-syntax pre,
+.diff-syntax code {
+  background: transparent;
+}
+
+.diff-syntax .token.comment,
+.diff-syntax .token.prolog,
+.diff-syntax .token.doctype,
+.diff-syntax .token.cdata {
+  color: var(--diff-token-comment);
+  font-style: italic;
+}
+
+.diff-syntax .token.punctuation {
+  color: var(--diff-token-punctuation);
+}
+
+.diff-syntax .token.operator,
+.diff-syntax .token.entity,
+.diff-syntax .token.url,
+.diff-syntax .token.symbol {
+  color: var(--diff-token-operator);
+}
+
+.diff-syntax .token.string,
+.diff-syntax .token.char {
+  color: var(--diff-token-string);
+}
+
+.diff-syntax .token.inserted {
+  color: var(--diff-token-inserted);
+}
+
+.diff-syntax .token.number {
+  color: var(--diff-token-number);
+}
+
+.diff-syntax .token.keyword,
+.diff-syntax .token.atrule,
+.diff-syntax .token.tag,
+.diff-syntax .token.constant,
+.diff-syntax .token.important {
+  color: var(--diff-token-keyword);
+}
+
+.diff-syntax .token.function,
+.diff-syntax .token.class-name,
+.diff-syntax .token.method {
+  color: var(--diff-token-function);
+}
+
+.diff-syntax .token.attr-name,
+.diff-syntax .token.selector,
+.diff-syntax .token.property,
+.diff-syntax .token.variable {
+  color: var(--diff-token-variable);
+}
+
+.diff-syntax .token.attr-value,
+.diff-syntax .token.interpolation {
+  color: var(--diff-token-attr);
+}
+
+.diff-syntax .token.deleted {
+  color: var(--diff-token-deleted);
+}
+
+.diff-syntax .token.regex,
+.diff-syntax .token.bold,
+.diff-syntax .token.builtin {
+  color: var(--diff-token-builtin);
+}
+
+.diff-syntax .token.italic {
+  font-style: italic;
+}
+
+.diff-syntax .token.bold {
+  font-weight: 600;
+}
+
+.diff-syntax .token.constant,
+.diff-syntax .token.boolean {
+  color: var(--diff-token-boolean);
+}
+
+/* Split view divider */
+.diff-hunk td:nth-of-type(3) {
+  @apply border-l;
+  border-color: rgb(229 229 229);
+}
+
+.dark .diff-hunk td:nth-of-type(3) {
+  border-color: rgb(64 64 64);
+}
+
+/* Diff code background overrides for heatmap compatibility */
+.diff-code-insert {
+  background-color: transparent !important;
+}
+
+.diff-code-delete {
+  background-color: transparent !important;
+}
+
+/* Ensure deleted code text is always visible - Light mode */
+.diff-code-delete {
+  color: rgb(82 82 82) !important;
+}
+
+/* Ensure deleted code text is always visible - Dark mode */
+.dark .diff-code-delete {
+  color: rgb(212 212 212) !important;
+}
+
+/* Ensure inserted code text is always visible - Light mode */
+.diff-code-insert {
+  color: rgb(22 101 52) !important;
+}
+
+/* Ensure inserted code text is always visible - Dark mode */
+.dark .diff-code-insert {
+  color: rgb(187 247 208) !important;
+}
+
+/* Ensure diff gutter text is always visible */
+.diff-gutter-delete {
+  color: rgb(115 115 115) !important;
+}
+
+.dark .diff-gutter-delete {
+  color: rgb(163 163 163) !important;
+}
+
+.diff-gutter-insert {
+  color: rgb(21 128 61) !important;
+}
+
+.dark .diff-gutter-insert {
+  color: rgb(134 239 172) !important;
+}
+
+/* Ensure diff table rows don't have excessive height */
+.diff tr {
+  height: auto;
+  min-height: 0;
+}
+
+/* Prevent diff cells from being hidden or collapsed */
+.diff td {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Ensure diff table layout is consistent */
+.diff tbody {
+  display: table-row-group;
+}
+
+/* Ensure diff code cells always show their content */
+.diff-code {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Prevent diff content from being blocked by sticky headers when scrolling */
+.diff {
+  scroll-margin-top: 48px;
+  /* Ensure diff table renders below sticky headers */
+  position: relative;
+  z-index: 1;
+}
+
+.diff-hunk {
+  scroll-margin-top: 48px;
+}
+
+.diff-decoration {
+  scroll-margin-top: 48px;
+}
+
+/* Ensure hunk header decorations don't overlap with file headers */
+.diff-decoration-content {
+  position: relative;
+  z-index: 2;
+}
+
+/* Heatmap character highlight styles */
+.cmux-heatmap-char {
+  display: inline-block;
+  padding: 0 0.05rem;
+}
+
+.cmux-heatmap-char-wrapper {
+  display: inline-block;
+  cursor: help;
+}
+
+/* Heatmap focus state - Light mode */
+.cmux-heatmap-focus td.diff-gutter,
+.cmux-heatmap-focus td.diff-code {
+  background-color: rgba(14, 165, 233, 0.12);
+  outline: 2px solid rgba(14, 165, 233, 0.4);
+  outline-offset: -1px;
+}
+
+/* Heatmap focus state - Dark mode */
+.dark .cmux-heatmap-focus td.diff-gutter,
+.dark .cmux-heatmap-focus td.diff-code {
+  background-color: rgba(2, 132, 199, 0.25);
+  outline: 2px solid rgba(125, 211, 252, 0.55);
+  outline-offset: -1px;
+}
+
+.cmux-heatmap-focus {
+  scroll-margin-top: 96px;
+  scroll-margin-bottom: 96px;
+}
+
+.cmux-heatmap-gutter {
+  display: inline-flex;
+  cursor: help;
+}

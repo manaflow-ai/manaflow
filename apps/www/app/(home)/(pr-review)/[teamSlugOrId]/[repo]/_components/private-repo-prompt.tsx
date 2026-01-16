@@ -7,14 +7,12 @@ interface PrivateRepoPromptProps {
   teamSlugOrId: string;
   repo: string;
   githubOwner: string;
-  githubAppSlug?: string;
 }
 
 export function PrivateRepoPrompt({
   teamSlugOrId,
   repo,
   githubOwner,
-  githubAppSlug: githubAppSlugProp,
 }: PrivateRepoPromptProps) {
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +68,7 @@ export function PrivateRepoPrompt({
       setError("An unexpected error occurred. Please try again.");
       setIsRedirecting(false);
     }
-  }, [githubAppSlugProp, teamSlugOrId]);
+  }, [teamSlugOrId]);
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900 flex items-center justify-center px-6">

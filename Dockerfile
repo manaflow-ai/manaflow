@@ -14,9 +14,9 @@ ARG NVM_VERSION=0.39.7
 ARG NODE_VERSION=24.9.0
 ARG GO_VERSION=1.25.2
 ARG GITHUB_TOKEN
-ARG IDE_PROVIDER=coder
+ARG IDE_PROVIDER=cmux-code
 
-FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-builder
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS rust-base
 
 ARG RUST_VERSION
 ARG BUILDPLATFORM
@@ -55,29 +55,87 @@ rustup target add x86_64-unknown-linux-gnu --toolchain "${RUST_VERSION}"
 cargo --version
 EOF
 
-WORKDIR /cmux
-
-# Copy only Rust crates
-COPY crates ./crates
-
-# Build Rust binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
-  --mount=type=cache,target=/cmux/crates/target \
+  cargo install cargo-chef --locked
+
+WORKDIR /cmux
+
+FROM rust-base AS rust-chef
+WORKDIR /cmux
+COPY crates/cmux-env/Cargo.toml crates/cmux-env/Cargo.lock crates/cmux-env/
+COPY crates/cmux-proxy/Cargo.toml crates/cmux-proxy/Cargo.lock crates/cmux-proxy/
+COPY crates/cmux-terminal/Cargo.toml crates/cmux-terminal/
+COPY crates/cmux-pty/Cargo.toml crates/cmux-pty/Cargo.lock crates/cmux-pty/
+RUN mkdir -p crates/cmux-env/src/bin crates/cmux-proxy/src crates/cmux-terminal/src crates/cmux-pty/src && \
+  printf 'fn main() {}\n' > crates/cmux-env/src/bin/envd.rs && \
+  printf 'fn main() {}\n' > crates/cmux-env/src/bin/envctl.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-env/src/lib.rs && \
+  printf 'fn main() {}\n' > crates/cmux-proxy/src/main.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-proxy/src/lib.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-terminal/src/lib.rs && \
+  printf 'fn main() {}\n' > crates/cmux-pty/src/main.rs
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-env && cargo chef prepare --recipe-path /cmux/recipe-env.json"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-proxy && cargo chef prepare --recipe-path /cmux/recipe-proxy.json"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  sh -c "cd crates/cmux-pty && cargo chef prepare --recipe-path /cmux/recipe-pty.json"
+
+FROM rust-base AS rust-builder
+ENV CARGO_TARGET_DIR=/cmux/target
+WORKDIR /cmux
+COPY --from=rust-chef /cmux/recipe-env.json /cmux/recipe-env.json
+COPY --from=rust-chef /cmux/recipe-proxy.json /cmux/recipe-proxy.json
+COPY --from=rust-chef /cmux/recipe-pty.json /cmux/recipe-pty.json
+# Copy cmux-terminal for path dependency resolution during cargo chef cook
+# cargo-chef places cmux-pty at /cmux during cooking, so ../cmux-terminal resolves to /cmux-terminal
+COPY --from=rust-chef /cmux/crates/cmux-terminal /cmux-terminal
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/target \
+  export CARGO_BUILD_JOBS="$(nproc)" && \
   if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
   # Cross-compile to x86_64 when building on a non-amd64 builder
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
   export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
   export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
-  cargo install --path crates/cmux-env --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-proxy --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-xterm --target x86_64-unknown-linux-gnu --locked --force; \
+  cargo chef cook --recipe-path /cmux/recipe-env.json --release --locked --target x86_64-unknown-linux-gnu && \
+  cargo chef cook --recipe-path /cmux/recipe-proxy.json --release --locked --target x86_64-unknown-linux-gnu && \
+  cargo chef cook --recipe-path /cmux/recipe-pty.json --release --locked --target x86_64-unknown-linux-gnu; \
   else \
   # Build natively for the requested platform (e.g., arm64 on Apple Silicon)
-  cargo install --path crates/cmux-env --locked --force && \
-  cargo install --path crates/cmux-proxy --locked --force && \
-  cargo install --path crates/cmux-xterm --locked --force; \
+  cargo chef cook --recipe-path /cmux/recipe-env.json --release --locked && \
+  cargo chef cook --recipe-path /cmux/recipe-proxy.json --release --locked && \
+  cargo chef cook --recipe-path /cmux/recipe-pty.json --release --locked; \
   fi
+
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  --mount=type=cache,target=/cmux/target \
+  export CARGO_BUILD_JOBS="$(nproc)" && \
+  if [ "$TARGETPLATFORM" = "linux/amd64" ] && [ "$BUILDPLATFORM" != "linux/amd64" ]; then \
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc && \
+  export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
+  export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
+  cargo build --release --locked --manifest-path crates/cmux-env/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  cargo build --release --locked --manifest-path crates/cmux-proxy/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  cargo build --release --locked --manifest-path crates/cmux-pty/Cargo.toml --target x86_64-unknown-linux-gnu && \
+  target_dir="/cmux/target/x86_64-unknown-linux-gnu/release"; \
+  else \
+  cargo build --release --locked --manifest-path crates/cmux-env/Cargo.toml && \
+  cargo build --release --locked --manifest-path crates/cmux-proxy/Cargo.toml && \
+  cargo build --release --locked --manifest-path crates/cmux-pty/Cargo.toml && \
+  target_dir="/cmux/target/release"; \
+  fi && \
+  install -m 0755 "${target_dir}/envd" /usr/local/cargo/bin/envd && \
+  install -m 0755 "${target_dir}/envctl" /usr/local/cargo/bin/envctl && \
+  install -m 0755 "${target_dir}/cmux-proxy" /usr/local/cargo/bin/cmux-proxy && \
+  install -m 0755 "${target_dir}/cmux-pty" /usr/local/cargo/bin/cmux-pty
 
 # Stage 2: Build base stage (runs natively on ARM64, cross-compiles to x86_64)
 FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS builder-base
@@ -209,12 +267,32 @@ RUN curl -fsSL https://bun.sh/install | bash && \
   bun --version && \
   bunx --version
 
-# Install IDE (coder or openvscode based on IDE_PROVIDER build arg)
+# Install IDE (coder, openvscode, or manaflow based on IDE_PROVIDER build arg)
 RUN --mount=type=secret,id=github_token,required=false <<'EOF'
 set -eux
 arch="$(dpkg --print-architecture)"
 
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
+  if [ -z "${CMUX_CODE_RELEASE:-}" ]; then
+    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+      | jq -r '.tag_name' \
+      | sed 's|^v||')
+  fi
+  echo "CMUX_CODE_RELEASE=${CMUX_CODE_RELEASE}"
+  if [ "$arch" = "amd64" ]; then
+    ARCH="x64"
+  elif [ "$arch" = "arm64" ]; then
+    ARCH="arm64"
+  fi
+  mkdir -p /app/cmux-code
+  url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+  echo "Downloading: $url"
+  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url" \
+    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url"
+  tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1
+  rm -rf /tmp/cmux-code.tar.gz
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   # Install openvscode-server
   if [ -z "${CODE_RELEASE:-}" ]; then
     CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest" \
@@ -365,7 +443,18 @@ WORKDIR /cmux/packages/vscode-extension
 RUN bun run package && cp cmux-vscode-extension-0.0.1.vsix /tmp/cmux-vscode-extension-0.0.1.vsix
 
 # Install VS Code extensions (keep the .vsix for copying to runtime-base)
-RUN /app/openvscode-server/bin/openvscode-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+# Note: This uses the IDE installed in builder-base for the builder's native arch.
+# The runtime stage will re-install for the target arch.
+RUN <<EOF
+set -eux
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  /app/cmux-code/bin/code-server-oss --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
+  /app/openvscode-server/bin/openvscode-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+else
+  /app/code-server/bin/code-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+fi
+EOF
 
 # Stage 2b: Worker build stage
 FROM builder-base AS builder
@@ -538,6 +627,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   git \
   python3 \
   bash \
+  zsh \
   nano \
   net-tools \
   lsof \
@@ -755,8 +845,23 @@ RUN curl -fsSL https://bun.sh/install | bash && \
 ENV PATH="/usr/local/bin:$PATH"
 ENV BUN_INSTALL_CACHE_DIR=/cmux/node_modules/.bun
 
-RUN --mount=type=cache,target=/root/.bun/install/cache \
-  bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.54 @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff @devcontainers/cli @sourcegraph/amp
+# Global CLIs are sourced from configs/ide-deps.json.
+COPY configs/ide-deps.json /tmp/ide-deps.json
+RUN --mount=type=cache,target=/root/.bun/install/cache <<'EOF'
+set -eux
+packages="$(node - <<'NODE'
+const fs = require("node:fs");
+const deps = JSON.parse(fs.readFileSync("/tmp/ide-deps.json", "utf8"));
+const entries = Object.entries(deps.packages ?? {});
+process.stdout.write(entries.map(([name, version]) => `${name}@${version}`).join(" "));
+NODE
+)"
+if [ -z "${packages}" ]; then
+  echo "No packages found in /tmp/ide-deps.json" >&2
+  exit 1
+fi
+bun add -g ${packages}
+EOF
 
 # Install cursor cli
 RUN curl https://cursor.com/install -fsS | bash
@@ -768,48 +873,68 @@ COPY --from=builder /builtins /builtins
 COPY --from=builder /cmux/node_modules/.bun /cmux/node_modules/.bun
 COPY --from=builder /usr/local/bin/wait-for-docker.sh /usr/local/bin/wait-for-docker.sh
 
-# Install IDE for target platform (coder or openvscode based on IDE_PROVIDER)
-RUN --mount=type=secret,id=github_token,required=false <<EOF
+# Install IDE for target platform (coder, openvscode, or cmux-code based on IDE_PROVIDER)
+RUN --mount=type=secret,id=github_token,required=false <<'EOF'
 set -eux
-arch="\$(dpkg --print-architecture)"
+arch="$(dpkg --print-architecture)"
 
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
+  if [ -z "${CMUX_CODE_RELEASE:-}" ]; then
+    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+      | jq -r '.tag_name' \
+      | sed 's|^v||')
+  fi
+  echo "CMUX_CODE_RELEASE=${CMUX_CODE_RELEASE}"
+  if [ "$arch" = "amd64" ]; then
+    ARCH="x64"
+  elif [ "$arch" = "arm64" ]; then
+    ARCH="arm64"
+  fi
+  mkdir -p /app/cmux-code
+  url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+  echo "Downloading: $url"
+  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url" \
+    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url"
+  tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1
+  rm -rf /tmp/cmux-code.tar.gz
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   # Install openvscode-server
   CODE_RELEASE_VAL="${CODE_RELEASE:-}"
-  if [ -z "\${CODE_RELEASE_VAL}" ]; then
-    CODE_RELEASE_VAL=\$(github-curl -sX GET "https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest" \
-      | awk '/tag_name/{print \$4;exit}' FS='[""]' \
+  if [ -z "${CODE_RELEASE_VAL}" ]; then
+    CODE_RELEASE_VAL=$(github-curl -sX GET "https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest" \
+      | awk '/tag_name/{print $4;exit}' FS='[""]' \
       | sed 's|^openvscode-server-v||')
   fi
-  echo "CODE_RELEASE=\${CODE_RELEASE_VAL}"
-  if [ "\$arch" = "amd64" ]; then
+  echo "CODE_RELEASE=${CODE_RELEASE_VAL}"
+  if [ "$arch" = "amd64" ]; then
     ARCH="x64"
-  elif [ "\$arch" = "arm64" ]; then
+  elif [ "$arch" = "arm64" ]; then
     ARCH="arm64"
   fi
   mkdir -p /app/openvscode-server
-  url="https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v\${CODE_RELEASE_VAL}/openvscode-server-v\${CODE_RELEASE_VAL}-linux-\${ARCH}.tar.gz"
-  echo "Downloading: \$url"
-  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/openvscode-server.tar.gz "\$url" \
-    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/openvscode-server.tar.gz "\$url"
+  url="https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${CODE_RELEASE_VAL}/openvscode-server-v${CODE_RELEASE_VAL}-linux-${ARCH}.tar.gz"
+  echo "Downloading: $url"
+  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/openvscode-server.tar.gz "$url" \
+    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/openvscode-server.tar.gz "$url"
   tar xf /tmp/openvscode-server.tar.gz -C /app/openvscode-server/ --strip-components=1
   rm -rf /tmp/openvscode-server.tar.gz
 else
   # Install coder (code-server)
-  CODER_RELEASE=\$(github-curl -sX GET "https://api.github.com/repos/coder/code-server/releases/latest" \
-    | awk '/tag_name/{print \$4;exit}' FS='[""]' \
+  CODER_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/coder/code-server/releases/latest" \
+    | awk '/tag_name/{print $4;exit}' FS='[""]' \
     | sed 's|^v||')
-  echo "CODER_RELEASE=\${CODER_RELEASE}"
-  if [ "\$arch" = "amd64" ]; then
+  echo "CODER_RELEASE=${CODER_RELEASE}"
+  if [ "$arch" = "amd64" ]; then
     ARCH="amd64"
-  elif [ "\$arch" = "arm64" ]; then
+  elif [ "$arch" = "arm64" ]; then
     ARCH="arm64"
   fi
   mkdir -p /app/code-server
-  url="https://github.com/coder/code-server/releases/download/v\${CODER_RELEASE}/code-server-\${CODER_RELEASE}-linux-\${ARCH}.tar.gz"
-  echo "Downloading: \$url"
-  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "\$url" \
-    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "\$url"
+  url="https://github.com/coder/code-server/releases/download/v${CODER_RELEASE}/code-server-${CODER_RELEASE}-linux-${ARCH}.tar.gz"
+  echo "Downloading: $url"
+  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "$url" \
+    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "$url"
   tar xf /tmp/code-server.tar.gz -C /app/code-server/ --strip-components=1
   rm -rf /tmp/code-server.tar.gz
 
@@ -834,83 +959,103 @@ EOF
 COPY --from=builder /tmp/cmux-vscode-extension-0.0.1.vsix /tmp/cmux-vscode-extension-0.0.1.vsix
 
 # Install extensions based on IDE provider
-RUN <<EOF
+RUN <<'EOF'
 set -eux
 export HOME=/root
 
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  server_root="/app/cmux-code"
+  bin_path="${server_root}/bin/code-server-oss"
+  extensions_dir="/root/.vscode-server-oss/extensions"
+  user_data_dir="/root/.vscode-server-oss/data"
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   server_root="/app/openvscode-server"
-  bin_path="\${server_root}/bin/openvscode-server"
+  bin_path="${server_root}/bin/openvscode-server"
   extensions_dir="/root/.openvscode-server/extensions"
   user_data_dir="/root/.openvscode-server/data"
 else
   server_root="/app/code-server"
-  bin_path="\${server_root}/bin/code-server"
+  bin_path="${server_root}/bin/code-server"
   extensions_dir="/root/.code-server/extensions"
   user_data_dir="/root/.code-server"
 fi
 
-if [ ! -x "\${bin_path}" ]; then
-  echo "IDE binary not found at \${bin_path}" >&2
+if [ ! -x "${bin_path}" ]; then
+  echo "IDE binary not found at ${bin_path}" >&2
   exit 1
 fi
 
-mkdir -p "\${extensions_dir}" "\${user_data_dir}"
+mkdir -p "${extensions_dir}" "${user_data_dir}/User"
+
+# Create settings to disable signature verification before installing extensions
+# This is required for cmux-code which uses OpenVSIX marketplace
+echo '{"extensions.verifySignature": false}' > "${user_data_dir}/User/settings.json"
 
 install_from_file() {
-  package_path="\$1"
-  "\${bin_path}" \
-    --install-extension "\${package_path}" \
+  package_path="$1"
+  "${bin_path}" \
+    --install-extension "${package_path}" \
     --force \
-    --extensions-dir "\${extensions_dir}" \
-    --user-data-dir "\${user_data_dir}"
+    --extensions-dir "${extensions_dir}" \
+    --user-data-dir "${user_data_dir}"
 }
 
 install_from_file "/tmp/cmux-vscode-extension-0.0.1.vsix"
 rm -f /tmp/cmux-vscode-extension-0.0.1.vsix
 
-download_dir="\$(mktemp -d)"
+download_dir="$(mktemp -d)"
 cleanup() {
-  rm -rf "\${download_dir}"
+  rm -rf "${download_dir}"
 }
 trap cleanup EXIT
 
 download_extension() {
-  publisher="\$1"
-  name="\$2"
-  version="\$3"
-  destination="\$4"
-  tmpfile="\${destination}.download"
-  url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/\${publisher}/vsextensions/\${name}/\${version}/vspackage"
-  if ! curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "\${tmpfile}" "\${url}"; then
-    echo "Failed to download \${publisher}.\${name}@\${version}" >&2
-    rm -f "\${tmpfile}"
+  publisher="$1"
+  name="$2"
+  version="$3"
+  destination="$4"
+  tmpfile="${destination}.download"
+  url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage"
+  if ! curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}"; then
+    echo "Failed to download ${publisher}.${name}@${version}" >&2
+    rm -f "${tmpfile}"
     return 1
   fi
-  if gzip -t "\${tmpfile}" >/dev/null 2>&1; then
-    gunzip -c "\${tmpfile}" > "\${destination}"
-    rm -f "\${tmpfile}"
+  if gzip -t "${tmpfile}" >/dev/null 2>&1; then
+    gunzip -c "${tmpfile}" > "${destination}"
+    rm -f "${tmpfile}"
   else
-    mv "\${tmpfile}" "\${destination}"
+    mv "${tmpfile}" "${destination}"
   fi
 }
 
-while IFS='|' read -r publisher name version; do
-  [ -z "\${publisher}" ] && continue
-  download_extension "\${publisher}" "\${name}" "\${version}" "\${download_dir}/\${publisher}.\${name}.vsix" &
-done <<'EXTENSIONS'
-anthropic|claude-code|2.0.27
-openai|chatgpt|0.5.27
-ms-vscode|vscode-typescript-next|5.9.20250531
-ms-python|python|2025.6.1
-ms-python|vscode-pylance|2025.8.100
-ms-python|debugpy|2025.14.0
-EXTENSIONS
+extensions="$(node - <<'NODE'
+const fs = require("node:fs");
+const deps = JSON.parse(fs.readFileSync("/tmp/ide-deps.json", "utf8"));
+const exts = deps.extensions ?? [];
+if (!Array.isArray(exts)) {
+  throw new Error("ide-deps.json extensions must be an array");
+}
+process.stdout.write(
+  exts
+    .map((ext) => `${ext.publisher}|${ext.name}|${ext.version}`)
+    .join("\\n")
+);
+NODE
+)"
+if [ -z "${extensions}" ]; then
+  echo "No extensions found in /tmp/ide-deps.json" >&2
+  exit 1
+fi
+echo "${extensions}" | while IFS='|' read -r publisher name version; do
+  [ -z "${publisher}" ] && continue
+  download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
+done
 wait
-set -- "\${download_dir}"/*.vsix
-for vsix in "\$@"; do
-  if [ -f "\${vsix}" ]; then
-    install_from_file "\${vsix}"
+set -- "${download_dir}"/*.vsix
+for vsix in "$@"; do
+  if [ -f "${vsix}" ]; then
+    install_from_file "${vsix}"
   fi
 done
 EOF
@@ -925,17 +1070,21 @@ RUN chmod +x /usr/local/bin/cmux-collect-relevant-diff.sh \
 COPY --from=rust-builder /usr/local/cargo/bin/envctl /usr/local/bin/envctl
 COPY --from=rust-builder /usr/local/cargo/bin/envd /usr/local/bin/envd
 COPY --from=rust-builder /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
-COPY --from=rust-builder /usr/local/cargo/bin/cmux-xterm-server /usr/local/bin/cmux-xterm-server
+COPY --from=rust-builder /usr/local/cargo/bin/cmux-pty /usr/local/bin/cmux-pty
 
 # Configure envctl/envd runtime defaults
-RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-xterm-server && \
+RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-pty && \
   envctl --version && \
   envctl install-hook bash && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.profile && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.bash_profile && \
   mkdir -p /run/user/0 && \
   chmod 700 /run/user/0 && \
-  echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc
+  echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc && \
+  echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.bashrc && \
+  echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.zshrc && \
+  printf 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"\n' > /etc/profile.d/local-bin.sh && \
+  chmod +x /etc/profile.d/local-bin.sh
 
 # Install tmux configuration for better mouse scrolling behavior
 COPY configs/tmux.conf /etc/tmux.conf
@@ -951,6 +1100,7 @@ RUN mkdir -p /usr/local/lib/cmux /etc/cmux
 COPY configs/systemd/cmux.target /usr/lib/systemd/system/cmux.target
 COPY configs/systemd/cmux-openvscode.service /usr/lib/systemd/system/cmux-openvscode.service
 COPY configs/systemd/cmux-coder.service /usr/lib/systemd/system/cmux-coder.service
+COPY configs/systemd/cmux-cmux-code.service /usr/lib/systemd/system/cmux-cmux-code.service
 COPY configs/systemd/cmux-worker.service /usr/lib/systemd/system/cmux-worker.service
 COPY configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.service
 COPY configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
@@ -959,10 +1109,13 @@ COPY configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
 COPY configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
 COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
-COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
+COPY configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+COPY configs/systemd/cmux-ide.service.template /usr/lib/systemd/system/cmux-ide.service.template
+COPY configs/systemd/cmux.target.docker.drop-in.conf /usr/lib/systemd/system/cmux.target.docker.drop-in.conf
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
+COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
 COPY configs/systemd/bin/code /usr/local/bin/code
 COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
 COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
@@ -970,13 +1123,14 @@ COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY configs/systemd/ide.env.coder /etc/cmux/ide.env.coder
 COPY configs/systemd/ide.env.openvscode /etc/cmux/ide.env.openvscode
+COPY configs/systemd/ide.env.cmux-code /etc/cmux/ide.env.cmux-code
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
 COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
 
 # Configure IDE service based on IDE_PROVIDER
-RUN <<EOF
+RUN <<'EOF'
 set -eux
-chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/configure-cmux-code /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
 chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 chmod +x /usr/local/sbin/cmux-configure-memory
 chmod +x /usr/local/bin/code
@@ -984,10 +1138,17 @@ touch /usr/local/lib/cmux/dockerd.flag
 mkdir -p /var/log/cmux
 mkdir -p /etc/systemd/system/multi-user.target.wants
 mkdir -p /etc/systemd/system/cmux.target.wants
+mkdir -p /etc/systemd/system/cmux.target.d
 mkdir -p /etc/systemd/system/swap.target.wants
 
+# Install Docker-specific drop-in for cmux.target (removes cmux-devtools.service from Requires)
+cp /usr/lib/systemd/system/cmux.target.docker.drop-in.conf /etc/systemd/system/cmux.target.d/10-docker.conf
+
 # Copy the correct IDE env file based on provider
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  cp /etc/cmux/ide.env.cmux-code /etc/cmux/ide.env
+  IDE_SERVICE="cmux-cmux-code.service"
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   cp /etc/cmux/ide.env.openvscode /etc/cmux/ide.env
   IDE_SERVICE="cmux-openvscode.service"
 else
@@ -996,17 +1157,19 @@ else
 fi
 
 ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
-# Create cmux-ide.service alias so systemd can find the unit when cmux.target requires it
-ln -sf /usr/lib/systemd/system/\${IDE_SERVICE} /etc/systemd/system/cmux-ide.service
-ln -sf /usr/lib/systemd/system/\${IDE_SERVICE} /etc/systemd/system/cmux.target.wants/cmux-ide.service
+# Generate cmux-ide.service from template (proper systemd proxy unit instead of symlink)
+sed "s/@IDE_SERVICE@/${IDE_SERVICE}/g" /usr/lib/systemd/system/cmux-ide.service.template > /usr/lib/systemd/system/cmux-ide.service
+ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.wants/cmux-ide.service
 ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
 ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
 ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
-ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
+# Note: cmux-devtools.service not enabled in Docker (requires cmux-openbox.service which is not available)
 ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
 ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
+# Note: cmux-cdp-proxy.service not enabled in Docker (requires cmux-devtools.service)
+ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
+ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.target.wants/cmux-pty.service
+ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/multi-user.target.wants/${IDE_SERVICE}
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
 mkdir -p /opt/app/overlay/upper /opt/app/overlay/work
@@ -1014,20 +1177,29 @@ printf 'CMUX_ROOTFS=/\nCMUX_RUNTIME_ROOT=/\nCMUX_OVERLAY_UPPER=/opt/app/overlay/
 EOF
 
 # Create IDE user settings based on provider
-RUN <<EOF
+RUN <<'EOF'
 set -eux
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  # cmux-code settings (includes workspace trust, secondary sidebar, and OpenVSIX compatibility settings)
+  # extensions.verifySignature: false is required because OpenVSIX marketplace doesn't support extension signatures
+  mkdir -p /root/.vscode-server-oss/data/User
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/settings.json
+  mkdir -p /root/.vscode-server-oss/data/User/profiles/default-profile
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/profiles/default-profile/settings.json
+  mkdir -p /root/.vscode-server-oss/data/Machine
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/Machine/settings.json
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   mkdir -p /root/.openvscode-server/data/User
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/User/settings.json
   mkdir -p /root/.openvscode-server/data/User/profiles/default-profile
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/profiles/default-profile/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/User/profiles/default-profile/settings.json
   mkdir -p /root/.openvscode-server/data/Machine
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/Machine/settings.json
 else
   # Coder settings are already created during IDE installation
   mkdir -p /root/.code-server/User /root/.code-server/Machine
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.code-server/User/settings.json
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.code-server/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.code-server/User/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.code-server/Machine/settings.json
 fi
 EOF
 
@@ -1039,7 +1211,7 @@ EOF
 # 39380: VNC websocket proxy (noVNC)
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
-# 39383: cmux-xterm server
+# 39383: cmux-pty server
 EXPOSE 39375 39377 39378 39379 39380 39381 39382 39383
 
 ENV container=docker

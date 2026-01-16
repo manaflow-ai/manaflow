@@ -1,7 +1,7 @@
 import { api } from "@cmux/convex/api";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
-import { spawnAgent } from "src/agentSpawner";
-import { getConvex } from "src/utils/convexClient";
+import { spawnAgent } from "../agentSpawner.ts";
+import { getConvex } from "../utils/convexClient.ts";
 
 const agentConfig = AGENT_CONFIGS.find(
   (agent) => agent.name === "codex/gpt-5.1-codex-high"

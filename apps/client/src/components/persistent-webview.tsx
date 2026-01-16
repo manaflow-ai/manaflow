@@ -63,7 +63,7 @@ export function PersistentWebView({
   persistentWrapperClassName,
   persistentWrapperStyle,
   suspended,
-  retainOnUnmount: _retainOnUnmount,
+  retainOnUnmount,
   backgroundColor,
   borderRadius,
   fallback,
@@ -82,7 +82,7 @@ export function PersistentWebView({
   isExpanded,
   isAnyPanelExpanded,
 }: PersistentWebViewProps) {
-  const resolvedRetain = true;
+  const resolvedRetain = retainOnUnmount ?? true;
 
   if (
     isElectron &&

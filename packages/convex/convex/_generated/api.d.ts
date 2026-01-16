@@ -8,13 +8,16 @@
  * @module
  */
 
+import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
+import type * as bedrock_utils from "../bedrock_utils.js";
 import type * as codeReview from "../codeReview.js";
 import type * as codeReviewActions from "../codeReviewActions.js";
 import type * as codeReview_http from "../codeReview_http.js";
 import type * as comments from "../comments.js";
 import type * as containerSettings from "../containerSettings.js";
+import type * as crons from "../crons.js";
 import type * as crown from "../crown.js";
 import type * as crown_actions from "../crown/actions.js";
 import type * as crown_http from "../crown_http.js";
@@ -39,9 +42,13 @@ import type * as hostScreenshotCollector_http from "../hostScreenshotCollector_h
 import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
+import type * as morphInstanceMaintenance from "../morphInstanceMaintenance.js";
+import type * as morphInstances from "../morphInstances.js";
+import type * as notifications_http from "../notifications_http.js";
 import type * as previewConfigs from "../previewConfigs.js";
 import type * as previewRuns from "../previewRuns.js";
 import type * as previewScreenshots from "../previewScreenshots.js";
+import type * as previewTestJobs from "../previewTestJobs.js";
 import type * as preview_jobs from "../preview_jobs.js";
 import type * as preview_jobs_http from "../preview_jobs_http.js";
 import type * as preview_jobs_worker from "../preview_jobs_worker.js";
@@ -56,11 +63,13 @@ import type * as stack_webhook_actions from "../stack_webhook_actions.js";
 import type * as storage from "../storage.js";
 import type * as sync from "../sync.js";
 import type * as taskComments from "../taskComments.js";
+import type * as taskNotifications from "../taskNotifications.js";
 import type * as taskRunLogChunks from "../taskRunLogChunks.js";
 import type * as taskRuns from "../taskRuns.js";
 import type * as taskRuns_http from "../taskRuns_http.js";
 import type * as tasks from "../tasks.js";
 import type * as teams from "../teams.js";
+import type * as userEditorSettings from "../userEditorSettings.js";
 import type * as users from "../users.js";
 import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
 import type * as users_utils_index from "../users/utils/index.js";
@@ -74,13 +83,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
+  bedrock_utils: typeof bedrock_utils;
   codeReview: typeof codeReview;
   codeReviewActions: typeof codeReviewActions;
   codeReview_http: typeof codeReview_http;
   comments: typeof comments;
   containerSettings: typeof containerSettings;
+  crons: typeof crons;
   crown: typeof crown;
   "crown/actions": typeof crown_actions;
   crown_http: typeof crown_http;
@@ -105,9 +117,13 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
+  morphInstanceMaintenance: typeof morphInstanceMaintenance;
+  morphInstances: typeof morphInstances;
+  notifications_http: typeof notifications_http;
   previewConfigs: typeof previewConfigs;
   previewRuns: typeof previewRuns;
   previewScreenshots: typeof previewScreenshots;
+  previewTestJobs: typeof previewTestJobs;
   preview_jobs: typeof preview_jobs;
   preview_jobs_http: typeof preview_jobs_http;
   preview_jobs_worker: typeof preview_jobs_worker;
@@ -122,11 +138,13 @@ declare const fullApi: ApiFromModules<{
   storage: typeof storage;
   sync: typeof sync;
   taskComments: typeof taskComments;
+  taskNotifications: typeof taskNotifications;
   taskRunLogChunks: typeof taskRunLogChunks;
   taskRuns: typeof taskRuns;
   taskRuns_http: typeof taskRuns_http;
   tasks: typeof tasks;
   teams: typeof teams;
+  userEditorSettings: typeof userEditorSettings;
   users: typeof users;
   "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
   "users/utils/index": typeof users_utils_index;

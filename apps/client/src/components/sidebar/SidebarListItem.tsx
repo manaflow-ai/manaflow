@@ -22,6 +22,8 @@ interface SidebarListItemProps {
     visible?: boolean;
     className?: string;
     iconClassName?: string;
+    /** Show a notification dot over the toggle arrow */
+    hasNotification?: boolean;
   };
 }
 
@@ -58,7 +60,7 @@ export function SidebarListItem({
         style={{ paddingLeft: `${effectivePaddingLeft}px` }}
       >
         {toggle ? (
-          <div className="pr-1 -ml-0.5">
+          <div className="pr-1 -ml-0.5 relative">
             <SidebarToggleButton
               onClick={(event) => {
                 event.preventDefault();
@@ -70,6 +72,11 @@ export function SidebarListItem({
               className={clsx("size-4", toggle.className)}
               iconClassName={toggle.iconClassName}
             />
+            {toggle.hasNotification && (
+              <div className="absolute inset-0 grid place-items-center pointer-events-none -translate-x-0.5">
+                <span className="size-2 rounded-full bg-blue-500" />
+              </div>
+            )}
           </div>
         ) : null}
 

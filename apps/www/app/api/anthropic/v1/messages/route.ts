@@ -1,12 +1,14 @@
 import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
+import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "@cmux/shared/utils/anthropic";
 import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
+import { trackAnthropicProxyRequest } from "@/lib/analytics/track-anthropic-proxy";
 
 const ANTHROPIC_API_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
 const TEMPORARY_DISABLE_AUTH = true;
 
-const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
+const hardCodedApiKey = CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
 
 async function requireTaskRunToken(
   request: NextRequest
@@ -24,13 +26,30 @@ function getIsOAuthToken(token: string) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!TEMPORARY_DISABLE_AUTH) {
-    try {
-      await requireTaskRunToken(request);
-    } catch (authError) {
-      console.error("[anthropic proxy] Auth error:", authError);
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  const startTime = Date.now();
+  let tokenPayload: TaskRunTokenPayload | null = null;
+
+  // Try to extract token payload for tracking (even if auth is disabled)
+  try {
+    tokenPayload = await requireTaskRunToken(request);
+  } catch {
+    // Token extraction failed - will use defaults for tracking
+  }
+
+  if (!TEMPORARY_DISABLE_AUTH && !tokenPayload) {
+    console.error("[anthropic proxy] Auth error: Missing or invalid token");
+    void trackAnthropicProxyRequest({
+      teamId: "unknown",
+      userId: "unknown",
+      taskRunId: "unknown",
+      model: "unknown",
+      stream: false,
+      isOAuthToken: false,
+      responseStatus: 401,
+      latencyMs: Date.now() - startTime,
+      errorType: "auth_error",
+    });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -82,6 +101,18 @@ export async function POST(request: NextRequest) {
 
     // Handle streaming responses
     if (body.stream && response.ok) {
+      // Track streaming request (token counts not available for streaming)
+      void trackAnthropicProxyRequest({
+        teamId: tokenPayload?.teamId ?? "unknown",
+        userId: tokenPayload?.userId ?? "unknown",
+        taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        model: body.model ?? "unknown",
+        stream: true,
+        isOAuthToken,
+        responseStatus: response.status,
+        latencyMs: Date.now() - startTime,
+      });
+
       // Create a TransformStream to pass through the SSE data
       const stream = new ReadableStream({
         async start(controller) {
@@ -121,12 +152,50 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       console.error("[anthropic proxy] Anthropic error:", data);
+      void trackAnthropicProxyRequest({
+        teamId: tokenPayload?.teamId ?? "unknown",
+        userId: tokenPayload?.userId ?? "unknown",
+        taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        model: body.model ?? "unknown",
+        stream: false,
+        isOAuthToken,
+        responseStatus: response.status,
+        latencyMs: Date.now() - startTime,
+        errorType: data?.error?.type ?? "anthropic_error",
+      });
       return NextResponse.json(data, { status: response.status });
     }
+
+    // Track successful non-streaming request with token usage
+    void trackAnthropicProxyRequest({
+      teamId: tokenPayload?.teamId ?? "unknown",
+      userId: tokenPayload?.userId ?? "unknown",
+      taskRunId: tokenPayload?.taskRunId ?? "unknown",
+      model: data.model ?? body.model ?? "unknown",
+      stream: false,
+      isOAuthToken,
+      responseStatus: response.status,
+      latencyMs: Date.now() - startTime,
+      inputTokens: data.usage?.input_tokens,
+      outputTokens: data.usage?.output_tokens,
+      cacheCreationInputTokens: data.usage?.cache_creation_input_tokens,
+      cacheReadInputTokens: data.usage?.cache_read_input_tokens,
+    });
 
     return NextResponse.json(data);
   } catch (error) {
     console.error("[anthropic proxy] Error:", error);
+    void trackAnthropicProxyRequest({
+      teamId: tokenPayload?.teamId ?? "unknown",
+      userId: tokenPayload?.userId ?? "unknown",
+      taskRunId: tokenPayload?.taskRunId ?? "unknown",
+      model: "unknown",
+      stream: false,
+      isOAuthToken: false,
+      responseStatus: 500,
+      latencyMs: Date.now() - startTime,
+      errorType: "proxy_error",
+    });
     return NextResponse.json(
       { error: "Failed to proxy request to Anthropic" },
       { status: 500 }

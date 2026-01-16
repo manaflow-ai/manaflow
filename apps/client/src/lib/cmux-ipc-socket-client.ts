@@ -32,6 +32,7 @@ const formatRpcErrorMessage = (event: string, error: unknown): string => {
 
 export class CmuxIpcSocketClient {
   private handlers = new Map<string, Set<EventHandler>>();
+  private ipcCleanups = new Map<string, () => void>();
   public connected = false;
   public disconnected = true;
   public id = "cmux-ipc";
@@ -49,12 +50,23 @@ export class CmuxIpcSocketClient {
     this.connected = true;
     this.disconnected = false;
 
-    // Wire existing handlers to IPC events
+    // Wire existing handlers to IPC events (only if not already wired)
     this.handlers.forEach((_set, event) => {
-      window.cmux.on(event, (...args: unknown[]) => this.trigger(event, ...args));
+      this.ensureIpcListener(event);
     });
     this.trigger("connect");
     return this;
+  }
+
+  private ensureIpcListener(event: string) {
+    // Skip if already registered or disposed
+    if (this.ipcCleanups.has(event) || this.disposed) return;
+    const cleanup = window.cmux.on(event, (...args: unknown[]) => {
+      if (!this.disposed) {
+        this.trigger(event, ...args);
+      }
+    });
+    this.ipcCleanups.set(event, cleanup);
   }
 
   disconnect() {
@@ -63,6 +75,16 @@ export class CmuxIpcSocketClient {
     this.connected = false;
     this.disconnected = true;
     this.trigger("disconnect");
+    // Clean up all IPC listeners to prevent memory leaks
+    for (const cleanup of this.ipcCleanups.values()) {
+      try {
+        cleanup();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    this.ipcCleanups.clear();
+    this.handlers.clear();
     return this;
   }
 
@@ -73,8 +95,10 @@ export class CmuxIpcSocketClient {
     const key = String(event);
     if (!this.handlers.has(key)) this.handlers.set(key, new Set());
     this.handlers.get(key)!.add(handler as EventHandler);
-    // Subscribe to IPC if connected
-    window.cmux.on(key, (...args: unknown[]) => this.trigger(key, ...args));
+    // Subscribe to IPC if connected (deduped via ensureIpcListener)
+    if (this.connected) {
+      this.ensureIpcListener(key);
+    }
     return this;
   }
   //window.api.cmux

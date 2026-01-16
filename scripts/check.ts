@@ -1,88 +1,37 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
-type Pkg = {
-  name: string;
-  path: string; // relative to repo root
-  hasLint: boolean;
-  hasTypecheck: boolean;
-};
+const quiet = !!process.env.CLAUDECODE;
 
-type CheckKind = "lint" | "typecheck";
-
-type CheckResult = {
-  pkgName: string;
-  kind: CheckKind;
-  success: boolean;
-  output: string;
-};
-
-function findPackages(): Pkg[] {
-  const repoRoot = join(__dirname, "..");
-  const roots = ["apps", "packages", "scripts"];
-
-  const pkgs: Pkg[] = [];
-
-  for (const root of roots) {
-    const rootPath = join(repoRoot, root);
-    try {
-      const stats = statSync(rootPath);
-      if (!stats.isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    // "scripts" is a single package; others have many subfolders
-    const dirs =
-      root === "scripts"
-        ? [rootPath]
-        : readdirSync(rootPath)
-            .map((d) => join(rootPath, d))
-            .filter((p) => {
-              try {
-                return statSync(p).isDirectory();
-              } catch {
-                return false;
-              }
-            });
-
-    for (const dir of dirs) {
-      const pkgJsonPath = join(dir, "package.json");
-      try {
-        const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as {
-          name?: string;
-          scripts?: Record<string, string>;
-        };
-        const name = pkgJson.name ?? relative(repoRoot, dir);
-        const hasLint = Boolean(pkgJson.scripts && pkgJson.scripts["lint"]);
-        const hasTypecheck = Boolean(
-          pkgJson.scripts && pkgJson.scripts["typecheck"]
-        );
-        if (hasLint || hasTypecheck) {
-          pkgs.push({
-            name,
-            path: relative(repoRoot, dir),
-            hasLint,
-            hasTypecheck,
-          });
-        }
-      } catch {
-        // not a package or invalid json; skip
-      }
-    }
-  }
-
-  return pkgs;
+// Run precheck (generate-openapi-client) - failures are non-fatal
+async function runPrecheck(repoRoot: string): Promise<void> {
+  return new Promise((resolve) => {
+    const child = spawn("bun", ["run", "--silent", "generate-openapi-client"], {
+      cwd: repoRoot,
+      shell: true,
+      stdio: quiet ? "ignore" : "inherit",
+    });
+    child.on("close", () => resolve());
+    child.on("error", () => resolve());
+  });
 }
 
-function runScript(pkg: Pkg, kind: CheckKind): Promise<CheckResult> {
-  const cwd = join(__dirname, "..", pkg.path);
-  const child = spawn("bun", ["run", "--silent", kind], {
-    cwd,
-    shell: true,
-  });
+type CheckResult = {
+  name: string;
+  success: boolean;
+  output: string;
+  durationMs: number;
+};
+
+function runCommand(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  name: string
+): Promise<CheckResult> {
+  const startTime = performance.now();
+  const child = spawn(cmd, args, { cwd, shell: true });
 
   let stdout = "";
   let stderr = "";
@@ -92,77 +41,74 @@ function runScript(pkg: Pkg, kind: CheckKind): Promise<CheckResult> {
   return new Promise((resolve) => {
     child.on("close", (code) => {
       resolve({
-        pkgName: pkg.name,
-        kind,
+        name,
         success: code === 0,
-        output: (stdout || stderr).trim(),
+        output: (stdout + stderr).trim(),
+        durationMs: performance.now() - startTime,
       });
     });
     child.on("error", (err) => {
       resolve({
-        pkgName: pkg.name,
-        kind,
+        name,
         success: false,
         output: err.message,
+        durationMs: performance.now() - startTime,
       });
     });
   });
 }
 
 async function main() {
-  const pkgs = findPackages();
+  const repoRoot = join(__dirname, "..");
 
-  const jobs: Promise<CheckResult>[] = [];
-  for (const pkg of pkgs) {
-    if (pkg.hasLint) jobs.push(runScript(pkg, "lint"));
-    if (pkg.hasTypecheck) jobs.push(runScript(pkg, "typecheck"));
+  // Run precheck first (non-fatal)
+  await runPrecheck(repoRoot);
+
+  const startTime = performance.now();
+  if (!quiet) console.log("Running lint + typecheck in parallel...\n");
+
+  // Run lint + single tsgo --build in parallel
+  const [lintResult, typecheckResult] = await Promise.all([
+    runCommand("bunx", ["eslint", "."], repoRoot, "lint"),
+    runCommand("bunx", ["tsgo", "--build", "--noEmit"], repoRoot, "typecheck"),
+  ]);
+
+  // Report failures
+  let hasFailures = false;
+
+  if (!lintResult.success) {
+    hasFailures = true;
+    console.log("❌ Lint failed:\n");
+    console.log(lintResult.output.replace(/^/gm, "  "));
+    console.log();
   }
 
-  if (jobs.length === 0) {
-    console.log("✅ Checks passed (nothing to run)");
-    return;
+  if (!typecheckResult.success) {
+    hasFailures = true;
+    console.log("❌ Typecheck failed:\n");
+    console.log(typecheckResult.output.replace(/^/gm, "  "));
+    console.log();
   }
 
-  const results = await Promise.all(jobs);
-  const failures = results.filter((r) => !r.success);
-
-  if (failures.length === 0) {
-    console.log("✅ Checks passed (lint + typecheck)");
-    return;
+  if (hasFailures) {
+    process.exit(1);
   }
 
-  const lintFailures = failures.filter((f) => f.kind === "lint");
-  const typeFailures = failures.filter((f) => f.kind === "typecheck");
-
-  if (lintFailures.length > 0) {
-    console.log("❌ Lint failures:\n");
-    for (const f of lintFailures) {
-      console.log(`- ${f.pkgName}`);
-      if (f.output) {
-        const indented = f.output
-          .split("\n")
-          .map((l) => `  ${l}`)
-          .join("\n");
-        console.log(indented + "\n");
-      }
+  // Print timing summary (only in verbose mode)
+  if (!quiet) {
+    const results = [lintResult, typecheckResult];
+    console.log("⏱  Timings:\n");
+    for (const r of results.sort((a, b) => b.durationMs - a.durationMs)) {
+      const status = r.success ? "✓" : "✗";
+      const duration = (r.durationMs / 1000).toFixed(2);
+      console.log(`  ${status} ${r.name.padEnd(10)}  ${duration}s`);
     }
+
+    const totalTime = performance.now() - startTime;
+    console.log(`\n  Total: ${(totalTime / 1000).toFixed(2)}s\n`);
   }
 
-  if (typeFailures.length > 0) {
-    console.log("❌ Typecheck failures:\n");
-    for (const f of typeFailures) {
-      console.log(`- ${f.pkgName}`);
-      if (f.output) {
-        const indented = f.output
-          .split("\n")
-          .map((l) => `  ${l}`)
-          .join("\n");
-        console.log(indented + "\n");
-      }
-    }
-  }
-
-  process.exit(1);
+  console.log("✅ Lint and typecheck passed");
 }
 
 main().catch((err) => {

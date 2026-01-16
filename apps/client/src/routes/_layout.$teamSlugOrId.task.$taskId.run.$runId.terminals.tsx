@@ -82,10 +82,7 @@ export const Route = createFileRoute(
       try {
         const created = await createTerminalTab({
           baseUrl,
-          request: {
-            cmd: "tmux",
-            args: ["attach", "-t", "cmux"],
-          },
+          request: {},
         });
 
         queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
@@ -98,7 +95,7 @@ export const Route = createFileRoute(
           return [...current, created.id];
         });
       } catch (error) {
-        console.error("Failed to auto-create tmux terminal", error);
+        console.error("Failed to auto-create terminal", error);
       }
     })();
   },

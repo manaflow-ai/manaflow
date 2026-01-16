@@ -13,6 +13,45 @@ import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
 import { SNAPSHOT_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 
+/**
+ * Helper to detect connection timeout errors from undici
+ */
+function isConnectTimeoutError(error: Error): boolean {
+  return (
+    error.message.includes("fetch failed") ||
+    error.message.includes("ConnectTimeoutError") ||
+    (error.cause instanceof Error &&
+      (error.cause.message.includes("Connect Timeout") ||
+        (error.cause as NodeJS.ErrnoException).code === "UND_ERR_CONNECT_TIMEOUT"))
+  );
+}
+
+/**
+ * Retry wrapper for Morph client operations to handle connection timeouts
+ */
+async function withMorphRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  maxRetries = 3
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!isConnectTimeoutError(lastError) || attempt === maxRetries) {
+        throw lastError;
+      }
+      console.log(
+        `[environments] ${operationName} connection timeout on attempt ${attempt}/${maxRetries}, retrying in ${attempt * 2}s...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+    }
+  }
+  throw lastError;
+}
+
 export const environmentsRouter = new OpenAPIHono();
 
 const sanitizePortsOrThrow = (ports: readonly number[]): number[] => {
@@ -220,9 +259,10 @@ environmentsRouter.openapi(
 
       // Create Morph snapshot from instance
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await client.instances.get({
-        instanceId: body.morphInstanceId,
-      });
+      const instance = await withMorphRetry(
+        () => client.instances.get({ instanceId: body.morphInstanceId }),
+        "instances.get (create environment)"
+      );
 
       // Ensure instance belongs to this team (when metadata exists)
       const instanceTeamId = instance.metadata?.teamId;
@@ -628,9 +668,10 @@ environmentsRouter.openapi(
 
       if (body.morphInstanceId) {
         const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-        const instance = await morphClient.instances.get({
-          instanceId: body.morphInstanceId,
-        });
+        const instance = await withMorphRetry(
+          () => morphClient.instances.get({ instanceId: body.morphInstanceId! }),
+          "instances.get (update ports)"
+        );
 
         const metadata = instance.metadata;
         const instanceTeamId = metadata?.teamId;
@@ -847,9 +888,10 @@ environmentsRouter.openapi(
 
       const convexClient = getConvex({ accessToken });
       const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await morphClient.instances.get({
-        instanceId: body.morphInstanceId,
-      });
+      const instance = await withMorphRetry(
+        () => morphClient.instances.get({ instanceId: body.morphInstanceId }),
+        "instances.get (create snapshot)"
+      );
 
       const metadata = instance.metadata;
       const instanceTeamId = metadata?.teamId;

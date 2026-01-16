@@ -1,10 +1,13 @@
 import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
+import { getLocalVSCodeSettingsSnapshot } from "../utils/editorSettings";
 
 type Logger = {
   info: (message: string, ...args: unknown[]) => void;
@@ -18,6 +21,13 @@ export const LOCAL_VSCODE_HOST = "localhost";
 const SERVE_WEB_PORT_START = 39_400;
 const SERVE_WEB_MAX_PORT_ATTEMPTS = 200;
 const SERVER_READY_TIMEOUT_MS = 15_000;
+const SERVE_WEB_AGENT_FOLDER = path.join(
+  os.homedir(),
+  ".cmux",
+  "vscode-serve-web"
+);
+const SERVE_WEB_PROFILE_ID = "default-profile";
+const BUILD_WITH_AGENT_SETTING_KEY = "cmux.buildWithAgent";
 
 let resolvedVSCodeExecutable: string | null = null;
 let currentServeWebBaseUrl: string | null = null;
@@ -71,6 +81,8 @@ export async function ensureVSCodeServeWeb(
   let child: ChildProcess | null = null;
 
   try {
+    await syncLocalVSCodeSettingsForServeWeb(logger);
+
     const port = await claimServeWebPort(logger);
     logger.info(
       `Starting VS Code serve-web using executable ${executable} on port ${port}...`
@@ -92,6 +104,7 @@ export async function ensureVSCodeServeWeb(
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
+          VSCODE_AGENT_FOLDER: SERVE_WEB_AGENT_FOLDER,
           // Make sure VS Code CLI does not inherit our existing IPC hook.
           VSCODE_IPC_HOOK_CLI: undefined,
         },
@@ -177,6 +190,234 @@ export function stopVSCodeServeWeb(
     child.kill();
   } catch (error) {
     logger.error("Failed to stop VS Code serve-web process:", error);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isQuoteEscaped(input: string, index: number): boolean {
+  let backslashCount = 0;
+  for (let i = index - 1; i >= 0 && input[i] === "\\"; i -= 1) {
+    backslashCount += 1;
+  }
+  return backslashCount % 2 === 1;
+}
+
+function stripJsonComments(input: string): string {
+  let output = "";
+  let inString = false;
+  let inSingleLineComment = false;
+  let inMultiLineComment = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    const next = input[i + 1];
+
+    if (inSingleLineComment) {
+      if (char === "\n") {
+        inSingleLineComment = false;
+        output += char;
+      }
+      continue;
+    }
+
+    if (inMultiLineComment) {
+      if (char === "*" && next === "/") {
+        inMultiLineComment = false;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (!inString && char === "/" && next === "/") {
+      inSingleLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (!inString && char === "/" && next === "*") {
+      inMultiLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (char === '"' && !isQuoteEscaped(input, i)) {
+      inString = !inString;
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+function removeTrailingCommas(input: string): string {
+  let output = "";
+  let inString = false;
+  let isEscaped = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+
+    if (inString) {
+      output += char;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === "\\") {
+        isEscaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      output += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let j = i + 1;
+      while (j < input.length && /\s/.test(input[j] ?? "")) {
+        j += 1;
+      }
+      const next = input[j];
+      if (next === "}" || next === "]") {
+        continue;
+      }
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+function parseSettingsJson(
+  raw: string | undefined,
+  logger: Logger
+): Record<string, unknown> {
+  if (!raw || raw.trim().length === 0) {
+    return {};
+  }
+
+  const tryParse = (value: string, label: string) => {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (isRecord(parsed)) {
+        return parsed;
+      }
+      logger.warn(`Parsed ${label} but it was not an object.`);
+      return null;
+    } catch (error) {
+      console.error(`Failed to parse ${label}:`, error);
+      logger.error(`Failed to parse ${label}:`, error);
+      return null;
+    }
+  };
+
+  const direct = tryParse(raw, "settings.json");
+  if (direct) {
+    return direct;
+  }
+
+  const stripped = stripJsonComments(raw);
+  const normalized = removeTrailingCommas(stripped);
+  const fallback = tryParse(normalized, "settings.json (jsonc)");
+  if (fallback) {
+    return fallback;
+  }
+
+  return {};
+}
+
+async function safeWriteFile(
+  target: string,
+  content: string,
+  logger: Logger
+): Promise<void> {
+  try {
+    await writeFile(target, content, { encoding: "utf8" });
+  } catch (error) {
+    console.error(`Failed to write ${target}:`, error);
+    logger.error(`Failed to write ${target}:`, error);
+  }
+}
+
+async function syncLocalVSCodeSettingsForServeWeb(logger: Logger): Promise<void> {
+  const dataDir = path.join(SERVE_WEB_AGENT_FOLDER, "data");
+  const userDir = path.join(dataDir, "User");
+  const profileDir = path.join(userDir, "profiles", SERVE_WEB_PROFILE_ID);
+  const machineDir = path.join(dataDir, "Machine");
+  const userSnippetsDir = path.join(userDir, "snippets");
+  const profileSnippetsDir = path.join(profileDir, "snippets");
+
+  try {
+    await Promise.all([
+      mkdir(userDir, { recursive: true }),
+      mkdir(profileDir, { recursive: true }),
+      mkdir(machineDir, { recursive: true }),
+      mkdir(userSnippetsDir, { recursive: true }),
+      mkdir(profileSnippetsDir, { recursive: true }),
+    ]);
+  } catch (error) {
+    console.error("Failed to prepare serve-web settings directories:", error);
+    logger.error("Failed to prepare serve-web settings directories:", error);
+    return;
+  }
+
+  let localSettings: Awaited<ReturnType<typeof getLocalVSCodeSettingsSnapshot>> =
+    null;
+  try {
+    localSettings = await getLocalVSCodeSettingsSnapshot();
+  } catch (error) {
+    console.error("Failed to load local VS Code settings:", error);
+    logger.error("Failed to load local VS Code settings:", error);
+  }
+
+  const mergedSettings = parseSettingsJson(localSettings?.settingsJson, logger);
+  mergedSettings[BUILD_WITH_AGENT_SETTING_KEY] = false;
+  mergedSettings["security.workspace.trust.enabled"] = false;
+  mergedSettings["security.workspace.trust.startupPrompt"] = "never";
+  mergedSettings["security.workspace.trust.untrustedFiles"] = "open";
+  mergedSettings["security.workspace.trust.emptyWindow"] = false;
+  const settingsContent = `${JSON.stringify(mergedSettings, null, 2)}\n`;
+
+  await Promise.all([
+    safeWriteFile(path.join(userDir, "settings.json"), settingsContent, logger),
+    safeWriteFile(path.join(profileDir, "settings.json"), settingsContent, logger),
+    safeWriteFile(path.join(machineDir, "settings.json"), settingsContent, logger),
+  ]);
+
+  if (localSettings?.keybindingsJson) {
+    await Promise.all([
+      safeWriteFile(
+        path.join(userDir, "keybindings.json"),
+        localSettings.keybindingsJson,
+        logger
+      ),
+      safeWriteFile(
+        path.join(profileDir, "keybindings.json"),
+        localSettings.keybindingsJson,
+        logger
+      ),
+    ]);
+  }
+
+  if (localSettings?.snippets && localSettings.snippets.length > 0) {
+    await Promise.all(
+      localSettings.snippets.flatMap((snippet) => {
+        const userSnippetPath = path.join(userSnippetsDir, snippet.name);
+        const profileSnippetPath = path.join(profileSnippetsDir, snippet.name);
+        return [
+          safeWriteFile(userSnippetPath, snippet.content, logger),
+          safeWriteFile(profileSnippetPath, snippet.content, logger),
+        ];
+      })
+    );
   }
 }
 

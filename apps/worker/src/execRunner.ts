@@ -1,15 +1,52 @@
 import { promisify } from "node:util";
-import { exec, type ExecException } from "node:child_process";
+import { exec, spawn, type ExecException } from "node:child_process";
 import type { WorkerExec, WorkerExecResult } from "@cmux/shared";
 
 const execAsync = promisify(exec);
 
+function spawnAsync(
+  command: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeout?: number }
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    const proc = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: options.timeout,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code, signal) => {
+      // If code is null, the process was killed by a signal - treat as failure
+      // Using exit code 1 for signalled processes (Unix convention is 128+signum but we don't need that precision)
+      const exitCode = code !== null ? code : 1;
+      resolve({ stdout, stderr, exitCode });
+    });
+
+    proc.on("error", (err) => {
+      resolve({ stdout, stderr, exitCode: 1 });
+    });
+  });
+}
+
 export async function runWorkerExec(validated: WorkerExec): Promise<WorkerExecResult> {
   const execOptions = {
     cwd: validated.cwd || process.env.HOME || "/",
-    env: { ...process.env, ...(validated.env || {}) },
+    env: { ...process.env, ...(validated.env || {}) } as NodeJS.ProcessEnv,
     timeout: validated.timeout,
-  } as const;
+  };
 
   try {
     // If the caller asked for a specific shell with -c, execute using that shell
@@ -30,12 +67,14 @@ export async function runWorkerExec(validated: WorkerExec): Promise<WorkerExecRe
       return { stdout: stdout || "", stderr: stderr || "", exitCode: 0 };
     }
 
-    // Otherwise compose command + args as a single string
-    const commandWithArgs = validated.args
-      ? `${validated.command} ${validated.args.join(" ")}`
-      : validated.command;
-    const { stdout, stderr } = await execAsync(commandWithArgs, execOptions);
-    return { stdout: stdout || "", stderr: stderr || "", exitCode: 0 };
+    // Use spawn to pass args directly without shell interpretation
+    // This properly handles args with special characters like newlines
+    const result = await spawnAsync(
+      validated.command,
+      validated.args || [],
+      execOptions
+    );
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
   } catch (execError: unknown) {
     const isObj = (v: unknown): v is Record<string, unknown> =>
       typeof v === "object" && v !== null;

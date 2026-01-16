@@ -3,6 +3,7 @@ import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
+import nextPlugin from '@next/eslint-plugin-next'
 import { globalIgnores } from 'eslint/config'
 import { fileURLToPath } from 'node:url'
 
@@ -22,7 +23,7 @@ const withTypescriptFiles = (config) => ({
 })
 
 export default tseslint.config(
-  // Ignore build artifacts across the monorepo
+  // Global ignores for build artifacts and generated files
   globalIgnores([
     'dist',
     '**/dist',
@@ -32,11 +33,35 @@ export default tseslint.config(
     '**/build',
     'node_modules',
     '**/node_modules',
+    // Generated files
+    'packages/morphcloud-openapi-client/src/client/**',
+    'packages/www-openapi-client/src/client/**',
+    'packages/convex/convex/_generated/**',
+    // Directories not previously linted (maintain backward compatibility)
+    // TODO: Enable linting for these directories and fix errors
+    'apps/server/**',
+    'apps/worker/**',
+    'apps/preview-proxy/**',
+    'apps/edge-router/**',
+    'apps/global-proxy/**',
+    'apps/landing/**',
+    'packages/shared/**',
+    'packages/convex/**',
+    'packages/cmux/**',
+    'packages/host-screenshot-collector/**',
+    'packages/sandbox/**',
+    'scripts/**',
+    'evals/**',
+    'configs/**',
+    'crates/**',
   ]),
+
+  // Base configs for all TypeScript files
   withTypescriptFiles(js.configs.recommended),
   ...tseslint.configs.recommended.map(withTypescriptFiles),
   withTypescriptFiles(reactHooks.configs['recommended-latest']),
-  withTypescriptFiles(reactRefresh.configs.vite),
+
+  // Base rules
   {
     name: 'cmux/base',
     files: typescriptFiles,
@@ -45,7 +70,6 @@ export default tseslint.config(
       sourceType: 'module',
       globals: sharedGlobals,
       parserOptions: {
-        // Disambiguate monorepo tsconfig roots (e.g. www-openapi-client)
         tsconfigRootDir,
       },
     },
@@ -61,6 +85,8 @@ export default tseslint.config(
       ],
     },
   },
+
+  // Test files
   {
     name: 'cmux/tests',
     files: ['**/*.{test,spec}.{ts,tsx}'],
@@ -71,10 +97,66 @@ export default tseslint.config(
       },
     },
   },
-  // Allow Next.js app router files to export metadata and other
-  // special exports without tripping react-refresh constraints.
+
+  // Vite apps (apps/client) - react-refresh rules
   {
-    files: ['apps/*/app/**/*.{ts,tsx}'],
+    name: 'cmux/vite',
+    files: ['apps/client/**/*.{ts,tsx}'],
+    plugins: {
+      'react-refresh': reactRefresh,
+    },
+    rules: {
+      ...reactRefresh.configs.vite.rules,
+    },
+  },
+
+  // TanStack Router routes - disable react-refresh rule
+  // Route files export `Route` (a config object, not a component), so
+  // components in these files won't get proper HMR regardless of ESLint config.
+  // Per Tanner Linsley: proper HMR requires moving components to separate files.
+  {
+    name: 'cmux/tanstack-router',
+    files: ['apps/client/src/routes/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+
+  // Next.js apps (apps/www)
+  {
+    name: 'cmux/nextjs',
+    files: ['apps/www/**/*.{ts,tsx}'],
+    plugins: {
+      '@next/next': nextPlugin,
+    },
+    settings: {
+      next: {
+        rootDir: 'apps/www',
+      },
+    },
+    rules: {
+      ...nextPlugin.configs.recommended.rules,
+      ...nextPlugin.configs['core-web-vitals'].rules,
+      // Match original www eslint config for backward compat
+      'no-irregular-whitespace': 'off',
+      'no-useless-catch': 'off',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
+
+  // Next.js app router - allow metadata, generateStaticParams, etc.
+  {
+    name: 'cmux/nextjs-app-router',
+    files: ['apps/www/app/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+
+  // VSCode extension - no react-refresh needed
+  {
+    name: 'cmux/vscode-extension',
+    files: ['packages/vscode-extension/**/*.{ts,tsx}'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },

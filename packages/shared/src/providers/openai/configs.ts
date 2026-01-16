@@ -1,9 +1,117 @@
 import type { AgentConfig } from "../../agentConfig";
-import { OPENAI_API_KEY } from "../../apiKeys";
+import { CODEX_AUTH_JSON, OPENAI_API_KEY } from "../../apiKeys";
 import { checkOpenAIRequirements } from "./check-requirements";
 // Lazy-load Node-only completion detector to avoid bundling fs in browser
 import { startCodexCompletionDetector } from "./completion-detector";
-import { getOpenAIEnvironment } from "./environment";
+import { applyCodexApiKeys, getOpenAIEnvironment } from "./environment";
+
+export const CODEX_GPT_5_2_CODEX_XHIGH_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-xhigh",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="xhigh"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-high",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="high"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-medium",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="medium"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex-low",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'model_reasoning_effort="low"',
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
+  completionDetector: startCodexCompletionDetector,
+};
+
+export const CODEX_GPT_5_2_CODEX_CONFIG: AgentConfig = {
+  name: "codex/gpt-5.2-codex",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5.2-codex",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
+  completionDetector: startCodexCompletionDetector,
+};
 
 export const CODEX_GPT_5_1_CODEX_MAX_XHIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max-xhigh",
@@ -22,7 +130,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_XHIGH_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -43,7 +152,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_HIGH_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -64,7 +174,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_MEDIUM_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -85,7 +196,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_LOW_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -104,7 +216,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -123,7 +236,8 @@ export const CODEX_GPT_5_1_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -142,7 +256,8 @@ export const CODEX_GPT_5_1_CODEX_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -161,7 +276,8 @@ export const CODEX_GPT_5_1_CODEX_MINI_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -182,7 +298,8 @@ export const CODEX_GPT_5_1_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -201,7 +318,8 @@ export const CODEX_GPT_5_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -222,7 +340,8 @@ export const CODEX_GPT_5_HIGH_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -243,7 +362,8 @@ export const CODEX_GPT_5_MEDIUM_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -264,7 +384,8 @@ export const CODEX_GPT_5_LOW_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -285,7 +406,8 @@ export const CODEX_GPT_5_MINIMAL_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -304,7 +426,8 @@ export const CODEX_O3_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -323,7 +446,8 @@ export const CODEX_O4_MINI_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -342,7 +466,8 @@ export const CODEX_GPT_4_1_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -361,7 +486,8 @@ export const CODEX_GPT_5_CODEX_MINI_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -382,7 +508,8 @@ export const CODEX_GPT_5_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -403,7 +530,8 @@ export const CODEX_GPT_5_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -424,7 +552,8 @@ export const CODEX_GPT_5_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -443,7 +572,8 @@ export const CODEX_GPT_5_2_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -464,7 +594,8 @@ export const CODEX_GPT_5_2_LOW_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -485,7 +616,8 @@ export const CODEX_GPT_5_2_MEDIUM_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };
 
@@ -506,6 +638,7 @@ export const CODEX_GPT_5_2_HIGH_REASONING_CONFIG: AgentConfig = {
   ],
   environment: getOpenAIEnvironment,
   checkRequirements: checkOpenAIRequirements,
-  apiKeys: [OPENAI_API_KEY],
+  apiKeys: [OPENAI_API_KEY, CODEX_AUTH_JSON],
+  applyApiKeys: applyCodexApiKeys,
   completionDetector: startCodexCompletionDetector,
 };

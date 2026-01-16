@@ -9,6 +9,7 @@ import type {
   WorkerCreateTerminal,
   WorkerTerminalFailed,
 } from "@cmux/shared/worker-schemas";
+import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { parse as parseDotenv } from "dotenv";
 import { sanitizeTmuxSessionName } from "./sanitizeTmuxSessionName";
 import {
@@ -24,7 +25,10 @@ import {
   getAuthToken,
   runWithAuth,
 } from "./utils/requestContext";
-import { getEditorSettingsUpload } from "./utils/editorSettings";
+import {
+  getEditorSettingsUpload,
+  type UserUploadedEditorSettings,
+} from "./utils/editorSettings";
 import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
@@ -246,10 +250,14 @@ export async function spawnAgent(
       );
     }
 
+    // Callback URL for stop hooks to call crown/complete (Convex site URL)
+    const callbackUrl = env.NEXT_PUBLIC_CONVEX_URL.replace('.convex.cloud', '.convex.site');
+
     let envVars: Record<string, string> = {
       CMUX_PROMPT: processedTaskDescription,
       CMUX_TASK_RUN_ID: taskRunId,
       CMUX_TASK_RUN_JWT: taskRunJwt,
+      CMUX_CALLBACK_URL: callbackUrl,
       PROMPT: processedTaskDescription,
     };
 
@@ -298,9 +306,13 @@ export async function spawnAgent(
 
     // Fetch API keys from Convex BEFORE calling agent.environment()
     // so agents can access them in their environment configuration
-    const apiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
+    const userApiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
       teamSlugOrId,
     });
+
+    const apiKeys: Record<string, string> = {
+      ...userApiKeys,
+    };
 
     // Use environment property if available
     if (agent.environment) {
@@ -309,6 +321,7 @@ export async function spawnAgent(
         prompt: processedTaskDescription,
         taskRunJwt,
         apiKeys,
+        callbackUrl,
       });
       envVars = {
         ...envVars,
@@ -346,7 +359,30 @@ export async function spawnAgent(
       }
     }
 
-    const editorSettings = await getEditorSettingsUpload();
+    // Fetch user-uploaded editor settings from Convex (for web mode users)
+    let userUploadedSettings: UserUploadedEditorSettings | null = null;
+    try {
+      const userEditorSettingsFromDb = await getConvex().query(
+        api.userEditorSettings.get,
+        { teamSlugOrId }
+      );
+      if (userEditorSettingsFromDb) {
+        userUploadedSettings = {
+          settingsJson: userEditorSettingsFromDb.settingsJson ?? undefined,
+          keybindingsJson: userEditorSettingsFromDb.keybindingsJson ?? undefined,
+          snippets: userEditorSettingsFromDb.snippets ?? undefined,
+          extensions: userEditorSettingsFromDb.extensions ?? undefined,
+        };
+      }
+    } catch (error) {
+      serverLogger.warn(
+        "[AgentSpawner] Failed to fetch user editor settings from Convex",
+        error
+      );
+    }
+
+    // Get editor settings (user-uploaded overrides auto-detected)
+    const editorSettings = await getEditorSettingsUpload(userUploadedSettings);
     if (editorSettings) {
       if (editorSettings.authFiles.length > 0) {
         authFiles = [...authFiles, ...editorSettings.authFiles];
@@ -376,6 +412,17 @@ export async function spawnAgent(
       }
       return arg;
     });
+
+    const usesDangerousPermissions = processedArgs.includes(
+      "--dangerously-skip-permissions"
+    );
+    if (usesDangerousPermissions && envVars.IS_SANDBOX !== "1") {
+      const previousValue = envVars.IS_SANDBOX;
+      envVars.IS_SANDBOX = "1";
+      serverLogger.info(
+        `[AgentSpawner] Setting IS_SANDBOX=1 for ${agent.name} (was ${previousValue ?? "unset"})`
+      );
+    }
 
     const agentCommand = `${agent.command} ${processedArgs.join(" ")}`;
 
@@ -452,6 +499,7 @@ export async function spawnAgent(
         taskId,
         theme: options.theme,
         teamSlugOrId,
+        envVars,
       });
     }
 
@@ -605,6 +653,23 @@ export async function spawnAgent(
       `[AgentSpawner] Preparing to send terminal creation command for ${agent.name}`
     );
 
+    // Start fetching workspace config early (for maintenance script) - runs in parallel with worker connection
+    const workspaceConfigPromise = (async () => {
+      if (options.isCloudMode || !options.repoUrl) return null;
+      const parsedRepo = parseGithubRepoUrl(options.repoUrl);
+      if (!parsedRepo) return null;
+      try {
+        const config = await getConvex().query(api.workspaceConfigs.get, {
+          teamSlugOrId,
+          projectFullName: parsedRepo.fullName,
+        });
+        return { config, projectFullName: parsedRepo.fullName };
+      } catch (error) {
+        serverLogger.warn(`[AgentSpawner] Failed to fetch workspace config`, error);
+        return null;
+      }
+    })();
+
     // Wait for worker connection if not already connected
     if (!vscodeInstance.isWorkerConnected()) {
       serverLogger.info(`[AgentSpawner] Waiting for worker connection...`);
@@ -641,6 +706,121 @@ export async function spawnAgent(
     }
     if (!vscodeInstance.isWorkerConnected()) {
       throw new Error("Worker socket not available");
+    }
+
+    // Run maintenance script for Docker containers in a cmux-pty session (fire-and-forget)
+    if (!options.isCloudMode && vscodeInstance instanceof DockerVSCodeInstance) {
+      void (async () => {
+        try {
+          // Use pre-fetched workspace config
+          const workspaceConfigResult = await workspaceConfigPromise;
+          if (!workspaceConfigResult?.config?.maintenanceScript?.trim()) {
+            return;
+          }
+
+          const { config: workspaceConfig, projectFullName } = workspaceConfigResult;
+          serverLogger.info(
+            `[AgentSpawner] Running maintenance script for ${projectFullName} via cmux-pty`
+          );
+
+          // Write maintenance script to a file first (like cloud mode does)
+          const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
+          const maintenanceScriptPath = `${CMUX_RUNTIME_DIR}/maintenance.sh`;
+          const maintenanceScriptContent = `#!/bin/zsh
+set -eu
+
+cd /root/workspace
+
+echo "=== Maintenance Script Started at \\$(date) ==="
+${workspaceConfig.maintenanceScript}
+echo "=== Maintenance Script Completed at \\$(date) ==="
+`;
+
+          // Create directory and write script file using heredoc
+          const writeScriptCommand = `mkdir -p ${CMUX_RUNTIME_DIR} && cat > ${maintenanceScriptPath} <<'MAINTENANCE_SCRIPT_EOF'
+${maintenanceScriptContent}
+MAINTENANCE_SCRIPT_EOF
+chmod +x ${maintenanceScriptPath}`;
+
+          const writeScriptResult = await workerExec({
+            workerSocket,
+            command: "bash",
+            args: ["-c", writeScriptCommand],
+            cwd: "/root/workspace",
+            env: {},
+            timeout: 10000,
+          });
+
+          if (writeScriptResult.exitCode !== 0) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to write maintenance script file`,
+              { exitCode: writeScriptResult.exitCode, stdout: writeScriptResult.stdout, stderr: writeScriptResult.stderr }
+            );
+            return;
+          }
+
+          serverLogger.info(`[AgentSpawner] Wrote maintenance script to ${maintenanceScriptPath}`);
+
+          // Create a cmux-pty session for the maintenance script
+          const createResult = await workerExec({
+            workerSocket,
+            command: "cmux-pty",
+            args: ["new", "--name", "maintenance", "--cwd", "/root/workspace", "--detached"],
+            cwd: "/root/workspace",
+            env: {},
+            timeout: 10000,
+          });
+
+          if (createResult.exitCode !== 0) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to create maintenance PTY session`,
+              { exitCode: createResult.exitCode, stdout: createResult.stdout, stderr: createResult.stderr }
+            );
+            return;
+          }
+
+          serverLogger.info(`[AgentSpawner] Created maintenance PTY session`);
+
+          // Send command to run the script file
+          const sendResult = await workerExec({
+            workerSocket,
+            command: "cmux-pty",
+            args: ["send-keys", "maintenance", maintenanceScriptPath, "Enter"],
+            cwd: "/root/workspace",
+            env: {},
+            timeout: 10000,
+          });
+
+          if (sendResult.exitCode !== 0) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to send maintenance script to PTY`,
+              { exitCode: sendResult.exitCode, stdout: sendResult.stdout, stderr: sendResult.stderr }
+            );
+            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
+              teamSlugOrId,
+              id: runId,
+              maintenanceError: `Failed to send maintenance script: ${sendResult.stderr || sendResult.stdout}`,
+              devError: undefined,
+            });
+          } else {
+            serverLogger.info(
+              `[AgentSpawner] Maintenance script sent to PTY for ${projectFullName}`
+            );
+            // Clear any previous error (script is now running in PTY)
+            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
+              teamSlugOrId,
+              id: runId,
+              maintenanceError: undefined,
+              devError: undefined,
+            });
+          }
+        } catch (error) {
+          serverLogger.error(
+            `[AgentSpawner] Failed to run maintenance script`,
+            error
+          );
+        }
+      })();
     }
 
     const actualCommand = agent.command;
@@ -701,10 +881,42 @@ export async function spawnAgent(
           `${unsetCommand}exec ${commandString}`,
         ];
 
+    // Build cmux-pty specific command (the actual agent command without tmux/bash wrapper)
+    // For Codex agents, replace $CMUX_PROMPT with actual prompt value (matching tmux behavior)
+    // This avoids relying on shell expansion which can fail due to timing or env setup issues
+    let ptyCommandString: string;
+    if (agent.name.toLowerCase().includes("codex")) {
+      // For Codex: build command with prompt value directly embedded (like tmuxArgs does)
+      const ptyArgs = actualArgs.map((arg) => {
+        if (arg === "$CMUX_PROMPT") {
+          return processedTaskDescription;
+        }
+        return arg;
+      });
+      // Shell-escape all args with single quotes (no env var expansion needed)
+      const ptyShellEscaped = (s: string) =>
+        `'${s.replace(/'/g, "'\\''")}'`;
+      const ptyCommandStr = [actualCommand, ...ptyArgs]
+        .map(ptyShellEscaped)
+        .join(" ");
+      ptyCommandString = `${unsetCommand}${ptyCommandStr}`;
+      serverLogger.info(
+        `[AgentSpawner] Codex ptyCommand (prompt embedded): ${ptyCommandString.slice(0, 200)}...`
+      );
+    } else {
+      // For other agents: use env var expansion as before
+      ptyCommandString = `${unsetCommand}${commandString}`;
+    }
+
+    // Use cmux-pty backend - worker will fall back to tmux if cmux-pty server unavailable
     const terminalCreationCommand: WorkerCreateTerminal = {
       terminalId: tmuxSessionName,
+      backend: "cmux-pty",
+      // tmux command/args for fallback when cmux-pty is unavailable
       command: "tmux",
       args: tmuxArgs,
+      // cmux-pty specific: the actual command to run in the PTY shell
+      ptyCommand: ptyCommandString,
       cols: 80,
       rows: 74,
       env: envVars,
@@ -882,13 +1094,20 @@ exit $EXIT_CODE
           formData.append("image", blob, "image.png");
           formData.append("path", imageFile.path);
 
-          // Get worker port from VSCode instance
-          const workerPort =
-            vscodeInstance instanceof DockerVSCodeInstance
-              ? (vscodeInstance as DockerVSCodeInstance).getPorts()?.worker
-              : "39377";
-
-          const uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          // Get upload URL from VSCode instance
+          let uploadUrl: string;
+          if (vscodeInstance instanceof DockerVSCodeInstance) {
+            const workerPort = vscodeInstance.getPorts()?.worker;
+            uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          } else if (vscodeInstance instanceof CmuxVSCodeInstance) {
+            const workerUrl = vscodeInstance.getWorkerUrl();
+            if (!workerUrl) {
+              throw new Error("Worker URL not available for cloud instance");
+            }
+            uploadUrl = `${workerUrl}/upload-image`;
+          } else {
+            throw new Error("Unknown VSCode instance type");
+          }
 
           serverLogger.info(`[AgentSpawner] Uploading image to ${uploadUrl}`);
 

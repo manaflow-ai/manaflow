@@ -1,8 +1,5 @@
 import type { AvailableEditors } from "@cmux/shared";
-import {
-  connectToMainServer,
-  type MainServerSocket,
-} from "@cmux/shared/socket";
+import { connectToMainServer } from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
@@ -11,13 +8,8 @@ import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
 import { WebSocketContext } from "./socket-context";
+import type { SocketContextType } from "./types";
 import { env } from "@/client-env";
-
-export interface SocketContextType {
-  socket: MainServerSocket | null;
-  isConnected: boolean;
-  availableEditors: AvailableEditors | null;
-}
 
 interface SocketProviderProps {
   children: React.ReactNode;
@@ -52,7 +44,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       return;
     }
     let disposed = false;
-    let createdSocket: MainServerSocket | null = null;
+    let createdSocket: SocketContextType["socket"] | null = null;
     (async () => {
       // Fetch full auth JSON for server to forward as x-stack-auth
       const user = await cachedGetUser(stackClientApp);
@@ -83,32 +75,45 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       // Signal that the provider has created the socket instance
       socketBoot.resolve();
 
-      newSocket.on("connect", () => {
+      // Define handlers as named functions so they can be removed
+      const handleConnect = () => {
         console.log("[Socket] connected");
         setIsConnected(true);
-      });
+      };
 
-      newSocket.on("disconnect", () => {
+      const handleDisconnect = () => {
         console.warn("[Socket] disconnected");
         setIsConnected(false);
-      });
+      };
 
-      newSocket.on("connect_error", (err) => {
+      const handleConnectError = (err: unknown) => {
         const errorMessage =
           err && typeof err === "object" && "message" in err
             ? (err as Error).message
             : String(err);
         console.error("[Socket] connect_error", errorMessage);
-      });
+      };
 
-      newSocket.on("available-editors", (data: AvailableEditors) => {
+      const handleAvailableEditors = (data: AvailableEditors) => {
         setAvailableEditors(data);
-      });
+      };
+
+      newSocket.on("connect", handleConnect);
+      newSocket.on("disconnect", handleDisconnect);
+      newSocket.on("connect_error", handleConnectError);
+      newSocket.on("available-editors", handleAvailableEditors);
     })();
 
     return () => {
       disposed = true;
-      if (createdSocket) createdSocket.disconnect();
+      if (createdSocket) {
+        // Remove all listeners before disconnecting to prevent memory leaks
+        createdSocket.off("connect");
+        createdSocket.off("disconnect");
+        createdSocket.off("connect_error");
+        createdSocket.off("available-editors");
+        createdSocket.disconnect();
+      }
       // Reset boot handle so future mounts can suspend appropriately
       setGlobalSocket(null);
       socketBoot.reset();

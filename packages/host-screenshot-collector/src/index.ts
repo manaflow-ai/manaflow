@@ -89,10 +89,13 @@ type BranchBaseOptions = {
   prDescription: string;
   outputDir: string;
   pathToClaudeCodeExecutable?: string;
+  /** Combined setup script (maintenance + dev), if provided */
+  setupScript?: string;
   /** Command to install dependencies (e.g., "bun install", "npm install") */
   installCommand?: string;
   /** Command to start the dev server (e.g., "bun run dev", "npm run dev") */
   devCommand?: string;
+  convexSiteUrl?: string;
 };
 
 type BranchCaptureOptions =
@@ -135,6 +138,17 @@ function log(
   console.log(`[${level}] ${message}${logData}`);
 }
 
+function formatOptionalValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : "<unset>";
+}
+
+function formatSecretValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "<unset>";
+  return `present(length=${trimmed.length})`;
+}
+
 export async function captureScreenshotsForBranch(
   options: BranchCaptureOptions
 ): Promise<{
@@ -149,14 +163,30 @@ export async function captureScreenshotsForBranch(
     branch,
     outputDir: requestedOutputDir,
     auth,
+    setupScript,
     installCommand,
     devCommand,
+    convexSiteUrl,
   } = options;
   const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
   const useTaskRunJwt = isTaskRunJwtAuth(auth);
   const providedApiKey = !useTaskRunJwt ? auth.anthropicApiKey : undefined;
 
   const devInstructions = (() => {
+    const normalizedSetupScript = setupScript?.trim() ?? "";
+    const fallbackSetupScript = [installCommand?.trim(), devCommand?.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    const resolvedSetupScript = normalizedSetupScript || fallbackSetupScript;
+
+    if (resolvedSetupScript) {
+      return `
+The user provided the following setup script (maintenance + dev combined). If no dev server is running, use this script to start it:
+<setup_script>
+${resolvedSetupScript}
+</setup_script>`;
+    }
+
     if (!installCommand && !devCommand) {
       return `
 The user did not provide installation or dev commands. You will need to discover them by reading README.md, package.json, .devcontainer.json, or other configuration files.`;
@@ -223,6 +253,7 @@ If UI changes exist, capture screenshots:
 1. FIRST, check if the dev server is ALREADY RUNNING:
    - Run \`tmux list-windows\` and \`tmux capture-pane -p -t <window>\` to see running processes and their logs
    - Check if there's a dev server process starting up or already running in any tmux window
+   - For cloud tasks, also inspect cmux-pty output/logs (tmux may not be used). Look for active dev server commands there.
    - The dev server is typically started automatically in this environment - BE PATIENT and monitor the logs
    - If you see the server is starting/compiling, WAIT for it to finish - do NOT kill it or restart it
    - Use \`ss -tlnp | grep LISTEN\` to see what ports have servers listening
@@ -236,10 +267,31 @@ If UI changes exist, capture screenshots:
    - Hidden UI: modals, dropdowns, tooltips, accordions
    - Responsive layouts if the PR includes responsive changes
 6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
-7. After taking a screenshot, always open the image to verify that the capture is expected
-8. If screenshot seems outdated, refresh the page and take the screenshot again.
-9. Delete any screenshot files from the filesystem that you do not want included
 </PHASE_2_CAPTURE>
+
+<PHASE_3_QUALITY_VERIFICATION>
+After capturing screenshots, you MUST verify each one for quality. For EACH screenshot file in ${outputDir}:
+
+1. OPEN the screenshot image file and visually inspect it
+2. EVALUATE the screenshot against these quality criteria:
+   - Does it show the intended UI component/page that the filename suggests?
+   - Is the content fully loaded (no spinners, skeleton loaders, or partial renders - unless that IS the intended capture)?
+   - Is the relevant UI element fully visible and not cut off?
+   - Is the screenshot free of error states, console overlays, or dev tool artifacts (unless intentionally capturing those)?
+   - Does it accurately represent the PR changes you intended to capture?
+
+3. DECIDE: Is this a good screenshot?
+   - GOOD: The screenshot clearly captures the intended UI state. Keep it.
+   - BAD: The screenshot is blurry, shows wrong content, has unintended loading states, is cut off, or doesn't represent the PR changes. DELETE IT.
+
+4. If BAD: Delete the screenshot file from the filesystem using \`rm <filepath>\`. Then either:
+   - Retake the screenshot after fixing the issue (refresh page, wait for content to load, scroll to element, resize viewport)
+   - Skip if the UI state cannot be reproduced
+
+5. Only include screenshots in your final output that you have verified as GOOD quality.
+
+Be ruthless about quality. A few excellent screenshots are far more valuable than many mediocre ones. Delete anything that doesn't clearly demonstrate the UI changes.
+</PHASE_3_QUALITY_VERIFICATION>
 
 <WHAT_TO_CAPTURE>
 Screenshot the UI states that the PR actually modifies. Be intentional:
@@ -284,6 +336,23 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
   const screenshotPaths: string[] = [];
   let structuredOutput: ScreenshotStructuredOutput | null = null;
 
+  if (useTaskRunJwt && !convexSiteUrl) {
+    await logToScreenshotCollector(
+      "[WARN] convexSiteUrl is missing; Anthropic proxy requests may fail."
+    );
+  }
+  const normalizedConvexSiteUrl = formatOptionalValue(convexSiteUrl);
+
+  await logToScreenshotCollector(
+    `[DEBUG] convexSiteUrl: ${normalizedConvexSiteUrl}`
+  );
+
+  const anthropicBaseUrl = `${normalizedConvexSiteUrl}/api/anthropic`;
+
+  await logToScreenshotCollector(
+    `[DEBUG] anthropicBaseUrl: ${anthropicBaseUrl}`
+  );
+
   try {
     const hadOriginalApiKey = Object.prototype.hasOwnProperty.call(
       process.env,
@@ -297,7 +366,10 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         `Using taskRun JWT auth. JWT present: ${!!auth.taskRunJwt}, JWT length: ${auth.taskRunJwt?.length ?? 0}, JWT first 20 chars: ${auth.taskRunJwt?.substring(0, 20) ?? "N/A"}`
       );
       await logToScreenshotCollector(
-        `ANTHROPIC_BASE_URL: https://www.cmux.dev/api/anthropic`
+        `ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`
+      );
+      await logToScreenshotCollector(
+        `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token:<jwt>`
       );
     } else if (providedApiKey) {
       process.env.ANTHROPIC_API_KEY = providedApiKey;
@@ -311,6 +383,36 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         prompt,
         cwd: workspaceDir,
         pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+      })}`
+    );
+
+    const claudeEnv = {
+      ...process.env,
+      IS_SANDBOX: "1",
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      ...(useTaskRunJwt
+        ? {
+          ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
+          ANTHROPIC_BASE_URL: anthropicBaseUrl,
+          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
+        }
+        : {}),
+    };
+
+    await logToScreenshotCollector(
+      `[DEBUG] Claude env: ${JSON.stringify({
+        ANTHROPIC_BASE_URL: formatOptionalValue(claudeEnv.ANTHROPIC_BASE_URL),
+        ANTHROPIC_CUSTOM_HEADERS: formatSecretValue(
+          claudeEnv.ANTHROPIC_CUSTOM_HEADERS
+        ),
+        ANTHROPIC_API_KEY: formatSecretValue(claudeEnv.ANTHROPIC_API_KEY),
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: formatOptionalValue(
+          claudeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+        ),
+        CLAUDE_CODE_ENABLE_TELEMETRY: formatOptionalValue(
+          claudeEnv.CLAUDE_CODE_ENABLE_TELEMETRY
+        ),
       })}`
     );
 
@@ -348,19 +450,7 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
             type: "json_schema",
             schema: screenshotOutputJsonSchema,
           },
-          env: {
-            ...process.env,
-            IS_SANDBOX: "1",
-            CLAUDE_CODE_ENABLE_TELEMETRY: "0",
-            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-            ...(useTaskRunJwt
-              ? {
-                  ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
-                  ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
-                  ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
-                }
-              : {}),
-          },
+          env: claudeEnv,
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
@@ -539,29 +629,33 @@ export async function claudeCodeCapturePRScreenshots(
       const beforeScreenshots = await captureScreenshotsForBranch(
         isTaskRunJwtAuth(auth)
           ? {
-              workspaceDir,
-              changedFiles,
-              prTitle,
-              prDescription,
-              branch: baseBranch,
-              outputDir,
-              auth: { taskRunJwt: auth.taskRunJwt },
-              pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-              installCommand: options.installCommand,
-              devCommand: options.devCommand,
-            }
-          : {
-              workspaceDir,
-              changedFiles,
-              prTitle,
-              prDescription,
-              branch: baseBranch,
-              outputDir,
-              auth: { anthropicApiKey: auth.anthropicApiKey },
-              pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-              installCommand: options.installCommand,
-              devCommand: options.devCommand,
-            }
+          workspaceDir,
+          changedFiles,
+          prTitle,
+          prDescription,
+          branch: baseBranch,
+          outputDir,
+          auth: { taskRunJwt: auth.taskRunJwt },
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
+          installCommand: options.installCommand,
+          devCommand: options.devCommand,
+          convexSiteUrl: options.convexSiteUrl,
+        }
+        : {
+          workspaceDir,
+          changedFiles,
+          prTitle,
+          prDescription,
+          branch: baseBranch,
+          outputDir,
+          auth: { anthropicApiKey: auth.anthropicApiKey },
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
+          installCommand: options.installCommand,
+          devCommand: options.devCommand,
+          convexSiteUrl: options.convexSiteUrl,
+        }
       );
       allScreenshots.push(...beforeScreenshots.screenshots);
       if (beforeScreenshots.hasUiChanges !== undefined) {
@@ -579,29 +673,33 @@ export async function claudeCodeCapturePRScreenshots(
     const afterScreenshots = await captureScreenshotsForBranch(
       isTaskRunJwtAuth(auth)
         ? {
-            workspaceDir,
-            changedFiles,
-            prTitle,
-            prDescription,
-            branch: headBranch,
-            outputDir,
-            auth: { taskRunJwt: auth.taskRunJwt },
-            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-            installCommand: options.installCommand,
-            devCommand: options.devCommand,
-          }
+          workspaceDir,
+          changedFiles,
+          prTitle,
+          prDescription,
+          branch: headBranch,
+          outputDir,
+          auth: { taskRunJwt: auth.taskRunJwt },
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
+          installCommand: options.installCommand,
+          devCommand: options.devCommand,
+          convexSiteUrl: options.convexSiteUrl,
+        }
         : {
-            workspaceDir,
-            changedFiles,
-            prTitle,
-            prDescription,
-            branch: headBranch,
-            outputDir,
-            auth: { anthropicApiKey: auth.anthropicApiKey },
-            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-            installCommand: options.installCommand,
-            devCommand: options.devCommand,
-          }
+          workspaceDir,
+          changedFiles,
+          prTitle,
+          prDescription,
+          branch: headBranch,
+          outputDir,
+          auth: { anthropicApiKey: auth.anthropicApiKey },
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          setupScript: options.setupScript,
+          installCommand: options.installCommand,
+          devCommand: options.devCommand,
+          convexSiteUrl: options.convexSiteUrl,
+        }
     );
     allScreenshots.push(...afterScreenshots.screenshots);
     if (afterScreenshots.hasUiChanges !== undefined) {
@@ -643,17 +741,19 @@ export { logToScreenshotCollector } from "./logger";
 export { formatClaudeMessage } from "./claudeMessageFormatter";
 
 // CLI entry point - runs when executed directly
-const cliOptionsSchema = z.object({
-  workspaceDir: z.string(),
-  changedFiles: z.array(z.string()),
-  prTitle: z.string(),
-  prDescription: z.string(),
-  baseBranch: z.string(),
-  headBranch: z.string(),
-  outputDir: z.string(),
-  pathToClaudeCodeExecutable: z.string().optional(),
-  installCommand: z.string().optional(),
-  devCommand: z.string().optional(),
+  const cliOptionsSchema = z.object({
+    workspaceDir: z.string(),
+    changedFiles: z.array(z.string()),
+    prTitle: z.string(),
+    prDescription: z.string(),
+    baseBranch: z.string(),
+    headBranch: z.string(),
+    outputDir: z.string(),
+    pathToClaudeCodeExecutable: z.string().optional(),
+    setupScript: z.string().optional(),
+    installCommand: z.string().optional(),
+    devCommand: z.string().optional(),
+    convexSiteUrl: z.string().optional(),
   auth: z.union([
     z.object({ taskRunJwt: z.string() }),
     z.object({ anthropicApiKey: z.string() }),
@@ -689,15 +789,11 @@ async function main() {
 }
 
 // Check if running as CLI (not imported as module)
-// Support various filename patterns: index.js, index.mjs, screenshot-collector.mjs, etc.
-const scriptPath = process.argv[1] ?? "";
-const isRunningAsCli =
-  import.meta.url === `file://${scriptPath}` ||
-  scriptPath.endsWith("/index.js") ||
-  scriptPath.endsWith("/index.mjs") ||
-  scriptPath.includes("screenshot-collector");
+// Only run as CLI if SCREENSHOT_OPTIONS env var is set - this is the definitive signal
+// that we're being run as a CLI, not imported as a module
+const shouldRunAsCli = !!process.env.SCREENSHOT_OPTIONS;
 
-if (isRunningAsCli) {
+if (shouldRunAsCli) {
   main().catch((error) => {
     console.error("CLI execution failed:", error);
     process.exit(1);

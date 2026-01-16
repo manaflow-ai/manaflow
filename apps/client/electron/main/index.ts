@@ -99,6 +99,7 @@ let historyForwardMenuItem: MenuItem | null = null;
 const previewWebContentsIds = new Set<number>();
 const altGrActivePreviewContents = new Set<number>();
 let embeddedServerCleanup: (() => Promise<void>) | null = null;
+let autoUpdateIntervalId: ReturnType<typeof setInterval> | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -616,7 +617,8 @@ function setupAutoUpdates(): void {
     )
     .catch((e) => mainWarn("checkForUpdatesAndNotify failed", e));
   const CHECK_INTERVAL_MS = 30 * 60 * 1000;
-  setInterval(() => {
+  // Store interval ID for cleanup on app quit
+  autoUpdateIntervalId = setInterval(() => {
     mainLog("Starting scheduled auto-update check");
     autoUpdater
       .checkForUpdates()
@@ -792,6 +794,12 @@ app.whenReady().then(async () => {
       disposeContextMenu();
     } catch (error) {
       console.error("Failed to dispose context menu", error);
+    }
+
+    // Clear auto-update interval to prevent leaks
+    if (autoUpdateIntervalId !== null) {
+      clearInterval(autoUpdateIntervalId);
+      autoUpdateIntervalId = null;
     }
 
     if (embeddedServerCleanup) {
@@ -1223,17 +1231,20 @@ async function handleProtocolUrl(url: string): Promise<void> {
   const urlObj = new URL(url);
 
   if (urlObj.hostname === "auth-callback") {
-    const rawStackRefresh = urlObj.searchParams.get("stack_refresh");
-    const rawStackAccess = urlObj.searchParams.get("stack_access");
+    const stackRefresh = urlObj.searchParams.get("stack_refresh");
+    const stackAccess = urlObj.searchParams.get("stack_access");
 
-    if (!rawStackRefresh || !rawStackAccess) {
+    if (!stackRefresh || !stackAccess) {
       mainWarn("Aborting cookie set due to missing tokens");
       return;
     }
 
-    // Check for the full URL parameter
-    const stackRefresh = encodeURIComponent(rawStackRefresh);
-    const stackAccess = encodeURIComponent(rawStackAccess);
+    mainLog("Processing auth-callback deeplink", {
+      hasRefresh: !!stackRefresh,
+      hasAccess: !!stackAccess,
+      refreshLength: stackRefresh.length,
+      accessLength: stackAccess.length,
+    });
 
     // Verify tokens with Stack JWKS and extract exp for cookie expiry.
     const [refreshPayload, accessPayload] = await Promise.all([
@@ -1241,10 +1252,23 @@ async function handleProtocolUrl(url: string): Promise<void> {
       verifyJwtAndGetPayload(stackAccess),
     ]);
 
-    if (refreshPayload?.exp === null || accessPayload?.exp === null) {
-      mainWarn("Aborting cookie set due to invalid tokens");
-      return;
+    // If verification fails, tokens may be in a non-JWT format (e.g., opaque tokens).
+    // Still proceed but log a warning.
+    if (!refreshPayload || !accessPayload) {
+      mainWarn("JWT verification failed - tokens may be opaque or malformed", {
+        hasRefreshPayload: !!refreshPayload,
+        hasAccessPayload: !!accessPayload,
+      });
     }
+
+    // Calculate cookie expiration dates.
+    // If JWT verification failed, use 30 days as default (matching server session creation).
+    // This prevents session cookies that expire on app close.
+    const THIRTY_DAYS_IN_SECONDS = 30 * 24 * 60 * 60;
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    const defaultExpiry = nowInSeconds + THIRTY_DAYS_IN_SECONDS;
+    const refreshExpiry = refreshPayload?.exp ?? defaultExpiry;
+    const accessExpiry = accessPayload?.exp ?? defaultExpiry;
 
     // Determine a cookieable URL. Prefer our custom cmux:// origin when not
     // running against an http(s) dev server.
@@ -1260,25 +1284,42 @@ async function handleProtocolUrl(url: string): Promise<void> {
       mainWindow.webContents.session.cookies.remove(realUrl, `stack-access`),
     ]);
 
-    await Promise.all([
-      mainWindow.webContents.session.cookies.set({
-        url: realUrl,
-        name: `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`,
-        value: stackRefresh,
-        expirationDate: refreshPayload?.exp,
-        sameSite: "no_restriction",
-        secure: true,
-      }),
-      mainWindow.webContents.session.cookies.set({
-        url: realUrl,
-        name: "stack-access",
-        value: stackAccess,
-        expirationDate: accessPayload?.exp,
-        sameSite: "no_restriction",
-        secure: true,
-      }),
-    ]);
+    const refreshCookieName = `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`;
+    mainLog("Setting auth cookies", {
+      url: realUrl,
+      refreshCookieName,
+      refreshValueLength: stackRefresh.length,
+      accessValueLength: stackAccess.length,
+      refreshExp: refreshExpiry,
+      accessExp: accessExpiry,
+    });
 
+    try {
+      await Promise.all([
+        mainWindow.webContents.session.cookies.set({
+          url: realUrl,
+          name: refreshCookieName,
+          value: stackRefresh,
+          expirationDate: refreshExpiry,
+          sameSite: "no_restriction",
+          secure: true,
+        }),
+        mainWindow.webContents.session.cookies.set({
+          url: realUrl,
+          name: "stack-access",
+          value: stackAccess,
+          expirationDate: accessExpiry,
+          sameSite: "no_restriction",
+          secure: true,
+        }),
+      ]);
+      mainLog("Auth cookies set successfully");
+    } catch (cookieError) {
+      mainError("Failed to set auth cookies", cookieError);
+      return;
+    }
+
+    mainLog("Reloading renderer to apply auth cookies");
     mainWindow.webContents.reload();
     return;
   }

@@ -11,16 +11,13 @@ const DEFAULT_AGENT_NAME = "local-workspace";
 
 const DEFAULT_WORKSPACE_DESCRIPTOR = ({
   workspaceName,
-  projectFullName,
   branch,
 }: {
   workspaceName: string;
-  projectFullName?: string | null;
   branch?: string | null;
 }) => {
-  const descriptorBase = projectFullName
-    ? `Local workspace ${workspaceName} (${projectFullName})`
-    : `Local workspace ${workspaceName}`;
+  // Use just the workspace name as the title (projectFullName is shown in secondary line)
+  const descriptorBase = workspaceName;
   if (!branch) {
     return descriptorBase;
   }
@@ -76,7 +73,6 @@ export const reserve = authMutation({
     const workspaceName = generateWorkspaceName({ repoName, sequence });
     const descriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
       workspaceName,
-      projectFullName,
       branch,
     });
 
@@ -106,6 +102,7 @@ export const reserve = authMutation({
       isLocalWorkspace: true,
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
       userId,
       teamId,
     });

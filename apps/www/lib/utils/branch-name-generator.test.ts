@@ -28,6 +28,8 @@ function createMockResult<RESULT>(
       inputTokens: 1,
       outputTokens: 1,
       totalTokens: 2,
+      inputTokenDetails: { noCacheTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
     },
     warnings: undefined,
     request: { body: undefined },

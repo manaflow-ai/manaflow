@@ -1,5 +1,9 @@
 import type { ITerminalOptions } from "@xterm/xterm";
 
+// Keep scrollback bounded to avoid runaway memory growth in long-running sessions.
+export const ACTIVE_TERMINAL_SCROLLBACK = 20_000;
+export const INACTIVE_TERMINAL_SCROLLBACK = 2_000;
+
 /**
  * Default terminal configuration based on the TerminalContextProvider settings.
  * This is the source of truth for terminal appearance across the application.
@@ -32,7 +36,7 @@ export const DEFAULT_TERMINAL_CONFIG: ITerminalOptions = {
   cursorStyle: "bar",
   cursorBlink: false,
   allowProposedApi: true,
-  scrollback: 10000,
+  scrollback: ACTIVE_TERMINAL_SCROLLBACK,
 };
 
 /**
@@ -43,7 +47,7 @@ export const DEFAULT_TERMINAL_CONFIG: ITerminalOptions = {
 export const SERVER_TERMINAL_CONFIG = {
   cols: 80,
   rows: 24,
-  scrollback: 100000,
+  scrollback: ACTIVE_TERMINAL_SCROLLBACK,
   allowProposedApi: true,
 };
 

@@ -6,7 +6,7 @@
   "main": "./convex/_generated/server.js",
   "types": "./convex/_generated/server.d.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "test": "vitest run",
     "deploy:prod": "convex deploy --env-file ../../.env.production",
     "setup": "bun run scripts/setup.ts",

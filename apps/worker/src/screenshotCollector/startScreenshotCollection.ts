@@ -43,8 +43,18 @@ export type ScreenshotCollectionResult =
       commitSha: string;
       hasUiChanges?: boolean;
     }
-  | { status: "skipped"; reason: string; commitSha?: string }
-  | { status: "failed"; error: string; commitSha?: string };
+  | {
+      status: "skipped";
+      reason: string;
+      commitSha?: string;
+      hasUiChanges?: boolean;
+    }
+  | {
+      status: "failed";
+      error: string;
+      commitSha?: string;
+      hasUiChanges?: boolean;
+    };
 
 function sanitizeSegment(segment: string | null | undefined): string {
   if (!segment) {
@@ -52,6 +62,29 @@ function sanitizeSegment(segment: string | null | undefined): string {
   }
   const normalized = segment.trim().replace(/[^A-Za-z0-9._-]/g, "-");
   return normalized.length > 0 ? normalized : "current";
+}
+
+function formatOptionalValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : "<unset>";
+}
+
+function normalizeConvexUrl(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname.endsWith(".convex.cloud")) {
+      url.hostname = url.hostname.replace(/\.convex\.cloud$/, ".convex.site");
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed
+      .replace(/\/$/, "")
+      .replace(/\.convex\.cloud$/, ".convex.site");
+  }
 }
 
 async function detectHeadBranch(workspaceDir: string): Promise<string | null> {
@@ -141,10 +174,26 @@ export async function startScreenshotCollection(
     path: SCREENSHOT_COLLECTOR_LOG_PATH,
     openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
   });
+  const normalizedConvexUrl = normalizeConvexUrl(options.convexUrl ?? undefined);
+  const convexUrlLabel = formatOptionalValue(normalizedConvexUrl);
+  const originalConvexUrlLabel = formatOptionalValue(options.convexUrl ?? undefined);
+  if (convexUrlLabel !== originalConvexUrlLabel) {
+    await logToScreenshotCollector(
+      `Normalized Convex URL from ${originalConvexUrlLabel} to ${convexUrlLabel}`
+    );
+  }
+  await logToScreenshotCollector(
+    `Convex URL for screenshot collector: ${convexUrlLabel}`
+  );
+  if (convexUrlLabel !== "<unset>") {
+    await logToScreenshotCollector(
+      `Expected ANTHROPIC_BASE_URL: ${convexUrlLabel}/api/anthropic`
+    );
+  }
 
   // Load the screenshot collector module from Convex storage
   await logToScreenshotCollector("Loading screenshot collector module...");
-  const collectorModule = await loadScreenshotCollector(options.convexUrl ?? undefined);
+  const collectorModule = await loadScreenshotCollector(normalizedConvexUrl);
   await logToScreenshotCollector("Screenshot collector module loaded");
 
   const workspaceRoot = WORKSPACE_ROOT;
@@ -467,6 +516,7 @@ export async function startScreenshotCollection(
       pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
       installCommand: options.installCommand ?? undefined,
       devCommand: options.devCommand ?? undefined,
+      convexSiteUrl: normalizedConvexUrl,
       ...claudeAuth,
     });
 
@@ -478,14 +528,31 @@ export async function startScreenshotCollection(
           const reason = "No UI changes detected in this PR";
           await logToScreenshotCollector(reason);
           log("INFO", reason, { headBranch, outputDir });
-          return { status: "skipped", reason, commitSha };
+          return { status: "skipped", reason, commitSha, hasUiChanges: false };
+        }
+        if (claudeResult.hasUiChanges === undefined) {
+          const reason = "No UI changes detected in this PR";
+          await logToScreenshotCollector(
+            `${reason} (collector returned no screenshots)`
+          );
+          log(
+            "WARN",
+            "Claude collector returned no screenshots without hasUiChanges; treating as no UI changes",
+            { headBranch, outputDir }
+          );
+          return { status: "skipped", reason, commitSha, hasUiChanges: false };
         }
         // Otherwise, Claude thought there were UI changes but returned no files - unexpected
         const error =
           "Claude collector reported success but returned no files";
         await logToScreenshotCollector(error);
         log("ERROR", error, { headBranch, outputDir });
-        return { status: "failed", error, commitSha };
+        return {
+          status: "failed",
+          error,
+          commitSha,
+          hasUiChanges: claudeResult.hasUiChanges,
+        };
       }
 
       const screenshotEntries: CapturedScreenshot[] =

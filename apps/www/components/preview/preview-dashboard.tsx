@@ -21,7 +21,7 @@ import {
   GitCompare as GitCompareIcon,
   Github,
   Home,
-  Link2,
+  // Link2, // commented out: quick setup input is disabled
   Loader2,
   Monitor,
   MoreVertical,
@@ -990,7 +990,7 @@ function MockGitHubPRBrowser() {
                     main
                   </span>
                   {" from "}
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono"></span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">cmux/test-re6k4tq</span>
                 </span>
               </div>
             </div>
@@ -1362,11 +1362,10 @@ function MockGitHubPRBrowser() {
                       <div className="flex items-center gap-1 mt-2">
                         <button
                           onClick={() => setThumbsUpActive(!thumbsUpActive)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
-                            thumbsUpActive
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${thumbsUpActive
                               ? "border-[#2f81f7] bg-[#388bfd1a] text-[#2f81f7]"
                               : "border-[#30363d] bg-[#21262d] hover:bg-[#30363d]"
-                          }`}
+                            }`}
                         >
                           <span>👍</span>
                           <span
@@ -1381,11 +1380,10 @@ function MockGitHubPRBrowser() {
                         </button>
                         <button
                           onClick={() => setRocketActive(!rocketActive)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
-                            rocketActive
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${rocketActive
                               ? "border-[#2f81f7] bg-[#388bfd1a] text-[#2f81f7]"
                               : "border-[#30363d] bg-[#21262d] hover:bg-[#30363d]"
-                          }`}
+                            }`}
                         >
                           <span>🚀</span>
                           <span
@@ -3719,8 +3717,8 @@ function PreviewDashboardInner({
   // OAuth sign-in with popup
   const { signInWithPopup, signingInProvider } = useOAuthPopup();
 
-  // Public URL input state
-  const [repoUrlInput, setRepoUrlInput] = useState("");
+  // Public URL input state (commented out: quick setup input is disabled)
+  // const [repoUrlInput, setRepoUrlInput] = useState("");
 
   const currentProviderConnections = useMemo(
     () => providerConnectionsByTeam[selectedTeamSlugOrIdState] ?? [],
@@ -3789,29 +3787,29 @@ function PreviewDashboardInner({
     setConfigs(previewConfigs);
   }, [previewConfigs]);
 
-  // Parse GitHub URL to extract owner/repo
-  const parseGithubUrl = useCallback((input: string): string | null => {
-    const trimmed = input.trim();
-    // Try to parse as URL
-    try {
-      const url = new URL(trimmed);
-      if (url.hostname === "github.com" || url.hostname === "www.github.com") {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (parts.length >= 2) {
-          return `${parts[0]}/${parts[1]}`;
-        }
-      }
-    } catch {
-      // Not a valid URL, check if it's owner/repo format
-      const ownerRepoMatch = trimmed.match(
-        /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/
-      );
-      if (ownerRepoMatch) {
-        return trimmed;
-      }
-    }
-    return null;
-  }, []);
+  // Parse GitHub URL to extract owner/repo (commented out: quick setup input is disabled)
+  // const parseGithubUrl = useCallback((input: string): string | null => {
+  //   const trimmed = input.trim();
+  //   // Try to parse as URL
+  //   try {
+  //     const url = new URL(trimmed);
+  //     if (url.hostname === "github.com" || url.hostname === "www.github.com") {
+  //       const parts = url.pathname.split("/").filter(Boolean);
+  //       if (parts.length >= 2) {
+  //         return `${parts[0]}/${parts[1]}`;
+  //       }
+  //     }
+  //   } catch {
+  //     // Not a valid URL, check if it's owner/repo format
+  //     const ownerRepoMatch = trimmed.match(
+  //       /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/
+  //     );
+  //     if (ownerRepoMatch) {
+  //       return trimmed;
+  //     }
+  //   }
+  //   return null;
+  // }, []);
 
   const handleOpenConfig = useCallback((config: PreviewConfigListItem) => {
     setOpeningConfigId(config.id);
@@ -3881,96 +3879,97 @@ function PreviewDashboardInner({
     setErrorMessage(null);
   }, []);
 
-  const handleStartPreview = useCallback(async () => {
-    const repoName = parseGithubUrl(repoUrlInput);
-    if (!repoName) {
-      setErrorMessage("Please enter a valid GitHub URL or owner/repo");
-      return;
-    }
-
-    // For unauthenticated users, redirect to sign-in without requiring team selection
-    if (!isAuthenticated) {
-      const params = new URLSearchParams({ repo: repoName });
-      // Include team if available, otherwise the configure page will handle it after sign-in
-      if (selectedTeamSlugOrIdState) {
-        params.set("team", selectedTeamSlugOrIdState);
-      }
-      const configurePath = `/preview/configure?${params.toString()}`;
-      setErrorMessage(null);
-      setNavigatingRepo("__url_input__");
-      window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
-      return;
-    }
-
-    if (!selectedTeamSlugOrIdState) {
-      setErrorMessage("Select a team before continuing.");
-      return;
-    }
-
-    const params = new URLSearchParams({ repo: repoName });
-    params.set("team", selectedTeamSlugOrIdState);
-    const configurePath = `/preview/configure?${params.toString()}`;
-
-    if (!hasGithubAppInstallation) {
-      setErrorMessage(null);
-      setIsInstallingApp(true);
-      setNavigatingRepo("__url_input__");
-
-      try {
-        const response = await fetch("/api/integrations/github/install-state", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            teamSlugOrId: selectedTeamSlugOrIdState,
-            returnUrl: new URL(
-              configurePath,
-              window.location.origin
-            ).toString(),
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-
-        const payload = (await response.json()) as { state: string };
-        const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-        if (!githubAppSlug) {
-          throw new Error("GitHub App slug is not configured");
-        }
-
-        const url = new URL(
-          `https://github.com/apps/${githubAppSlug}/installations/new`
-        );
-        url.searchParams.set("state", payload.state);
-        window.location.href = url.toString();
-        return;
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to start GitHub App install";
-        console.error(
-          "[PreviewDashboard] Failed to start GitHub App install",
-          error
-        );
-        setErrorMessage(message);
-        setIsInstallingApp(false);
-        setNavigatingRepo(null);
-        return;
-      }
-    }
-
-    setErrorMessage(null);
-    setNavigatingRepo("__url_input__");
-    window.location.href = configurePath;
-  }, [
-    repoUrlInput,
-    parseGithubUrl,
-    selectedTeamSlugOrIdState,
-    hasGithubAppInstallation,
-    isAuthenticated,
-  ]);
+  // handleStartPreview commented out: quick setup input is disabled
+  // const handleStartPreview = useCallback(async () => {
+  //   const repoName = parseGithubUrl(repoUrlInput);
+  //   if (!repoName) {
+  //     setErrorMessage("Please enter a valid GitHub URL or owner/repo");
+  //     return;
+  //   }
+  //
+  //   // For unauthenticated users, redirect to sign-in without requiring team selection
+  //   if (!isAuthenticated) {
+  //     const params = new URLSearchParams({ repo: repoName });
+  //     // Include team if available, otherwise the configure page will handle it after sign-in
+  //     if (selectedTeamSlugOrIdState) {
+  //       params.set("team", selectedTeamSlugOrIdState);
+  //     }
+  //     const configurePath = `/preview/configure?${params.toString()}`;
+  //     setErrorMessage(null);
+  //     setNavigatingRepo("__url_input__");
+  //     window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
+  //     return;
+  //   }
+  //
+  //   if (!selectedTeamSlugOrIdState) {
+  //     setErrorMessage("Select a team before continuing.");
+  //     return;
+  //   }
+  //
+  //   const params = new URLSearchParams({ repo: repoName });
+  //   params.set("team", selectedTeamSlugOrIdState);
+  //   const configurePath = `/preview/configure?${params.toString()}`;
+  //
+  //   if (!hasGithubAppInstallation) {
+  //     setErrorMessage(null);
+  //     setIsInstallingApp(true);
+  //     setNavigatingRepo("__url_input__");
+  //
+  //     try {
+  //       const response = await fetch("/api/integrations/github/install-state", {
+  //         method: "POST",
+  //         headers: { "Content-Type": "application/json" },
+  //         body: JSON.stringify({
+  //           teamSlugOrId: selectedTeamSlugOrIdState,
+  //           returnUrl: new URL(
+  //             configurePath,
+  //             window.location.origin
+  //           ).toString(),
+  //         }),
+  //       });
+  //
+  //       if (!response.ok) {
+  //         throw new Error(await response.text());
+  //       }
+  //
+  //       const payload = (await response.json()) as { state: string };
+  //       const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+  //       if (!githubAppSlug) {
+  //         throw new Error("GitHub App slug is not configured");
+  //       }
+  //
+  //       const url = new URL(
+  //         `https://github.com/apps/${githubAppSlug}/installations/new`
+  //       );
+  //       url.searchParams.set("state", payload.state);
+  //       window.location.href = url.toString();
+  //       return;
+  //     } catch (error) {
+  //       const message =
+  //         error instanceof Error
+  //           ? error.message
+  //           : "Failed to start GitHub App install";
+  //       console.error(
+  //         "[PreviewDashboard] Failed to start GitHub App install",
+  //         error
+  //       );
+  //       setErrorMessage(message);
+  //       setIsInstallingApp(false);
+  //       setNavigatingRepo(null);
+  //       return;
+  //     }
+  //   }
+  //
+  //   setErrorMessage(null);
+  //   setNavigatingRepo("__url_input__");
+  //   window.location.href = configurePath;
+  // }, [
+  //   repoUrlInput,
+  //   parseGithubUrl,
+  //   selectedTeamSlugOrIdState,
+  //   hasGithubAppInstallation,
+  //   isAuthenticated,
+  // ]);
 
   // Auto-select first connection for the team, but keep user choice if still valid
   useEffect(() => {
@@ -4473,7 +4472,7 @@ function PreviewDashboardInner({
       )}
 
       {/* Quick Setup Input */}
-      <div id="setup-preview" className="pb-10">
+      {/* <div id="setup-preview" className="pb-10">
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
           <div className="relative flex-1 flex items-center bg-white/5 backdrop-blur-sm">
             <Link2 className="absolute left-4 h-5 w-5 text-neutral-500 z-10" />
@@ -4505,7 +4504,7 @@ function PreviewDashboardInner({
         {errorMessage && (
           <p className="text-xs text-red-400 pt-2">{errorMessage}</p>
         )}
-      </div>
+      </div> */}
 
       {/* Main content grid */}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">

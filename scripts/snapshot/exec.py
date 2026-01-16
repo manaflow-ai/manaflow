@@ -10,6 +10,7 @@ import asyncio
 import json
 import shlex
 import ssl
+import time
 from http.client import HTTPResponse
 from typing import cast
 import urllib.error
@@ -19,6 +20,9 @@ import urllib.request
 from morphcloud.api import InstanceExecResponse
 
 from ._types import Console, Command
+
+# HTTP status codes that indicate transient errors worth retrying
+TRANSIENT_HTTP_CODES = frozenset({502, 503, 504})
 
 
 def shell_command(command: Command) -> list[str]:
@@ -107,6 +111,9 @@ class HttpExecClient:
         label: str,
         command: Command,
         timeout: float | None,
+        *,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
     ) -> InstanceExecResponse:
         exec_cmd = shell_command(command)
         command_str = exec_cmd if isinstance(exec_cmd, str) else shlex.join(exec_cmd)
@@ -116,20 +123,40 @@ class HttpExecClient:
             payload["timeout_ms"] = max(int(timeout * 1000), 1)
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         request_timeout: float | None = None
         if timeout is not None:
             request_timeout = max(timeout + 5, 30.0)
 
-        try:
-            resp = urllib.request.urlopen(  # pyright: ignore[reportAny]
-                request,
-                timeout=request_timeout,
-                context=self._ssl_context,
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            request = urllib.request.Request(
+                url, data=data, headers=headers, method="POST"
             )
-            response = cast(HTTPResponse, resp)
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"exec service request failed: {exc}") from exc
+            try:
+                resp = urllib.request.urlopen(  # pyright: ignore[reportAny]
+                    request,
+                    timeout=request_timeout,
+                    context=self._ssl_context,
+                )
+                response = cast(HTTPResponse, resp)
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code in TRANSIENT_HTTP_CODES and attempt < max_retries - 1:
+                    delay = initial_delay * (2**attempt)
+                    self._console.info(
+                        f"[{label}] HTTP {exc.code} error, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(delay)
+                    last_error = exc
+                    continue
+                raise RuntimeError(f"exec service request failed: {exc}") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError(f"exec service request failed: {exc}") from exc
+        else:
+            raise RuntimeError(
+                f"exec service request failed after {max_retries} retries: {last_error}"
+            ) from last_error
 
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []

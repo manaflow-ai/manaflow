@@ -29,4 +29,5 @@ export type EnvironmentContext = {
   prompt: string;
   taskRunJwt: string;
   apiKeys?: Record<string, string>;
+  callbackUrl: string;
 };

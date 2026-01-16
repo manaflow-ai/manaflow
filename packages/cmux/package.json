@@ -22,7 +22,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "tsx scripts/test-env-leak.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "prepare-publish": "npm run build && tsx scripts/prepare-publish.ts",
     "check-publish": "tsx scripts/check-upload-artifact.ts",
     "secure-publish": "npm run prepare-publish && npm run check-publish && echo 'Ready to publish! Run: cd upload-artifact && npm publish'",
@@ -57,7 +57,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
+    "@types/express": "^4.17.23",
     "@types/node": "^24.9.1",
     "esbuild": "^0.25.4",
     "tsx": "^4.6.0",

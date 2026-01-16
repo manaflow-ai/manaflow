@@ -2,7 +2,7 @@
 set -e
 
 # Docker Hub repository
-REPO="lawrencecchen/cmux"
+REPO="manaflow/cmux"
 
 # Get version from package.json or use 'latest'
 VERSION=${1:-latest}

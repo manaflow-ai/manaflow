@@ -12,11 +12,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { isElectron } from "@/lib/electron";
+import { getElectronBridge, isElectron } from "@/lib/electron";
+import {
+  consumeGitHubAppInstallIntent,
+  setGitHubAppInstallIntent,
+} from "@/lib/github-oauth-flow";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { parseGithubRepoUrl } from "@cmux/shared";
+import { useUser } from "@stackframe/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
@@ -47,12 +54,74 @@ interface DashboardInputControlsProps {
   providerStatus?: ProviderStatusResponse | null;
 }
 
-type AgentOption = SelectOptionObject & { displayLabel: string };
+type AgentOption = SelectOptionObject & { displayLabel: string; isDisabled?: boolean };
 
 type AgentSelectionInstance = {
   agent: string;
   id: string;
 };
+
+function watchPopupClosed(win: Window | null, onClose: () => void): void {
+  if (!win) return;
+  const timer = window.setInterval(() => {
+    try {
+      if (win.closed) {
+        window.clearInterval(timer);
+        onClose();
+      }
+    } catch (err) {
+      console.error("[GitHubOAuthFlow] Popup window failed to close:", err);
+    }
+  }, 600);
+}
+
+function openCenteredPopup(
+  url: string,
+  opts?: { name?: string; width?: number; height?: number },
+  onClose?: () => void,
+): Window | null {
+  if (isElectron) {
+    // In Electron, always open in the system browser and skip popup plumbing
+    window.open(url, "_blank", "noopener,noreferrer");
+    return null;
+  }
+  const name = opts?.name ?? "cmux-popup";
+  const width = Math.floor(opts?.width ?? 980);
+  const height = Math.floor(opts?.height ?? 780);
+  const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
+  const dualScreenTop = window.screenTop ?? window.screenY ?? 0;
+  const outerWidth = window.outerWidth || window.innerWidth || width;
+  const outerHeight = window.outerHeight || window.innerHeight || height;
+  const left = Math.max(0, dualScreenLeft + (outerWidth - width) / 2);
+  const top = Math.max(0, dualScreenTop + (outerHeight - height) / 2);
+  const features = [
+    `width=${width}`,
+    `height=${height}`,
+    `left=${Math.floor(left)}`,
+    `top=${Math.floor(top)}`,
+    "resizable=yes",
+    "scrollbars=yes",
+    "toolbar=no",
+    "location=no",
+    "status=no",
+    "menubar=no",
+  ].join(",");
+
+  const win = window.open("about:blank", name, features);
+  if (win) {
+    try {
+      win.location.href = url;
+    } catch {
+      window.open(url, "_blank");
+    }
+    win.focus?.();
+    if (onClose) watchPopupClosed(win, onClose);
+    return win;
+  } else {
+    window.open(url, "_blank");
+    return null;
+  }
+}
 
 export const DashboardInputControls = memo(function DashboardInputControls({
   projectOptions,
@@ -76,6 +145,8 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   providerStatus = null,
 }: DashboardInputControlsProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const user = useUser({ or: "return-null" });
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
@@ -112,40 +183,63 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       const status = providerStatusMap.get(agent.name);
       const missingRequirements = status?.missingRequirements ?? [];
       const isAvailable = status?.isAvailable ?? true;
+
+      // Check if agent is disabled at config level (e.g., not available on Bedrock)
+      const isDisabledByConfig = agent.disabled === true;
+      const isUnavailable = !isAvailable || isDisabledByConfig;
+
+      // Determine warning tooltip content
+      let warningConfig: AgentOption["warning"] = undefined;
+      if (isDisabledByConfig) {
+        warningConfig = {
+          tooltip: (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-amber-500">
+                Not available
+              </p>
+              <p className="text-xs text-neutral-300">
+                {agent.disabledReason ?? "This agent is currently disabled."}
+              </p>
+            </div>
+          ),
+        };
+      } else if (!isAvailable) {
+        warningConfig = {
+          tooltip: (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-red-500">
+                Setup required
+              </p>
+              <p className="text-xs text-neutral-300">
+                {env.NEXT_PUBLIC_WEB_MODE
+                  ? "Add your API key for this agent in Settings."
+                  : "Add credentials for this agent in Settings."}
+              </p>
+              {missingRequirements.length > 0 ? (
+                <ul className="list-disc pl-4 text-xs text-neutral-400">
+                  {missingRequirements.map((req) => (
+                    <li key={req}>{req}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className="text-[10px] tracking-wide text-neutral-500 pt-1 border-t border-neutral-700">
+                Click to open settings
+              </p>
+            </div>
+          ),
+          onClick: handleOpenSettings,
+        };
+      }
+
       return {
         label: agent.name,
         displayLabel: shortName(agent.name),
         value: agent.name,
         icon: <AgentLogo agentName={agent.name} className="w-4 h-4" />,
         iconKey: vendorKey(agent.name),
-        isUnavailable: !isAvailable,
-        warning: !isAvailable
-          ? {
-            tooltip: (
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-red-500">
-                  Setup required
-                </p>
-                <p className="text-xs text-neutral-300">
-                  {env.NEXT_PUBLIC_WEB_MODE
-                    ? "Add your API key for this agent in Settings."
-                    : "Add credentials for this agent in Settings."}
-                </p>
-                {missingRequirements.length > 0 ? (
-                  <ul className="list-disc pl-4 text-xs text-neutral-400">
-                    {missingRequirements.map((req) => (
-                      <li key={req}>{req}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                <p className="text-[10px] tracking-wide text-neutral-500 pt-1 border-t border-neutral-700">
-                  Click to open settings
-                </p>
-              </div>
-            ),
-            onClick: handleOpenSettings,
-          }
-          : undefined,
+        isUnavailable,
+        isDisabled: isDisabledByConfig,
+        warning: warningConfig,
       } satisfies AgentOption;
     });
   }, [handleOpenSettings, providerStatusMap]);
@@ -283,12 +377,12 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === "cmux/github-install-complete") {
-        router.options.context?.queryClient?.invalidateQueries();
+        void queryClient.invalidateQueries();
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [router.options.context?.queryClient]);
+  }, [queryClient]);
 
   const handleImageClick = useCallback(() => {
     // Trigger the file select from ImagePlugin
@@ -437,67 +531,60 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     </div>
   );
 
-  function openCenteredPopup(
-    url: string,
-    opts?: { name?: string; width?: number; height?: number },
-    onClose?: () => void,
-  ): Window | null {
-    if (isElectron) {
-      // In Electron, always open in the system browser and skip popup plumbing
-      window.open(url, "_blank", "noopener,noreferrer");
-      return null;
+  // Function to open GitHub App installation popup (without OAuth check)
+  const openGitHubAppInstallPopup = useCallback(async () => {
+    const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+    if (!slug) {
+      alert("GitHub App not configured. Please contact support.");
+      return;
     }
-    const name = opts?.name ?? "cmux-popup";
-    const width = Math.floor(opts?.width ?? 980);
-    const height = Math.floor(opts?.height ?? 780);
-    const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
-    const dualScreenTop = window.screenTop ?? window.screenY ?? 0;
-    const outerWidth = window.outerWidth || window.innerWidth || width;
-    const outerHeight = window.outerHeight || window.innerHeight || height;
-    const left = Math.max(0, dualScreenLeft + (outerWidth - width) / 2);
-    const top = Math.max(0, dualScreenTop + (outerHeight - height) / 2);
-    const features = [
-      `width=${width}`,
-      `height=${height}`,
-      `left=${Math.floor(left)}`,
-      `top=${Math.floor(top)}`,
-      "resizable=yes",
-      "scrollbars=yes",
-      "toolbar=no",
-      "location=no",
-      "status=no",
-      "menubar=no",
-    ].join(",");
+    const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+    const returnUrl = !isElectron
+      ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+      : undefined;
+    const { state } = await mintState({ teamSlugOrId, returnUrl });
+    const sep = baseUrl.includes("?") ? "&" : "?";
+    const url = `${baseUrl}${sep}state=${encodeURIComponent(state)}`;
+    const win = openCenteredPopup(
+      url,
+      { name: "github-install" },
+      () => {
+        void queryClient.invalidateQueries();
+      },
+    );
+    win?.focus?.();
+  }, [mintState, queryClient, teamSlugOrId]);
 
-    const win = window.open("about:blank", name, features);
-    if (win) {
-      try {
-        win.location.href = url;
-      } catch {
-        window.open(url, "_blank");
-      }
-      win.focus?.();
-      if (onClose) watchPopupClosed(win, onClose);
-      return win;
-    } else {
-      window.open(url, "_blank");
-      return null;
+  // Check for pending GitHub App install intent on mount and when github-connect-complete is received
+  useEffect(() => {
+    if (!env.NEXT_PUBLIC_GITHUB_APP_SLUG) {
+      return;
     }
-  }
 
-  function watchPopupClosed(win: Window | null, onClose: () => void): void {
-    if (!win) return;
-    const timer = window.setInterval(() => {
-      try {
-        if (win.closed) {
-          window.clearInterval(timer);
-          onClose();
-        }
-      } catch {
-        /* noop */
+    const checkAndConsumeInstallIntent = () => {
+      // Atomically get and clear - second call in Strict Mode returns null
+      const installIntent = consumeGitHubAppInstallIntent();
+
+      // Only proceed if there's an install intent for THIS team
+      if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
+        return;
       }
-    }, 600);
-  }
+
+      void openGitHubAppInstallPopup().catch((err) => {
+        console.error("Failed to continue GitHub install after OAuth:", err);
+      });
+    };
+
+    // Check on mount
+    checkAndConsumeInstallIntent();
+
+    // Also check when github-connect-complete event is received (Electron deep link)
+    const off = getElectronBridge()?.on("github-connect-complete", checkAndConsumeInstallIntent);
+
+    return () => {
+      off?.();
+    };
+  }, [openGitHubAppInstallPopup, teamSlugOrId]);
 
   return (
     <div className="flex items-end gap-1 grow">
@@ -536,30 +623,35 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                 onClick={async (e) => {
                   e.preventDefault();
                   try {
-                    const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-                    if (!slug) {
-                      alert("GitHub App not configured. Please contact support.");
-                      return;
+                    // First, ensure GitHub OAuth is connected via Stack Auth
+                    // This is needed for cloning private repos
+                    if (user) {
+                      try {
+                        const githubAccount = await user.getConnectedAccount("github");
+                        if (!githubAccount) {
+                          // Store intent to continue with app installation after OAuth
+                          setGitHubAppInstallIntent(teamSlugOrId);
+
+                          if (isElectron) {
+                            // In Electron, open OAuth flow in system browser
+                            // The www endpoint will handle OAuth and return via deep link
+                            const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
+                            window.open(oauthUrl, "_blank", "noopener,noreferrer");
+                            return;
+                          }
+
+                          // In web, use Stack Auth's redirect
+                          await user.getConnectedAccount("github", { or: "redirect" });
+                          return; // Will redirect, so don't continue
+                        }
+                      } catch (oauthErr) {
+                        console.error("Failed to check GitHub connected account:", oauthErr);
+                        // Continue with app installation even if check fails
+                      }
                     }
-                    const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                    // For web users, pass returnUrl to connect-complete page which handles popup close
-                    // Include popup=true query param to signal this is a web popup flow
-                    const returnUrl = !isElectron
-                      ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
-                      : undefined;
-                    const { state } = await mintState({ teamSlugOrId, returnUrl });
-                    const sep = baseUrl.includes("?") ? "&" : "?";
-                    const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                      state,
-                    )}`;
-                    const win = openCenteredPopup(
-                      url,
-                      { name: "github-install" },
-                      () => {
-                        router.options.context?.queryClient?.invalidateQueries();
-                      },
-                    );
-                    win?.focus?.();
+
+                    // OAuth connected, proceed with app installation
+                    await openGitHubAppInstallPopup();
                   } catch (err) {
                     console.error("Failed to start GitHub install:", err);
                     alert("Failed to start installation. Please try again.");

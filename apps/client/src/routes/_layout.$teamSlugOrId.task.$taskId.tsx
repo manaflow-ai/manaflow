@@ -11,7 +11,10 @@ import {
 import clsx from "clsx";
 import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
 import { useQuery } from "convex/react";
+import { useSetTaskReadState } from "@/hooks/useMarkTaskAsRead";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -43,15 +46,46 @@ type GetByTaskResultItem = (typeof api.taskRuns.getByTask._returnType)[number];
 
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
-  const task = useQuery(api.tasks.getById, {
-    teamSlugOrId,
-    id: taskId,
+  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
+  // that cause excessive re-renders cascading to all child components.
+  const taskQuery = useRQ({
+    ...convexQuery(api.tasks.getById, { teamSlugOrId, id: taskId }),
+    enabled: Boolean(teamSlugOrId && taskId),
   });
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
+  const task = taskQuery.data;
+  const taskRunsQuery = useRQ({
+    ...convexQuery(api.taskRuns.getByTask, { teamSlugOrId, taskId }),
+    enabled: Boolean(teamSlugOrId && taskId),
+  });
+  const taskRuns = taskRunsQuery.data;
+  const clipboard = useClipboard({ timeout: 2000 });
+  const setTaskReadState = useSetTaskReadState(teamSlugOrId);
+
+  // Real-time subscription to unread state for mark-as-read triggering
+  const hasUnread = useQuery(api.taskNotifications.hasUnreadForTask, {
     teamSlugOrId,
     taskId,
   });
-  const clipboard = useClipboard({ timeout: 2000 });
+
+  // Mark as read when viewing AND focused, triggers when unread state changes
+  useEffect(() => {
+    if (!taskId || !hasUnread) return;
+
+    const markReadIfFocused = () => {
+      if (document.hasFocus()) {
+        setTaskReadState(taskId, true).catch((err) => {
+          console.error("Failed to mark task notifications as read:", err);
+        });
+      }
+    };
+
+    // Mark as read immediately if focused
+    markReadIfFocused();
+
+    // Handle user returning to the page
+    window.addEventListener("focus", markReadIfFocused);
+    return () => window.removeEventListener("focus", markReadIfFocused);
+  }, [hasUnread, taskId, setTaskReadState]);
 
   // Get the deepest matched child to extract runId if present
   const childMatches = useChildMatches();
@@ -126,12 +160,12 @@ function TaskDetailPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [flatRuns, taskId, navigate, teamSlugOrId]);
 
-  // Distinguish between loading (undefined) and not found (null)
-  if (task === undefined || taskRuns === undefined) {
+  // Distinguish between loading and not found
+  if (taskQuery.isLoading || taskRunsQuery.isLoading) {
     return <div className="p-8">Loading...</div>;
   }
 
-  if (task === null) {
+  if (task === null || task === undefined) {
     return (
       <div className="p-8 text-neutral-500 dark:text-neutral-400">
         Task not found or you don't have access to it.

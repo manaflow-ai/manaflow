@@ -37,6 +37,7 @@ import {
 import clsx from "clsx";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
+import { useSetTaskReadState } from "@/hooks/useMarkTaskAsRead";
 import {
   AlertTriangle,
   Archive as ArchiveIcon,
@@ -44,6 +45,7 @@ import {
   CheckCircle,
   Circle,
   ChevronRight,
+  Cloud,
   Copy as CopyIcon,
   Crown,
   EllipsisVertical,
@@ -90,6 +92,12 @@ import { annotateAgentOrdinals } from "./task-tree/annotateAgentOrdinals";
 
 type PreviewService = NonNullable<TaskRunWithChildren["networking"]>[number];
 type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+/**
+ * Feature flag to show/hide preview URLs in the sidebar.
+ * Set to true to re-enable preview URLs and "Add preview URL" button.
+ */
+const SHOW_PREVIEW_URLS = false;
 
 function getStatusIcon(status: TaskRunStatus): ReactElement {
   switch (status) {
@@ -140,6 +148,8 @@ interface TaskTreeProps {
   // When true, expand the task node on initial mount
   defaultExpanded?: boolean;
   teamSlugOrId: string;
+  // Whether this task has unread notifications (show a dot indicator)
+  hasUnreadNotification?: boolean;
 }
 
 interface SidebarArchiveOverlayProps {
@@ -147,6 +157,7 @@ interface SidebarArchiveOverlayProps {
   label: string;
   onArchive: () => void;
   groupName: "task" | "run";
+  isLoading?: boolean;
 }
 
 function SidebarArchiveOverlay({
@@ -154,6 +165,7 @@ function SidebarArchiveOverlay({
   label,
   onArchive,
   groupName,
+  isLoading,
 }: SidebarArchiveOverlayProps) {
   const hoverShow =
     groupName === "task"
@@ -166,21 +178,32 @@ function SidebarArchiveOverlay({
         <TooltipTrigger asChild>
           <button
             type="button"
-            aria-label={label}
+            aria-label={isLoading ? "Archiving..." : label}
+            disabled={isLoading}
             className={clsx(
-              "flex h-4 w-4 -mr-0.5 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500",
-              hoverShow
+              "flex h-4 w-4 -mr-0.5 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500",
+              isLoading
+                ? "opacity-100 pointer-events-auto cursor-not-allowed"
+                : clsx("opacity-0", hoverShow)
             )}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              onArchive();
+              if (!isLoading) {
+                onArchive();
+              }
             }}
           >
-            <ArchiveIcon className="w-3 h-3" />
+            {isLoading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <ArchiveIcon className="w-3 h-3" />
+            )}
           </button>
         </TooltipTrigger>
-        <TooltipContent side="right">{label}</TooltipContent>
+        <TooltipContent side="right">
+          {isLoading ? "Archiving..." : label}
+        </TooltipContent>
       </Tooltip>
       {icon ? (
         <div className="flex items-center justify-center">{icon}</div>
@@ -354,6 +377,7 @@ function TaskTreeInner({
   level = 0,
   defaultExpanded = false,
   teamSlugOrId,
+  hasUnreadNotification = false,
 }: TaskTreeProps) {
   const navigate = useNavigate();
 
@@ -404,18 +428,20 @@ function TaskTreeInner({
   const hasVisibleRuns = activeRunsFlat.length > 0;
   const showRunNumbers = flattenedRuns.length > 1;
 
-  // For local workspaces, find the run with VSCode to navigate to VSCode view directly
-  const localWorkspaceRunWithVscode = useMemo(() => {
+  // For local workspaces, find the first run to navigate to VSCode view
+  // Use the run even when VSCode isn't ready yet (loading state)
+  const localWorkspaceRun = useMemo(() => {
     if (!task.isLocalWorkspace) {
       return null;
     }
-    // Find the first active run with a running VSCode instance
-    return (
-      activeRunsFlat.find(
-        (run) => run.vscode?.status === "running" && run.vscode?.url
-      ) ?? null
-    );
+    // Find the first active run (prefer one with running VSCode, but accept any)
+    return activeRunsFlat[0] ?? null;
   }, [task.isLocalWorkspace, activeRunsFlat]);
+
+  // Check if VSCode is actually ready for the local workspace run
+  const localWorkspaceVscodeReady = useMemo(() => {
+    return localWorkspaceRun?.vscode?.status === "running" && localWorkspaceRun?.vscode?.url;
+  }, [localWorkspaceRun]);
 
   const runMenuEntries = useMemo(
     () =>
@@ -428,7 +454,6 @@ function TaskTreeInner({
     [flattenedRuns]
   );
   const prefetched = useRef(false);
-  const taskLinkRef = useRef<HTMLAnchorElement | null>(null);
   const prefetchTaskRuns = useCallback(() => {
     if (prefetched.current || isOptimisticTask) {
       return;
@@ -515,7 +540,7 @@ function TaskTreeInner({
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
 
-  // Expand and scroll into view when task becomes selected
+  // Expand when task becomes selected
   useEffect(() => {
     if (!isTaskSelected) {
       return;
@@ -523,16 +548,6 @@ function TaskTreeInner({
 
     // Expand the task if not already expanded
     setIsExpanded(true);
-
-    // Scroll into view
-    const linkElement = taskLinkRef.current;
-    if (linkElement) {
-      linkElement.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-        behavior: "instant",
-      });
-    }
   }, [isTaskSelected]);
   const [isTaskLinkFocusVisible, setIsTaskLinkFocusVisible] = useState(false);
   const handleTaskLinkFocus = useCallback(
@@ -546,7 +561,9 @@ function TaskTreeInner({
     setIsTaskLinkFocusVisible(false);
   }, []);
 
-  const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
+  const { archiveWithUndo, unarchive, isArchiving } =
+    useArchiveTask(teamSlugOrId);
+  const taskIsArchiving = isArchiving(task._id);
 
   const {
     isRenaming,
@@ -591,7 +608,7 @@ function TaskTreeInner({
       });
       if (tasks) {
         const updatedTasks = tasks.map((t) =>
-          t._id === args.id ? { ...t, pinned: true, updatedAt: now } : t
+          t._id === args.id ? { ...t, pinned: true, updatedAt: now, hasUnread: t.hasUnread ?? false } : t
         );
         localStore.setQuery(
           api.tasks.get,
@@ -611,7 +628,7 @@ function TaskTreeInner({
         localStore.setQuery(
           api.tasks.getPinned,
           { teamSlugOrId: args.teamSlugOrId },
-          [{ ...taskToPin, pinned: true, updatedAt: now }, ...pinned]
+          [{ ...taskToPin, pinned: true, updatedAt: now, hasUnread: taskToPin.hasUnread ?? false }, ...pinned]
         );
       }
     }
@@ -662,6 +679,17 @@ function TaskTreeInner({
       id: task._id,
     });
   }, [unpinTask, teamSlugOrId, task._id]);
+
+  // Mutation for marking task as read/unread (with optimistic updates)
+  const setTaskReadState = useSetTaskReadState(teamSlugOrId);
+
+  const handleMarkAsRead = useCallback(() => {
+    setTaskReadState(task._id, true);
+  }, [setTaskReadState, task._id]);
+
+  const handleMarkAsUnread = useCallback(() => {
+    setTaskReadState(task._id, false);
+  }, [setTaskReadState, task._id]);
 
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
@@ -806,11 +834,19 @@ function TaskTreeInner({
       }
     }
 
-    return task.isCompleted ? (
-      <CheckCircle className="w-3 h-3 text-green-500" />
-    ) : (
-      <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />
-    );
+    if (task.isCompleted) {
+      return <CheckCircle className="w-3 h-3 text-green-500" />;
+    }
+
+    if (isLocalWorkspace) {
+      return <Monitor className="w-3 h-3 text-neutral-400" />;
+    }
+
+    if (isCloudWorkspace) {
+      return <Cloud className="w-3 h-3 text-neutral-400" />;
+    }
+
+    return <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />;
   })();
 
   const shouldShowTaskArchiveOverlay =
@@ -823,6 +859,7 @@ function TaskTreeInner({
       label="Archive"
       onArchive={handleArchive}
       groupName="task"
+      isLoading={taskIsArchiving}
     />
   ) : (
     taskLeadingIcon
@@ -833,17 +870,16 @@ function TaskTreeInner({
       <div className="select-none flex flex-col">
         <ContextMenu.Root>
           <ContextMenu.Trigger>
-            <Link
-              ref={taskLinkRef}
-              to="/$teamSlugOrId/task/$taskId"
-              params={{ teamSlugOrId, taskId: task._id }}
-              search={{ runId: undefined }}
-              activeOptions={{ exact: true }}
-              className={clsx(
-                "group/task block",
-                // For local workspaces, manually add active class since we navigate to VSCode sub-route
-                localWorkspaceRunWithVscode && isTaskSelected && "active"
-              )}
+              <Link
+                to="/$teamSlugOrId/task/$taskId"
+                params={{ teamSlugOrId, taskId: task._id }}
+                search={{ runId: undefined }}
+                activeOptions={{ exact: true }}
+                className={clsx(
+                  "group/task block",
+                  // For local workspaces, manually add active class since we navigate to VSCode sub-route
+                  localWorkspaceRun && isTaskSelected && "active"
+                )}
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
               onMouseEnter={handlePrefetch}
               onFocus={handleTaskLinkFocus}
@@ -862,8 +898,8 @@ function TaskTreeInner({
                   event.preventDefault();
                   return;
                 }
-                // For local workspaces with active VSCode, expand and navigate to VSCode view
-                if (localWorkspaceRunWithVscode) {
+                // For local workspaces, expand and navigate to VSCode view
+                if (localWorkspaceRun) {
                   event.preventDefault();
                   setIsExpanded(true);
                   void navigate({
@@ -871,7 +907,7 @@ function TaskTreeInner({
                     params: {
                       teamSlugOrId,
                       taskId: task._id,
-                      runId: localWorkspaceRunWithVscode._id,
+                      runId: localWorkspaceRun._id,
                     },
                   });
                   return;
@@ -885,6 +921,7 @@ function TaskTreeInner({
                   expanded: isExpanded,
                   onToggle: handleToggle,
                   visible: canExpand,
+                  hasNotification: hasUnreadNotification,
                 }}
                 title={taskTitleContent}
                 titleClassName={taskTitleClassName}
@@ -936,6 +973,23 @@ function TaskTreeInner({
                   >
                     <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
                     <span>Pin</span>
+                  </ContextMenu.Item>
+                )}
+                {hasUnreadNotification ? (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleMarkAsRead}
+                  >
+                    <Eye className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Mark as read</span>
+                  </ContextMenu.Item>
+                ) : (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleMarkAsUnread}
+                  >
+                    <EyeOff className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Mark as unread</span>
                   </ContextMenu.Item>
                 )}
                 <ContextMenu.SubmenuRoot>
@@ -1017,25 +1071,28 @@ function TaskTreeInner({
           </ContextMenu.Portal>
         </ContextMenu.Root>
 
-        {/* For local workspaces, only show VSCode link when expanded */}
-        {isExpanded && localWorkspaceRunWithVscode ? (
+        {/* For local workspaces, show VSCode link when expanded (with loading state if not ready) */}
+        {isExpanded && localWorkspaceRun ? (
           <TaskRunDetailLink
             to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
             params={{
               teamSlugOrId,
               taskId: task._id,
-              runId: localWorkspaceRunWithVscode._id,
+              runId: localWorkspaceRun._id,
             }}
             icon={
               <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
             }
             label="VS Code"
             indentLevel={level + 1}
+            trailing={!localWorkspaceVscodeReady ? (
+              <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+            ) : undefined}
           />
         ) : null}
 
         {/* For non-local workspaces, show normal task runs content */}
-        {isExpanded && !localWorkspaceRunWithVscode ? (
+        {isExpanded && !localWorkspaceRun ? (
           <TaskRunsContent
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
@@ -1453,6 +1510,7 @@ function TaskRunTreeInner({
     () => (hasActiveVSCode && run.vscode?.url) || null,
     [hasActiveVSCode, run]
   );
+  const vscodeProvider = run.vscode?.provider;
 
   // Collect running preview ports and custom previews
   const previewServices = useMemo(() => {
@@ -1468,6 +1526,7 @@ function TaskRunTreeInner({
     executePortAction,
   } = useOpenWithActions({
     vscodeUrl,
+    vscodeProvider,
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
@@ -2125,7 +2184,7 @@ function TaskRunDetails({
       ) : null}
 
       {/* Hide preview ports and custom previews for preview screenshot jobs */}
-      {!run.isPreviewJob && (
+      {SHOW_PREVIEW_URLS && !run.isPreviewJob && (
         <>
           {previewServices.map((service) => (
             <div key={service.port} className="relative group mt-px">

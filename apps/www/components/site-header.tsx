@@ -4,6 +4,7 @@ import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
 import type { MacDownloadUrls } from "@/lib/releases";
 import clsx from "clsx";
+import { CmuxIcon } from "@/components/icons/cmux-icon";
 import { Download } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -138,7 +139,7 @@ export function SiteHeader({
             <MacDownloadLink
               autoDetect
               fallbackUrl={fallbackUrl}
-              className="hidden md:inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-neutral-100"
+              className="hidden md:inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800"
               title={
                 latestVersion
                   ? `Download cmux ${latestVersion} for macOS`
@@ -150,6 +151,15 @@ export function SiteHeader({
               <span>Download</span>
             </MacDownloadLink>
           ) : null}
+          <a
+            className="hidden md:inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-neutral-100"
+            href="https://cmux.sh"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <CmuxIcon className="h-4 w-4" aria-hidden />
+            <span>Web</span>
+          </a>
         </div>
       </div>
     </header>

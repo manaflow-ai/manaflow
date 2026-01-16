@@ -1,0 +1,19 @@
+[package]
+name = "cmux-terminal"
+version = "0.1.0"
+edition = "2021"
+authors = ["cmux"]
+description = "Terminal emulation library with VirtualTerminal and DaFilter"
+
+[dependencies]
+# Terminal parsing
+vte = "0.13"
+
+# Style types (re-exported for consumers)
+ratatui = { version = "0.29", default-features = false }
+
+# Unicode width detection
+unicode-width = "0.2"
+
+[dev-dependencies]
+# For tests

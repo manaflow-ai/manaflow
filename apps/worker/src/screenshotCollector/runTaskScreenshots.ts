@@ -170,6 +170,7 @@ export async function runTaskScreenshots(
     status = "skipped";
     error = result.reason;
     commitSha = result.commitSha;
+    hasUiChanges = result.hasUiChanges;
     log("INFO", "Screenshot workflow skipped", {
       taskRunId,
       reason: result.reason,
@@ -178,6 +179,7 @@ export async function runTaskScreenshots(
     status = "failed";
     error = result.error;
     commitSha = result.commitSha;
+    hasUiChanges = result.hasUiChanges;
     log("ERROR", "Screenshot workflow failed", {
       taskRunId,
       error: result.error,

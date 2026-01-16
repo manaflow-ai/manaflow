@@ -44,10 +44,11 @@ async function main() {
       .replace(/`/g, "\\`");
     const args = [
       "-c",
-      `bunx @anthropic-ai/claude-code --model claude-sonnet-4-20250514 --dangerously-skip-permissions "${escapedPrompt}"`,
+      `bunx @anthropic-ai/claude-code --model claude-sonnet-4-20250514 --allow-dangerously-skip-permissions --dangerously-skip-permissions "${escapedPrompt}"`,
       // "@anthropic-ai/claude-code",
       // "--model",
       // "claude-sonnet-4-20250514",
+      // "--allow-dangerously-skip-permissions",
       // "--dangerously-skip-permissions",
       // prompt,
     ];
@@ -91,6 +92,7 @@ async function main() {
           cols: 80,
           rows: 24,
           env: {},
+          backend: "tmux",
           authFiles: [
             {
               contentBase64: claudeJsonBase64,

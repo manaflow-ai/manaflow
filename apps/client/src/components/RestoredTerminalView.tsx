@@ -34,7 +34,6 @@ export function RestoredTerminalView({
     // Create xterm instance with same theme as TerminalView
     const xterm = new XTerm(
       createTerminalOptions({
-        scrollback: 100000,
         convertEol: true,
       })
     );

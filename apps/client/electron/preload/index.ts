@@ -118,12 +118,19 @@ const cmuxAPI = {
       socketId: string,
       callback: (eventName: string, ...args: unknown[]) => void
     ) => {
-      ipcRenderer.on(
-        `socket:event:${socketId}`,
-        (_event, eventName, ...args) => {
-          callback(eventName, ...args);
-        }
-      );
+      const channel = `socket:event:${socketId}`;
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        eventName: string,
+        ...args: unknown[]
+      ) => {
+        callback(eventName, ...args);
+      };
+      ipcRenderer.on(channel, listener);
+      // Return cleanup function to remove the listener
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
     },
   },
   // UI helpers

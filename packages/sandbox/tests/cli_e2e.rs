@@ -72,6 +72,7 @@ impl SandboxService for MockService {
                 sandbox_ip: "10.201.0.2".into(),
                 cidr: 30,
             },
+            display: None,
             correlation_id: None,
         };
         let mut guard = self.sandboxes.lock().await;
@@ -160,6 +161,36 @@ impl SandboxService for MockService {
             return Ok(Some(summary));
         }
         Ok(None)
+    }
+
+    async fn prune_orphaned(
+        &self,
+        request: cmux_sandbox::models::PruneRequest,
+    ) -> cmux_sandbox::errors::SandboxResult<cmux_sandbox::models::PruneResponse> {
+        self.record("prune_orphaned").await;
+        Ok(cmux_sandbox::models::PruneResponse {
+            deleted_count: 0,
+            failed_count: 0,
+            items: vec![],
+            dry_run: request.dry_run,
+            bytes_freed: 0,
+        })
+    }
+
+    async fn await_services_ready(
+        &self,
+        _id: String,
+        _request: cmux_sandbox::models::AwaitReadyRequest,
+    ) -> cmux_sandbox::errors::SandboxResult<cmux_sandbox::models::AwaitReadyResponse> {
+        Ok(cmux_sandbox::models::AwaitReadyResponse {
+            ready: true,
+            services: cmux_sandbox::models::ServiceReadiness {
+                vnc: true,
+                vscode: false,
+                pty: false,
+            },
+            timed_out: vec![],
+        })
     }
 }
 

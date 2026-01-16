@@ -259,7 +259,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: aarch64-apple-darwin
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile
@@ -279,7 +278,24 @@ jobs:
       - name: Build native Rust addon
         working-directory: apps/server/native/core
         shell: bash
-        run: bunx --bun @napi-rs/cli build --platform --release
+        env:
+          # Limit parallel rustc jobs to reduce peak memory usage on self-hosted runners
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "Building native addon (attempt $attempt/3)..."
+            if bunx --bun @napi-rs/cli build --platform --release; then
+              echo "Build succeeded"
+              break
+            fi
+            if [[ $attempt -eq 3 ]]; then
+              echo "Build failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "Build failed, retrying in 10 seconds..."
+            sleep 10
+          done
       - name: Build, sign, and notarize (arm64) via publish script
         env:
           MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
@@ -379,7 +395,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Install dependencies (bun)
@@ -411,14 +426,46 @@ jobs:
           rm -f cmux_native_core.darwin-*.node
 
       # Prebuild the Rust N-API addon for both slices so electron-builder can pick them up.
+      # Build sequentially with limited parallelism to avoid OOM on self-hosted runners.
       - name: Build native Rust addon (arm64 + x64)
         working-directory: apps/server/native/core
         shell: bash
+        env:
+          # Limit parallel rustc jobs to reduce peak memory usage
+          CARGO_BUILD_JOBS: "2"
         run: |
           set -euo pipefail
           rustup target add x86_64-apple-darwin aarch64-apple-darwin || true
-          bunx --bun @napi-rs/cli build --platform --release --target x86_64-apple-darwin
-          bunx --bun @napi-rs/cli build --platform --release --target aarch64-apple-darwin
+
+          # Build x86_64 first with retry logic for transient OOM failures
+          for attempt in 1 2 3; do
+            echo "Building x86_64-apple-darwin (attempt $attempt/3)..."
+            if bunx --bun @napi-rs/cli build --platform --release --target x86_64-apple-darwin; then
+              echo "x86_64-apple-darwin build succeeded"
+              break
+            fi
+            if [[ $attempt -eq 3 ]]; then
+              echo "x86_64-apple-darwin build failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "Build failed, retrying in 10 seconds..."
+            sleep 10
+          done
+
+          # Build aarch64 with retry logic
+          for attempt in 1 2 3; do
+            echo "Building aarch64-apple-darwin (attempt $attempt/3)..."
+            if bunx --bun @napi-rs/cli build --platform --release --target aarch64-apple-darwin; then
+              echo "aarch64-apple-darwin build succeeded"
+              break
+            fi
+            if [[ $attempt -eq 3 ]]; then
+              echo "aarch64-apple-darwin build failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "Build failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Verify macOS native addon slices
         working-directory: apps/server/native/core
@@ -567,7 +614,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: x86_64-pc-windows-msvc
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile
@@ -615,7 +661,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: x86_64-unknown-linux-gnu
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile

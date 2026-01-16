@@ -1,56 +1,29 @@
 import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
-import { GitLabIcon } from "@/components/icons/gitlab";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
-import { isElectron } from "@/lib/electron";
+import { getElectronBridge, isElectron } from "@/lib/electron";
 import {
-  getApiIntegrationsGithubReposOptions,
-  postApiMorphSetupInstanceMutation,
-} from "@cmux/www-openapi-client/react-query";
-import * as Popover from "@radix-ui/react-popover";
-import {
-  useQuery as useRQ,
-  useMutation as useRQMutation,
-} from "@tanstack/react-query";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+  consumeGitHubAppInstallIntent,
+  setGitHubAppInstallIntent,
+} from "@/lib/github-oauth-flow";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
+import { useUser } from "@stackframe/react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
-
-function ConnectionIcon({ type }: { type?: string }) {
-  if (type && type.includes("gitlab")) {
-    return (
-      <GitLabIcon className="h-4 w-4 text-neutral-600 dark:text-neutral-300" />
-    );
-  }
-  return (
-    <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-  );
-}
 
 function formatTimeAgo(input?: string | number): string {
   if (!input) return "";
@@ -83,6 +56,7 @@ interface RepositoryConnectionsSectionProps {
   onSelectedLoginChange: (login: string | null) => void;
   onContextChange: (context: ConnectionContext) => void;
   onConnectionsInvalidated: () => void;
+  onInstallHandlerReady: (handler: (() => void) | null) => void;
 }
 
 interface RepositoryListSectionProps {
@@ -90,7 +64,9 @@ interface RepositoryListSectionProps {
   installationId: number | null;
   selectedRepos: readonly string[];
   onToggleRepo: (repo: string) => void;
+  onAddRepo: (repo: string) => void;
   hasConnections: boolean;
+  onInstallGitHubApp: () => void;
 }
 
 export interface RepositoryPickerProps {
@@ -112,6 +88,13 @@ export interface RepositoryPickerProps {
     snapshotId?: MorphSnapshotId;
   }) => void;
   topAccessory?: ReactNode;
+  /**
+   * Auto-continue to configure step when repos are selected.
+   * If a number, it's the delay in ms before auto-continuing.
+   * If true, uses default delay of 800ms.
+   * If false or undefined, no auto-continue.
+   */
+  autoContinue?: boolean | number;
 }
 
 export function RepositoryPicker({
@@ -129,9 +112,10 @@ export function RepositoryPicker({
   className = "",
   onStartConfigure,
   topAccessory,
+  autoContinue,
 }: RepositoryPickerProps) {
-  const router = useRouter();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
@@ -149,12 +133,6 @@ export function RepositoryPicker({
     }
   );
 
-  const setupInstanceMutation = useRQMutation(
-    postApiMorphSetupInstanceMutation()
-  );
-  const setupManualInstanceMutation = useRQMutation(
-    postApiMorphSetupInstanceMutation()
-  );
 
   useEffect(() => {
     if (initialSnapshotId) {
@@ -165,12 +143,9 @@ export function RepositoryPicker({
   }, [initialSnapshotId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
-    const qc = router.options.context?.queryClient;
-    if (qc) {
-      qc.invalidateQueries();
-    }
+    void queryClient.invalidateQueries();
     window.focus?.();
-  }, [router]);
+  }, [queryClient]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -196,21 +171,31 @@ export function RepositoryPicker({
     [instanceId]
   );
 
+  // Helper to check if repos are the same (order-independent)
+  const haveSameRepos = useCallback(
+    (a: readonly string[], b: readonly string[]): boolean => {
+      if (a.length !== b.length) return false;
+      const setA = new Set(a);
+      return b.every((repo) => setA.has(repo));
+    },
+    []
+  );
+
   const goToConfigure = useCallback(
     async (
       repos: string[],
-      provisionedInstanceId?: string
+      options?: { clearInstanceId?: boolean }
     ): Promise<string | undefined> => {
       let resolvedInstanceId: string | undefined;
-      const navigateToConfigure = async (options?: { replace?: boolean }) => {
+      const navigateToConfigure = async (navOptions?: { replace?: boolean }) => {
         await navigate({
           to: "/$teamSlugOrId/environments/new",
           params: { teamSlugOrId },
           search: (prev) => {
-            resolvedInstanceId = resolveInstanceId(
-              prev.instanceId,
-              provisionedInstanceId
-            );
+            // If clearInstanceId is set, don't include instanceId - we need a new VM
+            resolvedInstanceId = options?.clearInstanceId
+              ? undefined
+              : resolveInstanceId(prev.instanceId, undefined);
             return {
               step: "configure",
               selectedRepos: repos,
@@ -220,19 +205,14 @@ export function RepositoryPicker({
               snapshotId: selectedSnapshotId,
             };
           },
-          ...options,
+          ...navOptions,
         });
       };
 
       await navigateToConfigure();
-      if (!instanceId && provisionedInstanceId) {
-        await navigateToConfigure({ replace: true });
-      }
-
       return resolvedInstanceId;
     },
     [
-      instanceId,
       navigate,
       resolveInstanceId,
       selectedSnapshotId,
@@ -242,43 +222,27 @@ export function RepositoryPicker({
 
   const handleContinue = useCallback(
     (repos: string[]): void => {
-      const mutation =
-        repos.length > 0 ? setupInstanceMutation : setupManualInstanceMutation;
-      mutation.mutate(
-        {
-          body: {
-            teamSlugOrId,
-            instanceId: instanceId ?? undefined,
-            selectedRepos: repos,
-            snapshotId: selectedSnapshotId,
-          },
-        },
-        {
-          onSuccess: async (data) => {
-            const configuredInstanceId =
-              (await goToConfigure(repos, data.instanceId)) ?? data.instanceId;
-            onStartConfigure?.({
-              selectedRepos: repos,
-              instanceId: configuredInstanceId,
-              snapshotId: selectedSnapshotId,
-            });
-            console.log("Cloned repos:", data.clonedRepos);
-            console.log("Removed repos:", data.removedRepos);
-          },
-          onError: (error) => {
-            console.error("Failed to setup instance:", error);
-          },
-        }
-      );
+      // Check if repos or snapshot changed - if so, we need a new VM
+      const reposChanged = !haveSameRepos(initialSelectedRepos, repos);
+      const snapshotChanged = initialSnapshotId !== selectedSnapshotId;
+      const needsNewInstance = reposChanged || snapshotChanged;
+
+      // Navigate immediately - provisioning will happen on the configure page
+      void goToConfigure(repos, { clearInstanceId: needsNewInstance });
+      onStartConfigure?.({
+        selectedRepos: repos,
+        instanceId: needsNewInstance ? undefined : instanceId,
+        snapshotId: selectedSnapshotId,
+      });
     },
     [
       goToConfigure,
+      haveSameRepos,
+      initialSelectedRepos,
+      initialSnapshotId,
       instanceId,
       onStartConfigure,
       selectedSnapshotId,
-      setupInstanceMutation,
-      setupManualInstanceMutation,
-      teamSlugOrId,
     ]
   );
 
@@ -312,9 +276,23 @@ export function RepositoryPicker({
     });
   }, []);
 
+  const addRepo = useCallback((repo: string) => {
+    setSelectedRepos((prev) => {
+      if (prev.includes(repo)) {
+        return prev;
+      }
+      return [...prev, repo];
+    });
+  }, []);
+
   const removeRepo = useCallback((repo: string) => {
     setSelectedRepos((prev) => prev.filter((item) => item !== repo));
   }, []);
+
+  // GitHub app install handler - lifted from RepositoryConnectionsSection for use in RepositoryListSection
+  const [installGitHubAppHandler, setInstallGitHubAppHandler] = useState<
+    (() => void) | null
+  >(null);
 
   const setConnectionContextSafe = useCallback((ctx: ConnectionContext) => {
     setConnectionContext((prev) => {
@@ -329,8 +307,35 @@ export function RepositoryPicker({
     });
   }, []);
 
-  const isContinueLoading = setupInstanceMutation.isPending;
-  const isManualLoading = setupManualInstanceMutation.isPending;
+  // Auto-continue to configure step when repos are selected
+  const autoContinueTriggeredRef = useRef(false);
+  useEffect(() => {
+    // Skip if auto-continue is disabled
+    if (!autoContinue) {
+      return;
+    }
+
+    // Skip if no repos selected
+    if (selectedRepos.length === 0) {
+      autoContinueTriggeredRef.current = false;
+      return;
+    }
+
+    // Skip if already triggered
+    if (autoContinueTriggeredRef.current) {
+      return;
+    }
+
+    const delay = typeof autoContinue === "number" ? autoContinue : 800;
+    const timeoutId = window.setTimeout(() => {
+      autoContinueTriggeredRef.current = true;
+      handleContinue(selectedRepos);
+    }, delay);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [autoContinue, selectedRepos, handleContinue]);
 
   return (
     <div className={className}>
@@ -347,12 +352,14 @@ export function RepositoryPicker({
       )}
 
       <div className="space-y-6 mt-6">
+        {/* Hidden - provides context and install handler without visible UI */}
         <RepositoryConnectionsSection
           teamSlugOrId={teamSlugOrId}
           selectedLogin={selectedConnectionLogin}
           onSelectedLoginChange={setSelectedConnectionLogin}
           onContextChange={setConnectionContextSafe}
           onConnectionsInvalidated={handleConnectionsInvalidated}
+          onInstallHandlerReady={setInstallGitHubAppHandler}
         />
 
         <RepositoryListSection
@@ -360,7 +367,9 @@ export function RepositoryPicker({
           installationId={connectionContext.installationId}
           selectedRepos={selectedRepos}
           onToggleRepo={toggleRepo}
+          onAddRepo={addRepo}
           hasConnections={connectionContext.hasConnections}
+          onInstallGitHubApp={installGitHubAppHandler ?? (() => {})}
         />
 
         {selectedRepos.length > 0 ? (
@@ -395,33 +404,17 @@ export function RepositoryPicker({
             <div className="flex items-center gap-3 pt-2">
               <button
                 type="button"
-                disabled={
-                  selectedRepos.length === 0 ||
-                  isContinueLoading ||
-                  isManualLoading
-                }
                 onClick={() => handleContinue(selectedRepos)}
-                className={`inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-opacity ${
-                  isManualLoading ? "opacity-50" : "opacity-100"
-                }`}
+                className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
               >
-                {isContinueLoading && (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                )}
                 {continueButtonText}
               </button>
               {showManualConfigOption && (
                 <button
                   type="button"
-                  disabled={isContinueLoading || isManualLoading}
                   onClick={() => handleContinue([])}
-                  className={`inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:cursor-not-allowed transition-opacity ${
-                    isContinueLoading ? "opacity-50" : "opacity-100"
-                  }`}
+                  className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
                 >
-                  {isManualLoading && (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  )}
                   {manualConfigButtonText}
                 </button>
               )}
@@ -445,13 +438,13 @@ function RepositoryConnectionsSection({
   onSelectedLoginChange,
   onContextChange,
   onConnectionsInvalidated,
+  onInstallHandlerReady,
 }: RepositoryConnectionsSectionProps) {
+  const user = useUser({ or: "return-null" });
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
   });
   const mintState = useMutation(api.github_app.mintInstallState);
-  const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
-  const [connectionSearch, setConnectionSearch] = useState("");
 
   const activeConnections = useMemo(
     () => (connections || []).filter((c) => c.isActive !== false),
@@ -471,15 +464,6 @@ function RepositoryConnectionsSection({
       onSelectedLoginChange(currentLogin);
     }
   }, [currentLogin, onSelectedLoginChange, selectedLogin]);
-
-  const filteredConnections = useMemo(() => {
-    if (!connectionSearch.trim()) return activeConnections;
-    const searchLower = connectionSearch.toLowerCase();
-    return activeConnections.filter((c) => {
-      const name = c.accountLogin || `installation-${c.installationId}`;
-      return name.toLowerCase().includes(searchLower);
-    });
-  }, [activeConnections, connectionSearch]);
 
   const selectedInstallationId = useMemo(() => {
     const match = activeConnections.find(
@@ -516,8 +500,8 @@ function RepositoryConnectionsSection({
             window.clearInterval(timer);
             onClose();
           }
-        } catch (_error) {
-          void 0;
+        } catch (err) {
+          console.error("[GitHubOAuthFlow] Popup window failed to close:", err);
         }
       }, 600);
     },
@@ -583,10 +567,16 @@ function RepositoryConnectionsSection({
     onConnectionsInvalidated();
   }, [onConnectionsInvalidated]);
 
-  const handleInstallApp = useCallback(async () => {
+  // Function to open GitHub App installation popup (without OAuth check)
+  const openGitHubAppInstallPopup = useCallback(async () => {
     if (!installNewUrl) return;
     try {
-      const { state } = await mintState({ teamSlugOrId });
+      // In web mode, pass a returnUrl so github_setup redirects back to the web
+      // instead of using the cmux:// deep link (which opens Electron)
+      const returnUrl = !isElectron
+        ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+        : undefined;
+      const { state } = await mintState({ teamSlugOrId, returnUrl });
       const sep = installNewUrl.includes("?") ? "&" : "?";
       const url = `${installNewUrl}${sep}state=${encodeURIComponent(state)}`;
       openCenteredPopup(
@@ -598,208 +588,151 @@ function RepositoryConnectionsSection({
       console.error("Failed to start GitHub install:", err);
       alert("Failed to start installation. Please try again.");
     }
+  }, [handlePopupClosedRefetch, installNewUrl, mintState, openCenteredPopup, teamSlugOrId]);
+
+  // Check for pending GitHub App install intent on mount and when github-connect-complete is received
+  useEffect(() => {
+    if (!installNewUrl) {
+      return;
+    }
+
+    const checkAndConsumeInstallIntent = () => {
+      // Atomically get and clear - second call in Strict Mode returns null
+      const installIntent = consumeGitHubAppInstallIntent();
+
+      // Only proceed if there's an install intent for THIS team
+      if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
+        return;
+      }
+
+      void openGitHubAppInstallPopup().catch((err) => {
+        console.error("Failed to continue GitHub install after OAuth:", err);
+      });
+    };
+
+    // Check on mount
+    checkAndConsumeInstallIntent();
+
+    // Also check when github-connect-complete event is received (Electron deep link)
+    const off = getElectronBridge()?.on("github-connect-complete", checkAndConsumeInstallIntent);
+
+    return () => {
+      off?.();
+    };
+  }, [installNewUrl, openGitHubAppInstallPopup, teamSlugOrId]);
+
+  const handleInstallApp = useCallback(async () => {
+    if (!installNewUrl) return;
+
+    // First, ensure GitHub OAuth is connected via Stack Auth
+    // This is needed for cloning private repos
+    if (user) {
+      try {
+        const githubAccount = await user.getConnectedAccount("github");
+        if (!githubAccount) {
+          // Store intent to continue with app installation after OAuth
+          setGitHubAppInstallIntent(teamSlugOrId);
+
+          if (isElectron) {
+            // In Electron, open OAuth flow in system browser
+            // The www endpoint will handle OAuth and return via deep link
+            const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
+            window.open(oauthUrl, "_blank", "noopener,noreferrer");
+            return;
+          }
+
+          // In web, use Stack Auth's redirect
+          await user.getConnectedAccount("github", { or: "redirect" });
+          return; // Will redirect, so don't continue
+        }
+      } catch (err) {
+        console.error("Failed to check GitHub connected account:", err);
+        // Continue with app installation even if connected account check fails
+      }
+    }
+
+    // OAuth connected, proceed with app installation
+    await openGitHubAppInstallPopup();
   }, [
-    handlePopupClosedRefetch,
     installNewUrl,
-    mintState,
-    openCenteredPopup,
+    openGitHubAppInstallPopup,
     teamSlugOrId,
+    user,
   ]);
 
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
-        Connection
-      </label>
-      <Popover.Root
-        open={connectionDropdownOpen}
-        onOpenChange={setConnectionDropdownOpen}
-      >
-        <Popover.Trigger asChild>
-          <button className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 flex items-center justify-between text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors">
-            <div className="flex items-center gap-2 min-w-0">
-              {currentLogin ? (
-                <>
-                  <ConnectionIcon type="github" />
-                  <span className="truncate">{currentLogin}</span>
-                </>
-              ) : (
-                <span className="truncate text-neutral-500">
-                  Select connection
-                </span>
-              )}
-            </div>
-            <ChevronDown className="w-4 h-4 text-neutral-500" />
-          </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content
-            className="w-[320px] rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-md outline-none z-[var(--z-popover)]"
-            align="start"
-            sideOffset={4}
-          >
-            <Command shouldFilter={false}>
-              <CommandInput
-                placeholder="Search connections..."
-                value={connectionSearch}
-                onValueChange={setConnectionSearch}
-              />
-              <CommandList>
-                {connections === undefined ? (
-                  <div className="px-3 py-2 text-sm text-neutral-500">
-                    Loading...
-                  </div>
-                ) : activeConnections.length > 0 ? (
-                  <>
-                    {filteredConnections.length > 0 ? (
-                      <CommandGroup>
-                        {filteredConnections.map((c) => {
-                          const name =
-                            c.accountLogin ||
-                            `installation-${c.installationId}`;
-                          const cfgUrl =
-                            c.accountLogin && c.accountType
-                              ? c.accountType === "Organization"
-                                ? `https://github.com/organizations/${c.accountLogin}/settings/installations/${c.installationId}`
-                                : `https://github.com/settings/installations/${c.installationId}`
-                              : null;
-                          const isSelected = currentLogin === c.accountLogin;
-                          return (
-                            <CommandItem
-                              key={`${c.accountLogin}:${c.installationId}`}
-                              value={name}
-                              onSelect={() => {
-                                onSelectedLoginChange(c.accountLogin ?? null);
-                                setConnectionDropdownOpen(false);
-                              }}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <ConnectionIcon type={c.type} />
-                                <span className="truncate">{name}</span>
-                                {isSelected && (
-                                  <Check className="ml-auto h-4 w-4 text-neutral-600 dark:text-neutral-300" />
-                                )}
-                              </div>
-                              {cfgUrl ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 relative z-[var(--z-popover-hover)]"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        openCenteredPopup(
-                                          cfgUrl,
-                                          { name: "github-config" },
-                                          handlePopupClosedRefetch
-                                        );
-                                      }}
-                                    >
-                                      <Settings className="w-3 h-3 text-neutral-600 dark:text-neutral-300" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    Add Repos
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : null}
-                            </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
-                    ) : connectionSearch.trim() ? (
-                      <div className="px-3 py-2 text-sm text-neutral-500">
-                        No connections match your search
-                      </div>
-                    ) : null}
-                    {installNewUrl ? (
-                      <>
-                        <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
-                        <CommandGroup forceMount>
-                          <CommandItem
-                            value="add-github-account"
-                            forceMount
-                            onSelect={() => {
-                              void handleInstallApp();
-                              setConnectionDropdownOpen(false);
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                            <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-                            <span>Install GitHub App</span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    <CommandEmpty>
-                      <div className="px-3 py-2 text-sm text-neutral-500">
-                        No connections yet
-                      </div>
-                    </CommandEmpty>
-                    {installNewUrl ? (
-                      <>
-                        <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
-                        <CommandGroup forceMount>
-                          <CommandItem
-                            value="add-github-account"
-                            forceMount
-                            onSelect={() => {
-                              void handleInstallApp();
-                              setConnectionDropdownOpen(false);
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                            <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-                            <span>Install GitHub App</span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </>
-                    ) : null}
-                  </>
-                )}
-              </CommandList>
-            </Command>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+  // Expose the install handler to parent component
+  // Note: We use the functional update form (() => handler) because onInstallHandlerReady
+  // is a setState function. If we pass a function directly, React will CALL it thinking
+  // it's a state updater. Wrapping in () => handler ensures the handler itself is stored.
+  useEffect(() => {
+    if (installNewUrl) {
+      const handler = () => {
+        void handleInstallApp();
+      };
+      onInstallHandlerReady(() => handler);
+    } else {
+      onInstallHandlerReady(() => null);
+    }
+  }, [handleInstallApp, installNewUrl, onInstallHandlerReady]);
 
-    </div>
-  );
+  // This component now only provides data/context without rendering any UI
+  return null;
+}
+
+// Helper to parse GitHub repo URL or owner/repo format
+function parseGitHubRepo(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Handle owner/repo format directly
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Handle GitHub URLs
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname === "github.com" || url.hostname === "www.github.com") {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length >= 2) {
+        // Remove .git suffix if present
+        const repoName = parts[1].replace(/\.git$/, "");
+        return `${parts[0]}/${repoName}`;
+      }
+    }
+  } catch {
+    // Not a valid URL, ignore
+  }
+
+  return null;
 }
 
 function RepositoryListSection({
   teamSlugOrId,
-  installationId,
+  installationId: _installationId,
   selectedRepos,
   onToggleRepo,
+  onAddRepo,
   hasConnections,
+  onInstallGitHubApp,
 }: RepositoryListSectionProps) {
   const [search, setSearch] = useState("");
-  const debouncedSearch = useDebouncedValue(search, 300);
   const deferredSearch = useDeferredValue(search);
 
-  const githubReposQuery = useRQ({
-    ...getApiIntegrationsGithubReposOptions({
-      query: {
-        team: teamSlugOrId,
-        installationId: installationId ?? undefined,
-        search: debouncedSearch.trim() || undefined,
-      },
-    }),
-    enabled: installationId != null,
-  });
+  // Use Convex to fetch synced repos (same as dashboard) for consistent experience
+  const allReposQuery = useQuery(api.github.getAllRepos, { teamSlugOrId });
 
   const filteredRepos = useMemo(() => {
-    const repos = githubReposQuery.data?.repos ?? [];
+    const repos = allReposQuery ?? [];
     const q = deferredSearch.trim().toLowerCase();
+    // Map to the expected format and add timestamp for sorting
     const withTs = repos.map((r) => ({
-      ...r,
-      _ts: Date.parse(r.pushed_at ?? r.updated_at ?? "") || 0,
+      name: r.name,
+      full_name: r.fullName,
+      private: r.visibility === "private",
+      updated_at: r.lastSyncedAt ? new Date(r.lastSyncedAt).toISOString() : null,
+      pushed_at: r.lastPushedAt ? new Date(r.lastPushedAt).toISOString() : null,
+      _ts: r.lastPushedAt ?? r.lastSyncedAt ?? 0,
     }));
     let list = withTs.sort((a, b) => b._ts - a._ts);
     if (q) {
@@ -810,35 +743,29 @@ function RepositoryListSection({
       );
     }
     return list;
-  }, [deferredSearch, githubReposQuery.data]);
+  }, [deferredSearch, allReposQuery]);
 
-  const isSearchStale = search.trim() !== debouncedSearch.trim();
-  const showReposLoading =
-    !!installationId &&
-    (githubReposQuery.isPending ||
-      isSearchStale ||
-      (githubReposQuery.isFetching && filteredRepos.length === 0));
-  const showSpinner = isSearchStale || githubReposQuery.isFetching;
+  const showReposLoading = allReposQuery === undefined && hasConnections;
+  const showSpinner = false; // No need for spinner with Convex reactive queries
   const selectedSet = useMemo(() => new Set(selectedRepos), [selectedRepos]);
 
-  if (!hasConnections) {
-    return (
-      <div className="rounded-md border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 p-4 text-sm text-neutral-600 dark:text-neutral-300">
-        Connect your Git provider above to browse repositories.
-      </div>
-    );
-  }
-
-  if (installationId == null) {
-    return (
-      <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-4 text-sm text-neutral-600 dark:text-neutral-300">
-        Select an organization to see its repositories.
-      </div>
-    );
-  }
+  // Handle Enter key to add repo from URL/owner-repo format
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" && search.trim()) {
+        e.preventDefault();
+        const parsed = parseGitHubRepo(search);
+        if (parsed) {
+          onAddRepo(parsed);
+          setSearch("");
+        }
+      }
+    },
+    [search, onAddRepo]
+  );
 
   return (
-    <div className="space-y-2 mt-4">
+    <div className="space-y-2">
       <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
         Repositories
       </label>
@@ -847,7 +774,8 @@ function RepositoryListSection({
           type="text"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search recent repositories"
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search repositories or paste a GitHub URL..."
           aria-busy={showSpinner}
           className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 pr-8 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
         />
@@ -857,80 +785,92 @@ function RepositoryListSection({
       </div>
 
       <div className="mt-2 rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden">
-        {showReposLoading ? (
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
-            {[...Array(5)].map((_, index) => (
-              <div
-                key={index}
-                className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950"
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Skeleton className="h-4 w-4 rounded-sm" />
-                  <Skeleton className="h-4 w-56 rounded" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Skeleton className="h-3 w-16 rounded-full" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : filteredRepos.length > 0 ? (
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
-            {filteredRepos.map((repo) => {
-              const isSelected = selectedSet.has(repo.full_name);
-              const last = repo.pushed_at ?? repo.updated_at ?? null;
-              const when = last ? formatTimeAgo(last) : "";
-              return (
+        {/* Repository list */}
+        <div className="max-h-[180px] overflow-y-auto">
+          {showReposLoading ? (
+            <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
+              {[...Array(4)].map((_, index) => (
                 <div
-                  key={repo.full_name}
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => onToggleRepo(repo.full_name)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onToggleRepo(repo.full_name);
-                    }
-                  }}
-                  tabIndex={0}
-                  className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950 cursor-default select-none outline-none"
+                  key={index}
+                  className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950"
                 >
-                  <div className="text-sm flex items-center gap-2 min-w-0 flex-1">
-                    <div
-                      className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${
-                        isSelected
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <Skeleton className="h-4 w-4 rounded-sm" />
+                    <Skeleton className="h-4 w-56 rounded" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-3 w-16 rounded-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredRepos.length > 0 ? (
+            <div className="divide-y divide-neutral-200 dark:divide-neutral-900">
+              {filteredRepos.map((repo) => {
+                const isSelected = selectedSet.has(repo.full_name);
+                const last = repo.pushed_at ?? repo.updated_at ?? null;
+                const when = last ? formatTimeAgo(last) : "";
+                return (
+                  <div
+                    key={repo.full_name}
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => onToggleRepo(repo.full_name)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onToggleRepo(repo.full_name);
+                      }
+                    }}
+                    tabIndex={0}
+                    className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950 cursor-default select-none outline-none"
+                  >
+                    <div className="text-sm flex items-center gap-2 min-w-0 flex-1">
+                      <div
+                        className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${isSelected
                           ? "border-neutral-700 bg-neutral-800"
                           : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
-                      }`}
-                    >
-                      <Check
-                        className={`w-3 h-3 text-white transition-opacity ${
-                          isSelected ? "opacity-100" : "opacity-0"
-                        }`}
-                      />
+                          }`}
+                      >
+                        <Check
+                          className={`w-3 h-3 text-white transition-opacity ${isSelected ? "opacity-100" : "opacity-0"
+                            }`}
+                        />
+                      </div>
+                      <GitHubIcon className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+                      <span className="truncate">{repo.full_name}</span>
                     </div>
-                    <GitHubIcon className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
-                    <span className="truncate">{repo.full_name}</span>
+                    {when ? (
+                      <span className="ml-3 text-[10px] text-neutral-500 dark:text-neutral-500">
+                        {when}
+                      </span>
+                    ) : null}
                   </div>
-                  {when ? (
-                    <span className="ml-3 text-[10px] text-neutral-500 dark:text-neutral-500">
-                      {when}
-                    </span>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="px-3 py-10 h-[180px] text-sm text-neutral-500 dark:text-neutral-400 bg-white dark:bg-neutral-950 flex flex-col items-center justify-center text-center gap-2">
-            {search ? (
-              <div>No recent repositories match your search.</div>
-            ) : (
-              <div>No recent repositories found for this connection.</div>
-            )}
-            <div>Use the connection menu above to refresh GitHub access.</div>
-          </div>
-        )}
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-3 py-6 text-sm text-neutral-500 dark:text-neutral-400 bg-white dark:bg-neutral-950 text-center">
+              {search ? (
+                <span>No repositories match your search.</span>
+              ) : hasConnections ? (
+                <span>No repositories found.</span>
+              ) : (
+                <span>No GitHub connection yet.</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Connect GitHub account link */}
+        <button
+          type="button"
+          onClick={onInstallGitHubApp}
+          className="w-full px-3 py-2 flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 transition-colors"
+        >
+          <GitHubIcon className="h-3.5 w-3.5" />
+          <span>Connect another GitHub account</span>
+        </button>
       </div>
     </div>
   );

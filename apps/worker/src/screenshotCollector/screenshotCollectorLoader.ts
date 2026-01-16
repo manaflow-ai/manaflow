@@ -30,6 +30,7 @@ export type CaptureScreenshotsOptions = {
   pathToClaudeCodeExecutable?: string;
   installCommand?: string;
   devCommand?: string;
+  convexSiteUrl?: string;
 } & ({ auth: { taskRunJwt: string } } | { auth: { anthropicApiKey: string } });
 
 export interface ScreenshotCollectorModule {
@@ -40,14 +41,15 @@ export interface ScreenshotCollectorModule {
 
 /**
  * Determines if we're running in staging mode.
- * Defaults to true in development (NODE_ENV !== "production") unless explicitly set.
+ * Defaults to false (production) unless explicitly set via CMUX_IS_STAGING=true.
+ *
+ * Note: We default to production because:
+ * 1. Morph sandboxes don't have NODE_ENV=production set
+ * 2. Production Convex only has production releases (isStaging=false)
+ * 3. Staging should be an explicit opt-in, not a default
  */
 export function isStaging(): boolean {
-  if (process.env.CMUX_IS_STAGING !== undefined) {
-    return process.env.CMUX_IS_STAGING === "true";
-  }
-  // Default to staging in development
-  return process.env.NODE_ENV !== "production";
+  return process.env.CMUX_IS_STAGING === "true";
 }
 
 /**

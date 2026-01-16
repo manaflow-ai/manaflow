@@ -1,12 +1,29 @@
-import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
+import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
+import type { DiffViewerControls, StreamFileState, StreamFileStatus } from "@/components/heatmap-diff-viewer";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { Dropdown } from "@/components/ui/dropdown";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import type { ReviewHeatmapLine } from "@/lib/heatmap";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  normalizeHeatmapColors,
+  normalizeHeatmapModel,
+  normalizeTooltipLanguage,
+  type HeatmapModelOptionValue,
+  type TooltipLanguageValue,
+} from "@/lib/heatmap-settings";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
+import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
-import { useQuery as useConvexQuery } from "convex/react";
-import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
+import { ExternalLink, Flame, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
 import clsx from "clsx";
@@ -14,11 +31,111 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import z from "zod";
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 const PR_SYNC_GRACE_MS = 1500;
 const PR_FINAL_NOT_FOUND_DELAY_MS = 10000;
+
+const workspaceSettingsSchema = z
+  .object({
+    heatmapThreshold: z.number().optional(),
+    heatmapModel: z.string().optional(),
+    heatmapTooltipLanguage: z.string().optional(),
+    heatmapColors: z
+      .object({
+        line: z.object({ start: z.string(), end: z.string() }),
+        token: z.object({ start: z.string(), end: z.string() }),
+      })
+      .optional(),
+  })
+  .nullish();
+
+const DIFF_HEADER_PREFIXES = [
+  "diff --git ",
+  "index ",
+  "--- ",
+  "+++ ",
+  "new file mode ",
+  "deleted file mode ",
+  "similarity index ",
+  "rename from ",
+  "rename to ",
+  "old mode ",
+  "new mode ",
+  "copy from ",
+  "copy to ",
+];
+
+function stripDiffHeaders(diffText: string): string {
+  const lines = diffText.split("\n");
+  const filtered = lines.filter(
+    (line) =>
+      !DIFF_HEADER_PREFIXES.some((prefix) => line.startsWith(prefix))
+  );
+  return filtered.join("\n").trimEnd();
+}
+
+function buildPatchFromContent(entry: ReplaceDiffEntry): string {
+  const oldContent = entry.oldContent ?? "";
+  const newContent = entry.newContent ?? "";
+
+  if (!oldContent && !newContent) {
+    return "";
+  }
+
+  const oldLines = oldContent ? oldContent.split(/\r?\n/) : [];
+  const newLines = newContent ? newContent.split(/\r?\n/) : [];
+
+  if (oldLines.length === 1 && oldLines[0] === "") {
+    oldLines.length = 0;
+  }
+  if (newLines.length === 1 && newLines[0] === "") {
+    newLines.length = 0;
+  }
+
+  const hunks: string[] = [];
+
+  if (entry.status === "added" || oldLines.length === 0) {
+    if (newLines.length > 0) {
+      hunks.push(`@@ -0,0 +1,${newLines.length} @@`);
+      for (const line of newLines) {
+        hunks.push(`+${line}`);
+      }
+    }
+  } else if (entry.status === "deleted" || newLines.length === 0) {
+    if (oldLines.length > 0) {
+      hunks.push(`@@ -1,${oldLines.length} +0,0 @@`);
+      for (const line of oldLines) {
+        hunks.push(`-${line}`);
+      }
+    }
+  } else {
+    hunks.push(`@@ -1,${oldLines.length} +1,${newLines.length} @@`);
+    for (const line of oldLines) {
+      hunks.push(`-${line}`);
+    }
+    for (const line of newLines) {
+      hunks.push(`+${line}`);
+    }
+  }
+
+  return hunks.join("\n");
+}
+
+function convertDiffsToFileDiffs(
+  diffs: ReplaceDiffEntry[]
+): Array<{ filePath: string; diffText: string }> {
+  return diffs
+    .filter((entry) => !entry.isBinary)
+    .map((entry) => {
+      const rawPatch = entry.patch ?? buildPatchFromContent(entry);
+      const diffText = stripDiffHeaders(rawPatch);
+      return { filePath: entry.filePath, diffText };
+    })
+    .filter((entry) => entry.diffText.length > 0);
+}
 
 type PullRequestDetailViewProps = {
   teamSlugOrId: string;
@@ -27,11 +144,7 @@ type PullRequestDetailViewProps = {
   number: string;
 };
 
-type DiffControls = {
-  expandAll: () => void;
-  collapseAll: () => void;
-  totalAdditions: number;
-  totalDeletions: number;
+type DiffControls = DiffViewerControls & {
   expandChecks?: () => void;
   collapseChecks?: () => void;
 };
@@ -180,18 +293,441 @@ export function PullRequestDetailView({
     setChecksExpandedOverride(!checksExpanded);
   };
 
-  const expandAllChecks = () => setChecksExpandedOverride(true);
-  const collapseAllChecks = () => setChecksExpandedOverride(false);
+  const expandAllChecks = useCallback(() => setChecksExpandedOverride(true), []);
+  const collapseAllChecks = useCallback(() => setChecksExpandedOverride(false), []);
 
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
 
-  const handleDiffControlsChange = (controls: DiffControls | null) => {
+  const handleDiffControlsChange = useCallback((controls: DiffViewerControls | null) => {
     setDiffControls(controls ? {
       ...controls,
       expandChecks: expandAllChecks,
       collapseChecks: collapseAllChecks,
     } : null);
-  };
+  }, [expandAllChecks, collapseAllChecks]);
+
+  const [isAiReviewActive, setIsAiReviewActive] = useState(false);
+  const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
+
+  const handleToggleAiReview = useCallback(() => {
+    setIsAiReviewActive((prev) => {
+      const next = !prev;
+      if (next && !hasVisitedAiReview) {
+        setHasVisitedAiReview(true);
+      }
+      return next;
+    });
+  }, [hasVisitedAiReview]);
+
+  // Git diff query for heatmap streaming review
+  const baseRef = currentPR ? normalizeGitRef(currentPR.baseRef) : null;
+  const headRef = currentPR ? normalizeGitRef(currentPR.headRef) : null;
+  const diffQuery = useRQ({
+    ...gitDiffQueryOptions({
+      repoFullName: currentPR?.repoFullName ?? "",
+      baseRef: baseRef ?? "",
+      headRef: headRef ?? "",
+    }),
+    enabled: Boolean(currentPR?.repoFullName && baseRef && headRef),
+  });
+
+  const fileDiffsForReview = useMemo(() => {
+    if (!diffQuery.data) {
+      return null;
+    }
+    return convertDiffsToFileDiffs(diffQuery.data);
+  }, [diffQuery.data]);
+
+  // Heatmap settings state
+  const workspaceSettingsData = useConvexQuery(api.workspaceSettings.get, { teamSlugOrId });
+  const workspaceSettings = useMemo(() => {
+    const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsData);
+    return parsed.success ? parsed.data ?? null : null;
+  }, [workspaceSettingsData]);
+  const updateWorkspaceSettings = useConvexMutation(api.workspaceSettings.update);
+
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
+    normalizeHeatmapColors(undefined)
+  );
+  const [heatmapModel, setHeatmapModel] = useState<HeatmapModelOptionValue>(
+    DEFAULT_HEATMAP_MODEL
+  );
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<TooltipLanguageValue>(DEFAULT_TOOLTIP_LANGUAGE);
+
+  useEffect(() => {
+    if (!workspaceSettings) {
+      return;
+    }
+    setHeatmapThreshold(workspaceSettings.heatmapThreshold ?? 0);
+    setHeatmapColors(normalizeHeatmapColors(workspaceSettings.heatmapColors));
+    setHeatmapModel(normalizeHeatmapModel(workspaceSettings.heatmapModel ?? null));
+    setHeatmapTooltipLanguage(
+      normalizeTooltipLanguage(workspaceSettings.heatmapTooltipLanguage ?? null)
+    );
+  }, [workspaceSettings]);
+
+  const handleHeatmapThresholdChange = useCallback(
+    (next: number) => {
+      if (next === heatmapThreshold) {
+        return;
+      }
+      setHeatmapThreshold(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapThreshold: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap threshold:", error);
+      });
+    },
+    [heatmapThreshold, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapColorsChange = useCallback(
+    (next: HeatmapColorSettings) => {
+      setHeatmapColors(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapColors: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap colors:", error);
+      });
+    },
+    [teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapModelChange = useCallback(
+    (next: HeatmapModelOptionValue) => {
+      if (next === heatmapModel) {
+        return;
+      }
+      setHeatmapModel(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapModel: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap model:", error);
+      });
+    },
+    [heatmapModel, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapTooltipLanguageChange = useCallback(
+    (next: TooltipLanguageValue) => {
+      if (next === heatmapTooltipLanguage) {
+        return;
+      }
+      setHeatmapTooltipLanguage(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapTooltipLanguage: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap tooltip language:", error);
+      });
+    },
+    [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  // Streaming heatmap review state
+  const [streamStateByFile, setStreamStateByFile] = useState<Map<string, StreamFileState>>(
+    () => new Map()
+  );
+  const activeReviewControllerRef = useRef<AbortController | null>(null);
+  const activeReviewKeyRef = useRef<string | null>(null);
+
+  const diffLabel = useMemo(() => {
+    if (currentPR) {
+      return `${currentPR.repoFullName}#${currentPR.number}`;
+    }
+    return `pr:${owner}/${repo}#${number}`;
+  }, [currentPR, owner, repo, number]);
+
+  const startSimpleReview = useCallback(
+    async ({
+      fileDiffs,
+      model,
+      language,
+      requestKey,
+      prDiffLabel,
+    }: {
+      fileDiffs: Array<{ filePath: string; diffText: string }>;
+      model: HeatmapModelOptionValue;
+      language: TooltipLanguageValue;
+      requestKey: string;
+      prDiffLabel: string;
+    }) => {
+      if (fileDiffs.length === 0) {
+        return;
+      }
+
+      const existingController = activeReviewControllerRef.current;
+      const hasActiveMatchingRequest =
+        existingController &&
+        activeReviewKeyRef.current === requestKey &&
+        !existingController.signal.aborted;
+      if (hasActiveMatchingRequest) {
+        return;
+      }
+
+      existingController?.abort();
+      const controller = new AbortController();
+      activeReviewControllerRef.current = controller;
+      activeReviewKeyRef.current = requestKey;
+
+      setStreamStateByFile(new Map());
+
+      const user = await cachedGetUser(stackClientApp);
+      const authHeaders = user ? await user.getAuthHeaders() : undefined;
+      const headers = new Headers(authHeaders);
+      headers.set("Content-Type", "application/json");
+
+      const url = new URL("/api/code-review/simple", WWW_ORIGIN);
+      url.searchParams.set("model", model);
+      url.searchParams.set("lang", language);
+
+      try {
+        const response = await fetch(url.toString(), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ fileDiffs, diffLabel: prDiffLabel }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          console.error(
+            "[simple-review][pr][frontend] Failed to start stream",
+            response.status
+          );
+          return;
+        }
+
+        const body = response.body;
+        if (!body) {
+          console.error(
+            "[simple-review][pr][frontend] Response body missing for stream"
+          );
+          return;
+        }
+
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            separatorIndex = buffer.indexOf("\n\n");
+
+            const lines = rawEvent.split("\n");
+            for (const line of lines) {
+              if (!line.startsWith("data:")) {
+                continue;
+              }
+              const data = line.slice(5).trim();
+              if (data.length === 0) {
+                continue;
+              }
+              try {
+                const payload = JSON.parse(data) as Record<string, unknown>;
+                const type =
+                  typeof payload.type === "string" ? payload.type : "";
+                const filePath =
+                  typeof payload.filePath === "string"
+                    ? payload.filePath
+                    : null;
+
+                switch (type) {
+                  case "file":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "skip":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "skipped",
+                          skipReason:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "line":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        const newLine: ReviewHeatmapLine = {
+                          lineNumber:
+                            typeof payload.newLineNumber === "number"
+                              ? payload.newLineNumber
+                              : null,
+                          lineText:
+                            typeof payload.codeLine === "string"
+                              ? payload.codeLine
+                              : null,
+                          score:
+                            typeof payload.scoreNormalized === "number"
+                              ? payload.scoreNormalized
+                              : null,
+                          reason:
+                            typeof payload.shouldReviewWhy === "string"
+                              ? payload.shouldReviewWhy
+                              : null,
+                          mostImportantWord:
+                            typeof payload.mostImportantWord === "string"
+                              ? payload.mostImportantWord
+                              : null,
+                        };
+                        next.set(filePath, {
+                          lines: [...(current?.lines ?? []), newLine],
+                          status: current?.status ?? "pending",
+                          skipReason: current?.skipReason ?? null,
+                          summary: current?.summary ?? null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "file-complete":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        const rawStatus = payload.status;
+                        let status: StreamFileStatus = "success";
+                        if (rawStatus === "skipped") {
+                          status = "skipped";
+                        } else if (rawStatus === "error") {
+                          status = "error";
+                        }
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status,
+                          skipReason: current?.skipReason ?? null,
+                          summary:
+                            typeof payload.summary === "string"
+                              ? payload.summary
+                              : null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  default:
+                    break;
+                }
+              } catch (parseError) {
+                console.error(
+                  "[simple-review][pr][frontend] Failed to parse SSE payload",
+                  parseError
+                );
+              }
+            }
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        const isAbortError =
+          message.includes("Stream aborted") || message.includes("aborted");
+        if (!isAbortError) {
+          console.error("[simple-review][pr][frontend] Stream failed", {
+            prDiffLabel,
+            message,
+            error,
+          });
+        }
+      }
+    },
+    []
+  );
+
+  // Clean up streaming request on unmount
+  useEffect(() => {
+    return () => {
+      activeReviewControllerRef.current?.abort();
+    };
+  }, []);
+
+  // Auto-trigger the simple review when diff data and settings are ready
+  // Only trigger if there's no cached fileOutputs (KV cache hit)
+  const hasFileOutputs = fileOutputs && fileOutputs.length > 0;
+  useEffect(() => {
+    if (!hasVisitedAiReview) {
+      return;
+    }
+    if (!currentPR?.repoFullName || !baseRef || !headRef) {
+      return;
+    }
+    if (diffQuery.isLoading || workspaceSettingsData === undefined) {
+      return;
+    }
+    if (!fileDiffsForReview || fileDiffsForReview.length === 0) {
+      return;
+    }
+    // Skip streaming if we already have cached results
+    if (hasFileOutputs) {
+      return;
+    }
+
+    const diffKey = [
+      currentPR.repoFullName,
+      baseRef,
+      headRef,
+      String(diffQuery.dataUpdatedAt),
+    ].join("|");
+    const settingsKey = `${heatmapModel ?? "default"}|${heatmapTooltipLanguage ?? "default"}`;
+    const requestKey = `${diffKey}|${settingsKey}`;
+
+    void startSimpleReview({
+      fileDiffs: fileDiffsForReview,
+      model: heatmapModel,
+      language: heatmapTooltipLanguage,
+      requestKey,
+      prDiffLabel: diffLabel,
+    });
+  }, [
+    baseRef,
+    currentPR?.repoFullName,
+    diffLabel,
+    diffQuery.dataUpdatedAt,
+    diffQuery.isLoading,
+    fileDiffsForReview,
+    hasFileOutputs,
+    headRef,
+    heatmapModel,
+    heatmapTooltipLanguage,
+    hasVisitedAiReview,
+    startSimpleReview,
+    workspaceSettingsData,
+  ]);
 
   const [shouldShowPrMissingState, setShouldShowPrMissingState] = useState(false);
   const [shouldShowDefinitiveMissingState, setShouldShowDefinitiveMissingState] = useState(false);
@@ -339,10 +875,6 @@ export function PullRequestDetailView({
     );
   }
 
-  const gitDiffViewerClassNames = {
-    fileDiffRow: { button: "top-[56px]" },
-  };
-
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <div className="flex-1 min-h-0">
@@ -410,6 +942,20 @@ export function PullRequestDetailView({
                     Open on GitHub
                   </a>
                 ) : null}
+                <button
+                  onClick={handleToggleAiReview}
+                  className={clsx(
+                    "p-1 select-none transition-colors",
+                    isAiReviewActive
+                      ? "text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300"
+                      : "text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
+                  )}
+                  aria-label={isAiReviewActive ? "Switch to diff view" : "Switch to AI review"}
+                  aria-pressed={isAiReviewActive}
+                  title={isAiReviewActive ? "Viewing AI Review" : "View AI Review"}
+                >
+                  <Flame className="w-3.5 h-3.5" />
+                </button>
                 <Dropdown.Root>
                   <Dropdown.Trigger
                     className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none"
@@ -491,7 +1037,10 @@ export function PullRequestDetailView({
               </div>
             </div>
           </div>
-          <div className="bg-white dark:bg-neutral-950">
+          <div
+            className="bg-white dark:bg-neutral-950"
+            style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
+          >
             <Suspense fallback={null}>
               <WorkflowRunsSection
                 allRuns={workflowData.allRuns}
@@ -500,31 +1049,49 @@ export function PullRequestDetailView({
                 onToggle={handleToggleChecks}
               />
             </Suspense>
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
-                    Loading diffs...
+            <div className="mt-6">
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none py-4">
+                      Loading diffs...
+                    </div>
                   </div>
-                </div>
-              }
-            >
-              {currentPR?.repoFullName &&
-                currentPR.baseRef &&
-                currentPR.headRef ? (
-                <RunDiffSection
-                  repoFullName={currentPR.repoFullName}
-                  ref1={normalizeGitRef(currentPR.baseRef)}
-                  ref2={normalizeGitRef(currentPR.headRef)}
-                  onControlsChange={handleDiffControlsChange}
-                  classNames={gitDiffViewerClassNames}
-                />
-              ) : (
-                <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
-                  Missing repo or branches to show diff.
-                </div>
-              )}
-            </Suspense>
+                }
+              >
+                {currentPR?.repoFullName &&
+                  currentPR.baseRef &&
+                  currentPR.headRef ? (
+                  isAiReviewActive ? (
+                    <RunDiffHeatmapReviewSection
+                      repoFullName={currentPR.repoFullName}
+                      ref1={normalizeGitRef(currentPR.baseRef)}
+                      ref2={normalizeGitRef(currentPR.headRef)}
+                      onControlsChange={handleDiffControlsChange}
+                      fileOutputs={fileOutputs ?? undefined}
+                      streamStateByFile={streamStateByFile}
+                      heatmapThreshold={heatmapThreshold}
+                      heatmapColors={heatmapColors}
+                      heatmapModel={heatmapModel}
+                      heatmapTooltipLanguage={heatmapTooltipLanguage}
+                      onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                      onHeatmapColorsChange={handleHeatmapColorsChange}
+                      onHeatmapModelChange={handleHeatmapModelChange}
+                      onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                    />
+                  ) : (
+                    <MonacoGitDiffViewer
+                      diffs={diffQuery.data ?? []}
+                      onControlsChange={handleDiffControlsChange}
+                    />
+                  )
+                ) : (
+                  <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
+                    Missing repo or branches to show diff.
+                  </div>
+                )}
+              </Suspense>
+            </div>
           </div>
         </div>
       </div>

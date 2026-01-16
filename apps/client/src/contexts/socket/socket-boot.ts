@@ -97,7 +97,7 @@ function ensureSocketListeners(state: GlobalSocketState) {
   // Detach from previous socket if changed
   if (state.listeningSocket && state.listeningSocket !== sock) {
     if (state.onConnect) {
-      state.listeningSocket.off("connect", state.onConnect as never);
+      state.listeningSocket.off("connect", state.onConnect);
     }
     state.listeningSocket = null;
     state.onConnect = undefined;
@@ -110,7 +110,7 @@ function ensureSocketListeners(state: GlobalSocketState) {
 
   if (!state.onConnect) {
     state.onConnect = () => resolveConnectedWaiters(state);
-    sock.on("connect", state.onConnect as never);
+    sock.on("connect", state.onConnect);
     state.listeningSocket = sock;
   }
 }

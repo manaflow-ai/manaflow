@@ -97,6 +97,7 @@ interface AttemptResumeOptions {
   authorizeInstance?: (
     instance: MorphInstance,
   ) => Promise<AuthorizationResult>;
+  onResumed?: (instanceId: string, instance: MorphInstance) => Promise<void>;
 }
 
 async function attemptResumeIfNeeded(
@@ -168,6 +169,15 @@ async function attemptResumeIfNeeded(
         instanceId: instanceInfo.instanceId,
         attempt,
       });
+      // Record the resume for activity tracking (used by cleanup cron)
+      if (options?.onResumed) {
+        try {
+          await options.onResumed(instanceInfo.instanceId, instance);
+        } catch (recordError) {
+          // Don't fail the resume if recording fails
+          console.error("[iframe-preflight] Failed to record resume activity:", recordError);
+        }
+      }
       return "resumed";
     } catch (error) {
       if (attempt >= MAX_RESUME_ATTEMPTS) {
@@ -443,6 +453,19 @@ iframePreflightRouter.openapi(
                 }
 
                 return { authorized: true };
+              },
+              onResumed: async (instanceId, instance) => {
+                // Record the resume for activity tracking (used by cleanup cron)
+                const metadata = instance.metadata;
+                const teamId = isRecord(metadata) && typeof metadata.teamId === "string"
+                  ? metadata.teamId
+                  : null;
+                if (teamId) {
+                  await convexClient.mutation(api.morphInstances.recordResume, {
+                    instanceId,
+                    teamSlugOrId: teamId,
+                  });
+                }
               },
             },
           );

@@ -87,6 +87,26 @@ interface ExecError extends Error {
 
 const isWindows = process.platform === "win32";
 
+function collectWorktreePaths(nodes: unknown): string[] {
+  const paths = new Set<string>();
+
+  const walk = (entries: unknown): void => {
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const worktreePath = Reflect.get(Object(entry), "worktreePath");
+      if (typeof worktreePath === "string" && worktreePath.trim().length > 0) {
+        paths.add(worktreePath);
+      }
+      const children = Reflect.get(Object(entry), "children");
+      walk(children);
+    }
+  };
+
+  walk(nodes);
+  return Array.from(paths);
+}
+
 function sanitizeShellPath(candidate: string | undefined | null): string | null {
   if (!candidate) {
     return null;
@@ -556,7 +576,7 @@ export function setupSocketHandlers(
           return;
         }
 
-        // For local mode, ensure Docker is running before attempting to spawn
+        // For local mode, ensure Docker is running and image is available before attempting to spawn
         if (!taskData.isCloudMode) {
           try {
             const { checkDockerStatus } = await import(
@@ -569,6 +589,22 @@ export function setupSocketHandlers(
                 error:
                   "Docker is not running. Please start Docker Desktop or switch to Cloud mode.",
               });
+              return;
+            }
+            // Check if the worker image is available
+            if (docker.workerImage && !docker.workerImage.isAvailable) {
+              const imageName = docker.workerImage.name;
+              if (docker.workerImage.isPulling) {
+                callback({
+                  taskId,
+                  error: `Docker image "${imageName}" is currently being pulled. Please wait for the pull to complete and try again.`,
+                });
+              } else {
+                callback({
+                  taskId,
+                  error: `Docker image "${imageName}" is not available. Please pull the image first using: docker pull ${imageName}`,
+                });
+              }
               return;
             }
           } catch (e) {
@@ -1888,25 +1924,36 @@ export function setupSocketHandlers(
           repoFullName?: string;
           branchOverride?: string;
         }): Promise<FileInfo[]> => {
+          // Use unauthenticated URL for path derivation (consistent folder names)
           const projectPaths = await getProjectPaths(targetRepoUrl, safeTeam);
 
           await fs.mkdir(projectPaths.projectPath, { recursive: true });
           await fs.mkdir(projectPaths.worktreesPath, { recursive: true });
 
+          // Inject GitHub OAuth token for private repo access
+          // Use authenticated URL for git operations, but store clean URL as remote
+          let authenticatedRepoUrl = targetRepoUrl;
+          const githubToken = await getGitHubOAuthToken();
+          if (githubToken && targetRepoUrl.startsWith("https://github.com/")) {
+            authenticatedRepoUrl = targetRepoUrl.replace(
+              "https://github.com/",
+              `https://x-access-token:${githubToken}@github.com/`
+            );
+          }
+
+          // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
+          // If branchOverride is undefined, ensureRepository auto-detects and fetches default branch
           await repoManager.ensureRepository(
-            targetRepoUrl,
-            projectPaths.originPath
+            authenticatedRepoUrl,
+            projectPaths.originPath,
+            branchOverride,
+            targetRepoUrl // clean URL for remote storage
           );
 
+          // Get the branch name for worktree path (either override or detected default)
           const baseBranch =
             branchOverride ||
             (await repoManager.getDefaultBranch(projectPaths.originPath));
-
-          await repoManager.ensureRepository(
-            targetRepoUrl,
-            projectPaths.originPath,
-            baseBranch
-          );
 
           const worktreeInfo = {
             ...projectPaths,
@@ -2430,6 +2477,129 @@ ${title}`;
       }
     });
 
+    socket.on("docker-pull-image", async (callback) => {
+      // In web mode, Docker operations are not supported
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        callback({
+          success: false,
+          error: "Docker operations are not available in the web version.",
+        });
+        return;
+      }
+
+      try {
+        const { checkDockerStatus } = await import(
+          "@cmux/shared/providers/common/check-docker"
+        );
+        const docker = await checkDockerStatus();
+
+        if (!docker.isRunning) {
+          callback({
+            success: false,
+            error: "Docker is not running. Please start Docker Desktop first.",
+          });
+          return;
+        }
+
+        const imageName =
+          docker.workerImage?.name ||
+          process.env.WORKER_IMAGE_NAME ||
+          "docker.io/manaflow/cmux:latest";
+
+        // Check if already pulling
+        if (docker.workerImage?.isPulling) {
+          callback({
+            success: false,
+            imageName,
+            error: `Docker image "${imageName}" is already being pulled.`,
+          });
+          return;
+        }
+
+        // Check if already available
+        if (docker.workerImage?.isAvailable) {
+          callback({
+            success: true,
+            imageName,
+          });
+          return;
+        }
+
+        serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+
+        // Use dockerode to pull the image
+        const dockerClient = DockerVSCodeInstance.getDocker();
+
+        const stream = await dockerClient.pull(imageName);
+
+        // Wait for the pull to complete
+        await new Promise<void>((resolve, reject) => {
+          dockerClient.modem.followProgress(
+            stream,
+            (err: Error | null) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve();
+              }
+            },
+            (event: { status: string; progress?: string; id?: string }) => {
+              if (event.status) {
+                serverLogger.info(
+                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+                );
+              }
+            }
+          );
+        });
+
+        serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
+        callback({
+          success: true,
+          imageName,
+        });
+      } catch (error) {
+        serverLogger.error("Error pulling Docker image:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        // Provide user-friendly error messages
+        let userFriendlyError: string;
+        if (
+          errorMessage.includes("timeout") ||
+          errorMessage.includes("stalled")
+        ) {
+          userFriendlyError =
+            "Docker image pull timed out. This may be due to slow network or Docker registry issues.";
+        } else if (
+          errorMessage.includes("not found") ||
+          errorMessage.includes("manifest unknown")
+        ) {
+          userFriendlyError =
+            "Docker image not found. Please check if the image name is correct.";
+        } else if (
+          errorMessage.includes("unauthorized") ||
+          errorMessage.includes("authentication")
+        ) {
+          userFriendlyError =
+            "Docker authentication failed. Please ensure you have access to the Docker registry.";
+        } else if (
+          errorMessage.includes("ECONNREFUSED") ||
+          errorMessage.includes("connection refused")
+        ) {
+          userFriendlyError =
+            "Cannot connect to Docker daemon. Please ensure Docker is running.";
+        } else {
+          userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
+        }
+
+        callback({
+          success: false,
+          error: userFriendlyError,
+        });
+      }
+    });
+
     socket.on("archive-task", async (data, callback) => {
       try {
         const { taskId } = ArchiveTaskSchema.parse(data);
@@ -2443,6 +2613,27 @@ ${title}`;
 
         // Stop/pause all containers via helper (handles querying + logging)
         const results = await stopContainersForRuns(taskId, safeTeam);
+
+        try {
+          const runsTree = await getConvex().query(api.taskRuns.getByTask, {
+            teamSlugOrId: safeTeam,
+            taskId,
+          });
+          const worktreePaths = collectWorktreePaths(runsTree);
+          if (worktreePaths.length > 0) {
+            for (const worktreePath of worktreePaths) {
+              gitDiffManager.unwatchWorkspace(worktreePath);
+            }
+            serverLogger.info(
+              `Stopped git diff watchers for archived task ${taskId}: ${worktreePaths.join(", ")}`
+            );
+          }
+        } catch (error) {
+          serverLogger.error(
+            `Failed to clean up git diff watchers for archived task ${taskId}:`,
+            error
+          );
+        }
 
         // Log summary
         const successful = results.filter((r) => r.success).length;

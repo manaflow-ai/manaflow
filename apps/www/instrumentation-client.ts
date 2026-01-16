@@ -3,6 +3,7 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
+import type { Integration } from "@sentry/core";
 import { SENTRY_RELEASE } from "@/lib/sentry-release";
 import posthog from "posthog-js";
 
@@ -21,7 +22,7 @@ if (!isDev) {
     // Enable sending user PII (Personally Identifiable Information)
     // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
     sendDefaultPii: true,
-    integrations: (integrations) => [
+    integrations: (integrations: Integration[]) => [
       ...integrations,
       Sentry.thirdPartyErrorFilterIntegration({
         // Specify the application keys that you specified in the Sentry bundler plugin

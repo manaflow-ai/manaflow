@@ -2,10 +2,14 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { useMutation } from "convex/react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
 export function useArchiveTask(teamSlugOrId: string) {
   const { socket } = useSocket();
+  const [archivingTaskIds, setArchivingTaskIds] = useState<Set<string>>(
+    new Set()
+  );
 
   type TasksGetArgs = {
     teamSlugOrId: string;
@@ -111,49 +115,82 @@ export function useArchiveTask(teamSlugOrId: string) {
     }
   });
 
-  const archiveWithUndo = (task: Doc<"tasks">) => {
-    archiveMutation({ teamSlugOrId, id: task._id });
+  const archiveWithUndo = useCallback(
+    async (task: Doc<"tasks">) => {
+      const taskId = task._id;
+      setArchivingTaskIds((prev) => new Set(prev).add(taskId));
 
-    // Emit socket event to stop/pause containers
-    if (socket) {
-      socket.emit(
-        "archive-task",
-        { taskId: task._id },
-        (response: { success: boolean; error?: string }) => {
-          if (!response.success) {
-            console.error("Failed to stop containers:", response.error);
-          }
+      try {
+        await archiveMutation({ teamSlugOrId, id: taskId });
+
+        // Emit socket event to stop/pause containers
+        if (socket) {
+          socket.emit(
+            "archive-task",
+            { taskId },
+            (response: { success: boolean; error?: string }) => {
+              if (!response.success) {
+                console.error("Failed to stop containers:", response.error);
+              }
+            }
+          );
         }
-      );
-    }
 
-    toast("Task archived", {
-      action: {
-        label: "Undo",
-        onClick: () => unarchiveMutation({ teamSlugOrId, id: task._id }),
-      },
-    });
-  };
+        toast("Task archived", {
+          action: {
+            label: "Undo",
+            onClick: () => unarchiveMutation({ teamSlugOrId, id: taskId }),
+          },
+        });
+      } finally {
+        setArchivingTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(taskId);
+          return next;
+        });
+      }
+    },
+    [archiveMutation, socket, teamSlugOrId, unarchiveMutation]
+  );
 
-  const archive = (id: string) => {
-    archiveMutation({
-      teamSlugOrId,
-      id: id as Doc<"tasks">["_id"],
-    });
+  const archive = useCallback(
+    async (id: string) => {
+      const taskId = id as Doc<"tasks">["_id"];
+      setArchivingTaskIds((prev) => new Set(prev).add(id));
 
-    // Emit socket event to stop/pause containers
-    if (socket) {
-      socket.emit(
-        "archive-task",
-        { taskId: id as Doc<"tasks">["_id"] },
-        (response: { success: boolean; error?: string }) => {
-          if (!response.success) {
-            console.error("Failed to stop containers:", response.error);
-          }
+      try {
+        await archiveMutation({
+          teamSlugOrId,
+          id: taskId,
+        });
+
+        // Emit socket event to stop/pause containers
+        if (socket) {
+          socket.emit(
+            "archive-task",
+            { taskId },
+            (response: { success: boolean; error?: string }) => {
+              if (!response.success) {
+                console.error("Failed to stop containers:", response.error);
+              }
+            }
+          );
         }
-      );
-    }
-  };
+      } finally {
+        setArchivingTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [archiveMutation, socket, teamSlugOrId]
+  );
+
+  const isArchiving = useCallback(
+    (id: string) => archivingTaskIds.has(id),
+    [archivingTaskIds]
+  );
 
   return {
     archive,
@@ -163,5 +200,6 @@ export function useArchiveTask(teamSlugOrId: string) {
         id: id as Doc<"tasks">["_id"],
       }),
     archiveWithUndo,
+    isArchiving,
   };
 }

@@ -19,6 +19,8 @@ export interface VSCodeInstanceConfig {
   environmentId?: Id<"environments"> | string;
   // Optional: JWT token for crown workflow authentication
   taskRunJwt?: string;
+  // Optional: environment variables to pass to the container
+  envVars?: Record<string, string>;
 }
 
 export interface VSCodeInstanceInfo {

@@ -18,15 +18,9 @@
   "categories": [
     "Other"
   ],
-  "extensionDependencies": [
-    "vscode.git"
-  ],
   "activationEvents": [
-    "*",
     "onStartupFinished",
-    "onCommand:cmux.helloWorld",
-    "onCommand:cmux.run",
-    "onCommand:cmux.showOutput"
+    "onTerminalProfile:cmux.terminal"
   ],
   "main": "./out/extension.cjs",
   "contributes": {
@@ -46,8 +40,46 @@
       {
         "command": "cmux.git.openAllChangesAgainstBase",
         "title": "cmux: Open All Changes vs Base"
+      },
+      {
+        "command": "cmux.newTerminal",
+        "title": "cmux: New Terminal"
+      },
+      {
+        "command": "cmux.listSessions",
+        "title": "cmux: List PTY Sessions"
+      },
+      {
+        "command": "cmux.renameTerminal",
+        "title": "cmux: Rename Terminal"
       }
-    ]
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "cmux.terminal",
+          "title": "cmux"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "cmux",
+      "properties": {
+        "cmux.ptyServerUrl": {
+          "type": "string",
+          "default": "http://localhost:39383",
+          "description": "URL of the cmux-pty server inside the sandbox"
+        },
+        "cmux.defaultShell": {
+          "type": "string",
+          "default": "/bin/zsh",
+          "description": "Default shell for new terminals"
+        }
+      }
+    },
+    "configurationDefaults": {
+      "terminal.integrated.defaultProfile.linux": "cmux"
+    }
   },
   "scripts": {
     "vscode:prepublish": "bun run compile-bun",
@@ -59,7 +91,7 @@
     "lint": "eslint src",
     "test:todo": "echo 'TODO: enable VS Code tests later'",
     "package": "bunx @vscode/vsce package --allow-missing-repository --no-dependencies --allow-star-activation",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@cmux/shared": "workspace:*",

@@ -1,0 +1,13 @@
+[Unit]
+Description=Cmux IDE Service (proxy unit for @IDE_SERVICE@)
+BindsTo=@IDE_SERVICE@
+After=@IDE_SERVICE@
+PropagatesReloadTo=@IDE_SERVICE@
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=cmux.target

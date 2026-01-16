@@ -6,7 +6,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx tsgo --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
   "exports": {
@@ -82,9 +82,17 @@
       "import": "./src/node/convex-cache.ts",
       "types": "./src/node/convex-cache.ts"
     },
+    "./cmux-pty-client": {
+      "import": "./src/cmux-pty-client.ts",
+      "types": "./src/cmux-pty-client.ts"
+    },
     "./utils/format-env-vars-content": {
       "import": "./src/utils/format-env-vars-content.ts",
       "types": "./src/utils/format-env-vars-content.ts"
+    },
+    "./utils/anthropic": {
+      "import": "./src/utils/anthropic.ts",
+      "types": "./src/utils/anthropic.ts"
     },
     "./pull-request-state": {
       "import": "./src/pull-request-state.ts",
@@ -105,6 +113,14 @@
     "./components/vnc-viewer": {
       "import": "./src/components/vnc-viewer.tsx",
       "types": "./src/components/vnc-viewer.tsx"
+    },
+    "./components/environment": {
+      "import": "./src/components/environment/index.ts",
+      "types": "./src/components/environment/index.ts"
+    },
+    "./hooks/use-network": {
+      "import": "./src/hooks/use-network.ts",
+      "types": "./src/hooks/use-network.ts"
     }
   },
   "peerDependencies": {

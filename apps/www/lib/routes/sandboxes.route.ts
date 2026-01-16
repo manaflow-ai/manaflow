@@ -155,6 +155,72 @@ function getSandboxStartErrorMessage(error: unknown): string {
   return baseMessage;
 }
 
+/**
+ * Cmux instance metadata stored in Morph instance.metadata
+ */
+interface CmuxInstanceMetadata {
+  app?: string;
+  userId?: string;
+  teamId?: string;
+}
+
+/**
+ * Result of instance ownership verification
+ */
+type VerifyInstanceOwnershipResult =
+  | { authorized: true; instanceId: string }
+  | { authorized: false; status: 403 | 404; message: string };
+
+/**
+ * Verify that a user owns or has team access to a Morph instance.
+ * Checks instance metadata for cmux app prefix and user/team ownership.
+ */
+async function verifyInstanceOwnership(
+  morphClient: MorphCloudClient,
+  instanceId: string,
+  userId: string,
+  checkTeamMembership: () => Promise<{ teamId: string }[]>
+): Promise<VerifyInstanceOwnershipResult> {
+  let instance;
+  try {
+    instance = await morphClient.instances.get({ instanceId });
+  } catch {
+    return { authorized: false, status: 404, message: "Instance not found" };
+  }
+
+  const meta = instance.metadata as CmuxInstanceMetadata | undefined;
+
+  // Verify the instance belongs to cmux (accepts cmux, cmux-dev, cmux-preview, etc.)
+  if (!meta?.app?.startsWith("cmux")) {
+    return { authorized: false, status: 404, message: "Instance not found" };
+  }
+
+  // Check direct ownership
+  const isOwner = meta.userId === userId;
+  if (isOwner) {
+    return { authorized: true, instanceId };
+  }
+
+  // Check team membership if instance has a teamId
+  if (meta.teamId) {
+    try {
+      const memberships = await checkTeamMembership();
+      const isTeamMember = memberships.some((m) => m.teamId === meta.teamId);
+      if (isTeamMember) {
+        return { authorized: true, instanceId };
+      }
+    } catch {
+      // Failed to check team membership - continue to deny
+    }
+  }
+
+  return {
+    authorized: false,
+    status: 403,
+    message: "Forbidden - not authorized to access this instance",
+  };
+}
+
 export const sandboxesRouter = new OpenAPIHono();
 
 const StartSandboxBody = z
@@ -659,6 +725,127 @@ sandboxesRouter.openapi(
   },
 );
 
+// Run maintenance and dev scripts in a sandbox
+const RunScriptsBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    maintenanceScript: z.string().optional(),
+    devScript: z.string().optional(),
+  })
+  .openapi("RunScriptsBody");
+
+const RunScriptsResponse = z
+  .object({
+    started: z.literal(true),
+  })
+  .openapi("RunScriptsResponse");
+
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/run-scripts",
+    tags: ["Sandboxes"],
+    summary: "Run maintenance and dev scripts in a sandbox",
+    description:
+      "Runs maintenance and/or dev scripts in tmux sessions within the sandbox. " +
+      "This ensures scripts run in a managed way that can be properly cleaned up before snapshotting.",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: RunScriptsBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: RunScriptsResponse,
+          },
+        },
+        description: "Scripts started successfully",
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Sandbox not found" },
+      500: { description: "Failed to run scripts" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const { teamSlugOrId, maintenanceScript, devScript } = c.req.valid("json");
+
+    // Need at least one script to run
+    if (!maintenanceScript && !devScript) {
+      return c.json({ started: true as const });
+    }
+
+    try {
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId,
+      });
+
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances
+        .get({ instanceId: id })
+        .catch((error) => {
+          console.error("[sandboxes.run-scripts] Failed to load instance", error);
+          return null;
+        });
+
+      if (!instance) {
+        return c.text("Sandbox not found", 404);
+      }
+
+      const metadataTeamId = (
+        instance as unknown as {
+          metadata?: { teamId?: string };
+        }
+      ).metadata?.teamId;
+
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Allocate script identifiers for tracking
+      const scriptIdentifiers = allocateScriptIdentifiers();
+
+      // Run scripts in background (don't await)
+      (async () => {
+        await runMaintenanceAndDevScripts({
+          instance,
+          maintenanceScript: maintenanceScript || undefined,
+          devScript: devScript || undefined,
+          identifiers: scriptIdentifiers,
+          convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+          isCloudWorkspace: true,
+        });
+      })().catch((error) => {
+        console.error(
+          "[sandboxes.run-scripts] Background script execution failed:",
+          error,
+        );
+      });
+
+      return c.json({ started: true as const });
+    } catch (error) {
+      console.error(
+        "[sandboxes.run-scripts] Failed to run scripts",
+        error,
+      );
+      return c.text("Failed to run scripts", 500);
+    }
+  },
+);
+
 // Stop/pause a sandbox
 sandboxesRouter.openapi(
   createRoute({
@@ -1016,47 +1203,19 @@ sandboxesRouter.openapi(
 
         // If not found via task run, verify ownership via instance metadata
         if (!morphInstanceId) {
-          // Fetch instance to verify ownership
-          let instance;
-          try {
-            instance = await morphClient.instances.get({ instanceId: id });
-          } catch {
-            return c.text("Instance not found", 404);
-          }
-
-          const meta = instance.metadata as
-            | { app?: string; userId?: string; teamId?: string }
-            | undefined;
-
-          // Verify the instance belongs to cmux (accepts cmux, cmux-dev, cmux-preview, etc.)
-          if (!meta?.app?.startsWith("cmux")) {
-            return c.text("Instance not found", 404);
-          }
-
-          // Verify user ownership: either direct user match or team membership
-          const isOwner = meta.userId === user.id;
-          let isTeamMember = false;
-
-          if (meta.teamId && !isOwner) {
-            // Check if user is a member of the team that owns this instance
-            try {
-              const memberships = await convex.query(
-                api.teams.listTeamMemberships,
-                {},
-              );
-              isTeamMember = memberships.some(
-                (m) => m.team.teamId === meta.teamId,
-              );
-            } catch {
-              // Failed to check team membership
+          const result = await verifyInstanceOwnership(
+            morphClient,
+            id,
+            user.id,
+            async () => {
+              const memberships = await convex.query(api.teams.listTeamMemberships, {});
+              return memberships.map((m) => ({ teamId: m.team.teamId }));
             }
+          );
+          if (!result.authorized) {
+            return c.text(result.message, result.status);
           }
-
-          if (!isOwner && !isTeamMember) {
-            return c.text("Forbidden - not authorized to access this instance", 403);
-          }
-
-          morphInstanceId = id;
+          morphInstanceId = result.instanceId;
         }
       } else {
         // For task-run IDs, team is required to look up the task run
@@ -1262,50 +1421,19 @@ sandboxesRouter.openapi(
 
         // If not found via task run, verify ownership via instance metadata
         if (!morphInstanceId) {
-          // Fetch instance to verify ownership
-          let instance;
-          try {
-            instance = await morphClient.instances.get({ instanceId: id });
-          } catch {
-            return c.text("Instance not found", 404);
-          }
-
-          const meta = instance.metadata as
-            | { app?: string; userId?: string; teamId?: string }
-            | undefined;
-
-          // Verify the instance belongs to cmux (accepts cmux, cmux-dev, cmux-preview, etc.)
-          if (!meta?.app?.startsWith("cmux")) {
-            return c.text("Instance not found", 404);
-          }
-
-          // Verify user ownership: either direct user match or team membership
-          const isOwner = meta.userId === user.id;
-          let isTeamMember = false;
-
-          if (meta.teamId && !isOwner) {
-            // Check if user is a member of the team that owns this instance
-            try {
-              const memberships = await convex.query(
-                api.teams.listTeamMemberships,
-                {},
-              );
-              isTeamMember = memberships.some(
-                (m) => m.team.teamId === meta.teamId,
-              );
-            } catch {
-              // Failed to check team membership
+          const result = await verifyInstanceOwnership(
+            morphClient,
+            id,
+            user.id,
+            async () => {
+              const memberships = await convex.query(api.teams.listTeamMemberships, {});
+              return memberships.map((m) => ({ teamId: m.team.teamId }));
             }
+          );
+          if (!result.authorized) {
+            return c.text(result.message, result.status);
           }
-
-          if (!isOwner && !isTeamMember) {
-            return c.text(
-              "Forbidden - not authorized to access this instance",
-              403,
-            );
-          }
-
-          morphInstanceId = id;
+          morphInstanceId = result.instanceId;
         }
       } else {
         // Task-run ID - team is required
@@ -1348,6 +1476,23 @@ sandboxesRouter.openapi(
       }
 
       await instance.resume();
+
+      // Record the resume for activity tracking (used by cleanup cron)
+      // Get teamSlugOrId from request or fall back to instance metadata
+      const instanceMetadata = instance.metadata as Record<string, unknown> | undefined;
+      const effectiveTeamSlugOrId = teamSlugOrId ?? (instanceMetadata?.teamId as string | undefined);
+      if (effectiveTeamSlugOrId && morphInstanceId) {
+        try {
+          await convex.mutation(api.morphInstances.recordResume, {
+            instanceId: morphInstanceId,
+            teamSlugOrId: effectiveTeamSlugOrId,
+          });
+        } catch (recordError) {
+          // Don't fail the resume if recording fails
+          console.error("[sandboxes.resume] Failed to record resume activity:", recordError);
+        }
+      }
+
       return c.json({ resumed: true });
     } catch (error) {
       if (error instanceof HTTPException) {

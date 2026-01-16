@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -420,15 +421,19 @@ export const create = authMutation({
       isLocalWorkspace: task.isLocalWorkspace,
       isCloudWorkspace: task.isCloudWorkspace,
     });
+
+    // Update task's lastActivityAt for sorting
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
+    const taskPatch: { generatedBranchName?: string; lastActivityAt: number } = {
+      lastActivityAt: now,
+    };
     if (
       generatedBranchName &&
       task.generatedBranchName !== generatedBranchName
     ) {
-      await ctx.db.patch(args.taskId, {
-        generatedBranchName,
-      });
+      taskPatch.generatedBranchName = generatedBranchName;
     }
+    await ctx.db.patch(args.taskId, taskPatch);
     const jwt = await new SignJWT({
       taskRunId,
       teamId,
@@ -552,6 +557,20 @@ export const updateStatus = internalMutation({
     // After updating to a terminal status, check if we should update the task status
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
+
+      // Create a notification for the user (also marks as unread)
+      console.log("[taskNotifications] Creating notification", {
+        taskId: run.taskId,
+        taskRunId: args.id,
+        type: args.status === "completed" ? "run_completed" : "run_failed",
+      });
+      await ctx.runMutation(internal.taskNotifications.createInternal, {
+        taskId: run.taskId,
+        taskRunId: args.id,
+        teamId: run.teamId,
+        userId: run.userId,
+        type: args.status === "completed" ? "run_completed" : "run_failed",
+      });
     }
   },
 });
@@ -975,6 +994,20 @@ export const updateStatusPublic = authMutation({
     // After updating to a terminal status, check if we should update the task status
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
+
+      // Create a notification for the user (also marks as unread)
+      console.log("[taskNotifications] Creating notification (crown)", {
+        taskId: doc.taskId,
+        taskRunId: args.id,
+        type: args.status === "completed" ? "run_completed" : "run_failed",
+      });
+      await ctx.runMutation(internal.taskNotifications.createInternal, {
+        taskId: doc.taskId,
+        taskRunId: args.id,
+        teamId,
+        userId,
+        type: args.status === "completed" ? "run_completed" : "run_failed",
+      });
     }
   },
 });
@@ -997,6 +1030,7 @@ export const updateVSCodeInstance = authMutation({
         v.literal("running"),
         v.literal("stopped"),
       ),
+      statusMessage: v.optional(v.string()),
       ports: v.optional(
         v.object({
           vscode: v.string(),
@@ -1098,6 +1132,39 @@ export const updateVSCodePorts = authMutation({
       vscode: {
         ...vscode,
         ports: args.ports,
+      },
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+// Update VSCode instance status message (for showing Docker pull progress, etc.)
+export const updateVSCodeStatusMessage = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    statusMessage: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const run = await ctx.db.get(args.id);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+    if (run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    const vscode = run.vscode || {
+      provider: "docker" as const,
+      status: "starting" as const,
+    };
+
+    await ctx.db.patch(args.id, {
+      vscode: {
+        ...vscode,
+        statusMessage: args.statusMessage,
       },
       updatedAt: Date.now(),
     });
@@ -1329,6 +1396,9 @@ export const workerComplete = internalMutation({
 
     // After marking this run as completed, check if we should update the task status
     await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
+
+    // Note: Notifications are handled separately via /api/notifications/agent-stopped
+    // which is called by the stop hook. This keeps status updates decoupled from notifications.
 
     return run;
   },
@@ -2033,6 +2103,9 @@ export const createForPreview = internalMutation({
       isCloudWorkspace: task.isCloudWorkspace,
       isPreviewJob: true,
     });
+
+    // Update task's lastActivityAt for sorting
+    await ctx.db.patch(args.taskId, { lastActivityAt: now });
 
     const jwt = await new SignJWT({
       taskRunId,

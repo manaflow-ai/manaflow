@@ -86,10 +86,11 @@ export async function runMaintenanceAndDevScripts({
   // Create maintenance script if provided
   const maintenanceScriptContent = hasMaintenanceScript
     ? `#!/bin/zsh
-set -eux
+set -eu
 
 # Source system profile for environment variables (RUSTUP_HOME, etc.)
-[[ -f /etc/profile ]] && source /etc/profile
+# Use || true to ignore non-zero exit codes from nvm/etc that aren't real errors
+[[ -f /etc/profile ]] && { source /etc/profile || true; }
 
 cd ${WORKSPACE_ROOT}
 
@@ -102,10 +103,11 @@ echo "=== Maintenance Script Completed at \\$(date) ==="
   // Create dev script if provided
   const devScriptContent = hasDevScript
     ? `#!/bin/zsh
-set -ux
+set -u
 
 # Source system profile for environment variables (RUSTUP_HOME, etc.)
-[[ -f /etc/profile ]] && source /etc/profile
+# Use || true to ignore non-zero exit codes from nvm/etc that aren't real errors
+[[ -f /etc/profile ]] && { source /etc/profile || true; }
 
 cd ${WORKSPACE_ROOT}
 

@@ -26,8 +26,8 @@ import {
 import {
   toMorphVncUrl,
   toMorphXtermBaseUrl,
-  toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
+import { getWorkspaceUrl } from "@/lib/workspace-url";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
@@ -134,12 +134,18 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
 
       // Preload both VSCode and browser iframes in parallel
       if (selectedRun && rawWorkspaceUrl) {
-        const workspaceUrl = toProxyWorkspaceUrl(rawWorkspaceUrl, undefined);
-        void preloadTaskRunIframes([
-          { url: workspaceUrl, taskRunId: selectedRun._id },
-        ]).catch((error) => {
-          console.error("Failed to preload VSCode iframe", error);
-        });
+        const workspaceUrl = getWorkspaceUrl(
+          rawWorkspaceUrl,
+          selectedRun.vscode?.provider,
+          undefined // localServeWeb not available in loader
+        );
+        if (workspaceUrl) {
+          void preloadTaskRunIframes([
+            { url: workspaceUrl, taskRunId: selectedRun._id },
+          ]).catch((error) => {
+            console.error("Failed to preload VSCode iframe", error);
+          });
+        }
       }
       if (selectedRun && rawBrowserUrl) {
         const vncUrl = toMorphVncUrl(rawBrowserUrl);
@@ -181,14 +187,11 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         try {
           const created = await createTerminalTab({
             baseUrl,
-            request: {
-              cmd: "tmux",
-              args: ["new-session", "-A", "cmux"],
-            },
+            request: {},
           });
           tabs = [created.id];
         } catch (error) {
-          console.error("Failed to create default tmux terminal", error);
+          console.error("Failed to create default terminal", error);
           return;
         }
       }
@@ -482,9 +485,11 @@ function TaskDetailPage() {
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-  const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
-    : null;
+  const workspaceUrl = getWorkspaceUrl(
+    rawWorkspaceUrl,
+    selectedRun?.vscode?.provider,
+    localServeWeb.data?.baseUrl
+  );
   const workspacePersistKey = selectedRunId
     ? getTaskRunPersistKey(selectedRunId)
     : null;
@@ -634,17 +639,68 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  const currentLayout = useMemo(
-    () => getCurrentLayoutPanels(panelConfig),
-    [panelConfig]
-  );
-  const availablePanels = useMemo(
-    () => getAvailablePanels(panelConfig),
-    [panelConfig]
-  );
+  // Determine workspace type for layout overrides
+  const isLocalWorkspaceTask = task?.isLocalWorkspace;
+  const isCloudWorkspaceTask = task?.isCloudWorkspace;
+
+  // Determine effective layout mode based on workspace type
+  // - Local workspaces: single panel (just VSCode)
+  // - Cloud workspaces: two-horizontal (VSCode left, browser right)
+  // - Regular tasks: use user's configured layout
+  const effectiveLayoutMode = useMemo(() => {
+    if (isLocalWorkspaceTask) {
+      return "single-panel" as const;
+    }
+    if (isCloudWorkspaceTask) {
+      return "two-horizontal" as const;
+    }
+    return panelConfig.layoutMode;
+  }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
+
+  const currentLayout = useMemo(() => {
+    // For local workspaces: just VSCode
+    if (isLocalWorkspaceTask) {
+      return {
+        topLeft: "workspace" as const,
+        topRight: null,
+        bottomLeft: null,
+        bottomRight: null,
+      };
+    }
+
+    // For cloud workspaces: VSCode left, browser right
+    if (isCloudWorkspaceTask) {
+      return {
+        topLeft: "workspace" as const,
+        topRight: "browser" as const,
+        bottomLeft: null,
+        bottomRight: null,
+      };
+    }
+
+    // Regular tasks: use configured layout
+    return getCurrentLayoutPanels(panelConfig);
+  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+
+  const availablePanels = useMemo(() => {
+    const panels = getAvailablePanels(panelConfig);
+
+    // For local workspaces, exclude gitDiff and browser from available panels
+    if (isLocalWorkspaceTask) {
+      return panels.filter((p) => p !== "gitDiff" && p !== "browser");
+    }
+
+    // For cloud workspaces, exclude gitDiff (browser is used)
+    if (isCloudWorkspaceTask) {
+      return panels.filter((p) => p !== "gitDiff");
+    }
+
+    return panels;
+  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+
   const activePanelPositions = useMemo(
-    () => getActivePanelPositions(panelConfig.layoutMode),
-    [panelConfig.layoutMode]
+    () => getActivePanelPositions(effectiveLayoutMode),
+    [effectiveLayoutMode]
   );
 
   const isPanelPositionActive = useCallback(
@@ -744,7 +800,7 @@ function TaskDetailPage() {
             />
           ) : null}
           <FlexiblePanelLayout
-            layoutMode={panelConfig.layoutMode}
+            layoutMode={effectiveLayoutMode}
             storageKey="taskDetailGrid"
             topLeft={
               isPanelPositionActive("topLeft") && currentLayout.topLeft ? (

@@ -1,10 +1,10 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import {
-  CLOUDFLARE_ANTHROPIC_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  BEDROCK_AWS_REGION,
 } from "@cmux/shared";
 import { collectPrDiffs, collectPrDiffsViaGhCli } from "@/scripts/pr-review-heatmap";
 import { env } from "@/lib/utils/www-env";
@@ -130,6 +130,7 @@ export type SimpleReviewStreamOptions = {
   githubToken?: string | null;
   modelConfig?: ModelConfig;
   tooltipLanguage?: TooltipLanguageValue;
+  fileDiffs?: FileDiff[];
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -299,6 +300,7 @@ export async function runSimpleAnthropicReviewStream(
     githubToken: providedGithubToken = null,
     modelConfig,
     tooltipLanguage = DEFAULT_TOOLTIP_LANGUAGE,
+    fileDiffs: providedFileDiffs,
     onChunk,
     signal,
   } = options;
@@ -315,10 +317,19 @@ export async function runSimpleAnthropicReviewStream(
     throw new Error("Stream aborted before start");
   }
 
-  const { fileDiffs, metadata } = await collectDiffsWithFallback({
-    prIdentifier,
-    githubToken: providedGithubToken,
-  });
+  let fileDiffs: FileDiff[] = [];
+  let metadata: CollectPrDiffsResult["metadata"] | null = null;
+
+  if (providedFileDiffs && providedFileDiffs.length > 0) {
+    fileDiffs = providedFileDiffs;
+  } else {
+    const fetched = await collectDiffsWithFallback({
+      prIdentifier,
+      githubToken: providedGithubToken,
+    });
+    fileDiffs = fetched.fileDiffs;
+    metadata = fetched.metadata;
+  }
 
   const candidateFiles: FileDiff[] = [];
 
@@ -348,16 +359,20 @@ export async function runSimpleAnthropicReviewStream(
   }
 
   const prLabel =
-    metadata.prUrl ??
-    `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
+    metadata?.prUrl ??
+    (metadata
+      ? `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`
+      : prIdentifier);
 
   // Determine which model to use based on configuration
   const effectiveModelConfig: ModelConfig =
     modelConfig ?? getDefaultHeatmapModelConfig();
 
-  const anthropic = createAnthropic({
-    apiKey: env.ANTHROPIC_API_KEY,
-    baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+  // AWS Bedrock SDK reads AWS_BEARER_TOKEN_BEDROCK and AWS_REGION from env vars by default
+  // We pass them explicitly for clarity
+  const bedrock = createAmazonBedrock({
+    region: env.AWS_REGION ?? BEDROCK_AWS_REGION,
+    apiKey: env.AWS_BEARER_TOKEN_BEDROCK,
   });
 
   const openai = createOpenAI({
@@ -398,7 +413,7 @@ export async function runSimpleAnthropicReviewStream(
           const modelInstance =
             effectiveModelConfig.provider === "openai"
               ? openai(effectiveModelConfig.model)
-              : anthropic(effectiveModelConfig.model);
+              : bedrock(effectiveModelConfig.model);
 
           const stream = streamText({
             model: modelInstance,

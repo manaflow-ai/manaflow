@@ -28,7 +28,7 @@ import { useMutation, useQuery } from "convex/react";
 import {
   Bug,
   ClipboardCopy,
-  FolderPlus,
+  Cloud,
   GitPullRequest,
   Home,
   LogOut,
@@ -1081,6 +1081,26 @@ export function CommandBar({
     return () => document.removeEventListener("keydown", down);
   }, [captureFocusBeforeOpen, closeCommand]);
 
+  // Listen for custom event to open command bar with a specific page
+  useEffect(() => {
+    type CommandBarPage = "root" | "teams" | "local-workspaces" | "cloud-workspaces";
+    const validPages: CommandBarPage[] = ["root", "teams", "local-workspaces", "cloud-workspaces"];
+
+    const handleOpenWithPage = (e: Event) => {
+      const customEvent = e as CustomEvent<{ page: string }>;
+      const page = customEvent.detail?.page;
+      if (page && validPages.includes(page as CommandBarPage)) {
+        captureFocusBeforeOpen();
+        setActivePage(page as CommandBarPage);
+        setOpen(true);
+      }
+    };
+    window.addEventListener("cmux:open-command-bar", handleOpenWithPage);
+    return () => {
+      window.removeEventListener("cmux:open-command-bar", handleOpenWithPage);
+    };
+  }, [captureFocusBeforeOpen, setActivePage]);
+
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {
     // Inform Electron main about palette open state to gate focus capture
@@ -1560,7 +1580,7 @@ export function CommandBar({
               execute: () => handleSelect("local-workspaces"),
               renderContent: () => (
                 <>
-                  <FolderPlus className="h-4 w-4 text-neutral-500" />
+                  <Monitor className="h-4 w-4 text-neutral-500" />
                   <span className="text-sm">New Local Workspace</span>
                 </>
               ),
@@ -1580,7 +1600,7 @@ export function CommandBar({
         execute: () => handleSelect("cloud-workspaces"),
         renderContent: () => (
           <>
-            <Server className="h-4 w-4 text-neutral-500" />
+            <Cloud className="h-[18px] w-[18px] text-neutral-500" />
             <span className="text-sm">New Cloud Workspace</span>
           </>
         ),

@@ -394,6 +394,8 @@ export type ResumeTaskRunBody = {
 
 export type CheckTaskRunPausedResponse = {
     paused: boolean;
+    stopped?: boolean;
+    stoppedAt?: number;
 };
 
 export type CheckTaskRunPausedBody = {
@@ -420,7 +422,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_bzpn87aw' | 'snapshot_yf1j2634' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_p9vgqaay' | 'snapshot_8apf9s6p' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -567,6 +569,16 @@ export type UpdateSandboxEnvResponse = {
 export type UpdateSandboxEnvBody = {
     teamSlugOrId: string;
     envVarsContent: string;
+};
+
+export type RunScriptsResponse = {
+    started: true;
+};
+
+export type RunScriptsBody = {
+    teamSlugOrId: string;
+    maintenanceScript?: string;
+    devScript?: string;
 };
 
 export type SandboxSshResponse = {
@@ -719,6 +731,12 @@ export type CodeReviewStartBody = {
             label: string;
         };
     };
+    fileDiffs?: Array<{
+        filePath: string;
+        diffText: string;
+    }>;
+    heatmapModel?: string;
+    tooltipLanguage?: string;
 };
 
 export type WorkspaceConfigResponse = {
@@ -739,7 +757,7 @@ export type PreviewConfig = {
     id: string;
     repoFullName: string;
     environmentId?: string | null;
-    repoInstallationId: number;
+    repoInstallationId?: number | null;
     repoDefaultBranch?: string | null;
     status: 'active' | 'paused' | 'disabled';
     lastRunAt?: number | null;
@@ -756,7 +774,7 @@ export type PreviewConfigMutationBody = {
     teamSlugOrId: string;
     repoFullName: string;
     environmentId?: string;
-    repoInstallationId: number;
+    repoInstallationId?: number;
     repoDefaultBranch?: string;
     status?: 'active' | 'paused' | 'disabled';
 };
@@ -767,7 +785,7 @@ export type PreviewRun = {
     prUrl: string;
     headSha: string;
     baseSha?: string | null;
-    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'superseded';
     createdAt: number;
     updatedAt: number;
     dispatchedAt?: number | null;
@@ -777,6 +795,28 @@ export type PreviewRun = {
 
 export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
+};
+
+export type EditorSettingsResponse = {
+    settingsJson?: string;
+    keybindingsJson?: string;
+    snippets?: Array<{
+        name: string;
+        content: string;
+    }>;
+    extensions?: string;
+    updatedAt?: number;
+} | null;
+
+export type EditorSettingsBody = {
+    teamSlugOrId: string;
+    settingsJson?: string;
+    keybindingsJson?: string;
+    snippets?: Array<{
+        name: string;
+        content: string;
+    }>;
+    extensions?: string;
 };
 
 export type GetApiHealthData = {
@@ -2461,6 +2501,43 @@ export type PostApiSandboxesByIdEnvResponses = {
 
 export type PostApiSandboxesByIdEnvResponse = PostApiSandboxesByIdEnvResponses[keyof PostApiSandboxesByIdEnvResponses];
 
+export type PostApiSandboxesByIdRunScriptsData = {
+    body: RunScriptsBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/run-scripts';
+};
+
+export type PostApiSandboxesByIdRunScriptsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to run scripts
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdRunScriptsResponses = {
+    /**
+     * Scripts started successfully
+     */
+    200: RunScriptsResponse;
+};
+
+export type PostApiSandboxesByIdRunScriptsResponse = PostApiSandboxesByIdRunScriptsResponses[keyof PostApiSandboxesByIdRunScriptsResponses];
+
 export type PostApiSandboxesByIdStopData = {
     body?: never;
     path: {
@@ -2927,6 +3004,376 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
+
+export type GetApiPreviewTestCheckAccessData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        prUrl: string;
+    };
+    url: '/api/preview/test/check-access';
+};
+
+export type GetApiPreviewTestCheckAccessErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiPreviewTestCheckAccessResponses = {
+    /**
+     * Access check result
+     */
+    200: {
+        hasAccess: boolean;
+        hasConfig: boolean;
+        hasActiveInstallation: boolean;
+        repoFullName: string | null;
+        errorCode: 'invalid_url' | 'no_config' | 'no_installation' | 'installation_inactive';
+        errorMessage: string | null;
+        suggestedAction: string | null;
+    };
+};
+
+export type GetApiPreviewTestCheckAccessResponse = GetApiPreviewTestCheckAccessResponses[keyof GetApiPreviewTestCheckAccessResponses];
+
+export type GetApiPreviewTestJobsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+        limit?: number;
+    };
+    url: '/api/preview/test/jobs';
+};
+
+export type GetApiPreviewTestJobsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiPreviewTestJobsResponses = {
+    /**
+     * Test jobs listed
+     */
+    200: {
+        jobs: Array<{
+            _id: string;
+            prNumber: number;
+            prUrl: string;
+            prTitle?: string | null;
+            repoFullName: string;
+            headSha: string;
+            status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+            stateReason?: string | null;
+            taskId?: string | null;
+            taskRunId?: string | null;
+            createdAt: number;
+            updatedAt: number;
+            dispatchedAt?: number | null;
+            startedAt?: number | null;
+            completedAt?: number | null;
+            configRepoFullName?: string | null;
+            screenshotSet?: {
+                _id: string;
+                status: 'completed' | 'failed' | 'skipped';
+                hasUiChanges?: boolean | null;
+                capturedAt: number;
+                error?: string | null;
+                images: Array<{
+                    storageId: string;
+                    mimeType: string;
+                    fileName?: string | null;
+                    description?: string | null;
+                    url?: string | null;
+                }>;
+            } | null;
+        }>;
+    };
+};
+
+export type GetApiPreviewTestJobsResponse = GetApiPreviewTestJobsResponses[keyof GetApiPreviewTestJobsResponses];
+
+export type PostApiPreviewTestJobsData = {
+    body: {
+        teamSlugOrId: string;
+        prUrl: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/preview/test/jobs';
+};
+
+export type PostApiPreviewTestJobsErrors = {
+    /**
+     * Invalid PR URL
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Preview config not found or PR not found on GitHub
+     */
+    404: unknown;
+};
+
+export type PostApiPreviewTestJobsResponses = {
+    /**
+     * Test job created (task/taskRun will be created after VM starts)
+     */
+    200: {
+        previewRunId: string;
+        prNumber: number;
+        repoFullName: string;
+    };
+};
+
+export type PostApiPreviewTestJobsResponse = PostApiPreviewTestJobsResponses[keyof PostApiPreviewTestJobsResponses];
+
+export type PostApiPreviewTestJobsByPreviewRunIdDispatchData = {
+    body?: never;
+    path: {
+        previewRunId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/test/jobs/{previewRunId}/dispatch';
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdDispatchErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Preview run not found
+     */
+    404: unknown;
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdDispatchResponses = {
+    /**
+     * Job dispatched
+     */
+    200: {
+        dispatched: boolean;
+    };
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdDispatchResponse = PostApiPreviewTestJobsByPreviewRunIdDispatchResponses[keyof PostApiPreviewTestJobsByPreviewRunIdDispatchResponses];
+
+export type DeleteApiPreviewTestJobsByPreviewRunIdData = {
+    body?: never;
+    path: {
+        previewRunId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/test/jobs/{previewRunId}';
+};
+
+export type DeleteApiPreviewTestJobsByPreviewRunIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Preview run not found
+     */
+    404: unknown;
+};
+
+export type DeleteApiPreviewTestJobsByPreviewRunIdResponses = {
+    /**
+     * Test job deleted
+     */
+    200: {
+        deleted: boolean;
+    };
+};
+
+export type DeleteApiPreviewTestJobsByPreviewRunIdResponse = DeleteApiPreviewTestJobsByPreviewRunIdResponses[keyof DeleteApiPreviewTestJobsByPreviewRunIdResponses];
+
+export type GetApiPreviewTestJobsByPreviewRunIdData = {
+    body?: never;
+    path: {
+        previewRunId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/test/jobs/{previewRunId}';
+};
+
+export type GetApiPreviewTestJobsByPreviewRunIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Preview run not found
+     */
+    404: unknown;
+};
+
+export type GetApiPreviewTestJobsByPreviewRunIdResponses = {
+    /**
+     * Test job details
+     */
+    200: {
+        _id: string;
+        prNumber: number;
+        prUrl: string;
+        prTitle?: string | null;
+        repoFullName: string;
+        headSha: string;
+        status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+        stateReason?: string | null;
+        taskId?: string | null;
+        taskRunId?: string | null;
+        createdAt: number;
+        updatedAt: number;
+        dispatchedAt?: number | null;
+        startedAt?: number | null;
+        completedAt?: number | null;
+        configRepoFullName?: string | null;
+        screenshotSet?: {
+            _id: string;
+            status: 'completed' | 'failed' | 'skipped';
+            hasUiChanges?: boolean | null;
+            capturedAt: number;
+            error?: string | null;
+            images: Array<{
+                storageId: string;
+                mimeType: string;
+                fileName?: string | null;
+                description?: string | null;
+                url?: string | null;
+            }>;
+        } | null;
+        prDescription?: string | null;
+        baseSha?: string | null;
+        headRef?: string | null;
+        environmentId?: string | null;
+    };
+};
+
+export type GetApiPreviewTestJobsByPreviewRunIdResponse = GetApiPreviewTestJobsByPreviewRunIdResponses[keyof GetApiPreviewTestJobsByPreviewRunIdResponses];
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryData = {
+    body?: never;
+    path: {
+        previewRunId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/test/jobs/{previewRunId}/retry';
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Preview run not found
+     */
+    404: unknown;
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryResponses = {
+    /**
+     * New job created and dispatched
+     */
+    200: {
+        newPreviewRunId: string;
+        dispatched: boolean;
+    };
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryResponse = PostApiPreviewTestJobsByPreviewRunIdRetryResponses[keyof PostApiPreviewTestJobsByPreviewRunIdRetryResponses];
+
+export type DeleteApiEditorSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/editor-settings';
+};
+
+export type DeleteApiEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type DeleteApiEditorSettingsResponses = {
+    /**
+     * Editor settings cleared
+     */
+    204: void;
+};
+
+export type DeleteApiEditorSettingsResponse = DeleteApiEditorSettingsResponses[keyof DeleteApiEditorSettingsResponses];
+
+export type GetApiEditorSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/editor-settings';
+};
+
+export type GetApiEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiEditorSettingsResponses = {
+    /**
+     * Editor settings retrieved
+     */
+    200: EditorSettingsResponse;
+};
+
+export type GetApiEditorSettingsResponse = GetApiEditorSettingsResponses[keyof GetApiEditorSettingsResponses];
+
+export type PostApiEditorSettingsData = {
+    body: EditorSettingsBody;
+    path?: never;
+    query?: never;
+    url: '/api/editor-settings';
+};
+
+export type PostApiEditorSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiEditorSettingsResponses = {
+    /**
+     * Editor settings saved
+     */
+    200: EditorSettingsResponse;
+};
+
+export type PostApiEditorSettingsResponse = PostApiEditorSettingsResponses[keyof PostApiEditorSettingsResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

@@ -104,6 +104,47 @@ export const getAllRepos = authQuery({
   },
 });
 
+// Get repos filtered by GitHub installation (provider connection)
+// Only returns repos where the owner matches the connection's account
+export const getReposByInstallation = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    installationId: v.number(),
+  },
+  handler: async (ctx, { teamSlugOrId, installationId }) => {
+    const teamId = await getTeamId(ctx, teamSlugOrId);
+
+    // Find the provider connection for this installation
+    const connection = await ctx.db
+      .query("providerConnections")
+      .withIndex("by_installationId", (q) =>
+        q.eq("installationId", installationId)
+      )
+      .first();
+
+    if (!connection || connection.teamId !== teamId) {
+      return [];
+    }
+
+    // Return repos linked to this connection AND owned by the connection's account
+    // This ensures "austinywang" connection shows only austinywang/* repos,
+    // not manaflow-ai/* repos that the user might have access to
+    const allRepos = await ctx.db
+      .query("repos")
+      .withIndex("by_connection", (q) => q.eq("connectionId", connection._id))
+      .collect();
+
+    // Filter to only repos owned by this connection's account
+    if (connection.accountLogin) {
+      return allRepos.filter(
+        (repo) => repo.ownerLogin === connection.accountLogin
+      );
+    }
+
+    return allRepos;
+  },
+});
+
 const SYSTEM_BRANCH_USER_ID = "__system__";
 
 export const getBranchesByRepo = authQuery({

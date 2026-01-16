@@ -13,10 +13,16 @@ import type { ComparisonJobDetails } from "./comparison";
 import { PR_REVIEW_STRATEGY } from "@/pr-review.config";
 import { runHeatmapReview } from "./run-heatmap-review";
 import type { ModelConfig } from "./run-simple-anthropic-review";
+import { getHeatmapModelConfigForSelection, normalizeHeatmapModelQueryValue, type TooltipLanguageValue, normalizeTooltipLanguage } from "./model-config";
 import { loadOptionsFromEnv } from "@/scripts/pr-review/core/options";
 import type { PrReviewStrategyId } from "@/scripts/pr-review/core/options";
 
 type ComparisonJobPayload = Pick<ComparisonJobDetails, "slug" | "base" | "head">;
+
+interface FileDiff {
+  filePath: string;
+  diffText: string;
+}
 
 type StartCodeReviewPayload = {
   teamSlugOrId?: string;
@@ -28,6 +34,12 @@ type StartCodeReviewPayload = {
   force?: boolean;
   comparison?: ComparisonJobPayload;
   modelConfig?: ModelConfig;
+  /** Pre-fetched diffs from the client to avoid re-fetching from GitHub API */
+  fileDiffs?: FileDiff[];
+  /** Model selection for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2") */
+  heatmapModel?: string;
+  /** Language for tooltip text (e.g., "en", "zh-Hant", "ja") */
+  tooltipLanguage?: string;
 };
 
 type StartCodeReviewOptions = {
@@ -270,12 +282,37 @@ export async function startCodeReviewJob({
 
   const backgroundTask = (async () => {
     try {
+      // For comparison jobs, always use heatmap strategy (Morph doesn't support branch comparisons)
+      const effectiveStrategy = jobType === "comparison" ? "heatmap" : strategy;
+
       // Fork based on strategy
-      if (strategy === "heatmap") {
+      if (effectiveStrategy === "heatmap") {
         console.info("[code-review] Starting heatmap review (no Morph)", {
           jobId: job.jobId,
           strategy: "heatmap",
+          jobType,
         });
+
+        // Build comparison config if this is a comparison job
+        const comparisonConfig = payload.comparison
+          ? {
+              owner: payload.comparison.base.owner,
+              repo: payload.comparison.base.repo,
+              base: payload.comparison.base.ref,
+              head: payload.comparison.head.ref,
+            }
+          : undefined;
+
+        // Derive model config from heatmapModel if provided, otherwise use modelConfig or let runHeatmapReview use default
+        const effectiveModelConfig: ModelConfig | undefined = payload.heatmapModel
+          ? getHeatmapModelConfigForSelection(normalizeHeatmapModelQueryValue(payload.heatmapModel))
+          : payload.modelConfig;
+
+        // Normalize tooltip language
+        const effectiveTooltipLanguage: TooltipLanguageValue | undefined = payload.tooltipLanguage
+          ? normalizeTooltipLanguage(payload.tooltipLanguage)
+          : undefined;
+
         await runHeatmapReview({
           jobId: job.jobId,
           teamId: job.teamId ?? undefined,
@@ -284,12 +321,15 @@ export async function startCodeReviewJob({
           accessToken,
           callbackToken,
           githubAccessToken,
-          modelConfig: payload.modelConfig,
+          modelConfig: effectiveModelConfig,
+          tooltipLanguage: effectiveTooltipLanguage,
+          comparison: comparisonConfig,
+          fileDiffs: payload.fileDiffs,
         });
       } else {
         console.info("[code-review] Starting automated PR review (Morph)", {
           jobId: job.jobId,
-          strategy,
+          strategy: effectiveStrategy,
         });
         await startAutomatedPrReview(reviewConfig);
       }

@@ -38,8 +38,7 @@ export function SignInComponent() {
               </div>
               <button
                 onClick={() => {
-                  const url = `${WWW_ORIGIN}/handler/sign-in/`;
-                  // Open in external browser via Electron handler
+                  const url = `${WWW_ORIGIN}/handler/sign-in`;
                   window.open(url, "_blank", "noopener,noreferrer");
                 }}
                 className="px-4 py-2 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90"

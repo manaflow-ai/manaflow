@@ -24,3 +24,12 @@ similar = "2"
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.release]
+# Reduce memory pressure during compilation on CI (especially for universal macOS builds).
+# Higher codegen-units = less parallelism per crate = lower peak memory usage.
+codegen-units = 8
+# Disable LTO to significantly reduce memory usage during linking.
+lto = false
+# Keep optimizations high for runtime performance.
+opt-level = 3

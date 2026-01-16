@@ -9,8 +9,10 @@ import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
 import { api } from "@cmux/convex/api";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
-import { Suspense, useEffect, useMemo } from "react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery as useRQ } from "@tanstack/react-query";
+import { Suspense, useEffect } from "react";
+import { env } from "@/client-env";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
@@ -41,9 +43,11 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
     }
   },
   loader: async ({ params }) => {
+    // In web mode, exclude local workspaces
+    const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
     convexQueryClient.convexClient.prewarmQuery({
-      query: api.tasks.get,
-      args: { teamSlugOrId: params.teamSlugOrId },
+      query: api.tasks.getWithNotificationOrder,
+      args: { teamSlugOrId: params.teamSlugOrId, excludeLocalWorkspaces },
     });
     convexQueryClient.convexClient.prewarmQuery({
       query: api.github_prs.listPullRequests,
@@ -58,18 +62,19 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
 
 function LayoutComponent() {
   const { teamSlugOrId } = Route.useParams();
-  const tasks = useQuery(api.tasks.get, { teamSlugOrId });
+  // In web mode, exclude local workspaces
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+  // Use React Query-wrapped Convex queries to avoid real-time subscriptions
+  // that cause excessive re-renders cascading to all child components.
+  // Uses getWithNotificationOrder which sorts tasks with unread notifications first
+  const tasksQuery = useRQ({
+    ...convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const tasks = tasksQuery.data;
 
-  // Sort tasks by creation date (newest first) and take the latest 5
-  const recentTasks = useMemo(() => {
-    return (
-      tasks
-        ?.filter((task) => task.createdAt)
-        ?.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) || []
-    );
-  }, [tasks]);
-
-  const displayTasks = tasks === undefined ? undefined : recentTasks;
+  // Tasks are already sorted by the query (unread notifications first, then by createdAt)
+  const displayTasks = tasks;
 
   return (
     <ExpandTasksProvider>
@@ -78,7 +83,7 @@ function LayoutComponent() {
       <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
         <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-        <div className="min-w-full md:min-w-0 grow snap-start snap-always">
+        <div className="min-w-full md:min-w-0 grow snap-start snap-always flex flex-col">
           <Suspense fallback={<div>Loading...</div>}>
             <Outlet />
           </Suspense>

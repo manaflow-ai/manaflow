@@ -1,0 +1,60 @@
+[package]
+name = "cmux-pty"
+version = "0.1.0"
+edition = "2021"
+authors = ["cmux"]
+description = "WebSocket PTY Server with persistent sessions and state sync"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full", "process"] }
+
+# PTY
+portable-pty = "0.8"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# HTTP client for CLI (use rustls to avoid OpenSSL dependency)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# WebSocket client for attach (use rustls to avoid OpenSSL dependency)
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+
+# Terminal handling for attach
+crossterm = "0.28"
+
+# Terminal emulation
+cmux-terminal = { path = "../cmux-terminal" }
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "1"
+url = "2"
+
+# Unix signal handling
+nix = { version = "0.29", features = ["signal"] }
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+http = "1"
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+strip = false
+debug = true

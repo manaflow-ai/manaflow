@@ -2,6 +2,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
+import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, waitForAnyCmuxPtyTerminals, createQueuedTerminals } from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -278,7 +279,7 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // If any meaningful editors exist (not just system/onboarding tabs), don't do anything
+  // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup
   const isSystemTab = (label: string | undefined): boolean => {
     if (!label) return false;
     // Exact matches for known system tabs
@@ -289,37 +290,72 @@ async function setupDefaultTerminal() {
   };
   const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
   const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
-  if (meaningfulTabs.length > 0) {
-    log(`Found ${meaningfulTabs.length} existing tab(s), skipping setup`);
-    return;
+  const preserveFocus = meaningfulTabs.length > 0;
+  if (preserveFocus) {
+    log(
+      `Found ${meaningfulTabs.length} existing tab(s), preserving focus during setup`
+    );
   }
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
-  // Wait for tmux session to exist before creating terminal
-  const tmuxSessionExists = await waitForTmuxSession("cmux");
-  if (!tmuxSessionExists) {
-    log("Tmux session not found, skipping terminal creation");
-    return;
+  // Check if cmux-pty is managing ANY terminals (not just "cmux")
+  // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
+  // We use a longer timeout (15s) to allow the orchestrator to finish
+  log("Waiting for cmux-pty terminals (up to 15s)...");
+  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(15000);
+
+  if (hasCmuxPtyTerminals) {
+    // cmux-pty has terminals - create all of them from the restore queue
+    log("cmux-pty is managing terminals, creating queued terminals");
+    // This directly creates the terminal using vscode.window.createTerminal with the PTY
+    // It bypasses provideTerminalProfile which requires user action to trigger
+    await createQueuedTerminals({ focus: !preserveFocus });
+
+    // Also check for the specific "cmux" terminal (main agent)
+    // If not present yet, it might still be created by the agent spawner
+    const hasCmuxTerminal = await waitForCmuxPtyTerminal("cmux", 5000);
+    if (hasCmuxTerminal) {
+      log("Found 'cmux' terminal in cmux-pty");
+      // The terminal was already created by createQueuedTerminals
+    } else {
+      log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
+    }
+  } else {
+    // Fall back to tmux-based terminal
+    log("cmux-pty not available or no terminals, falling back to tmux");
+
+    // Wait for tmux session to exist before creating terminal
+    const tmuxSessionExists = await waitForTmuxSession("cmux");
+    if (!tmuxSessionExists) {
+      log("Tmux session not found, skipping terminal creation");
+      // Still proceed with SCM/multi-diff setup
+    } else {
+      const workspacePath =
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/workspace";
+      // Create terminal and attach to tmux session (Editor pane for main agent)
+      const terminal = vscode.window.createTerminal({
+        name: "cmux",
+        location: vscode.TerminalLocation.Editor,
+        cwd: workspacePath,
+        env: process.env,
+      });
+      terminal.show(preserveFocus);
+      activeTerminals.set("default", terminal);
+      terminal.sendText("tmux attach-session -t cmux");
+    }
   }
 
-  // Create terminal and attach to tmux session
-  const terminal = vscode.window.createTerminal({
-    name: "cmux",
-    location: vscode.TerminalLocation.Editor,
-    cwd: "/root/workspace",
-    env: process.env,
-  });
-  terminal.show();
-  activeTerminals.set("default", terminal);
-  terminal.sendText("tmux attach-session -t cmux");
-
-  // Run all UI setup in parallel
-  log("Setting up SCM view, multi-diff editor in parallel...");
-  await Promise.all([
-    vscode.commands.executeCommand("workbench.view.scm"),
-    openMultiDiffEditor(),
-  ]);
+  if (!preserveFocus) {
+    // Run all UI setup in parallel
+    log("Setting up SCM view, multi-diff editor in parallel...");
+    await Promise.all([
+      vscode.commands.executeCommand("workbench.view.scm"),
+      openMultiDiffEditor(),
+    ]);
+  } else {
+    log("Skipping SCM/multi-diff setup due to existing tabs");
+  }
 
   log("Terminal setup complete");
 }
@@ -372,6 +408,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Log activation
   console.log("[cmux] activate() called");
   log("[cmux] activate() called");
+
+  // Activate terminal module (PTY backend)
+  activateTerminal(context);
 
   // Register command to show output
   const showOutputCommand = vscode.commands.registerCommand(
@@ -468,6 +507,9 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   log("cmux extension is now deactivated!");
   isSetupComplete = false;
+
+  // Deactivate terminal module
+  deactivateTerminal();
 
   // Clean up file watcher and timer
   if (fileWatcher) {

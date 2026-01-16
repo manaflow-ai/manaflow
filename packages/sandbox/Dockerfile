@@ -42,6 +42,41 @@ RUN git clone https://github.com/agentclientprotocol/agent-client-protocol .tmp_
     cd .tmp_acp_repos/codex-acp && \
     cargo build --release
 
+# Build cmux-pty (PTY terminal server)
+FROM rust-base AS pty-builder
+WORKDIR /workspace
+ENV CARGO_TERM_COLOR=never \
+  CARGO_PROFILE_RELEASE_STRIP=symbols \
+  CARGO_TARGET_DIR=/workspace/target
+
+COPY crates/cmux-terminal ./crates/cmux-terminal
+COPY crates/cmux-pty ./crates/cmux-pty
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  cargo build --locked --release --manifest-path crates/cmux-pty/Cargo.toml
+
+# Build VS Code extension
+FROM node:22-bookworm AS ext-builder
+RUN npm install -g bun @vscode/vsce
+WORKDIR /workspace/packages/shared
+# Copy and install shared dependencies first
+COPY packages/shared/package.json ./
+# Remove workspace refs (convex is not needed for extension build) and install
+RUN sed -i '/"@cmux\/convex"/d' package.json && \
+    npm install --legacy-peer-deps --ignore-scripts
+COPY packages/shared/src ./src
+# Now build the extension
+WORKDIR /workspace/packages/vscode-extension
+COPY packages/vscode-extension/package.json ./
+# Replace workspace:* with file:../shared for npm compatibility, then install
+RUN sed -i 's/"workspace:\*"/"file:..\/shared"/g' package.json && \
+    npm install --legacy-peer-deps
+# Copy extension source and build
+COPY packages/vscode-extension/src ./src
+COPY packages/vscode-extension/tsconfig.json ./
+RUN bun run compile && vsce package --allow-missing-repository --no-dependencies --allow-star-activation
+
 FROM chef AS builder
 ENV CARGO_TERM_COLOR=never \
   CARGO_PROFILE_RELEASE_STRIP=symbols \
@@ -129,6 +164,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   systemd \
   systemd-sysv \
   dbus \
+  dbus-x11 \
   ca-certificates \
   curl \
   bash \
@@ -159,6 +195,29 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   openssh-server \
   jq \
   findutils \
+  tigervnc-standalone-server \
+  openbox \
+  xterm \
+  novnc \
+  x11-xserver-utils \
+  libx11-6 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxext6 \
+  libxfixes3 \
+  libxrandr2 \
+  libxrender1 \
+  libxtst6 \
+  libnss3 \
+  libatk1.0-0 \
+  libatk-bridge2.0-0 \
+  libcups2 \
+  libdrm2 \
+  libgbm1 \
+  libasound2t64 \
+  libpango-1.0-0 \
+  libcairo2 \
+  fonts-liberation \
   && mkdir -p -m 755 /etc/apt/keyrings \
   && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -166,6 +225,45 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   && apt-get update \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Google Chrome (optional, may not be available on ARM64)
+RUN arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" ;; \
+    aarch64) echo "Chrome not officially available for ARM64, skipping"; exit 0 ;; \
+    *) echo "Unsupported architecture: ${arch}" >&2; exit 0 ;; \
+  esac; \
+  if curl -fsSL -o /tmp/chrome.deb "$chrome_url"; then \
+    apt-get update && \
+    apt-get install -y --no-install-recommends /tmp/chrome.deb || true; \
+    rm -f /tmp/chrome.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+  else \
+    echo "Failed to download Chrome, skipping"; \
+  fi
+
+# Install cmux-code (our VSCode fork with OpenVSIX marketplace)
+# This provides a web-based VS Code IDE inside each sandbox
+RUN arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64) ARCH="x64" ;; \
+    aarch64) ARCH="arm64" ;; \
+    *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+  esac; \
+  CMUX_CODE_RELEASE=$(curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+    | jq -r '.tag_name' \
+    | sed 's|^v||'); \
+  echo "Installing cmux-code v${CMUX_CODE_RELEASE}"; \
+  mkdir -p /app/cmux-code; \
+  curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 \
+    -o /tmp/cmux-code.tar.gz \
+    "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; \
+  tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1; \
+  rm -rf /tmp/cmux-code.tar.gz; \
+  # Create VS Code settings directory with default config
+  mkdir -p /root/.vscode-server-oss/data/User /root/.vscode-server-oss/extensions; \
+  echo '{"workbench.startupEditor":"none","security.workspace.trust.enabled":false,"extensions.verifySignature":false,"telemetry.telemetryLevel":"off"}' \
+    > /root/.vscode-server-oss/data/User/settings.json
 
 # Configure sshd for sandbox access
 RUN mkdir -p /run/sshd && \
@@ -293,6 +391,16 @@ COPY --from=builder --link /workspace/target/release/cmux-sandboxd /usr/local/bi
 COPY --from=builder --link /workspace/target/release/cmux /usr/local/bin/cmux
 COPY --from=builder --link /workspace/target/release/cmux-bridge /usr/local/bin/cmux-bridge
 COPY --from=acp-builder --link /workspace/target/release/codex-acp /usr/local/bin/codex-acp
+COPY --from=pty-builder --link /workspace/target/release/cmux-pty /usr/local/bin/cmux-pty
+
+# Install cmux VS Code extension
+COPY --from=ext-builder /workspace/packages/vscode-extension/*.vsix /tmp/
+RUN mkdir -p /root/.vscode-server-oss/extensions && \
+    /app/cmux-code/bin/code-server-oss \
+      --install-extension /tmp/cmux-vscode-extension-*.vsix \
+      --extensions-dir /root/.vscode-server-oss/extensions \
+      --user-data-dir /root/.vscode-server-oss/data && \
+    rm -f /tmp/*.vsix
 
 COPY --link packages/sandbox/scripts/bootstrap-dind.sh /usr/local/bin/bootstrap-dind.sh
 COPY --link packages/sandbox/scripts/docker-mode.sh /usr/local/bin/docker-mode.sh

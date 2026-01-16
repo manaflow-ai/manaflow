@@ -11,6 +11,7 @@
  */
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
+import type { Doc } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import { authQuery } from "./users/utils";
 import type { CheckRunEvent } from "@octokit/webhooks-types";
@@ -150,23 +151,29 @@ export const getCheckRunsForPr = authQuery({
     const { teamSlugOrId, repoFullName, prNumber, headSha, limit = 20 } = args;
     const teamId = await getTeamId(ctx, teamSlugOrId);
 
+    let filtered: Doc<"githubCheckRuns">[];
 
-    // Source: check_run webhooks from third-party GitHub Apps (e.g., Vercel, Bugbot)
-    const allRunsForRepo = await ctx.db
-      .query("githubCheckRuns")
-      .withIndex("by_team_repo", (q) =>
-        q.eq("teamId", teamId).eq("repoFullName", repoFullName),
-      )
-      .collect();
-
-
-    // Filter by headSha if provided (more specific), otherwise by triggeringPrNumber
-    const filtered = allRunsForRepo.filter((run) => {
-      if (headSha) {
-        return run.headSha === headSha;
-      }
-      return run.triggeringPrNumber === prNumber;
-    });
+    if (headSha) {
+      // Use the by_headSha index for efficient filtering when headSha is provided
+      filtered = await ctx.db
+        .query("githubCheckRuns")
+        .withIndex("by_headSha", (q) => q.eq("headSha", headSha))
+        .order("desc")
+        .collect();
+      // Filter to ensure it's for the right team/repo
+      filtered = filtered.filter(
+        (run) => run.teamId === teamId && run.repoFullName === repoFullName
+      );
+    } else {
+      // Use the by_team_repo_pr index for filtering by PR number
+      filtered = await ctx.db
+        .query("githubCheckRuns")
+        .withIndex("by_team_repo_pr", (q) =>
+          q.eq("teamId", teamId).eq("repoFullName", repoFullName).eq("triggeringPrNumber", prNumber)
+        )
+        .order("desc")
+        .collect();
+    }
 
     // Deduplicate by name (for same app), keeping the most recently updated one
     const dedupMap = new Map<string, typeof filtered[number]>();

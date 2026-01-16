@@ -60,6 +60,15 @@ function useAutoUpdateNotifications() {
     const showToast = (version: string | null) => {
       const versionLabel = version ? ` (${version})` : "";
 
+      const showRestartingToast = () => {
+        toast.loading("Restarting cmux...", {
+          id: AUTO_UPDATE_TOAST_ID,
+          duration: Infinity,
+          description: "Please wait while the update is being applied.",
+          className: "select-none",
+        });
+      };
+
       toast("New version available", {
         id: AUTO_UPDATE_TOAST_ID,
         duration: 30000,
@@ -69,6 +78,7 @@ function useAutoUpdateNotifications() {
           ? {
               label: "Restart now",
               onClick: () => {
+                showRestartingToast();
                 void cmux.autoUpdate
                   .install()
                   .then((result) => {
@@ -77,7 +87,7 @@ function useAutoUpdateNotifications() {
                         result.reason === "not-packaged"
                           ? "Updates can only be applied from the packaged app."
                           : "Failed to restart. Try again from the menu.";
-                      toast.error(reason);
+                      toast.error(reason, { id: AUTO_UPDATE_TOAST_ID });
                     }
                   })
                   .catch((error) => {
@@ -85,7 +95,9 @@ function useAutoUpdateNotifications() {
                       "Failed to trigger auto-update install",
                       error
                     );
-                    toast.error("Couldn't restart. Try again from the menu.");
+                    toast.error("Couldn't restart. Try again from the menu.", {
+                      id: AUTO_UPDATE_TOAST_ID,
+                    });
                   });
               },
             }
@@ -122,7 +134,7 @@ function RootComponent() {
   const location = useRouterState({
     select: (state) => state.location,
   });
-  const locationKey = `${location.pathname}${location.search}${location.hash}`;
+  const locationKey = `${location.pathname}${JSON.stringify(location.search)}${location.hash}`;
 
   useAutoUpdateNotifications();
 

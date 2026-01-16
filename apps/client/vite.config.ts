@@ -1,3 +1,4 @@
+import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
@@ -44,6 +45,13 @@ export default defineConfig({
   resolve: {
     // Dedupe so Monaco services (e.g. hoverService) are registered once
     dedupe: ["monaco-editor"],
+    alias: {
+      // Explicitly resolve workspace package subpath exports for rolldown-vite compatibility
+      "@cmux/www-openapi-client/client.gen": path.resolve(
+        import.meta.dirname,
+        "../../packages/www-openapi-client/src/client/client.gen.ts"
+      ),
+    },
   },
   optimizeDeps: {
     // Skip pre-bundling to avoid shipping a second Monaco runtime copy

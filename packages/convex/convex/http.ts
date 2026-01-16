@@ -6,6 +6,7 @@ import {
   crownWorkerFinalize,
   crownWorkerComplete,
 } from "./crown_http";
+import { agentStopped } from "./notifications_http";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./screenshots_http";
 import {
   codeReviewFileCallback,
@@ -25,6 +26,11 @@ import {
   syncRelease as syncHostScreenshotCollectorRelease,
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
+import {
+  anthropicProxy,
+  anthropicCountTokens,
+  anthropicEventLogging,
+} from "./anthropic_http";
 
 const http = httpRouter();
 
@@ -68,6 +74,12 @@ http.route({
   path: "/api/crown/complete",
   method: "POST",
   handler: crownWorkerComplete,
+});
+
+http.route({
+  path: "/api/notifications/agent-stopped",
+  method: "POST",
+  handler: agentStopped,
 });
 
 http.route({
@@ -140,6 +152,24 @@ http.route({
   path: "/api/host-screenshot-collector/latest",
   method: "GET",
   handler: getLatestHostScreenshotCollector,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages",
+  method: "POST",
+  handler: anthropicProxy,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages/count_tokens",
+  method: "POST",
+  handler: anthropicCountTokens,
+});
+
+http.route({
+  path: "/api/anthropic/api/event_logging/batch",
+  method: "POST",
+  handler: anthropicEventLogging,
 });
 
 export default http;

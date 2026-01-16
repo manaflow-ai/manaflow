@@ -1,0 +1,21 @@
+[Unit]
+Description=Cmux PTY Terminal Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/app/app.env
+Environment=SHELL=/bin/zsh
+Environment=PTY_SERVER_HOST=0.0.0.0
+Environment=PTY_SERVER_PORT=39383
+LogsDirectory=cmux
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/bin/bash -lc 'exec /usr/local/bin/cmux-pty'
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/cmux-pty.log
+StandardError=append:/var/log/cmux/cmux-pty.log
+
+[Install]
+WantedBy=cmux.target multi-user.target

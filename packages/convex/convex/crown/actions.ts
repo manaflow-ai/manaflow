@@ -1,6 +1,5 @@
 "use node";
 
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
 import { ConvexError, v } from "convex/values";
@@ -15,8 +14,7 @@ import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
 
-const OPENAI_CROWN_MODEL = "gpt-5-mini";
-const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
+const OPENAI_CROWN_MODEL = "gpt-5-mini-2025-08-07";
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -27,38 +25,26 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-function resolveCrownModel(): {
-  provider: "openai" | "anthropic";
-  model: LanguageModel;
-} {
+function resolveCrownModel(): LanguageModel {
   const openaiKey = env.OPENAI_API_KEY;
-  if (openaiKey) {
-    const openai = createOpenAI({
-      apiKey: openaiKey,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
-    });
-    return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
+  if (!openaiKey) {
+    throw new ConvexError(
+      "Crown evaluation is not configured (missing OpenAI API key)"
+    );
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    const anthropic = createAnthropic({ apiKey: anthropicKey });
-    return {
-      provider: "anthropic",
-      model: anthropic(ANTHROPIC_CROWN_MODEL),
-    };
-  }
-
-  throw new ConvexError(
-    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)"
-  );
+  const openai = createOpenAI({
+    apiKey: openaiKey,
+    baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+  });
+  return openai(OPENAI_CROWN_MODEL);
 }
 
 export async function performCrownEvaluation(
   prompt: string,
   candidates: CrownEvaluationCandidate[]
 ): Promise<CrownEvaluationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const model = resolveCrownModel();
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -110,7 +96,6 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       system:
         "You select the best implementation from structured diff inputs and explain briefly why.",
       prompt: evaluationPrompt,
-      ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 
@@ -125,7 +110,7 @@ export async function performCrownSummarization(
   prompt: string,
   gitDiff: string
 ): Promise<CrownSummarizationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const model = resolveCrownModel();
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -161,7 +146,6 @@ OUTPUT FORMAT (Markdown)
       system:
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
       prompt: summarizationPrompt,
-      ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 

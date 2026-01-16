@@ -40,27 +40,22 @@ function buildTerminalUrl(baseUrl: string, pathname: string) {
   return new URL(pathname, baseUrl);
 }
 
+interface SessionsListResponse {
+  sessions: Array<{ id: string; name: string; index: number }>;
+}
+
+function isSessionsListResponse(value: unknown): value is SessionsListResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const sessions = Reflect.get(value, "sessions");
+  return Array.isArray(sessions);
+}
+
 function isTerminalTabIdList(value: unknown): value is TerminalTabId[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
   );
 }
 
-interface CreateTerminalTabHttpResponse {
-  id: string;
-  ws_url: string;
-}
-
-function isCreateTerminalTabHttpResponse(
-  value: unknown
-): value is CreateTerminalTabHttpResponse {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const id = Reflect.get(value, "id");
-  const wsUrl = Reflect.get(value, "ws_url");
-  return typeof id === "string" && typeof wsUrl === "string";
-}
 
 export function terminalTabsQueryOptions({
   baseUrl,
@@ -78,7 +73,7 @@ export function terminalTabsQueryOptions({
     enabled: effectiveEnabled,
     queryFn: async () => {
       const resolvedBaseUrl = ensureBaseUrl(baseUrl);
-      const url = buildTerminalUrl(resolvedBaseUrl, "/api/tabs");
+      const url = buildTerminalUrl(resolvedBaseUrl, "/sessions");
       const response = await fetch(url, {
         headers: {
           Accept: "application/json",
@@ -88,6 +83,11 @@ export function terminalTabsQueryOptions({
         throw new Error(`Failed to load terminals (${response.status})`);
       }
       const payload: unknown = await response.json();
+      // Handle new API format: { sessions: [...] }
+      if (isSessionsListResponse(payload)) {
+        return payload.sessions.map((s) => s.id);
+      }
+      // Fallback for old API format: [...]
       if (!isTerminalTabIdList(payload)) {
         throw new Error("Unexpected response while loading terminals.");
       }
@@ -106,7 +106,7 @@ export async function createTerminalTab({
   request?: CreateTerminalTabRequest;
 }): Promise<CreateTerminalTabResponse> {
   const resolvedBaseUrl = ensureBaseUrl(baseUrl);
-  const url = buildTerminalUrl(resolvedBaseUrl, "/api/tabs");
+  const url = buildTerminalUrl(resolvedBaseUrl, "/sessions");
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -119,12 +119,14 @@ export async function createTerminalTab({
     throw new Error(`Failed to create terminal (${response.status})`);
   }
   const payload: unknown = await response.json();
-  if (!isCreateTerminalTabHttpResponse(payload)) {
+  // New API returns full session info with id
+  const id = typeof payload === "object" && payload !== null ? Reflect.get(payload, "id") : null;
+  if (typeof id !== "string") {
     throw new Error("Unexpected response while creating terminal.");
   }
   return {
-    id: payload.id,
-    wsUrl: payload.ws_url,
+    id,
+    wsUrl: `/sessions/${id}/ws`,
   };
 }
 
@@ -138,7 +140,7 @@ export async function deleteTerminalTab({
   const resolvedBaseUrl = ensureBaseUrl(baseUrl);
   const url = buildTerminalUrl(
     resolvedBaseUrl,
-    `/api/tabs/${encodeURIComponent(tabId)}`
+    `/sessions/${encodeURIComponent(tabId)}`
   );
   const response = await fetch(url, {
     method: "DELETE",

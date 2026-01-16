@@ -65,7 +65,7 @@ jobs:
           # Skip Docker E2E tests in CI for stability/speed
           CMUX_SKIP_DOCKER_TESTS: "1"
           # Skip cargo crates handled in dedicated workflows
-          CMUX_SKIP_CARGO_CRATES: "sandbox,cmux-env,cmux-xterm,cmux-proxy,global-proxy,server/native/core"
+          CMUX_SKIP_CARGO_CRATES: "sandbox,cmux-env,cmux-pty,cmux-proxy,global-proxy,server/native/core"
           # Stack Auth env vars
           STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
           STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}
@@ -80,6 +80,7 @@ jobs:
           MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
           # Next.js public env vars
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
           NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}

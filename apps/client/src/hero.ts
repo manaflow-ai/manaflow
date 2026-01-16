@@ -1,5 +1,5 @@
 import { heroui } from "@heroui/react";
+import type { default as createPlugin } from "tailwindcss/plugin";
 
-const result = heroui() as ReturnType<typeof heroui>;
-
-export default result;
+const plugin: ReturnType<typeof createPlugin> = heroui();
+export default plugin;
