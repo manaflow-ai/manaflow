@@ -519,7 +519,7 @@ function RepositoryConnectionsSection({
         return null;
       }
       const name = opts?.name ?? "cmux-popup";
-      const width = Math.floor(opts?.width ?? 980);
+      const width = Math.floor(opts?.width ?? 1176);
       const height = Math.floor(opts?.height ?? 780);
       const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
       const dualScreenTop = window.screenTop ?? window.screenY ?? 0;
