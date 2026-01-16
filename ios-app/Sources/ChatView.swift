@@ -2,18 +2,29 @@ import SwiftUI
 import UIKit
 
 struct ChatView: View {
-    let conversation: Conversation
+    let conversation: ConvexConversation
 
-    init(conversation: Conversation) {
+    init(conversation: ConvexConversation) {
         self.conversation = conversation
     }
 
     var body: some View {
-        ChatFix1MainView(conversation: conversation)
-            .navigationTitle(conversation.name)
+        ChatFix1MainView(conversationId: conversation._id.rawValue, providerId: conversation.providerId)
+            .navigationTitle(conversation.providerDisplayName)
             .navigationBarTitleDisplayMode(.inline)
     }
+}
 
+/// ChatView that takes only a conversation ID (for navigation from new task creation)
+struct ChatViewById: View {
+    let conversationId: String
+    var providerId: String = "claude"
+
+    var body: some View {
+        ChatFix1MainView(conversationId: conversationId, providerId: providerId)
+            .navigationTitle("Task")
+            .navigationBarTitleDisplayMode(.inline)
+    }
 }
 
 // MARK: - Message Bubble
@@ -161,6 +172,9 @@ struct MessageInputBar: View {
 
 #Preview {
     NavigationStack {
-        ChatView(conversation: fakeConversations[0])
+        // Preview with mock data
+        ChatFix1MainView(conversationId: "preview", providerId: "claude")
+            .navigationTitle("Claude")
+            .navigationBarTitleDisplayMode(.inline)
     }
 }

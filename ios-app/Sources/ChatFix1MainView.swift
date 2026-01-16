@@ -6,18 +6,41 @@ private func log(_ message: String) {
 }
 
 struct ChatFix1MainView: View {
-    let conversation: Conversation
+    @StateObject private var viewModel: ChatViewModel
+    let conversationId: String
+    let providerId: String
     private let topShimHeight: CGFloat
 
-    init(conversation: Conversation) {
-        self.conversation = conversation
+    init(conversationId: String, providerId: String) {
+        self.conversationId = conversationId
+        self.providerId = providerId
+        self._viewModel = StateObject(wrappedValue: ChatViewModel(conversationId: conversationId))
         self.topShimHeight = 1 / UIScreen.main.scale
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            Fix1MainViewController_Wrapper(conversation: conversation)
+            if viewModel.isLoading {
+                ProgressView("Loading messages...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = viewModel.error {
+                ContentUnavailableView {
+                    Label("Error", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                }
+            } else {
+                Fix1MainViewController_Wrapper(
+                    messages: convertMessages(viewModel.messages),
+                    isSending: viewModel.isSending,
+                    onSend: { text in
+                        Task {
+                            await viewModel.sendMessage(text)
+                        }
+                    }
+                )
                 .ignoresSafeArea()
+            }
             Color.clear
                 .frame(height: topShimHeight)
                 .accessibilityHidden(true)
@@ -25,16 +48,34 @@ struct ChatFix1MainView: View {
         .background(Color.clear)
         .ignoresSafeArea()
     }
+
+    /// Convert Convex messages to the legacy Message format used by Fix1MainViewController
+    private func convertMessages(_ convexMessages: [ConvexMessage]) -> [Message] {
+        convexMessages.map { msg in
+            Message(
+                id: msg._id.rawValue,
+                content: msg.textContent,
+                timestamp: msg.displayTimestamp,
+                isFromMe: msg.isFromUser,
+                status: .delivered
+            )
+        }
+    }
 }
 
 private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
-    let conversation: Conversation
+    let messages: [Message]
+    let isSending: Bool
+    let onSend: (String) -> Void
 
     func makeUIViewController(context: Context) -> Fix1MainViewController {
-        Fix1MainViewController(messages: conversation.messages)
+        Fix1MainViewController(messages: messages, onSend: onSend)
     }
 
-    func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {
+        uiViewController.updateMessages(messages)
+        uiViewController.updateSendingState(isSending)
+    }
 }
 
 private final class Fix1MainViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
@@ -60,6 +101,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var debugSettingsObserver: NSObjectProtocol?
 
     private var messages: [Message]
+    private var onSend: ((String) -> Void)?
+    private var isSending = false
     private var lastAppliedTopInset: CGFloat = 0
     private var lastContentHeight: CGFloat = 0
     private var hasUserScrolled = false
@@ -168,12 +211,76 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var uiTestLastDismissTranslation: CGFloat = 0
 #endif
 
-    init(messages: [Message]) {
+    init(messages: [Message], onSend: ((String) -> Void)? = nil) {
         self.messages = messages
+        self.onSend = onSend
         super.init(nibName: nil, bundle: nil)
     }
 
+    /// Update sending state from SwiftUI
+    func updateSendingState(_ sending: Bool) {
+        isSending = sending
+        // Optionally disable input while sending
+        inputBarVC?.setEnabled(!sending)
+    }
+
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Update messages from SwiftUI when subscription updates
+    func updateMessages(_ newMessages: [Message]) {
+        guard newMessages != messages else { return }
+
+        // Check if this is an append-only update (most common case)
+        let isAppendOnly = newMessages.count > messages.count &&
+            zip(messages, newMessages).allSatisfy { $0.id == $1.id }
+
+        if isAppendOnly {
+            // Only add new messages - no need to rebuild everything
+            let newCount = newMessages.count - messages.count
+            let newMessagesToAdd = Array(newMessages.suffix(newCount))
+
+            // Update the last message's tail (remove it since it's no longer last)
+            // The tail is visual only, so we can skip this optimization for now
+
+            messages = newMessages
+
+            for (index, message) in newMessagesToAdd.enumerated() {
+                let isLast = index == newMessagesToAdd.count - 1
+                addMessageBubble(message, showTail: isLast, showTimestamp: false)
+            }
+
+            // Scroll to bottom for new messages
+            DispatchQueue.main.async {
+                self.scrollToBottom(animated: true)
+            }
+        } else {
+            // Full rebuild needed - disable animations to prevent jank
+            UIView.performWithoutAnimation {
+                // Clear existing message views
+                for view in messageArrangedViews() {
+                    view.removeFromSuperview()
+                    if let host = children.first(where: { $0.view === view }) {
+                        host.willMove(toParent: nil)
+                        host.removeFromParent()
+                    }
+                }
+
+                // Update messages array
+                messages = newMessages
+
+                // Re-populate
+                populateMessages()
+
+                // Force layout immediately
+                view.layoutIfNeeded()
+            }
+
+            // Scroll to bottom after layout settles
+            DispatchQueue.main.async {
+                self.scrollToBottom(animated: false)
+            }
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1485,7 +1592,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         )
         let host = UIHostingController(rootView: bubble)
         host.view.isAccessibilityElement = true
-        host.view.accessibilityIdentifier = "chat.message.\(message.id.uuidString)"
+        host.view.accessibilityIdentifier = "chat.message.\(message.id)"
         if #available(iOS 16.0, *) {
             host.safeAreaRegions = []
         }
@@ -1631,13 +1738,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func sendMessage() {
-        guard !inputBarVC.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let text = inputBarVC.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard !isSending else { return }
 
-        let message = Message(content: inputBarVC.text, timestamp: .now, isFromMe: true, status: .sent)
-        messages.append(message)
+        // Clear input immediately for better UX
         inputBarVC.clearText()
 
-        addMessageBubble(message, showTail: true, showTimestamp: false)
+        // Call the onSend callback to send via Convex
+        // The message will appear via subscription update
+        if let onSend {
+            log("Sending message via Convex: \(text.prefix(50))...")
+            onSend(text)
+        } else {
+            // Fallback: add local message (for preview/testing)
+            let message = Message(content: text, timestamp: .now, isFromMe: true, status: .sent)
+            messages.append(message)
+            addMessageBubble(message, showTail: true, showTimestamp: false)
+        }
 
         DispatchQueue.main.async {
             self.scrollToBottom(animated: true)

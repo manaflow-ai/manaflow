@@ -51,6 +51,10 @@ Use crypto.subtle instead of node:crypto
 Exception is if the file defines only actions and includes a "use node" directive at the top of the file
 To query Convex data during development, first cd into packages/convex, and run `bunx convex data <table> --format jsonl | rg "pattern"` (e.g., `bunx convex data sessions --format jsonl | rg "mn7abc123"`).
 
+Swift Convex types (iOS):
+- `bun run gen:swift-api-types` -> `ios-app/Sources/Generated/ConvexApiTypes.swift`
+- `bun run gen:swift-types` -> `ios-app/Sources/Generated/ConvexTables.swift`
+
 ## Sandboxes
 
 This project uses Morph sandboxes for running Claude Code/Codex/other coding CLIs inside.

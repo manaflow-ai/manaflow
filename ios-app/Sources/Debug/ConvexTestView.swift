@@ -9,6 +9,7 @@ struct ConvexTestView: View {
     @State private var result: String = "Not tested yet"
     @State private var isLoading = false
     @State private var logs: [String] = []
+    @State private var teamInfo: TeamDebugInfo?
 
     // Debug login
     @State private var email = "l@l.com"
@@ -26,12 +27,49 @@ struct ConvexTestView: View {
                         .foregroundStyle(convex.isAuthenticated ? .green : .red)
                 }
                 if let user = auth.currentUser {
-                    LabeledContent("User") {
-                        Text(user.primary_email ?? user.id)
+                    LabeledContent("User Email") {
+                        Text(user.primary_email ?? "N/A")
                             .font(.caption)
                     }
+                    LabeledContent("User ID") {
+                        Text(user.id)
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            Section("Team Info") {
+                if let info = teamInfo {
+                    LabeledContent("Team Name") {
+                        Text(info.displayName)
+                            .font(.caption)
+                    }
+                    LabeledContent("Team Slug") {
+                        Text(info.slug)
+                            .font(.caption)
+                    }
+                    LabeledContent("Convex Team ID") {
+                        Text(info.convexTeamId)
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
+                    LabeledContent("Stack Team ID") {
+                        Text(info.stackTeamId)
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text("Loading team info...")
+                        .foregroundStyle(.secondary)
                 }
 
+                Button("Refresh Team Info") {
+                    Task { await loadTeamInfo() }
+                }
+            }
+
+            Section("Debug Tools") {
                 // Show token info for debugging
                 Button("Show Token Info") {
                     Task {
@@ -146,11 +184,54 @@ struct ConvexTestView: View {
             }
         }
         .navigationTitle("Convex Test")
+        .onAppear {
+            Task { await loadTeamInfo() }
+        }
     }
 
     func addLog(_ message: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         logs.append("[\(timestamp)] \(message)")
+    }
+
+    func loadTeamInfo() async {
+        guard convex.isAuthenticated else {
+            addLog("Cannot load team info: not authenticated")
+            return
+        }
+
+        addLog("Loading team info...")
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            var cancellable: AnyCancellable?
+            cancellable = convex.client
+                .subscribe(to: "teams:listTeamMemberships", yielding: TeamsListTeamMembershipsReturn.self)
+                .first()
+                .receive(on: DispatchQueue.main)
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            self.addLog("Failed to load team info: \(error)")
+                        }
+                        cancellable?.cancel()
+                        continuation.resume()
+                    },
+                    receiveValue: { memberships in
+                        if let first = memberships.first {
+                            self.teamInfo = TeamDebugInfo(
+                                displayName: first.team.displayName ?? "Unknown",
+                                slug: first.team.slug ?? "unknown",
+                                convexTeamId: first.team._id.rawValue,
+                                stackTeamId: first.team.teamId
+                            )
+                            self.addLog("Team: \(first.team.displayName ?? "Unknown") (\(first.team.slug ?? "?"))")
+                            self.addLog("Convex ID: \(first.team._id.rawValue)")
+                        } else {
+                            self.addLog("No team memberships found")
+                        }
+                    }
+                )
+        }
     }
 
     func debugLogin() async {
@@ -171,7 +252,7 @@ struct ConvexTestView: View {
         var cancellable: AnyCancellable?
 
         cancellable = convex.client
-            .subscribe(to: "teams:listTeamMemberships", yielding: [TeamMembership].self)
+            .subscribe(to: "teams:listTeamMemberships", yielding: TeamsListTeamMembershipsReturn.self)
             .first()
             .receive(on: DispatchQueue.main)
             .sink(
@@ -216,10 +297,12 @@ struct ConvexTestView: View {
     }
 }
 
-// Minimal struct to decode the response
-struct TeamMembership: Decodable {
-    let teamId: String
-    let userId: String
+// Extended team info for debug display
+struct TeamDebugInfo {
+    let displayName: String
+    let slug: String
+    let convexTeamId: String  // Convex _id
+    let stackTeamId: String   // Stack Auth teamId
 }
 
 // JWT decoder helper

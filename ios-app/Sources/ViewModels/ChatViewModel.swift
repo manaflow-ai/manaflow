@@ -1,0 +1,143 @@
+import Foundation
+import Combine
+import ConvexMobile
+
+/// ViewModel for loading and displaying chat messages from Convex
+@MainActor
+class ChatViewModel: ObservableObject {
+    @Published var messages: [ConvexMessage] = []
+    @Published var isLoading = true
+    @Published var isSending = false
+    @Published var error: String?
+
+    private var cancellables = Set<AnyCancellable>()
+    private let convex = ConvexClientManager.shared
+    let conversationId: String
+    private var teamId: String?
+
+    init(conversationId: String) {
+        self.conversationId = conversationId
+        Task {
+            await loadMessages()
+        }
+    }
+
+    /// Send a text message to the conversation
+    func sendMessage(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isSending = true
+        defer { isSending = false }
+
+        print("📱 ChatViewModel: Sending message to \(conversationId)")
+
+        let contentItem = AcpSendMessageArgsContentItem(
+            name: nil,
+            text: trimmed,
+            mimeType: nil,
+            data: nil,
+            uri: nil,
+            type: .text
+        )
+
+        do {
+            // Call acp:sendMessage action
+            let sendArgs = AcpSendMessageArgs(
+                content: [contentItem],
+                conversationId: ConvexId(rawValue: conversationId)
+            )
+            let _: AcpSendMessageReturn = try await convex.client.action(
+                "acp:sendMessage",
+                with: sendArgs.asDictionary()
+            )
+            print("📱 ChatViewModel: Message sent successfully")
+        } catch {
+            print("📱 ChatViewModel: Failed to send message: \(error)")
+            self.error = "Failed to send: \(error.localizedDescription)"
+        }
+    }
+
+    func loadMessages() async {
+        // Wait for auth with retry loop (up to 30 seconds)
+        var attempts = 0
+        while !convex.isAuthenticated && attempts < 30 {
+            print("📱 ChatViewModel: Not authenticated, waiting... (attempt \(attempts + 1))")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            attempts += 1
+        }
+
+        guard convex.isAuthenticated else {
+            print("📱 ChatViewModel: Auth timeout")
+            error = "Authentication timeout"
+            isLoading = false
+            return
+        }
+
+        // Get team ID first
+        guard let teamId = await getFirstTeamId() else {
+            print("📱 ChatViewModel: Failed to get team ID")
+            error = "Failed to get team"
+            isLoading = false
+            return
+        }
+
+        self.teamId = teamId
+        print("📱 ChatViewModel: Loading messages for conversation \(conversationId)")
+
+        // Subscribe to messages (paginated response)
+        let listArgs = ConversationMessagesListByConversationArgs(
+            limit: nil,
+            cursor: nil,
+            conversationId: ConvexId(rawValue: conversationId),
+            teamSlugOrId: teamId
+        )
+        convex.client
+            .subscribe(
+                to: "conversationMessages:listByConversation",
+                with: listArgs.asDictionary(),
+                yielding: MessagesPage.self
+            )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    if case .failure(let err) = completion {
+                        print("📱 ChatViewModel: Subscription error: \(err)")
+                        self?.error = err.localizedDescription
+                        self?.isLoading = false
+                    }
+                },
+                receiveValue: { [weak self] page in
+                    print("📱 ChatViewModel: Received \(page.messages.count) messages")
+                    self?.messages = page.messages
+                    self?.isLoading = false
+                }
+            )
+            .store(in: &cancellables)
+    }
+
+    private func getFirstTeamId() async -> String? {
+        return await withCheckedContinuation { continuation in
+            var cancellable: AnyCancellable?
+            cancellable = convex.client
+                .subscribe(to: "teams:listTeamMemberships", yielding: TeamsListTeamMembershipsReturn.self)
+                .first()
+                .receive(on: DispatchQueue.main)
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure = completion {
+                            continuation.resume(returning: nil)
+                        }
+                        cancellable?.cancel()
+                    },
+                    receiveValue: { memberships in
+                        // Use Stack Auth UUID (teamId) for queries
+                        if let first = memberships.first {
+                            print("📱 ChatViewModel: Team '\(first.team.displayName ?? "?")' teamId: \(first.teamId)")
+                        }
+                        continuation.resume(returning: memberships.first?.teamId)
+                    }
+                )
+        }
+    }
+}

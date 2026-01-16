@@ -204,9 +204,10 @@ struct CodexOAuthView: View {
         currentTeamId = teamId
 
         // Now check for Codex tokens using subscription
+        let args = CodexTokensGetArgs(teamSlugOrId: teamId)
         var cancellable: AnyCancellable?
         cancellable = convex.client
-            .subscribe(to: "codexTokens:get", with: ["teamSlugOrId": teamId], yielding: CodexTokensResponse?.self)
+            .subscribe(to: "codexTokens:get", with: args.asDictionary(), yielding: CodexTokensGetReturn?.self)
             .first()
             .receive(on: DispatchQueue.main)
             .sink(
@@ -221,7 +222,7 @@ struct CodexOAuthView: View {
                     cancellable?.cancel()
                 },
                 receiveValue: { tokens in
-                    if let tokens = tokens {
+                    if let tokens {
                         let userId = self.authManager.currentUser?.id ?? "unknown"
                         let proxyToken = "cmux_\(userId)_\(teamId)"
                         self.codexStatus = .linked(CodexAccountInfo(
@@ -241,7 +242,7 @@ struct CodexOAuthView: View {
         return await withCheckedContinuation { continuation in
             var cancellable: AnyCancellable?
             cancellable = convex.client
-                .subscribe(to: "teams:listTeamMemberships", yielding: [TeamMembershipForCodex].self)
+                .subscribe(to: "teams:listTeamMemberships", yielding: TeamsListTeamMembershipsReturn.self)
                 .first()
                 .receive(on: DispatchQueue.main)
                 .sink(
@@ -487,16 +488,6 @@ private struct CodexAccountInfo {
     let accountId: String?
     let planType: String?
     let proxyToken: String
-}
-
-private struct CodexTokensResponse: Decodable {
-    let email: String?
-    let accountId: String?
-    let planType: String?
-}
-
-private struct TeamMembershipForCodex: Decodable {
-    let teamId: String
 }
 
 struct CodexTokenResponse: Codable {

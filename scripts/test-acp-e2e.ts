@@ -78,7 +78,7 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runTests() {
+async function runTests(): Promise<{ results: TestResult[]; totalDuration: number }> {
   const testStartTime = performance.now();
   console.log("\n========================================");
   console.log("ACP E2E Test Suite");
@@ -98,7 +98,7 @@ async function runTests() {
     log("Spawn sandbox", "pass", `Created sandbox ${sandboxId}`, result);
   } catch (error) {
     log("Spawn sandbox", "fail", String(error));
-    return results;
+    return { results, totalDuration: performance.now() - testStartTime };
   }
 
   // Step 2: Wait for sandbox to be ready
@@ -130,11 +130,11 @@ async function runTests() {
 
     if (!sandboxUrl) {
       log("Sandbox ready", "fail", "Timeout waiting for sandbox to be ready");
-      return results;
+      return { results, totalDuration: performance.now() - testStartTime };
     }
   } catch (error) {
     log("Sandbox ready", "fail", String(error));
-    return results;
+    return { results, totalDuration: performance.now() - testStartTime };
   }
 
   // Step 3: Create conversation via internal mutation
@@ -153,7 +153,7 @@ async function runTests() {
     log("Create conversation", "pass", `Created ${conversationId}`, { sessionId });
   } catch (error) {
     log("Create conversation", "fail", String(error));
-    return results;
+    return { results, totalDuration: performance.now() - testStartTime };
   }
 
   // Step 4: Initialize conversation on sandbox
@@ -165,7 +165,7 @@ async function runTests() {
 
     if (!conversation) {
       log("Init on sandbox", "fail", "Conversation not found");
-      return results;
+      return { results, totalDuration: performance.now() - testStartTime };
     }
 
     const initUrl = `${sandboxUrl}/api/acp/init`;
@@ -187,11 +187,11 @@ async function runTests() {
       log("Init on sandbox", "pass", "Conversation initialized", initData);
     } else {
       log("Init on sandbox", "fail", `HTTP ${initResponse.status}`, initData);
-      return results;
+      return { results, totalDuration: performance.now() - testStartTime };
     }
   } catch (error) {
     log("Init on sandbox", "fail", String(error));
-    return results;
+    return { results, totalDuration: performance.now() - testStartTime };
   }
 
   // Step 5: Send a prompt
@@ -203,7 +203,7 @@ async function runTests() {
 
     if (!conversation) {
       log("Send prompt", "fail", "Conversation not found");
-      return results;
+      return { results, totalDuration: performance.now() - testStartTime };
     }
 
     const promptUrl = `${sandboxUrl}/api/acp/prompt`;
@@ -229,11 +229,11 @@ async function runTests() {
       log("Send prompt", "pass", "Prompt accepted", promptData);
     } else {
       log("Send prompt", "fail", `HTTP ${promptResponse.status}`, promptData);
-      return results;
+      return { results, totalDuration: performance.now() - testStartTime };
     }
   } catch (error) {
     log("Send prompt", "fail", String(error));
-    return results;
+    return { results, totalDuration: performance.now() - testStartTime };
   }
 
   // Step 6: Wait for response and check messages in Convex
