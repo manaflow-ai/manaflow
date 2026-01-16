@@ -980,7 +980,7 @@ function MockGitHubPRBrowser() {
                     main
                   </span>
                   {" from "}
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono"></span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">cmux/test-re6k4tq</span>
                 </span>
               </div>
             </div>
