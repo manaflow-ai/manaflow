@@ -27,6 +27,14 @@ import type {
   SandboxStatusInfo,
 } from "../_shared/sandbox-providers";
 
+function getCurrentSnapshotId(): string {
+  const provider = getDefaultSandboxProvider();
+  return (
+    getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
+    "snap_default"
+  );
+}
+
 // Content block validator (simplified ACP ContentBlock)
 const contentBlockValidator = v.object({
   type: v.union(
@@ -274,6 +282,7 @@ async function replaceSandboxForConversation(
   const previousSandboxId = conversation.acpSandboxId;
 
   let claimedWarmSandbox: Doc<"acpSandboxes"> | null = null;
+  const snapshotId = getCurrentSnapshotId();
 
   if (userId) {
     claimedWarmSandbox = await ctx.runMutation(
@@ -281,6 +290,7 @@ async function replaceSandboxForConversation(
       {
         userId,
         teamId,
+        snapshotId,
       },
     );
   }
@@ -490,12 +500,15 @@ export const prewarmSandbox = action({
       userId: identity.subject,
     });
 
+    const snapshotId = getCurrentSnapshotId();
+
     const reserved = await ctx.runMutation(
       internal.acpSandboxes.reserveWarmSandbox,
       {
         userId: identity.subject,
         teamId,
         extendMs: WARM_SANDBOX_TTL_MS,
+        snapshotId,
       },
     );
 
@@ -558,6 +571,7 @@ export const startConversation = action({
     let sandboxId = args.sandboxId;
     let status: "starting" | "ready" = "starting";
     let claimedWarmSandbox = null as Doc<"acpSandboxes"> | null;
+    const snapshotId = getCurrentSnapshotId();
 
     if (sandboxId) {
       claimedWarmSandbox = await ctx.runMutation(
@@ -566,6 +580,7 @@ export const startConversation = action({
           userId: identity.subject,
           teamId,
           sandboxId,
+          snapshotId,
         },
       );
       sandboxId = claimedWarmSandbox?._id;
@@ -577,6 +592,7 @@ export const startConversation = action({
         {
           userId: identity.subject,
           teamId,
+          snapshotId,
         },
       );
       sandboxId = claimedWarmSandbox?._id;

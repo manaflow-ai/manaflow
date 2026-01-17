@@ -303,9 +303,53 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
       await ctx.run(
         "install-acp",
         `
+        set -e
         export BUN_INSTALL="$HOME/.bun"
         export PATH="$BUN_INSTALL/bin:$PATH"
         bun add -g @zed-industries/claude-code-acp@latest @zed-industries/codex-acp@latest @google/gemini-cli@latest opencode-ai@latest
+
+        PATCH_FILE="/root/.bun/install/global/node_modules/@zed-industries/claude-code-acp/dist/acp-agent.js"
+        if [ ! -f "$PATCH_FILE" ]; then
+          echo "ERROR: claude-code-acp not found at $PATCH_FILE"
+          exit 1
+        fi
+
+        node - << 'NODE'
+const fs = require("node:fs");
+
+const path = "/root/.bun/install/global/node_modules/@zed-industries/claude-code-acp/dist/acp-agent.js";
+const text = fs.readFileSync(path, "utf8");
+
+if (text.includes("sawStreamEvent")) {
+  console.log("claude-code-acp patch already applied");
+  process.exit(0);
+}
+
+const target = "const { query, input } = this.sessions[params.sessionId];";
+if (!text.includes(target)) {
+  throw new Error("Failed to find prompt setup line");
+}
+let next = text.replace(target, target + "\\n        let sawStreamEvent = false;");
+
+const streamCase = 'case "stream_event": {';
+if (!next.includes(streamCase)) {
+  throw new Error("Failed to find stream_event case");
+}
+next = next.replace(streamCase, streamCase + "\\n                    sawStreamEvent = true;");
+
+const filterExpr =
+  'message.message.content.filter((item) => !["text", "thinking"].includes(item.type))';
+if (!next.includes(filterExpr)) {
+  throw new Error("Failed to find assistant text filter");
+}
+next = next.replace(
+  filterExpr,
+  'message.message.content.filter((item) => !["text", "thinking"].includes(item.type) || !sawStreamEvent)'
+);
+
+fs.writeFileSync(path, next);
+console.log("Patched claude-code-acp to emit non-streamed assistant text");
+NODE
         `
       );
     },

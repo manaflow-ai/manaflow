@@ -154,10 +154,12 @@ export const reserveWarmSandbox = internalMutation({
     userId: v.string(),
     teamId: v.string(),
     extendMs: v.number(),
+    snapshotId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     const expiresAt = now + args.extendMs;
+    const snapshotId = args.snapshotId;
 
     const reserved = await ctx.db
       .query("acpSandboxes")
@@ -170,7 +172,12 @@ export const reserveWarmSandbox = internalMutation({
       .order("desc")
       .first();
 
-    if (reserved && reserved.warmExpiresAt && reserved.warmExpiresAt > now) {
+    if (
+      reserved &&
+      reserved.warmExpiresAt &&
+      reserved.warmExpiresAt > now &&
+      (!snapshotId || reserved.snapshotId === snapshotId)
+    ) {
       await ctx.db.patch(reserved._id, {
         warmExpiresAt: expiresAt,
         warmReservedAt: now,
@@ -187,6 +194,7 @@ export const reserveWarmSandbox = internalMutation({
 
     const candidate = available.find(
       (sandbox) =>
+        (!snapshotId || sandbox.snapshotId === snapshotId) &&
         sandbox.status !== "stopped" &&
         sandbox.status !== "error" &&
         sandbox.warmExpiresAt &&
@@ -218,6 +226,7 @@ export const claimWarmSandbox = internalMutation({
     userId: v.string(),
     teamId: v.string(),
     sandboxId: v.optional(v.id("acpSandboxes")),
+    snapshotId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -228,6 +237,9 @@ export const claimWarmSandbox = internalMutation({
         !candidate.warmExpiresAt ||
         candidate.warmExpiresAt <= now
       ) {
+        return null;
+      }
+      if (args.snapshotId && candidate.snapshotId !== args.snapshotId) {
         return null;
       }
       if (candidate.poolState === "reserved") {
