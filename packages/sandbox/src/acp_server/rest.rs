@@ -825,7 +825,31 @@ pub async fn init_conversation(
                                     }
                                 }
                             }
-                            AcpEvent::MessageComplete(stop_reason) => {
+                            AcpEvent::MessageComplete {
+                                stop_reason,
+                                content,
+                            } => {
+                                if let Some(text) = content {
+                                    if message_buffer.is_empty() && !text.trim().is_empty() {
+                                        message_buffer.push_str(&text);
+                                        last_message_event_at = Some(line_created_at);
+                                        last_message_event_seq = Some(raw_seq);
+                                    }
+                                }
+                                if message_buffer.is_empty() && reasoning_buffer.is_empty() {
+                                    let tool_outputs: Vec<String> = pending_tool_calls
+                                        .iter()
+                                        .filter_map(|tool_call| tool_call.result.as_ref())
+                                        .map(|value| value.trim())
+                                        .filter(|value| !value.is_empty())
+                                        .map(|value| value.to_string())
+                                        .collect();
+                                    if !tool_outputs.is_empty() {
+                                        message_buffer = tool_outputs.join("\n\n");
+                                        last_message_event_at = Some(line_created_at);
+                                        last_message_event_seq = Some(raw_seq);
+                                    }
+                                }
                                 // MESSAGE BOUNDARY: Persist all buffered content to Convex
                                 info!(
                                     conversation_id = %conversation_id,
@@ -997,8 +1021,11 @@ enum AcpEvent {
         status: String,
         result: Option<String>,
     },
-    /// Message completion with stop reason
-    MessageComplete(String), // stop_reason
+    /// Message completion with optional final content and stop reason
+    MessageComplete {
+        stop_reason: String,
+        content: Option<String>,
+    },
 }
 
 /// Parse ACP events from a JSON-RPC line.
@@ -1012,11 +1039,15 @@ fn parse_acp_event(line: &str) -> Option<AcpEvent> {
 
     // Check for JSON-RPC result with stopReason (message complete)
     if let Some(result) = value.get("result") {
+        let content_text = extract_text_from_result(result);
         if let Some(stop_reason) = result.get("stopReason").and_then(|s| s.as_str()) {
-            return Some(AcpEvent::MessageComplete(stop_reason.to_string()));
+            return Some(AcpEvent::MessageComplete {
+                stop_reason: stop_reason.to_string(),
+                content: content_text,
+            });
         }
         // Check for text in result.content (standard response)
-        if let Some(text) = extract_text_from_result(result) {
+        if let Some(text) = content_text {
             return Some(AcpEvent::MessageChunk(text));
         }
     }
@@ -1082,15 +1113,20 @@ fn parse_acp_event(line: &str) -> Option<AcpEvent> {
                         .get("status")
                         .or_else(|| update.get("fields").and_then(|f| f.get("status")))
                         .and_then(|v| v.as_str());
-                    let result = update
+                    let mut result = update
                         .get("result")
                         .or_else(|| update.get("fields").and_then(|f| f.get("result")))
                         .and_then(|v| v.as_str());
+                    let result = if result.is_some() {
+                        result.map(|value| value.to_string())
+                    } else {
+                        extract_tool_output(update)
+                    };
                     if let Some(id) = id {
                         return Some(AcpEvent::ToolCallUpdate {
                             id: id.to_string(),
                             status: status.unwrap_or("unknown").to_string(),
-                            result: result.map(|s| s.to_string()),
+                            result,
                         });
                     }
                 }
@@ -1203,6 +1239,36 @@ fn extract_text_from_content(content: Option<&serde_json::Value>) -> Option<Stri
                 if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                     return Some(text.to_string());
                 }
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract tool output text from a tool_call_update payload.
+fn extract_tool_output(update: &serde_json::Value) -> Option<String> {
+    let stdout = update
+        .get("_meta")
+        .and_then(|meta| meta.get("claudeCode"))
+        .and_then(|claude| claude.get("toolResponse"))
+        .and_then(|tool_response| tool_response.get("stdout"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
+    if stdout.is_some() {
+        return stdout;
+    }
+
+    let content = update.get("content")?;
+    if let Some(arr) = content.as_array() {
+        for item in arr {
+            if let Some(nested) = item.get("content") {
+                if let Some(text) = extract_text_from_content(Some(nested)) {
+                    return Some(text);
+                }
+            }
+            if let Some(text) = extract_text_from_content(Some(item)) {
+                return Some(text);
             }
         }
     }

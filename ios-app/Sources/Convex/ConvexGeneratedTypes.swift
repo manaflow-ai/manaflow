@@ -58,6 +58,20 @@ extension ConversationsListPagedWithLatestReturnPageItem {
         return Date(timeIntervalSince1970: timestamp / 1000)
     }
 
+    var previewSubtitle: String {
+        if let text = preview.text, !text.isEmpty {
+            return text
+        }
+        switch preview.kind {
+        case .image:
+            return "image"
+        case .resource:
+            return "attachment"
+        case .text, .empty:
+            return "no messages yet"
+        }
+    }
+
     var isActive: Bool {
         status == .active
     }

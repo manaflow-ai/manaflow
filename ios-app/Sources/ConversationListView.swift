@@ -351,40 +351,28 @@ struct ConversationRow: View {
     let conversation: ConvexConversation
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Provider icon
-            Image(systemName: conversation.providerIcon)
-                .font(.title2)
-                .foregroundStyle(conversation.isActive ? .blue : .secondary)
-                .frame(width: 40, height: 40)
-                .background(
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(conversation.displayName)
+                    .font(.headline)
+
+                if conversation.isActive {
                     Circle()
-                        .fill(conversation.isActive ? Color.blue.opacity(0.1) : Color.secondary.opacity(0.1))
-                )
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(conversation.displayName)
-                        .font(.headline)
-
-                    if conversation.isActive {
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 8, height: 8)
-                    }
-
-                    Spacer()
-
-                    Text(formatTimestamp(conversation.displayTimestamp))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .fill(.green)
+                        .frame(width: 8, height: 8)
                 }
 
-                Text(conversation.cwd)
+                Spacer()
+
+                Text(formatTimestamp(conversation.displayTimestamp))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
+
+            Text(conversation.previewSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .padding(.vertical, 4)
     }

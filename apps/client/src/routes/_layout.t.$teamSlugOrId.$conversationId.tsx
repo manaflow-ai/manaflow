@@ -727,6 +727,17 @@ function ConversationThread() {
       latestUserMessageAt > latestAssistantMessageAt);
 
   const permissionRequest = useMemo<PermissionRequest | null>(() => {
+    // First, collect all permission request IDs that have already been responded to
+    const respondedIds = new Set<string>();
+    for (const event of rawEvents) {
+      const parsed = safeParseJson(event.raw);
+      if (!parsed || !isRecord(parsed)) continue;
+      // A response has "result" field and an "id" that matches the request
+      if (isRecord(parsed.result) && (typeof parsed.id === "string" || typeof parsed.id === "number")) {
+        respondedIds.add(parsed.id.toString());
+      }
+    }
+
     for (const event of rawEvents) {
       const parsed = safeParseJson(event.raw);
       if (!parsed || !isRecord(parsed)) continue;
@@ -734,6 +745,10 @@ function ConversationThread() {
       if (method !== "session/request_permission") continue;
       const id = parsed.id;
       if (typeof id !== "string" && typeof id !== "number") continue;
+      
+      // Skip if this permission request has already been responded to
+      if (respondedIds.has(id.toString())) continue;
+      
       const params = parsed.params;
       if (!isRecord(params)) continue;
       const optionsRaw = params.options;
