@@ -69,68 +69,144 @@ function serializeProviderConnections(
   }));
 }
 
+// Helper function to render the unauthenticated view
+function renderUnauthenticatedView() {
+  return (
+    <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
+      <svg
+        className="absolute inset-0 -z-10 w-full h-full -mx-8 sm:mx-0"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 832 252"
+        fill="none"
+        preserveAspectRatio="none"
+      >
+        <ellipse className="sm:hidden" cx="446" cy="96" rx="500" ry="126" fill="url(#paint0_radial_preview_unauth_sm)" />
+        <ellipse className="hidden sm:block" cx="446" cy="96" rx="416" ry="126" fill="url(#paint0_radial_preview_unauth)" />
+        <defs>
+          <radialGradient
+            id="paint0_radial_preview_unauth_sm"
+            cx="0"
+            cy="0"
+            r="1"
+            gradientUnits="userSpaceOnUse"
+            gradientTransform="translate(446 96) scale(500 126)"
+          >
+            <stop stopColor="rgba(4,120,255,0.25)" />
+            <stop offset="1" stopColor="rgba(4,120,255,0)" />
+          </radialGradient>
+          <radialGradient
+            id="paint0_radial_preview_unauth"
+            cx="0"
+            cy="0"
+            r="1"
+            gradientUnits="userSpaceOnUse"
+            gradientTransform="translate(446 96) scale(416 126)"
+          >
+            <stop stopColor="rgba(4,120,255,0.25)" />
+            <stop offset="1" stopColor="rgba(4,120,255,0)" />
+          </radialGradient>
+        </defs>
+      </svg>
+
+      <PreviewDashboard
+        selectedTeamSlugOrId=""
+        teamOptions={[]}
+        providerConnectionsByTeam={{}}
+        isAuthenticated={false}
+        previewConfigs={[]}
+      />
+    </div>
+  );
+}
+
 export default async function PreviewLandingPage({ searchParams }: PageProps) {
-  const user = await stackServerApp.getUser();
+  // Wrap the entire page in try-catch to prevent 500 errors
+  // If anything fails, show the unauthenticated view so users can try signing in again
+  let user;
+  try {
+    user = await stackServerApp.getUser();
+  } catch (error) {
+    console.error("[PreviewLandingPage] Failed to get user from Stack Auth", error);
+    return renderUnauthenticatedView();
+  }
+
   const resolvedSearch = await searchParams;
 
   if (!user) {
-    return (
-      <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
-        <svg
-          className="absolute inset-0 -z-10 w-full h-full -mx-8 sm:mx-0"
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 832 252"
-          fill="none"
-          preserveAspectRatio="none"
-        >
-          <ellipse className="sm:hidden" cx="446" cy="96" rx="500" ry="126" fill="url(#paint0_radial_preview_1_sm)" />
-          <ellipse className="hidden sm:block" cx="446" cy="96" rx="416" ry="126" fill="url(#paint0_radial_preview_1)" />
-          <defs>
-            <radialGradient
-              id="paint0_radial_preview_1_sm"
-              cx="0"
-              cy="0"
-              r="1"
-              gradientUnits="userSpaceOnUse"
-              gradientTransform="translate(446 96) scale(500 126)"
-            >
-              <stop stopColor="rgba(4,120,255,0.25)" />
-              <stop offset="1" stopColor="rgba(4,120,255,0)" />
-            </radialGradient>
-            <radialGradient
-              id="paint0_radial_preview_1"
-              cx="0"
-              cy="0"
-              r="1"
-              gradientUnits="userSpaceOnUse"
-              gradientTransform="translate(446 96) scale(416 126)"
-            >
-              <stop stopColor="rgba(4,120,255,0.25)" />
-              <stop offset="1" stopColor="rgba(4,120,255,0)" />
-            </radialGradient>
-          </defs>
-        </svg>
-
-        <PreviewDashboard
-          selectedTeamSlugOrId=""
-          teamOptions={[]}
-          providerConnectionsByTeam={{}}
-          isAuthenticated={false}
-          previewConfigs={[]}
-        />
-      </div>
-    );
+    return renderUnauthenticatedView();
   }
 
-  const [auth, teamsResult, githubAccount, gitlabAccount, bitbucketAccount] = await Promise.all([
-    user.getAuthJson(),
-    user.listTeams(),
-    user.getConnectedAccount("github"),
-    user.getConnectedAccount("gitlab"),
-    user.getConnectedAccount("bitbucket"),
-  ]);
-  const teams: StackTeam[] = teamsResult;
-  const { accessToken } = auth;
+  // Try to get auth tokens and user data
+  // Wrap in try-catch to handle any Stack Auth API errors gracefully
+  let accessToken: string | null = null;
+  let teams: StackTeam[] = [];
+  let githubAccount: Awaited<ReturnType<typeof user.getConnectedAccount>> = null;
+  let gitlabAccount: Awaited<ReturnType<typeof user.getConnectedAccount>> = null;
+  let bitbucketAccount: Awaited<ReturnType<typeof user.getConnectedAccount>> = null;
+
+  try {
+    const [auth, teamsResult, github, gitlab, bitbucket] = await Promise.all([
+      user.getAuthJson(),
+      user.listTeams(),
+      user.getConnectedAccount("github"),
+      user.getConnectedAccount("gitlab"),
+      user.getConnectedAccount("bitbucket"),
+    ]);
+    teams = teamsResult;
+    githubAccount = github;
+    gitlabAccount = gitlab;
+    bitbucketAccount = bitbucket;
+    accessToken = auth.accessToken;
+  } catch (error) {
+    console.error("[PreviewLandingPage] Failed to fetch user data from Stack Auth", error);
+    // Fall through to try creating a fresh session
+  }
+
+  // If accessToken is null, try creating a fresh session to get valid tokens
+  // This can happen right after OAuth sign-in when tokens aren't fully propagated
+  if (!accessToken) {
+    console.log("[PreviewLandingPage] accessToken is null, attempting to create fresh session");
+    try {
+      const freshSession = await user.createSession({ expiresInMillis: 24 * 60 * 60 * 1000 });
+      const freshTokens = await freshSession.getTokens();
+      if (freshTokens.accessToken) {
+        accessToken = freshTokens.accessToken;
+        console.log("[PreviewLandingPage] Got fresh access token from new session");
+        // Also try to fetch teams if we didn't get them earlier
+        if (teams.length === 0) {
+          try {
+            teams = await user.listTeams();
+          } catch (teamsError) {
+            console.error("[PreviewLandingPage] Failed to fetch teams", teamsError);
+          }
+        }
+        // Try to fetch connected accounts if we didn't get them earlier
+        if (!githubAccount && !gitlabAccount && !bitbucketAccount) {
+          try {
+            const [github, gitlab, bitbucket] = await Promise.all([
+              user.getConnectedAccount("github"),
+              user.getConnectedAccount("gitlab"),
+              user.getConnectedAccount("bitbucket"),
+            ]);
+            githubAccount = github;
+            gitlabAccount = gitlab;
+            bitbucketAccount = bitbucket;
+          } catch (accountsError) {
+            console.error("[PreviewLandingPage] Failed to fetch connected accounts", accountsError);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[PreviewLandingPage] Failed to create fresh session", error);
+    }
+  }
+
+  // If we still don't have an access token, show the unauthenticated view
+  // This allows the user to sign in again rather than seeing a crash
+  if (!accessToken) {
+    console.error("[PreviewLandingPage] No access token available after retry, showing unauthenticated view");
+    return renderUnauthenticatedView();
+  }
 
   // Check if user authenticated with GitLab or Bitbucket but not GitHub
   // These providers are still in beta, so show waitlist in the repo selection box
@@ -168,10 +244,6 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     }
   }
 
-  if (!accessToken) {
-    throw new Error("Missing Stack access token");
-  }
-
   const searchTeam = (() => {
     if (!resolvedSearch) {
       return null;
@@ -204,11 +276,21 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     Promise.all(
       teams.map(async (team) => {
         const teamSlugOrId = getTeamSlugOrId(team);
-        const connections = await convex.query(api.github.listProviderConnections, {
-          teamSlugOrId,
-        });
-        const serialized = serializeProviderConnections(connections);
-        return [teamSlugOrId, serialized];
+        try {
+          const connections = await convex.query(api.github.listProviderConnections, {
+            teamSlugOrId,
+          });
+          const serialized = serializeProviderConnections(connections);
+          return [teamSlugOrId, serialized];
+        } catch (error) {
+          // This can happen for new users before webhook syncs membership to Convex.
+          // Return empty connections for this team - it will populate on next page load.
+          console.error("[PreviewLandingPage] Failed to load provider connections", {
+            teamSlugOrId,
+            error,
+          });
+          return [teamSlugOrId, []];
+        }
       }),
     ),
     Promise.all(
@@ -232,6 +314,8 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
             })
           );
         } catch (error) {
+          // This can happen for new users before webhook syncs membership to Convex.
+          // Return empty configs for this team - it will populate on next page load.
           console.error("[PreviewLandingPage] Failed to load preview configs", {
             teamSlugOrId,
             error,

@@ -35,15 +35,52 @@ export default async function PreviewTestPage({ searchParams }: PageProps) {
     return redirect(signInUrl);
   }
 
-  const [auth, teamsResult] = await Promise.all([
-    user.getAuthJson(),
-    user.listTeams(),
-  ]);
-  const teams: StackTeam[] = teamsResult;
-  const { accessToken } = auth;
+  // Try to get auth tokens and user data
+  // Wrap in try-catch to handle any Stack Auth API errors gracefully
+  let accessToken: string | null = null;
+  let teams: StackTeam[] = [];
 
+  try {
+    const [auth, teamsResult] = await Promise.all([
+      user.getAuthJson(),
+      user.listTeams(),
+    ]);
+    teams = teamsResult;
+    accessToken = auth.accessToken;
+  } catch (error) {
+    console.error("[PreviewTestPage] Failed to fetch user data from Stack Auth", error);
+    // Fall through to try creating a fresh session
+  }
+
+  // If accessToken is null, try creating a fresh session to get valid tokens
+  // This can happen right after OAuth sign-in when tokens aren't fully propagated
   if (!accessToken) {
-    throw new Error("Missing Stack access token");
+    console.log("[PreviewTestPage] accessToken is null, attempting to create fresh session");
+    try {
+      const freshSession = await user.createSession({ expiresInMillis: 24 * 60 * 60 * 1000 });
+      const freshTokens = await freshSession.getTokens();
+      if (freshTokens.accessToken) {
+        accessToken = freshTokens.accessToken;
+        console.log("[PreviewTestPage] Got fresh access token from new session");
+        // Also try to fetch teams if we didn't get them earlier
+        if (teams.length === 0) {
+          try {
+            teams = await user.listTeams();
+          } catch (teamsError) {
+            console.error("[PreviewTestPage] Failed to fetch teams", teamsError);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[PreviewTestPage] Failed to create fresh session", error);
+    }
+  }
+
+  // If we still don't have an access token, redirect to sign-in
+  if (!accessToken) {
+    console.error("[PreviewTestPage] No access token available after retry, redirecting to sign-in");
+    const signInUrl = `/handler/sign-in?after_auth_return_to=${encodeURIComponent("/preview/test")}`;
+    return redirect(signInUrl);
   }
 
   const searchTeam = (() => {

@@ -22,6 +22,7 @@ export const env = createEnv({
     MORPH_API_KEY: z.string().min(1).optional(),
     CMUX_IS_STAGING: z.string().optional(),
     CONVEX_IS_PRODUCTION: z.string().optional(),
+    POSTHOG_API_KEY: z.string().optional(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

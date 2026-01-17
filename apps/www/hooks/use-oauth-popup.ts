@@ -156,8 +156,8 @@ export function useOAuthPopup(
       setSigningInProvider(provider);
 
       // Calculate centered position
-      const width = 600;
-      const height = 700;
+      const width = 820;
+      const height = 720;
       const screenLeft = window.screenLeft ?? window.screenX ?? 0;
       const screenTop = window.screenTop ?? window.screenY ?? 0;
       const screenWidth = window.outerWidth || window.innerWidth || width;
