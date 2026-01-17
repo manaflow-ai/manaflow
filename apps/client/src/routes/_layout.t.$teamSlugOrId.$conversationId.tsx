@@ -27,6 +27,7 @@ import { Streamdown } from "streamdown";
 
 const PAGE_SIZE = 40;
 const RAW_EVENTS_PAGE_SIZE = 120;
+const OPTIMISTIC_CONVERSATION_PREFIX = "optimistic-";
 const conversationIdSchema = z.custom<Id<"conversations">>(
   (value) => typeof value === "string"
 );
@@ -49,7 +50,7 @@ type PendingImage = {
 
 type ContentBlock = Doc<"conversationMessages">["content"][number];
 
-type PendingMessageStatus = "sending" | "sent" | "error";
+type PendingMessageStatus = "sending" | "queued" | "sent" | "error";
 
 type PendingMessage = {
   localId: string;
@@ -60,6 +61,15 @@ type PendingMessage = {
   status: PendingMessageStatus;
   error?: string;
 };
+
+function isDeliveryStatus(value: unknown): value is PendingMessageStatus {
+  return (
+    value === "queued" ||
+    value === "sent" ||
+    value === "error" ||
+    value === "sending"
+  );
+}
 
 type PaginatedStatus = ReturnType<typeof usePaginatedQuery>["status"];
 
@@ -118,15 +128,23 @@ const providerLabel: Record<string, string> = {
 
 function ConversationThread() {
   const { teamSlugOrId, conversationId: conversationIdParam } = Route.useParams();
+  const isOptimisticConversation = conversationIdParam.startsWith(
+    OPTIMISTIC_CONVERSATION_PREFIX
+  );
   const conversationId = conversationIdSchema.parse(conversationIdParam);
-  const detail = useQuery(api.conversations.getDetail, {
-    teamSlugOrId,
-    conversationId,
-  });
+  const detail = useQuery(
+    api.conversations.getDetail,
+    isOptimisticConversation
+      ? "skip"
+      : {
+          teamSlugOrId,
+          conversationId,
+        }
+  );
 
   const { results, status, loadMore } = usePaginatedQuery(
     api.conversationMessages.listByConversationPaginated,
-    { teamSlugOrId, conversationId },
+    isOptimisticConversation ? "skip" : { teamSlugOrId, conversationId },
     { initialNumItems: PAGE_SIZE }
   );
   const {
@@ -135,7 +153,7 @@ function ConversationThread() {
     loadMore: loadMoreRawEvents,
   } = usePaginatedQuery(
     api.acpRawEvents.listByConversationPaginated,
-    { teamSlugOrId, conversationId },
+    isOptimisticConversation ? "skip" : { teamSlugOrId, conversationId },
     { initialNumItems: RAW_EVENTS_PAGE_SIZE }
   );
 
@@ -183,6 +201,7 @@ function ConversationThread() {
   );
 
   useEffect(() => {
+    if (isOptimisticConversation) return;
     if (!latestMessageAt) return;
     if (
       lastMarkedAt.current !== null &&
@@ -199,7 +218,7 @@ function ConversationThread() {
     }).catch((error) => {
       console.error("Failed to mark conversation read", error);
     });
-  }, [conversationId, latestMessageAt, markRead, teamSlugOrId]);
+  }, [conversationId, isOptimisticConversation, latestMessageAt, markRead, teamSlugOrId]);
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -213,6 +232,7 @@ function ConversationThread() {
   }, [messages.length]);
 
   useEffect(() => {
+    if (isOptimisticConversation) return;
     const root = scrollRef.current;
     const target = loadMoreRef.current;
     if (!root || !target) return;
@@ -232,7 +252,7 @@ function ConversationThread() {
     return () => {
       observer.unobserve(target);
     };
-  }, [loadMore, status]);
+  }, [isOptimisticConversation, loadMore, status]);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -275,6 +295,41 @@ function ConversationThread() {
     });
   }, [messages, pendingMessages.length]);
 
+  useEffect(() => {
+    if (pendingMessages.length === 0 || messages.length === 0) return;
+    const byId = new Map(messages.map((message) => [message._id, message]));
+
+    setPendingMessages((current) => {
+      let changed = false;
+      const next = current.map((pending): PendingMessage => {
+        if (!pending.serverId) return pending;
+        const message = byId.get(pending.serverId);
+        if (!message?.deliveryStatus || !isDeliveryStatus(message.deliveryStatus)) {
+          return pending;
+        }
+        if (message.deliveryStatus === "sent" && pending.status !== "sent") {
+          changed = true;
+          return { ...pending, status: "sent", error: undefined };
+        }
+        if (message.deliveryStatus === "error" && pending.status !== "error") {
+          changed = true;
+          return {
+            ...pending,
+            status: "error",
+            error: message.deliveryError ?? pending.error ?? "Delivery failed",
+          };
+        }
+        if (message.deliveryStatus === "queued" && pending.status === "sending") {
+          changed = true;
+          return { ...pending, status: "queued" };
+        }
+        return pending;
+      });
+
+      return changed ? next : current;
+    });
+  }, [messages, pendingMessages.length]);
+
   const handleAttachFiles = (files: FileList | null) => {
     if (!files) return;
 
@@ -301,6 +356,10 @@ function ConversationThread() {
   };
 
   const handleSend = async () => {
+    if (isOptimisticConversation) {
+      toast.message("Conversation is still starting");
+      return;
+    }
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
 
@@ -426,6 +485,19 @@ function ConversationThread() {
           current.map((entry) =>
             entry.localId === pending.localId
               ? { ...entry, status: "sent", serverId: result.messageId }
+              : entry
+          )
+        );
+      } else if (result.status === "queued") {
+        setPendingMessages((current) =>
+          current.map((entry) =>
+            entry.localId === pending.localId
+              ? {
+                  ...entry,
+                  status: "queued",
+                  serverId: result.messageId,
+                  error: result.error ?? "Waiting for sandbox",
+                }
               : entry
           )
         );
@@ -628,7 +700,10 @@ function ConversationThread() {
 
   const latestUserMessageAt = useMemo(() => {
     const serverUser = visibleMessages
-      .filter((message) => message.role === "user")
+      .filter(
+        (message) =>
+          message.role === "user" && message.deliveryStatus !== "error"
+      )
       .map((message) => message.createdAt);
     const pendingUser = pendingMessages
       .filter((pending) => pending.status !== "error")
@@ -756,26 +831,31 @@ function ConversationThread() {
     void handlePermissionDecision(optionId);
   }, [activePermissionRequest, effectivePermissionMode, handlePermissionDecision]);
 
-  if (!conversation) {
-    return (
-      <div className="flex h-full min-h-dvh items-center justify-center px-6">
-        <div className="rounded-3xl border border-neutral-200/70 bg-white/80 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/70 dark:bg-neutral-900/70 dark:text-neutral-400">
-          Loading conversation…
-        </div>
-      </div>
-    );
-  }
-
-  const providerName = providerLabel[conversation.providerId] ?? "Agent";
-  const modelLabel = conversation.modelId ?? "default";
+  const providerId = conversation?.providerId ?? "claude";
+  const providerName = providerLabel[providerId] ?? "Agent";
+  const modelLabel = conversation?.modelId ?? "default";
+  const cwd = conversation?.cwd ?? "/root";
+  const sandboxMeta: SandboxMeta | null = sandbox
+    ? {
+        status: sandbox.status,
+        sandboxUrl: sandbox.sandboxUrl ?? null,
+        lastActivityAt: sandbox.lastActivityAt,
+      }
+    : isOptimisticConversation
+      ? {
+          status: "starting",
+          sandboxUrl: null,
+          lastActivityAt: Date.now(),
+        }
+      : null;
 
   return (
     <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden">
       <ConversationHeader
         providerName={providerName}
-        cwd={conversation.cwd}
+        cwd={cwd}
         modelLabel={modelLabel}
-        sandbox={sandbox}
+        sandbox={sandboxMeta}
         showRawEvents={showRawEvents}
         onToggleRawEvents={() => setShowRawEvents((current) => !current)}
         permissionMode={effectivePermissionMode}
@@ -837,9 +917,15 @@ function ConversationThread() {
             setAttachments={setAttachments}
             onAttachFiles={handleAttachFiles}
             onSend={handleSend}
-            disabled={isSending}
+            isSending={isSending}
+            isLocked={isOptimisticConversation}
+            autoFocusKey={conversationIdParam}
             statusMessage={
-              isAwaitingResponse ? "Waiting for agent response…" : null
+              isOptimisticConversation
+                ? "Creating conversation…"
+                : isAwaitingResponse
+                  ? "Waiting for agent response…"
+                  : null
             }
           />
         </div>
@@ -879,63 +965,66 @@ function ConversationHeader({
   const statusLabel = sandbox ? `Sandbox ${status}` : "Sandbox offline";
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-neutral-200/70 bg-white/80 px-6 py-4 dark:border-neutral-800/70 dark:bg-neutral-950/80">
-      <div>
-        <div className="text-xs text-neutral-400 dark:text-neutral-500">
-          {providerName}
+    <div className="border-b border-neutral-200/70 bg-white/80 px-6 py-4 dark:border-neutral-800/70 dark:bg-neutral-950/80">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="text-xs text-neutral-400 dark:text-neutral-500">
+            {providerName}
+          </div>
+          <div className="mt-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+            {cwd}
+          </div>
+          <div className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
+            Model: {modelLabel}
+          </div>
         </div>
-        <div className="mt-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-          {cwd}
-        </div>
-        <div className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
-          Model: {modelLabel}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center rounded-full border border-neutral-200/70 bg-white/80 p-1 text-[10px] font-semibold text-neutral-500 dark:border-neutral-800/70 dark:bg-neutral-950/60 dark:text-neutral-400">
-          {([
-            { value: "auto_allow_always", label: "Auto" },
-            { value: "manual", label: "Ask" },
-          ] as const).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onPermissionModeChange(option.value)}
-              className={clsx(
-                "rounded-full px-3 py-1 transition",
-                permissionMode === option.value
-                  ? "bg-neutral-900 text-neutral-50 dark:bg-neutral-100 dark:text-neutral-950"
-                  : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onToggleRawEvents}
-          className={clsx(
-            "rounded-full border px-3 py-1 text-[10px] font-semibold transition",
-            showRawEvents
-              ? "border-neutral-900 bg-neutral-900 text-neutral-50 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950"
-              : "border-neutral-200/70 text-neutral-400 hover:border-neutral-300 hover:text-neutral-700 dark:border-neutral-800/70 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-200"
-          )}
-          aria-pressed={showRawEvents}
-        >
-          Raw events
-        </button>
-        <div
-          className="flex items-center gap-2 text-xs text-neutral-400"
-          title={statusLabel}
-        >
-          <SandboxStatusIcon status={status} />
-          <span>{status}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center rounded-full border border-neutral-200/70 bg-white/80 p-1 text-[10px] font-semibold text-neutral-500 dark:border-neutral-800/70 dark:bg-neutral-950/60 dark:text-neutral-400">
+            {([
+              { value: "auto_allow_always", label: "Auto" },
+              { value: "manual", label: "Ask" },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onPermissionModeChange(option.value)}
+                className={clsx(
+                  "rounded-full px-3 py-1 transition",
+                  permissionMode === option.value
+                    ? "bg-neutral-900 text-neutral-50 dark:bg-neutral-100 dark:text-neutral-950"
+                    : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onToggleRawEvents}
+            className={clsx(
+              "rounded-full border px-3 py-1 text-[10px] font-semibold transition",
+              showRawEvents
+                ? "border-neutral-900 bg-neutral-900 text-neutral-50 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950"
+                : "border-neutral-200/70 text-neutral-400 hover:border-neutral-300 hover:text-neutral-700 dark:border-neutral-800/70 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-200"
+            )}
+            aria-pressed={showRawEvents}
+          >
+            Raw events
+          </button>
+          <div
+            className="flex items-center gap-2 text-xs text-neutral-400"
+            title={statusLabel}
+          >
+            <SandboxStatusIcon status={status} />
+            <span>{status}</span>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
 
 function SandboxStatusIcon({ status }: { status: ConversationSandboxStatus }) {
   switch (status) {
@@ -1028,11 +1117,30 @@ function PendingMessageStatus({
   pending: PendingMessage;
   onRetry: () => void;
 }) {
+  const handleCopyError = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success("Error copied to clipboard");
+    } catch (error) {
+      console.error("Failed to copy error", error);
+      toast.error("Failed to copy error");
+    }
+  };
+
   if (pending.status === "sending") {
     return (
       <div className="flex items-center gap-2 text-[11px] text-neutral-400">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
         Sending…
+      </div>
+    );
+  }
+
+  if (pending.status === "queued") {
+    return (
+      <div className="flex items-center gap-2 text-[11px] text-amber-400">
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+        {pending.error ?? "Waiting for sandbox"}
       </div>
     );
   }
@@ -1045,15 +1153,26 @@ function PendingMessageStatus({
     );
   }
 
+  const errorText = pending.error ?? "Delivery failed";
+
   return (
-    <div className="flex items-center gap-3 text-[11px] text-rose-400">
-      <span>{pending.error ?? "Delivery failed"}</span>
+    <div className="flex items-center gap-3 rounded-full border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-400">
+      <span className="max-w-[360px] truncate">{errorText}</span>
       <button
         type="button"
         onClick={onRetry}
-        className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200"
+        className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:border-rose-300 hover:text-rose-500 dark:text-rose-200 dark:hover:text-rose-100"
       >
         Retry
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void handleCopyError(errorText);
+        }}
+        className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:border-rose-300 hover:text-rose-500 dark:text-rose-200 dark:hover:text-rose-100"
+      >
+        Copy
       </button>
     </div>
   );
@@ -1192,7 +1311,9 @@ function ConversationComposer({
   setAttachments,
   onAttachFiles,
   onSend,
-  disabled,
+  isSending,
+  isLocked,
+  autoFocusKey,
   statusMessage,
 }: {
   text: string;
@@ -1201,15 +1322,39 @@ function ConversationComposer({
   setAttachments: Dispatch<SetStateAction<PendingImage[]>>;
   onAttachFiles: (files: FileList | null) => void;
   onSend: () => void;
-  disabled: boolean;
+  isSending: boolean;
+  isLocked: boolean;
+  autoFocusKey: string;
   statusMessage: string | null;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isComposingRef = useRef(false);
+
+  useEffect(() => {
+    if (!textAreaRef.current) return;
+    const handle = requestAnimationFrame(() => {
+      textAreaRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [autoFocusKey]);
+
+  useEffect(() => {
+    const textArea = textAreaRef.current;
+    if (!textArea) return;
+    textArea.style.height = "0px";
+    textArea.style.height = `${textArea.scrollHeight}px`;
+  }, [text]);
+
+  const canSend =
+    !isLocked &&
+    !isSending &&
+    (text.trim().length > 0 || attachments.length > 0);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !isComposingRef.current) {
       event.preventDefault();
-      if (!disabled) {
+      if (canSend) {
         onSend();
       }
     }
@@ -1264,31 +1409,47 @@ function ConversationComposer({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/70 bg-white text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-800 dark:border-neutral-800/70 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-700 dark:hover:text-neutral-100"
-          disabled={disabled}
+          disabled={isLocked}
         >
           <ImagePlus className="h-4 w-4" aria-hidden />
         </button>
         <div className="flex-1">
           <textarea
+            ref={textAreaRef}
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
             rows={1}
-            placeholder="Write a message"
-            className="w-full resize-none rounded-2xl border border-neutral-200/80 bg-white/80 px-4 py-3 text-sm text-neutral-900 focus:border-neutral-400 focus:outline-none dark:border-neutral-800/80 dark:bg-neutral-900/70 dark:text-neutral-100"
+            placeholder="write a message · enter to send"
+            className={clsx(
+              "w-full resize-none rounded-2xl border border-neutral-200/80 bg-white/80 px-4 py-3 text-sm text-neutral-900",
+              "focus:border-neutral-400 focus:outline-none dark:border-neutral-800/80 dark:bg-neutral-900/70 dark:text-neutral-100",
+              "max-h-40 overflow-y-auto"
+            )}
           />
         </div>
         <button
           type="button"
           onClick={onSend}
-          disabled={disabled}
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-neutral-900 text-neutral-50 transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-neutral-200"
+          disabled={!canSend}
+          aria-label="send message"
+          className={clsx(
+            "flex h-10 items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 text-neutral-50 transition",
+            "hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-neutral-200"
+          )}
         >
-          {disabled ? (
+          {isSending ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           ) : (
             <Send className="h-4 w-4" aria-hidden />
           )}
+          <span className="text-[11px] font-semibold">send</span>
         </button>
       </div>
 

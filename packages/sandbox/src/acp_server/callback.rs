@@ -47,6 +47,15 @@ pub struct CallbackToolCall {
     pub result: Option<String>,
 }
 
+/// Raw ACP event for callbacks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallbackRawEvent {
+    pub seq: u64,
+    pub raw: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: u64,
+}
+
 /// Stop reason for message completion.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,6 +89,10 @@ enum CallbackPayload {
         conversation_id: String,
         #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+        #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none")]
+        created_at: Option<u64>,
+        #[serde(rename = "eventSeq", skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
         content: CallbackContentBlock,
     },
     #[serde(rename = "reasoning_chunk")]
@@ -88,6 +101,10 @@ enum CallbackPayload {
         conversation_id: String,
         #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+        #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none")]
+        created_at: Option<u64>,
+        #[serde(rename = "eventSeq", skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
         text: String,
     },
     #[serde(rename = "message_complete")]
@@ -115,6 +132,12 @@ enum CallbackPayload {
         code: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+    },
+    #[serde(rename = "raw_event_batch")]
+    RawEventBatch {
+        #[serde(rename = "conversationId")]
+        conversation_id: String,
+        events: Vec<CallbackRawEvent>,
     },
     #[serde(rename = "sandbox_ready")]
     SandboxReady {
@@ -204,11 +227,15 @@ impl CallbackClient {
         &self,
         conversation_id: &str,
         message_id: Option<&str>,
+        created_at: Option<u64>,
+        event_seq: Option<u64>,
         text: &str,
     ) {
         let payload = CallbackPayload::MessageChunk {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.map(|s| s.to_string()),
+            created_at,
+            event_seq,
             content: CallbackContentBlock::Text {
                 text: text.to_string(),
             },
@@ -231,11 +258,15 @@ impl CallbackClient {
         &self,
         conversation_id: &str,
         message_id: Option<&str>,
+        created_at: Option<u64>,
+        event_seq: Option<u64>,
         text: &str,
     ) {
         let payload = CallbackPayload::ReasoningChunk {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.map(|s| s.to_string()),
+            created_at,
+            event_seq,
             text: text.to_string(),
         };
 
@@ -253,11 +284,15 @@ impl CallbackClient {
         &self,
         conversation_id: &str,
         message_id: Option<&str>,
+        created_at: Option<u64>,
+        event_seq: Option<u64>,
         content: CallbackContentBlock,
     ) {
         let payload = CallbackPayload::MessageChunk {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.map(|s| s.to_string()),
+            created_at,
+            event_seq,
             content,
         };
 
@@ -333,6 +368,26 @@ impl CallbackClient {
         }
     }
 
+    /// Record raw ACP events for a conversation.
+    pub async fn record_raw_events(&self, conversation_id: &str, events: Vec<CallbackRawEvent>) {
+        if events.is_empty() {
+            return;
+        }
+
+        let payload = CallbackPayload::RawEventBatch {
+            conversation_id: conversation_id.to_string(),
+            events,
+        };
+
+        if let Err(e) = self.post_callback(payload).await {
+            warn!(
+                conversation_id = %conversation_id,
+                error = %e,
+                "Failed to send raw event batch callback"
+            );
+        }
+    }
+
     /// Notify Convex that the sandbox is ready.
     pub async fn sandbox_ready(&self, sandbox_id: &str, sandbox_url: &str) -> Result<()> {
         let payload = CallbackPayload::SandboxReady {
@@ -363,6 +418,8 @@ mod tests {
         let payload = CallbackPayload::MessageChunk {
             conversation_id: "conv123".to_string(),
             message_id: Some("msg456".to_string()),
+            created_at: None,
+            event_seq: None,
             content: CallbackContentBlock::Text {
                 text: "test".to_string(),
             },
@@ -409,6 +466,23 @@ mod tests {
         assert!(json.contains("\"type\":\"error\""));
         assert!(json.contains("\"code\":\"cli_crashed\""));
         assert!(json.contains("\"detail\":"));
+    }
+
+    #[test]
+    fn test_raw_event_batch_serialization() {
+        let payload = CallbackPayload::RawEventBatch {
+            conversation_id: "conv123".to_string(),
+            events: vec![CallbackRawEvent {
+                seq: 1,
+                raw: "{\"type\":\"test\"}".to_string(),
+                created_at: 123,
+            }],
+        };
+        let json = serde_json::to_string(&payload).expect("Serialization failed");
+        assert!(json.contains("\"type\":\"raw_event_batch\""));
+        assert!(json.contains("\"conversationId\":\"conv123\""));
+        assert!(json.contains("\"raw\":\"{\\\"type\\\":\\\"test\\\"}\""));
+        assert!(json.contains("\"createdAt\":123"));
     }
 
     #[test]

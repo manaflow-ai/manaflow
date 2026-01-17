@@ -1,8 +1,10 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
-import { getTeamId } from "../_shared/team";
+import { resolveTeamIdLoose } from "../_shared/team";
 import {
   internalMutation,
   internalQuery,
+  type QueryCtx,
 } from "./_generated/server";
 import { authQuery } from "./users/utils";
 
@@ -60,6 +62,34 @@ const toolCallValidator = v.object({
 });
 
 const roleValidator = v.union(v.literal("user"), v.literal("assistant"));
+const deliveryStatusValidator = v.union(
+  v.literal("queued"),
+  v.literal("sent"),
+  v.literal("error")
+);
+
+async function requireTeamMembership(
+  ctx: QueryCtx,
+  teamSlugOrId: string
+): Promise<string> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("Not authenticated");
+  }
+
+  const teamId = await resolveTeamIdLoose(ctx, teamSlugOrId);
+  const membership = await ctx.db
+    .query("teamMemberships")
+    .withIndex("by_team_user", (q) =>
+      q.eq("teamId", teamId).eq("userId", identity.subject)
+    )
+    .first();
+  if (!membership) {
+    throw new Error("Forbidden: Not a member of this team");
+  }
+
+  return teamId;
+}
 
 // Create a new message (internal - called from ACP server)
 export const create = internalMutation({
@@ -80,6 +110,8 @@ export const create = internalMutation({
       role: args.role,
       content: args.content,
       toolCalls: args.toolCalls,
+      deliveryStatus: args.role === "user" ? "queued" : undefined,
+      deliverySwapAttempted: args.role === "user" ? false : undefined,
       createdAt: Date.now(),
     });
 
@@ -89,6 +121,42 @@ export const create = internalMutation({
     });
 
     return messageId;
+  },
+});
+
+export const updateDeliveryStatus = internalMutation({
+  args: {
+    messageId: v.id("conversationMessages"),
+    status: deliveryStatusValidator,
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    await ctx.db.patch(args.messageId, {
+      deliveryStatus: args.status,
+      deliveryError: args.error,
+    });
+  },
+});
+
+export const markDeliverySwapAttempted = internalMutation({
+  args: {
+    messageId: v.id("conversationMessages"),
+    attempted: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    await ctx.db.patch(args.messageId, {
+      deliverySwapAttempted: args.attempted,
+    });
   },
 });
 
@@ -173,15 +241,16 @@ export const listByConversationInternal = internalQuery({
   },
 });
 
-// Get messages for a conversation (authenticated)
+// Get messages for a conversation (authenticated, paginated)
 export const listByConversation = authQuery({
   args: {
     teamSlugOrId: v.string(),
     conversationId: v.id("conversations"),
     limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const teamId = await requireTeamMembership(ctx, args.teamSlugOrId);
 
     // Verify conversation belongs to team
     const conversation = await ctx.db.get(args.conversationId);
@@ -190,13 +259,42 @@ export const listByConversation = authQuery({
     }
 
     const limit = args.limit ?? 100;
-    return await ctx.db
+    const result = await ctx.db
       .query("conversationMessages")
       .withIndex("by_conversation", (q) =>
         q.eq("conversationId", args.conversationId)
       )
       .order("asc")
-      .take(limit);
+      .paginate({ numItems: limit, cursor: args.cursor ?? null });
+
+    return {
+      messages: result.page,
+      nextCursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+export const listByConversationPaginated = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const teamId = await requireTeamMembership(ctx, args.teamSlugOrId);
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.teamId !== teamId) {
+      throw new Error("Conversation not found");
+    }
+
+    return await ctx.db
+      .query("conversationMessages")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId)
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -213,6 +311,15 @@ export const getLatest = internalQuery({
       )
       .order("desc")
       .first();
+  },
+});
+
+export const getByIdInternal = internalQuery({
+  args: {
+    messageId: v.id("conversationMessages"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.messageId);
   },
 });
 

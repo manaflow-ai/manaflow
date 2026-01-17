@@ -685,7 +685,7 @@ const ReviewProgressIndicator = memo(function ReviewProgressIndicator({
 
   return (
     <div className="border border-neutral-200 bg-white px-4 py-3 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-      <div className="flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+      <div className="flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wide text-neutral-500 dark:text-neutral-400">
         <span>Review progress</span>
         <span>{Math.round(progressPercent)}%</span>
       </div>
@@ -971,7 +971,7 @@ function ErrorNavigator({
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
               <span>Previous highlight</span>
-              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 Shift+K
               </span>
             </TooltipContent>
@@ -997,7 +997,7 @@ function ErrorNavigator({
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
               <span>Next highlight</span>
-              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 Shift+J
               </span>
             </TooltipContent>

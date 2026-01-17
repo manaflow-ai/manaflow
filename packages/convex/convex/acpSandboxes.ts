@@ -3,6 +3,7 @@ import {
   internalQuery,
   query,
 } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 
 // Status type for type safety
@@ -21,6 +22,12 @@ const providerValidator = v.union(
   v.literal("daytona")
 );
 
+const poolStateValidator = v.union(
+  v.literal("available"),
+  v.literal("reserved"),
+  v.literal("claimed")
+);
+
 /**
  * Create a new ACP sandbox record.
  * Called when spawning a new sandbox instance for ACP.
@@ -33,6 +40,12 @@ export const create = internalMutation({
     snapshotId: v.string(),
     callbackJwtHash: v.string(),
     sandboxUrl: v.optional(v.string()),
+    poolState: v.optional(poolStateValidator),
+    warmExpiresAt: v.optional(v.number()),
+    warmReservedUserId: v.optional(v.string()),
+    warmReservedTeamId: v.optional(v.string()),
+    warmReservedAt: v.optional(v.number()),
+    claimedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -46,6 +59,12 @@ export const create = internalMutation({
       lastActivityAt: now,
       conversationCount: 0,
       snapshotId: args.snapshotId,
+      poolState: args.poolState ?? "claimed",
+      warmExpiresAt: args.warmExpiresAt,
+      warmReservedUserId: args.warmReservedUserId,
+      warmReservedTeamId: args.warmReservedTeamId,
+      warmReservedAt: args.warmReservedAt,
+      claimedAt: args.claimedAt ?? (args.poolState === "claimed" ? now : undefined),
       createdAt: now,
     });
   },
@@ -59,8 +78,14 @@ export const updateStatus = internalMutation({
     sandboxId: v.id("acpSandboxes"),
     status: sandboxStatusValidator,
     sandboxUrl: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      return;
+    }
+
     const updates: Record<string, unknown> = {
       status: args.status,
       lastActivityAt: Date.now(),
@@ -68,7 +93,206 @@ export const updateStatus = internalMutation({
     if (args.sandboxUrl !== undefined) {
       updates.sandboxUrl = args.sandboxUrl;
     }
+    if (args.status === "error") {
+      updates.lastError =
+        args.errorMessage ??
+        sandbox.lastError ??
+        "Sandbox reported error status";
+    }
+    // Note: We no longer clear lastError when status changes away from "error"
+    // This preserves error history for debugging. Errors are cleared explicitly
+    // via clearLastError mutation or when a new error replaces it.
     await ctx.db.patch(args.sandboxId, updates);
+  },
+});
+
+/**
+ * Record a sandbox error message without changing status.
+ */
+export const setLastError = internalMutation({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
+    errorMessage: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      return;
+    }
+    await ctx.db.patch(args.sandboxId, {
+      lastError: args.errorMessage,
+      lastActivityAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Clear the lastError field explicitly.
+ * Use this when the sandbox has recovered and you want to hide the error from the UI.
+ */
+export const clearLastError = internalMutation({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
+  },
+  handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      return;
+    }
+    await ctx.db.patch(args.sandboxId, {
+      lastError: undefined,
+      lastActivityAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Reserve a warm sandbox for a user + team, or claim an available one.
+ */
+export const reserveWarmSandbox = internalMutation({
+  args: {
+    userId: v.string(),
+    teamId: v.string(),
+    extendMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const expiresAt = now + args.extendMs;
+
+    const reserved = await ctx.db
+      .query("acpSandboxes")
+      .withIndex("by_pool_reservation", (q) =>
+        q
+          .eq("poolState", "reserved")
+          .eq("warmReservedUserId", args.userId)
+          .eq("warmReservedTeamId", args.teamId)
+      )
+      .order("desc")
+      .first();
+
+    if (reserved && reserved.warmExpiresAt && reserved.warmExpiresAt > now) {
+      await ctx.db.patch(reserved._id, {
+        warmExpiresAt: expiresAt,
+        warmReservedAt: now,
+        lastActivityAt: now,
+      });
+      return reserved;
+    }
+
+    const available = await ctx.db
+      .query("acpSandboxes")
+      .withIndex("by_pool_state", (q) => q.eq("poolState", "available"))
+      .order("asc")
+      .take(10);
+
+    const candidate = available.find(
+      (sandbox) =>
+        sandbox.status !== "stopped" &&
+        sandbox.status !== "error" &&
+        sandbox.warmExpiresAt &&
+        sandbox.warmExpiresAt > now
+    );
+
+    if (!candidate) {
+      return null;
+    }
+
+    await ctx.db.patch(candidate._id, {
+      poolState: "reserved",
+      warmReservedUserId: args.userId,
+      warmReservedTeamId: args.teamId,
+      warmReservedAt: now,
+      warmExpiresAt: expiresAt,
+      lastActivityAt: now,
+    });
+
+    return candidate;
+  },
+});
+
+/**
+ * Claim a reserved or available warm sandbox for a team.
+ */
+export const claimWarmSandbox = internalMutation({
+  args: {
+    userId: v.string(),
+    teamId: v.string(),
+    sandboxId: v.optional(v.id("acpSandboxes")),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const claimCandidate = async (candidate: Doc<"acpSandboxes">) => {
+      if (
+        candidate.status === "stopped" ||
+        candidate.status === "error" ||
+        !candidate.warmExpiresAt ||
+        candidate.warmExpiresAt <= now
+      ) {
+        return null;
+      }
+      if (candidate.poolState === "reserved") {
+        if (
+          candidate.warmReservedUserId !== args.userId ||
+          candidate.warmReservedTeamId !== args.teamId
+        ) {
+          return null;
+        }
+      } else if (candidate.poolState !== "available") {
+        return null;
+      }
+
+      await ctx.db.patch(candidate._id, {
+        poolState: "claimed",
+        teamId: args.teamId,
+        claimedAt: now,
+        lastActivityAt: now,
+      });
+      return candidate;
+    };
+
+    if (args.sandboxId) {
+      const sandbox = await ctx.db.get(args.sandboxId);
+      if (!sandbox) {
+        return null;
+      }
+      const claimed = await claimCandidate(sandbox);
+      if (claimed) {
+        return claimed;
+      }
+    }
+
+    const reserved = await ctx.db
+      .query("acpSandboxes")
+      .withIndex("by_pool_reservation", (q) =>
+        q
+          .eq("poolState", "reserved")
+          .eq("warmReservedUserId", args.userId)
+          .eq("warmReservedTeamId", args.teamId)
+      )
+      .order("desc")
+      .first();
+
+    if (reserved) {
+      const claimed = await claimCandidate(reserved);
+      if (claimed) {
+        return claimed;
+      }
+    }
+
+    const available = await ctx.db
+      .query("acpSandboxes")
+      .withIndex("by_pool_state", (q) => q.eq("poolState", "available"))
+      .order("asc")
+      .take(10);
+
+    for (const candidate of available) {
+      const claimed = await claimCandidate(candidate);
+      if (claimed) {
+        return claimed;
+      }
+    }
+
+    return null;
   },
 });
 
@@ -231,6 +455,23 @@ export const markStopped = internalMutation({
     await ctx.db.patch(args.sandboxId, {
       status: "stopped",
       lastActivityAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Clear warm reservation metadata after a warm sandbox is fully claimed.
+ */
+export const clearWarmReservation = internalMutation({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sandboxId, {
+      warmReservedUserId: "",
+      warmReservedTeamId: "",
+      warmReservedAt: 0,
+      warmExpiresAt: 0,
     });
   },
 });

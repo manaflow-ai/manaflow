@@ -160,6 +160,7 @@ export class MorphSandboxProvider implements SandboxProvider {
     const statusMap: Record<string, SandboxStatusInfo["status"]> = {
       starting: "starting",
       running: "running",
+      ready: "running", // Morph returns "ready" for healthy instances
       paused: "paused",
       stopping: "stopping",
       stopped: "stopped",

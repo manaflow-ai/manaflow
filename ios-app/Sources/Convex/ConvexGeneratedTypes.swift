@@ -14,6 +14,14 @@ extension ConversationsListReturnConversationsItem: Identifiable {
 }
 
 extension ConversationsListReturnConversationsItem {
+    /// Display name for the conversation - uses title if available, otherwise falls back to provider name
+    var displayName: String {
+        if let title, !title.isEmpty {
+            return title
+        }
+        return providerDisplayName
+    }
+
     var providerDisplayName: String {
         switch providerId {
         case "claude": return "Claude"

@@ -12,6 +12,7 @@ class ConversationsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var teamId: String?
     private let convex = ConvexClientManager.shared
+    private var lastPrewarmAt: Date?
 
     init() {
         // Start loading when auth is ready
@@ -119,6 +120,35 @@ class ConversationsViewModel: ObservableObject {
                 }
             )
             .store(in: &cancellables)
+    }
+
+    func prewarmSandbox() async {
+        if let lastPrewarmAt, Date().timeIntervalSince(lastPrewarmAt) < 10 {
+            return
+        }
+        lastPrewarmAt = Date()
+
+        guard convex.isAuthenticated else {
+            return
+        }
+
+        var teamId = self.teamId
+        if teamId == nil {
+            teamId = await getFirstTeamId()
+        }
+        guard let teamId else {
+            return
+        }
+
+        do {
+            let args = AcpPrewarmSandboxArgs(teamSlugOrId: teamId)
+            let _: AcpPrewarmSandboxReturn = try await convex.client.action(
+                "acp:prewarmSandbox",
+                with: args.asDictionary()
+            )
+        } catch {
+            print("📱 ConversationsViewModel: Prewarm failed: \(error)")
+        }
     }
 
     private func getFirstTeamId() async -> String? {

@@ -17,6 +17,7 @@ export const env = createEnv({
     GEMINI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
+    CMUX_CONVERSATION_JWT_SECRET: z.string().min(1).optional(),
     // AWS Bedrock credentials (optional - only required when spawning Claude agents)
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
     AWS_REGION: z.string().min(1).optional(),

@@ -1098,6 +1098,9 @@ exit $EXIT_CODE
           let uploadUrl: string;
           if (vscodeInstance instanceof DockerVSCodeInstance) {
             const workerPort = vscodeInstance.getPorts()?.worker;
+            if (!workerPort) {
+              throw new Error("Worker port not available for Docker instance");
+            }
             uploadUrl = `http://localhost:${workerPort}/upload-image`;
           } else if (vscodeInstance instanceof CmuxVSCodeInstance) {
             const workerUrl = vscodeInstance.getWorkerUrl();

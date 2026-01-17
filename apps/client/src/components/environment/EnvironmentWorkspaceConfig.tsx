@@ -634,7 +634,7 @@ export function EnvironmentWorkspaceConfig({
                 </p>
                 <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden">
                   <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50">
-                    <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                    <span className="text-[10px] tracking-wide text-neutral-500">
                       Commands
                     </span>
                     {(maintenanceScript.trim() || devScript.trim()) && (

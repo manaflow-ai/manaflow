@@ -37,6 +37,7 @@ import { Route as LayoutTeamSlugOrIdDashboardRouteImport } from './routes/_layou
 import { Route as LayoutTeamSlugOrIdConnectCompleteRouteImport } from './routes/_layout.$teamSlugOrId.connect-complete'
 import { Route as LayoutTTeamSlugOrIdIndexRouteImport } from './routes/_layout.t.$teamSlugOrId.index'
 import { Route as LayoutTeamSlugOrIdEnvironmentsIndexRouteImport } from './routes/_layout.$teamSlugOrId.environments.index'
+import { Route as LayoutTTeamSlugOrIdSettingsRouteImport } from './routes/_layout.t.$teamSlugOrId.settings'
 import { Route as LayoutTTeamSlugOrIdConversationIdRouteImport } from './routes/_layout.t.$teamSlugOrId.$conversationId'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId'
 import { Route as LayoutTeamSlugOrIdEnvironmentsNewVersionRouteImport } from './routes/_layout.$teamSlugOrId.environments.new-version'
@@ -201,6 +202,12 @@ const LayoutTeamSlugOrIdEnvironmentsIndexRoute =
     path: '/',
     getParentRoute: () => LayoutTeamSlugOrIdEnvironmentsRoute,
   } as any)
+const LayoutTTeamSlugOrIdSettingsRoute =
+  LayoutTTeamSlugOrIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => LayoutTTeamSlugOrIdRoute,
+  } as any)
 const LayoutTTeamSlugOrIdConversationIdRoute =
   LayoutTTeamSlugOrIdConversationIdRouteImport.update({
     id: '/$conversationId',
@@ -323,6 +330,7 @@ export interface FileRoutesByFullPath {
   '/$teamSlugOrId/environments/new-version': typeof LayoutTeamSlugOrIdEnvironmentsNewVersionRoute
   '/$teamSlugOrId/task/$taskId': typeof LayoutTeamSlugOrIdTaskTaskIdRouteWithChildren
   '/t/$teamSlugOrId/$conversationId': typeof LayoutTTeamSlugOrIdConversationIdRoute
+  '/t/$teamSlugOrId/settings': typeof LayoutTTeamSlugOrIdSettingsRoute
   '/$teamSlugOrId/environments/': typeof LayoutTeamSlugOrIdEnvironmentsIndexRoute
   '/t/$teamSlugOrId/': typeof LayoutTTeamSlugOrIdIndexRoute
   '/$teamSlugOrId/task/$taskId/': typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
@@ -364,6 +372,7 @@ export interface FileRoutesByTo {
   '/$teamSlugOrId/environments/new': typeof LayoutTeamSlugOrIdEnvironmentsNewRoute
   '/$teamSlugOrId/environments/new-version': typeof LayoutTeamSlugOrIdEnvironmentsNewVersionRoute
   '/t/$teamSlugOrId/$conversationId': typeof LayoutTTeamSlugOrIdConversationIdRoute
+  '/t/$teamSlugOrId/settings': typeof LayoutTTeamSlugOrIdSettingsRoute
   '/$teamSlugOrId/environments': typeof LayoutTeamSlugOrIdEnvironmentsIndexRoute
   '/t/$teamSlugOrId': typeof LayoutTTeamSlugOrIdIndexRoute
   '/$teamSlugOrId/task/$taskId': typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
@@ -410,6 +419,7 @@ export interface FileRoutesById {
   '/_layout/$teamSlugOrId/environments/new-version': typeof LayoutTeamSlugOrIdEnvironmentsNewVersionRoute
   '/_layout/$teamSlugOrId/task/$taskId': typeof LayoutTeamSlugOrIdTaskTaskIdRouteWithChildren
   '/_layout/t/$teamSlugOrId/$conversationId': typeof LayoutTTeamSlugOrIdConversationIdRoute
+  '/_layout/t/$teamSlugOrId/settings': typeof LayoutTTeamSlugOrIdSettingsRoute
   '/_layout/$teamSlugOrId/environments/': typeof LayoutTeamSlugOrIdEnvironmentsIndexRoute
   '/_layout/t/$teamSlugOrId/': typeof LayoutTTeamSlugOrIdIndexRoute
   '/_layout/$teamSlugOrId/task/$taskId/': typeof LayoutTeamSlugOrIdTaskTaskIdIndexRoute
@@ -456,6 +466,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/environments/new-version'
     | '/$teamSlugOrId/task/$taskId'
     | '/t/$teamSlugOrId/$conversationId'
+    | '/t/$teamSlugOrId/settings'
     | '/$teamSlugOrId/environments/'
     | '/t/$teamSlugOrId/'
     | '/$teamSlugOrId/task/$taskId/'
@@ -497,6 +508,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/environments/new'
     | '/$teamSlugOrId/environments/new-version'
     | '/t/$teamSlugOrId/$conversationId'
+    | '/t/$teamSlugOrId/settings'
     | '/$teamSlugOrId/environments'
     | '/t/$teamSlugOrId'
     | '/$teamSlugOrId/task/$taskId'
@@ -542,6 +554,7 @@ export interface FileRouteTypes {
     | '/_layout/$teamSlugOrId/environments/new-version'
     | '/_layout/$teamSlugOrId/task/$taskId'
     | '/_layout/t/$teamSlugOrId/$conversationId'
+    | '/_layout/t/$teamSlugOrId/settings'
     | '/_layout/$teamSlugOrId/environments/'
     | '/_layout/t/$teamSlugOrId/'
     | '/_layout/$teamSlugOrId/task/$taskId/'
@@ -768,6 +781,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTeamSlugOrIdEnvironmentsIndexRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdEnvironmentsRoute
     }
+    '/_layout/t/$teamSlugOrId/settings': {
+      id: '/_layout/t/$teamSlugOrId/settings'
+      path: '/settings'
+      fullPath: '/t/$teamSlugOrId/settings'
+      preLoaderRoute: typeof LayoutTTeamSlugOrIdSettingsRouteImport
+      parentRoute: typeof LayoutTTeamSlugOrIdRoute
+    }
     '/_layout/t/$teamSlugOrId/$conversationId': {
       id: '/_layout/t/$teamSlugOrId/$conversationId'
       path: '/$conversationId'
@@ -989,12 +1009,14 @@ const LayoutTeamSlugOrIdRouteWithChildren =
 
 interface LayoutTTeamSlugOrIdRouteChildren {
   LayoutTTeamSlugOrIdConversationIdRoute: typeof LayoutTTeamSlugOrIdConversationIdRoute
+  LayoutTTeamSlugOrIdSettingsRoute: typeof LayoutTTeamSlugOrIdSettingsRoute
   LayoutTTeamSlugOrIdIndexRoute: typeof LayoutTTeamSlugOrIdIndexRoute
 }
 
 const LayoutTTeamSlugOrIdRouteChildren: LayoutTTeamSlugOrIdRouteChildren = {
   LayoutTTeamSlugOrIdConversationIdRoute:
     LayoutTTeamSlugOrIdConversationIdRoute,
+  LayoutTTeamSlugOrIdSettingsRoute: LayoutTTeamSlugOrIdSettingsRoute,
   LayoutTTeamSlugOrIdIndexRoute: LayoutTTeamSlugOrIdIndexRoute,
 }
 

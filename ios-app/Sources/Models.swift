@@ -11,15 +11,31 @@ struct Conversation: Identifiable {
     var messages: [Message]
 }
 
-struct Message: Identifiable {
-    let id = UUID()
+struct Message: Identifiable, Equatable {
+    let id: String
     let content: String
     let timestamp: Date
     let isFromMe: Bool
     let status: MessageStatus
+
+    init(id: String = UUID().uuidString, content: String, timestamp: Date, isFromMe: Bool, status: MessageStatus) {
+        self.id = id
+        self.content = content
+        self.timestamp = timestamp
+        self.isFromMe = isFromMe
+        self.status = status
+    }
+
+    static func == (lhs: Message, rhs: Message) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.content == rhs.content &&
+        lhs.timestamp == rhs.timestamp &&
+        lhs.isFromMe == rhs.isFromMe &&
+        lhs.status == rhs.status
+    }
 }
 
-enum MessageStatus {
+enum MessageStatus: Equatable {
     case sending
     case sent
     case delivered

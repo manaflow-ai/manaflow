@@ -581,6 +581,15 @@ const convexSchema = defineSchema({
         token: v.object({ start: v.string(), end: v.string() }), // Token highlight gradient colors
       })
     ),
+    // Conversation title generation settings
+    conversationTitleStyle: v.optional(
+      v.union(
+        v.literal("sentence"), // Sentence case (default): "Fix large image upload bug"
+        v.literal("lowercase"), // All lowercase: "fix large image upload bug"
+        v.literal("title") // Title Case: "Fix Large Image Upload Bug"
+      )
+    ),
+    conversationTitleCustomPrompt: v.optional(v.string()), // Advanced: custom system prompt override
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
@@ -1159,7 +1168,17 @@ const convexSchema = defineSchema({
     userId: v.optional(v.string()),
     sessionId: v.string(), // ACP SessionId - unique identifier for the conversation session
     providerId: v.string(), // "claude" | "codex" | "gemini" | "opencode"
+    modelId: v.optional(v.string()),
     cwd: v.string(), // Working directory for the session
+    // Brief AI-generated title of the conversation (3-8 words)
+    title: v.optional(v.string()),
+    permissionMode: v.optional(
+      v.union(
+        v.literal("manual"),
+        v.literal("auto_allow_once"),
+        v.literal("auto_allow_always")
+      )
+    ),
     status: v.union(
       v.literal("active"),
       v.literal("completed"),
@@ -1215,6 +1234,8 @@ const convexSchema = defineSchema({
   })
     .index("by_team", ["teamId", "createdAt"])
     .index("by_user", ["userId", "createdAt"])
+    .index("by_team_updated", ["teamId", "updatedAt"])
+    .index("by_team_user_updated", ["teamId", "userId", "updatedAt"])
     .index("by_session", ["sessionId"])
     .index("by_namespace", ["namespaceId"])
     .index("by_sandbox", ["sandboxInstanceId"])
@@ -1225,6 +1246,11 @@ const convexSchema = defineSchema({
   conversationMessages: defineTable({
     conversationId: v.id("conversations"),
     role: v.union(v.literal("user"), v.literal("assistant")),
+    deliveryStatus: v.optional(
+      v.union(v.literal("queued"), v.literal("sent"), v.literal("error"))
+    ),
+    deliveryError: v.optional(v.string()),
+    deliverySwapAttempted: v.optional(v.boolean()),
     // ACP ContentBlock array - supports text, image, audio, resource_link, resource
     content: v.array(
       v.object({
@@ -1284,10 +1310,39 @@ const convexSchema = defineSchema({
     ),
     // Reasoning/thinking content from extended thinking models
     reasoning: v.optional(v.string()),
+    // Sequence number from ACP stream for deterministic ordering
+    acpSeq: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId", "createdAt"])
     .index("by_conversation_desc", ["conversationId"]), // For reverse chronological queries
+
+  acpRawEvents: defineTable({
+    conversationId: v.id("conversations"),
+    sandboxId: v.id("acpSandboxes"),
+    teamId: v.string(),
+    seq: v.number(),
+    raw: v.string(),
+    direction: v.optional(
+      v.union(v.literal("inbound"), v.literal("outbound"))
+    ),
+    eventType: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_conversation_seq", ["conversationId", "seq"])
+    .index("by_conversation", ["conversationId", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"]),
+
+  conversationReads: defineTable({
+    conversationId: v.id("conversations"),
+    teamId: v.string(),
+    userId: v.string(),
+    lastReadAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_conversation_user", ["conversationId", "userId"])
+    .index("by_user_team", ["userId", "teamId"]),
 
   // ACP Sandboxes - Provider-agnostic sandbox instances hosting coding CLIs
   // Supports Morph, Freestyle, Daytona. Many conversations can share a single sandbox (Many:1 model)
@@ -1312,13 +1367,32 @@ const convexSchema = defineSchema({
     // Security - hash of callback JWT for verification
     callbackJwtHash: v.string(), // SHA-256 hash
     // Lifecycle tracking
+    lastError: v.optional(v.string()),
     lastActivityAt: v.number(),
     conversationCount: v.number(), // Active conversations using this sandbox
     // Configuration
     snapshotId: v.string(),
+    // Warm pool state (global, pre-provisioned sandboxes)
+    poolState: v.optional(
+      v.union(
+        v.literal("available"),
+        v.literal("reserved"),
+        v.literal("claimed")
+      )
+    ),
+    warmExpiresAt: v.optional(v.number()),
+    warmReservedUserId: v.optional(v.string()),
+    warmReservedTeamId: v.optional(v.string()),
+    warmReservedAt: v.optional(v.number()),
+    claimedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_team_status", ["teamId", "status", "lastActivityAt"])
+    .index("by_pool_state", ["poolState", "warmExpiresAt"])
+    .index(
+      "by_pool_reservation",
+      ["poolState", "warmReservedUserId", "warmReservedTeamId", "warmExpiresAt"]
+    )
     .index("by_instance", ["instanceId"]),
 
   // OpenAI Codex OAuth tokens for users

@@ -37,10 +37,12 @@ export const appendMessageChunk = internalMutation({
   args: {
     conversationId: v.id("conversations"),
     messageId: v.optional(v.id("conversationMessages")),
+    createdAt: v.optional(v.number()),
+    eventSeq: v.optional(v.number()),
     content: contentBlockValidator,
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
+    const now = args.createdAt ?? Date.now();
 
     // If no messageId, create a new assistant message
     if (!args.messageId) {
@@ -48,6 +50,7 @@ export const appendMessageChunk = internalMutation({
         conversationId: args.conversationId,
         role: "assistant",
         content: [args.content],
+        acpSeq: args.eventSeq,
         createdAt: now,
       });
 
@@ -67,6 +70,11 @@ export const appendMessageChunk = internalMutation({
     }
 
     // For text chunks, try to append to the last text block if possible
+    const nextSeq =
+      args.eventSeq !== undefined
+        ? Math.max(message.acpSeq ?? 0, args.eventSeq)
+        : message.acpSeq;
+
     if (args.content.type === "text" && args.content.text) {
       const lastBlock = message.content[message.content.length - 1];
       if (lastBlock?.type === "text" && lastBlock.text !== undefined) {
@@ -76,17 +84,22 @@ export const appendMessageChunk = internalMutation({
           ...lastBlock,
           text: (lastBlock.text ?? "") + args.content.text,
         };
-        await ctx.db.patch(args.messageId, { content: updatedContent });
+        await ctx.db.patch(args.messageId, {
+          content: updatedContent,
+          acpSeq: nextSeq,
+        });
       } else {
         // Add new text block
         await ctx.db.patch(args.messageId, {
           content: [...message.content, args.content],
+          acpSeq: nextSeq,
         });
       }
     } else {
       // Add new content block
       await ctx.db.patch(args.messageId, {
         content: [...message.content, args.content],
+        acpSeq: nextSeq,
       });
     }
 
@@ -108,10 +121,12 @@ export const appendReasoningChunk = internalMutation({
   args: {
     conversationId: v.id("conversations"),
     messageId: v.optional(v.id("conversationMessages")),
+    createdAt: v.optional(v.number()),
+    eventSeq: v.optional(v.number()),
     text: v.string(),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
+    const now = args.createdAt ?? Date.now();
 
     // If no messageId, create a new assistant message with reasoning
     if (!args.messageId) {
@@ -120,6 +135,7 @@ export const appendReasoningChunk = internalMutation({
         role: "assistant",
         content: [],
         reasoning: args.text,
+        acpSeq: args.eventSeq,
         createdAt: now,
       });
 
@@ -141,6 +157,10 @@ export const appendReasoningChunk = internalMutation({
     const existingReasoning = message.reasoning ?? "";
     await ctx.db.patch(args.messageId, {
       reasoning: existingReasoning + args.text,
+      acpSeq:
+        args.eventSeq !== undefined
+          ? Math.max(message.acpSeq ?? 0, args.eventSeq)
+          : message.acpSeq,
     });
 
     // Update conversation activity
@@ -276,6 +296,45 @@ export const recordError = internalMutation({
         }
       }
     }
+  },
+});
+
+/**
+ * Record raw ACP events for a conversation.
+ */
+export const appendRawEvents = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    sandboxId: v.id("acpSandboxes"),
+    teamId: v.string(),
+    rawEvents: v.array(
+      v.object({
+        seq: v.number(),
+        raw: v.string(),
+        createdAt: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    for (const event of args.rawEvents) {
+      await ctx.db.insert("acpRawEvents", {
+        conversationId: args.conversationId,
+        sandboxId: args.sandboxId,
+        teamId: args.teamId,
+        seq: event.seq,
+        raw: event.raw,
+        direction: "inbound",
+        eventType: "rpc",
+        createdAt: event.createdAt ?? now,
+      });
+    }
+
+    await ctx.db.patch(args.conversationId, {
+      lastMessageAt: now,
+      updatedAt: now,
+    });
   },
 });
 

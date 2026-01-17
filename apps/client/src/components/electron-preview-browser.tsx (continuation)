@@ -39,7 +39,7 @@ function PreviewErrorState({
         <dl className="mt-4 space-y-2 text-xs text-neutral-500 dark:text-neutral-400">
           {content.details.map(({ label, value }) => (
             <div key={`${label}-${value}`}>
-              <dt className="font-medium uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+              <dt className="font-medium tracking-wide text-neutral-400 dark:text-neutral-500">
                 {label}
               </dt>
               <dd className="mt-0.5 break-words text-neutral-600 dark:text-neutral-300">

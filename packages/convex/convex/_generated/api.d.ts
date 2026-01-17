@@ -9,10 +9,11 @@
  */
 
 import type * as acp from "../acp.js";
+import type * as acpErrors from "../acpErrors.js";
+import type * as acpRawEvents from "../acpRawEvents.js";
 import type * as acpSandboxes from "../acpSandboxes.js";
 import type * as acp_callbacks from "../acp_callbacks.js";
 import type * as acp_http from "../acp_http.js";
-import type * as admin from "../admin.js";
 import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
@@ -24,6 +25,9 @@ import type * as codex_oauth_http from "../codex_oauth_http.js";
 import type * as comments from "../comments.js";
 import type * as containerSettings from "../containerSettings.js";
 import type * as conversationMessages from "../conversationMessages.js";
+import type * as conversationReads from "../conversationReads.js";
+import type * as conversationSummary from "../conversationSummary.js";
+import type * as conversationTitle from "../conversationTitle.js";
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as crown from "../crown.js";
@@ -91,10 +95,11 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   acp: typeof acp;
+  acpErrors: typeof acpErrors;
+  acpRawEvents: typeof acpRawEvents;
   acpSandboxes: typeof acpSandboxes;
   acp_callbacks: typeof acp_callbacks;
   acp_http: typeof acp_http;
-  admin: typeof admin;
   anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
@@ -106,6 +111,9 @@ declare const fullApi: ApiFromModules<{
   comments: typeof comments;
   containerSettings: typeof containerSettings;
   conversationMessages: typeof conversationMessages;
+  conversationReads: typeof conversationReads;
+  conversationSummary: typeof conversationSummary;
+  conversationTitle: typeof conversationTitle;
   conversations: typeof conversations;
   crons: typeof crons;
   crown: typeof crown;

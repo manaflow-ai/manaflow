@@ -401,6 +401,58 @@ EOF
 
         echo "Created /root/.codex/config.toml"
         cat /root/.codex/config.toml
+
+        # Create Claude Code settings to bypass permission prompts
+        mkdir -p /root/.claude
+        cat > /root/.claude/settings.json << 'EOF'
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  }
+}
+EOF
+
+        echo "Created /root/.claude/settings.json"
+        cat /root/.claude/settings.json
+
+        # Create Claude Code config to skip onboarding/trust prompts
+        cat > /root/.claude.json << 'EOF'
+{
+  "projects": {
+    "/root": {
+      "allowedTools": [],
+      "history": [],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 0,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false
+    },
+    "/root/workspace": {
+      "allowedTools": [],
+      "history": [],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 0,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false
+    }
+  },
+  "isQualifiedForDataSharing": false,
+  "hasCompletedOnboarding": true,
+  "bypassPermissionsModeAccepted": true,
+  "hasAcknowledgedCostThreshold": true
+}
+EOF
+
+        echo "Created /root/.claude.json"
+        cat /root/.claude.json
         `
       );
     },
@@ -732,4 +784,3 @@ EOF
 
   return registry;
 }
-

@@ -86,6 +86,7 @@ enum AcpSendMessageArgsContentItemTypeEnum: String, Encodable, ConvexEncodable {
 enum AcpSendMessageReturnStatusEnum: String, Decodable {
   case error = "error"
   case sent = "sent"
+  case queued = "queued"
 }
 
 enum ConversationMessagesListByConversationReturnMessagesItemToolCallsItemStatusEnum: String,
@@ -154,6 +155,10 @@ struct AcpStartConversationReturn: Decodable {
   let conversationId: ConvexId<ConvexTableConversations>
   let sandboxId: ConvexId<ConvexTableAcpSandboxes>
   let status: AcpStartConversationReturnStatusEnum
+}
+
+struct AcpPrewarmSandboxReturn: Decodable {
+  let sandboxId: ConvexId<ConvexTableAcpSandboxes>
 }
 
 struct AcpSendMessageArgsContentItem: ConvexEncodable {
@@ -284,6 +289,7 @@ struct ConversationsListReturnConversationsItem: Decodable {
   let acpSandboxId: ConvexId<ConvexTableAcpSandboxes>?
   let initializedOnSandbox: Bool?
   @OptionalConvexFloat var lastMessageAt: Double?
+  let title: String?
   let teamId: String
   @ConvexFloat var createdAt: Double
   @ConvexFloat var updatedAt: Double
@@ -337,6 +343,16 @@ struct AcpStartConversationArgs {
     if let value = sandboxId { result["sandboxId"] = value }
     result["providerId"] = providerId
     result["cwd"] = cwd
+    result["teamSlugOrId"] = teamSlugOrId
+    return result
+  }
+}
+
+struct AcpPrewarmSandboxArgs {
+  let teamSlugOrId: String
+
+  func asDictionary() -> [String: ConvexEncodable?] {
+    var result: [String: ConvexEncodable?] = [:]
     result["teamSlugOrId"] = teamSlugOrId
     return result
   }

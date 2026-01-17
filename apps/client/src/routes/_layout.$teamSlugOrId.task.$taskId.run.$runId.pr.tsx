@@ -178,7 +178,7 @@ function RunPullRequestPage() {
                         )}
                       >
                         <span className="truncate">{pr.repoFullName}</span>
-                        <span className="text-[10px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                        <span className="text-[10px] tracking-wide text-neutral-400 dark:text-neutral-500">
                           {pr.state ?? "none"}
                         </span>
                       </button>

@@ -69,7 +69,7 @@ export function MainLogStreamPanel({ entries, onClear }: MainLogStreamPanelProps
                     </span>
                     <span
                       className={cn(
-                        "uppercase tracking-wide font-semibold",
+                        "tracking-wide font-semibold",
                         LEVEL_CLASS[entry.level]
                       )}
                     >

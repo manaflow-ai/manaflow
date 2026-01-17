@@ -42,6 +42,12 @@ export class CmuxIpcSocketClient {
 
   async connect() {
     if (this.connected) return this;
+    if (typeof window.cmux?.register !== "function") {
+      throw new Error(
+        "CmuxIpcSocketClient: window.cmux.register is not available. " +
+          "This client can only be used in the Electron app."
+      );
+    }
     await window.cmux.register({
       auth: this.query.auth,
       team: this.query.team,
@@ -61,6 +67,14 @@ export class CmuxIpcSocketClient {
   private ensureIpcListener(event: string) {
     // Skip if already registered or disposed
     if (this.ipcCleanups.has(event) || this.disposed) return;
+    if (typeof window.cmux?.on !== "function") {
+      console.error(
+        "[CmuxIpcSocketClient] window.cmux.on is not available. " +
+          "Cannot subscribe to event:",
+        event
+      );
+      return;
+    }
     const cleanup = window.cmux.on(event, (...args: unknown[]) => {
       if (!this.disposed) {
         this.trigger(event, ...args);
@@ -124,6 +138,13 @@ export class CmuxIpcSocketClient {
     event: E | string,
     ...args: unknown[]
   ) {
+    if (typeof window.cmux?.rpc !== "function") {
+      console.error(
+        "[CmuxIpcSocketClient] window.cmux.rpc is not available. " +
+          "This client can only be used in the Electron app."
+      );
+      return this;
+    }
     const key = String(event);
     const last = args[args.length - 1];
     if (typeof last === "function") {

@@ -1,7 +1,10 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId } from "../_shared/team";
+import type { Doc } from "./_generated/dataModel";
+import type { QueryCtx } from "./_generated/server";
 import {
   internalMutation,
   internalQuery,
@@ -13,6 +16,12 @@ const isolationModeValidator = v.union(
   v.literal("none"),
   v.literal("shared_namespace"),
   v.literal("dedicated_namespace")
+);
+
+const permissionModeValidator = v.union(
+  v.literal("manual"),
+  v.literal("auto_allow_once"),
+  v.literal("auto_allow_always")
 );
 
 const statusValidator = v.union(
@@ -37,6 +46,58 @@ const providerIdValidator = v.union(
   v.literal("opencode")
 );
 
+const conversationScopeValidator = v.union(
+  v.literal("mine"),
+  v.literal("all")
+);
+
+type MessagePreview = {
+  text: string | null;
+  kind: "text" | "image" | "resource" | "empty";
+};
+
+function buildMessagePreview(
+  message: Doc<"conversationMessages"> | null
+): MessagePreview {
+  if (!message) {
+    return { text: null, kind: "empty" };
+  }
+
+  for (const block of message.content) {
+    if (block.type === "text" && block.text) {
+      return { text: block.text, kind: "text" };
+    }
+    if (block.type === "image") {
+      return { text: "Image", kind: "image" };
+    }
+    if (block.type === "resource_link") {
+      const label = block.name ?? block.title ?? block.description ?? "Attachment";
+      const kind = block.description?.startsWith("image/") ? "image" : "resource";
+      return { text: label, kind };
+    }
+    if (block.type === "resource" && block.resource?.text) {
+      return { text: block.resource.text, kind: "resource" };
+    }
+  }
+
+  return { text: null, kind: "empty" };
+}
+
+async function requireTeamMembership(
+  ctx: QueryCtx,
+  teamSlugOrId: string
+): Promise<{ teamId: string; userId: string }> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("Not authenticated");
+  }
+
+  // getTeamId handles membership check and returns Convex _id
+  const teamId = await getTeamId(ctx, teamSlugOrId);
+
+  return { teamId, userId: identity.subject };
+}
+
 // Create a new conversation
 export const create = authMutation({
   args: {
@@ -59,7 +120,10 @@ export const create = authMutation({
       userId: userId ?? undefined,
       sessionId: args.sessionId,
       providerId: args.providerId,
+      modelId:
+        args.providerId === "claude" ? "claude-opus-4-5-20251101" : undefined,
       cwd: args.cwd,
+      permissionMode: "auto_allow_always",
       status: "active",
       isolationMode: args.isolationMode,
       namespaceId: args.namespaceId,
@@ -100,6 +164,47 @@ export const getById = authQuery({
   },
 });
 
+export const getDetail = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const { teamId, userId } = await requireTeamMembership(
+      ctx,
+      args.teamSlugOrId
+    );
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.teamId !== teamId) {
+      return null;
+    }
+
+    const sandbox = conversation.acpSandboxId
+      ? await ctx.db.get(conversation.acpSandboxId)
+      : null;
+
+    const read = await ctx.db
+      .query("conversationReads")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversation._id).eq("userId", userId)
+      )
+      .first();
+
+    return {
+      conversation,
+      sandbox: sandbox
+        ? {
+            status: sandbox.status,
+            sandboxUrl: sandbox.sandboxUrl ?? null,
+            lastActivityAt: sandbox.lastActivityAt,
+            errorMessage: sandbox.lastError ?? null,
+          }
+        : null,
+      lastReadAt: read?.lastReadAt ?? null,
+    };
+  },
+});
+
 // Internal query to get conversation by ID (for JWT verification)
 export const getByIdInternal = internalQuery({
   args: {
@@ -129,32 +234,106 @@ export const getBySessionId = authQuery({
   },
 });
 
-// List conversations for a team
+// List conversations for a team (paginated)
 export const list = authQuery({
   args: {
     teamSlugOrId: v.string(),
     status: v.optional(statusValidator),
     limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const { teamId } = await requireTeamMembership(ctx, args.teamSlugOrId);
     const limit = args.limit ?? 50;
 
+    let query;
     if (args.status) {
-      return await ctx.db
+      query = ctx.db
         .query("conversations")
         .withIndex("by_team_status", (q) =>
           q.eq("teamId", teamId).eq("status", args.status!)
         )
-        .order("desc")
-        .take(limit);
+        .order("desc");
+    } else {
+      query = ctx.db
+        .query("conversations")
+        .withIndex("by_team", (q) => q.eq("teamId", teamId))
+        .order("desc");
     }
 
-    return await ctx.db
-      .query("conversations")
-      .withIndex("by_team", (q) => q.eq("teamId", teamId))
-      .order("desc")
-      .take(limit);
+    const result = await query.paginate({ numItems: limit, cursor: args.cursor ?? null });
+    return {
+      conversations: result.page,
+      nextCursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+export const listPagedWithLatest = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    scope: conversationScopeValidator,
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const { teamId, userId } = await requireTeamMembership(
+      ctx,
+      args.teamSlugOrId
+    );
+
+    const baseQuery =
+      args.scope === "all"
+        ? ctx.db
+            .query("conversations")
+            .withIndex("by_team_updated", (q) => q.eq("teamId", teamId))
+        : ctx.db
+            .query("conversations")
+            .withIndex("by_team_user_updated", (q) =>
+              q.eq("teamId", teamId).eq("userId", userId)
+            );
+
+    const page = await baseQuery.order("desc").paginate(args.paginationOpts);
+
+    const entries = await Promise.all(
+      page.page.map(async (conversation) => {
+        const latestMessage = await ctx.db
+          .query("conversationMessages")
+          .withIndex("by_conversation", (q) =>
+            q.eq("conversationId", conversation._id)
+          )
+          .order("desc")
+          .first();
+
+        const preview = buildMessagePreview(latestMessage);
+
+        const read = await ctx.db
+          .query("conversationReads")
+          .withIndex("by_conversation_user", (q) =>
+            q.eq("conversationId", conversation._id).eq("userId", userId)
+          )
+          .first();
+
+        const lastMessageAt = conversation.lastMessageAt ?? 0;
+        const lastActivityAt =
+          lastMessageAt || conversation.updatedAt || conversation.createdAt || 0;
+        const lastReadAt = read?.lastReadAt ?? 0;
+
+        return {
+          conversation,
+          preview,
+          unread: lastMessageAt > lastReadAt,
+          lastReadAt: read?.lastReadAt ?? null,
+          latestMessageAt: lastActivityAt,
+          title: conversation.title ?? null,
+        };
+      })
+    );
+
+    return {
+      ...page,
+      page: entries,
+    };
   },
 });
 
@@ -241,6 +420,28 @@ export const updateModes = internalMutation({
   },
 });
 
+export const updatePermissionMode = authMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    permissionMode: permissionModeValidator,
+  },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) {
+      throw new Error("Conversation not found");
+    }
+
+    await getTeamId(ctx, conversation.teamId);
+
+    await ctx.db.patch(args.conversationId, {
+      permissionMode: args.permissionMode,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
 // Update agent info (from ACP initialization)
 export const updateAgentInfo = internalMutation({
   args: {
@@ -274,6 +475,7 @@ export const createInternal = internalMutation({
     isolationMode: v.optional(isolationModeValidator),
     namespaceId: v.optional(v.string()),
     sandboxInstanceId: v.optional(v.string()),
+    permissionMode: v.optional(permissionModeValidator),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -282,7 +484,10 @@ export const createInternal = internalMutation({
       teamId: args.teamId,
       sessionId: args.sessionId,
       providerId: args.providerId,
+      modelId:
+        args.providerId === "claude" ? "claude-opus-4-5-20251101" : undefined,
       cwd: args.cwd,
+      permissionMode: args.permissionMode ?? "auto_allow_always",
       status: "active",
       isolationMode: args.isolationMode,
       namespaceId: args.namespaceId,

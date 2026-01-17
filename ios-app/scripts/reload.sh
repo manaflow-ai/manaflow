@@ -21,9 +21,19 @@ xcodebuild -scheme cmux -sdk iphonesimulator -configuration Debug \
     -derivedDataPath build \
     -quiet
 
-echo "📲 Installing on simulator..."
-xcrun simctl install booted "build/Build/Products/Debug-iphonesimulator/cmux DEV.app" 2>/dev/null || true
-xcrun simctl launch booted dev.cmux.app.dev 2>/dev/null || true
+echo "📲 Installing on simulator(s)..."
+# Install and launch on ALL booted simulators
+BOOTED_SIMS=$(xcrun simctl list devices | grep "Booted" | grep -oE '[A-F0-9-]{36}')
+if [ -n "$BOOTED_SIMS" ]; then
+    for SIM_ID in $BOOTED_SIMS; do
+        SIM_NAME=$(xcrun simctl list devices | grep "$SIM_ID" | sed 's/ (.*//')
+        echo "  → $SIM_NAME"
+        xcrun simctl install "$SIM_ID" "build/Build/Products/Debug-iphonesimulator/cmux DEV.app" 2>/dev/null || true
+        xcrun simctl launch "$SIM_ID" dev.cmux.app.dev 2>/dev/null || true
+    done
+else
+    echo "  ⚠️  No booted simulators found"
+fi
 
 if [ "$SIMULATOR_ONLY" -eq 1 ]; then
     echo "✅ Done! (simulator only)"

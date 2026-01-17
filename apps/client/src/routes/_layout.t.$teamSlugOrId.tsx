@@ -27,6 +27,16 @@ type SearchParams = z.infer<typeof searchSchema>;
 
 const DEFAULT_SCOPE: ConversationScope = "mine";
 const PAGE_SIZE = 30;
+const OPTIMISTIC_CONVERSATION_PREFIX = "optimistic-";
+
+type OptimisticConversation = {
+  id: string;
+  providerId: string;
+  modelId: string | null;
+  cwd: string;
+  latestMessageAt: number;
+  state: "creating" | "ready";
+};
 
 export const Route = createFileRoute("/_layout/t/$teamSlugOrId")({
   component: ConversationsLayout,
@@ -78,13 +88,70 @@ function ConversationsLayout() {
   const activeConversationId = match?.params.conversationId;
 
   const startConversation = useAction(api.acp.startConversation);
+  const sendMessage = useAction(api.acp.sendMessage);
+  const prewarmSandbox = useAction(api.acp.prewarmSandbox);
   const [isCreating, setIsCreating] = useState(false);
+  const [optimisticConversations, setOptimisticConversations] = useState<
+    OptimisticConversation[]
+  >([]);
 
-  const entries = useMemo(() => results ?? [], [results]);
+  const serverEntries = useMemo(() => {
+    const base = results ?? [];
+    return base.map((entry) => ({
+      conversationId: entry.conversation._id,
+      providerId: entry.conversation.providerId,
+      modelId: entry.conversation.modelId ?? null,
+      cwd: entry.conversation.cwd,
+      title: entry.title,
+      preview: entry.preview,
+      unread: entry.unread,
+      latestMessageAt: entry.latestMessageAt,
+      isOptimistic: false,
+    }));
+  }, [results]);
+
+  const entries = useMemo(() => {
+    const optimisticEntries = optimisticConversations.map((entry) => ({
+      conversationId: entry.id,
+      providerId: entry.providerId,
+      modelId: entry.modelId,
+      cwd: entry.cwd,
+      title: null, // Title will be generated after first message
+      preview: {
+        text: entry.state === "creating" ? "Creating conversation…" : null,
+        kind: "empty" as const,
+      },
+      unread: false,
+      latestMessageAt: entry.latestMessageAt,
+      isOptimistic: true,
+    }));
+
+    const optimisticIds = new Set(
+      optimisticEntries.map((entry) => entry.conversationId)
+    );
+    const merged = [
+      ...optimisticEntries,
+      ...serverEntries.filter((entry) => !optimisticIds.has(entry.conversationId)),
+    ];
+
+    return merged.sort((a, b) => b.latestMessageAt - a.latestMessageAt);
+  }, [optimisticConversations, serverEntries]);
 
   useEffect(() => {
     setLastTeamSlugOrId(teamSlugOrId);
   }, [teamSlugOrId]);
+
+  useEffect(() => {
+    if (!results || optimisticConversations.length === 0) return;
+    const serverIds = new Set(
+      results.map((entry) => entry.conversation._id.toString())
+    );
+    setOptimisticConversations((current) => {
+      if (current.length === 0) return current;
+      const next = current.filter((entry) => !serverIds.has(entry.id));
+      return next.length === current.length ? current : next;
+    });
+  }, [optimisticConversations.length, results]);
 
   const handleScopeChange = (next: ConversationScope) => {
     if (next === scope) return;
@@ -93,27 +160,101 @@ function ConversationsLayout() {
     });
   };
 
-  const handleNewConversation = async () => {
+  const handleNewConversation = async (initialPrompt?: string) => {
+    const previousConversationId = activeConversationId;
+    const optimisticId = `${OPTIMISTIC_CONVERSATION_PREFIX}${crypto.randomUUID()}`;
+    const now = Date.now();
+    setOptimisticConversations((current) => [
+      {
+        id: optimisticId,
+        providerId: "claude",
+        modelId: null,
+        cwd: "/root",
+        latestMessageAt: now,
+        state: "creating",
+      },
+      ...current,
+    ]);
     setIsCreating(true);
+    void navigate({
+      to: "/t/$teamSlugOrId/$conversationId",
+      params: {
+        teamSlugOrId,
+        conversationId: optimisticId,
+      },
+    });
     try {
       const result = await startConversation({
         teamSlugOrId,
         providerId: "claude",
         cwd: "/root",
       });
+      setOptimisticConversations((current) =>
+        current.map((entry) =>
+          entry.id === optimisticId
+            ? {
+                ...entry,
+                id: result.conversationId,
+                latestMessageAt: Date.now(),
+                state: "ready",
+              }
+            : entry
+        )
+      );
       await navigate({
         to: "/t/$teamSlugOrId/$conversationId",
         params: {
           teamSlugOrId,
           conversationId: result.conversationId,
         },
+        replace: true,
       });
+      if (initialPrompt?.trim()) {
+        try {
+          await sendMessage({
+            conversationId: result.conversationId,
+            content: [{ type: "text", text: initialPrompt.trim() }],
+          });
+        } catch (error) {
+          console.error("Failed to send initial prompt", error);
+          toast.error("Failed to send initial prompt");
+        }
+      }
     } catch (error) {
       console.error("Failed to start conversation", error);
       toast.error("Failed to start conversation");
+      setOptimisticConversations((current) =>
+        current.filter((entry) => entry.id !== optimisticId)
+      );
+      if (previousConversationId) {
+        void navigate({
+          to: "/t/$teamSlugOrId/$conversationId",
+          params: {
+            teamSlugOrId,
+            conversationId: previousConversationId,
+          },
+          replace: true,
+        });
+      } else {
+        void navigate({
+          to: "/t/$teamSlugOrId",
+          params: { teamSlugOrId },
+          replace: true,
+        });
+      }
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const handlePrewarm = () => {
+    void prewarmSandbox({ teamSlugOrId }).catch((error) => {
+      console.error("Failed to prewarm sandbox", error);
+    });
+  };
+
+  const handleSubmitDraft = (prompt: string) => {
+    void handleNewConversation(prompt);
   };
 
   return (
@@ -127,7 +268,9 @@ function ConversationsLayout() {
           status={status}
           onLoadMore={loadMore}
           activeConversationId={activeConversationId}
-          onNewConversation={handleNewConversation}
+          onNewConversation={() => handleNewConversation()}
+          onSubmitDraft={handleSubmitDraft}
+          onPrewarm={handlePrewarm}
           isCreating={isCreating}
         />
       }

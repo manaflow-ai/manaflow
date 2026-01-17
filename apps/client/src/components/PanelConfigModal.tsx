@@ -189,7 +189,7 @@ export function PanelConfigModal({ open, onOpenChange, config, onChange }: Panel
           </button>
         )}
 
-        <div className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+        <div className="text-xs font-medium tracking-wide text-neutral-500 dark:text-neutral-400">
           {label}
         </div>
         <div className="flex flex-col items-center gap-1">

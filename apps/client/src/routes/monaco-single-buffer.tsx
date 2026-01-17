@@ -685,7 +685,7 @@ function MonacoSingleBufferRoute() {
   if (!isReady) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-neutral-100 text-neutral-800 dark:bg-neutral-950 dark:text-neutral-100">
-        <span className="text-sm uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
+        <span className="text-sm tracking-wide text-neutral-600 dark:text-neutral-400">
           Loading Monaco diff…
         </span>
       </div>

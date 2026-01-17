@@ -1,10 +1,11 @@
 import SwiftUI
 
 struct ConversationListView: View {
-    @State private var conversations = fakeConversations
+    @StateObject private var viewModel = ConversationsViewModel()
     @State private var searchText = ""
     @State private var showSettings = false
     @State private var showNewTask = false
+    @State private var navigationPath = NavigationPath()
     @FocusState private var isSearchFocused: Bool
     @State private var isSearchActive = false
 
@@ -12,44 +13,41 @@ struct ConversationListView: View {
         isSearchFocused || !searchText.isEmpty || isSearchActive
     }
 
-    var filteredConversations: [Conversation] {
+    var filteredConversations: [ConvexConversation] {
         if searchText.isEmpty {
-            return conversations
+            return viewModel.conversations
         }
-        return conversations.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        return viewModel.conversations.filter {
+            $0.displayName.localizedCaseInsensitiveContains(searchText) ||
+            $0.providerDisplayName.localizedCaseInsensitiveContains(searchText) ||
+            $0.cwd.localizedCaseInsensitiveContains(searchText)
+        }
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(filteredConversations) { conversation in
-                    NavigationLink(destination: ChatView(conversation: conversation)) {
-                        ConversationRow(conversation: conversation)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            withAnimation {
-                                conversations.removeAll { $0.id == conversation.id }
-                            }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
+        NavigationStack(path: $navigationPath) {
+            Group {
+                if viewModel.isLoading {
+                    ProgressView("Loading conversations...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = viewModel.error {
+                    ContentUnavailableView {
+                        Label("Error", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(error)
+                    } actions: {
+                        Button("Retry") {
+                            Task { await viewModel.loadConversations() }
                         }
-
-                        Button {
-                            // Pin action
-                        } label: {
-                            Label("Pin", systemImage: "pin")
-                        }
-                        .tint(.orange)
                     }
-                    .swipeActions(edge: .leading) {
-                        Button {
-                            // Mark as unread
-                        } label: {
-                            Label("Unread", systemImage: "message.badge")
-                        }
-                        .tint(.blue)
+                } else if filteredConversations.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Tasks", systemImage: "tray")
+                    } description: {
+                        Text("Create a new task to get started")
                     }
+                } else {
+                    conversationsList
                 }
             }
             .listStyle(.plain)
@@ -107,6 +105,9 @@ struct ConversationListView: View {
                             .glassEffect(.regular.interactive(), in: .circle)
                         } else {
                             Button {
+                                Task {
+                                    await viewModel.prewarmSandbox()
+                                }
                                 showNewTask = true
                             } label: {
                                 Image(systemName: "square.and.pencil")
@@ -153,9 +154,48 @@ struct ConversationListView: View {
                 }
             }
             .sheet(isPresented: $showNewTask) {
-                NewTaskSheet()
+                NewTaskSheet(viewModel: viewModel) { conversationId in
+                    // Navigate to the new conversation
+                    navigationPath.append(conversationId)
+                }
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+            }
+            .navigationDestination(for: String.self) { conversationId in
+                // Navigate by conversation ID (from new task creation)
+                ChatViewById(conversationId: conversationId)
+            }
+        }
+    }
+
+    private var conversationsList: some View {
+        List {
+            ForEach(filteredConversations) { conversation in
+                NavigationLink(destination: ChatView(conversation: conversation)) {
+                    ConversationRow(conversation: conversation)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) {
+                        // TODO: Delete conversation via Convex
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+
+                    Button {
+                        // Pin action
+                    } label: {
+                        Label("Pin", systemImage: "pin")
+                    }
+                    .tint(.orange)
+                }
+                .swipeActions(edge: .leading) {
+                    Button {
+                        // Mark as unread
+                    } label: {
+                        Label("Unread", systemImage: "message.badge")
+                    }
+                    .tint(.blue)
+                }
             }
         }
     }
@@ -163,13 +203,25 @@ struct ConversationListView: View {
 
 struct NewTaskSheet: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: ConversationsViewModel
+    let onCreated: (String) -> Void
+
     @State private var taskDescription = ""
+    @State private var isCreating = false
+    @State private var error: String?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
                 InstantFocusTextView(text: $taskDescription, placeholder: "Describe a coding task")
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .disabled(isCreating)
+
+                if let error {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                }
 
                 Spacer()
             }
@@ -182,14 +234,38 @@ struct NewTaskSheet: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isCreating)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Create") {
-                        // Create task
-                        dismiss()
+                    if isCreating {
+                        ProgressView()
+                    } else {
+                        Button("Create") {
+                            createTask()
+                        }
+                        .fontWeight(.semibold)
+                        .disabled(taskDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .fontWeight(.semibold)
-                    .disabled(taskDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+
+    private func createTask() {
+        isCreating = true
+        error = nil
+
+        Task {
+            do {
+                let conversationId = try await viewModel.createConversation(initialMessage: taskDescription)
+                await MainActor.run {
+                    dismiss()
+                    onCreated(conversationId)
+                }
+            } catch {
+                await MainActor.run {
+                    self.error = error.localizedDescription
+                    isCreating = false
                 }
             }
         }
@@ -255,38 +331,42 @@ struct InstantFocusTextView: UIViewRepresentable {
 }
 
 struct ConversationRow: View {
-    let conversation: Conversation
+    let conversation: ConvexConversation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(conversation.name)
-                    .font(.headline)
+        HStack(spacing: 12) {
+            // Provider icon
+            Image(systemName: conversation.providerIcon)
+                .font(.title2)
+                .foregroundStyle(conversation.isActive ? .blue : .secondary)
+                .frame(width: 40, height: 40)
+                .background(
+                    Circle()
+                        .fill(conversation.isActive ? Color.blue.opacity(0.1) : Color.secondary.opacity(0.1))
+                )
 
-                Spacer()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(conversation.displayName)
+                        .font(.headline)
 
-                Text(formatTimestamp(conversation.timestamp))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+                    if conversation.isActive {
+                        Circle()
+                            .fill(.green)
+                            .frame(width: 8, height: 8)
+                    }
 
-            HStack {
-                Text(conversation.lastMessage)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    Spacer()
 
-                Spacer()
-
-                if conversation.unreadCount > 0 {
-                    Text("\(conversation.unreadCount)")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.blue, in: Capsule())
+                    Text(formatTimestamp(conversation.displayTimestamp))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+
+                Text(conversation.cwd)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .padding(.vertical, 4)

@@ -19,7 +19,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    configure, init_conversation, receive_prompt, ApiProxies, CallbackClient, RestApiDoc,
+    configure, init_conversation, receive_prompt, send_rpc, ApiProxies, CallbackClient, RestApiDoc,
     RestApiState,
 };
 
@@ -231,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/acp/configure", post(configure))
         .route("/api/acp/init", post(init_conversation))
         .route("/api/acp/prompt", post(receive_prompt))
+        .route("/api/acp/rpc", post(send_rpc))
         .with_state(rest_state)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));
 

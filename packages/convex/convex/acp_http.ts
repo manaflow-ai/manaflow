@@ -73,6 +73,8 @@ const messageChunkPayload = z.object({
   type: z.literal("message_chunk"),
   conversationId: z.string(),
   messageId: z.string().optional(),
+  createdAt: z.number().optional(),
+  eventSeq: z.number().optional(),
   content: contentBlockSchema,
 });
 
@@ -80,6 +82,8 @@ const reasoningChunkPayload = z.object({
   type: z.literal("reasoning_chunk"),
   conversationId: z.string(),
   messageId: z.string().optional(),
+  createdAt: z.number().optional(),
+  eventSeq: z.number().optional(),
   text: z.string(),
 });
 
@@ -110,6 +114,18 @@ const errorPayload = z.object({
   detail: z.string().optional(),
 });
 
+const rawEventPayload = z.object({
+  type: z.literal("raw_event_batch"),
+  conversationId: z.string(),
+  events: z.array(
+    z.object({
+      seq: z.number(),
+      raw: z.string(),
+      createdAt: z.number(),
+    })
+  ),
+});
+
 const sandboxReadyPayload = z.object({
   type: z.literal("sandbox_ready"),
   sandboxId: z.string(),
@@ -122,6 +138,7 @@ const acpCallbackPayload = z.discriminatedUnion("type", [
   messageCompletePayload,
   toolCallPayload,
   errorPayload,
+  rawEventPayload,
   sandboxReadyPayload,
 ]);
 
@@ -200,6 +217,8 @@ export const acpCallback = httpAction(async (ctx, req) => {
         await ctx.runMutation(internal.acp_callbacks.appendMessageChunk, {
           conversationId: payload.conversationId as Id<"conversations">,
           messageId: payload.messageId as Id<"conversationMessages"> | undefined,
+          createdAt: payload.createdAt,
+          eventSeq: payload.eventSeq,
           content: payload.content,
         });
         break;
@@ -209,6 +228,8 @@ export const acpCallback = httpAction(async (ctx, req) => {
         await ctx.runMutation(internal.acp_callbacks.appendReasoningChunk, {
           conversationId: payload.conversationId as Id<"conversations">,
           messageId: payload.messageId as Id<"conversationMessages"> | undefined,
+          createdAt: payload.createdAt,
+          eventSeq: payload.eventSeq,
           text: payload.text,
         });
         break;
@@ -237,6 +258,16 @@ export const acpCallback = httpAction(async (ctx, req) => {
           conversationId: payload.conversationId as Id<"conversations">,
           code: payload.code,
           detail: payload.detail,
+        });
+        break;
+      }
+
+      case "raw_event_batch": {
+        await ctx.runMutation(internal.acp_callbacks.appendRawEvents, {
+          conversationId: payload.conversationId as Id<"conversations">,
+          sandboxId: jwtPayload.sandboxId as Id<"acpSandboxes">,
+          teamId: jwtPayload.teamId,
+          rawEvents: payload.events,
         });
         break;
       }

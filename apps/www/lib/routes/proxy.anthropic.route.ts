@@ -13,7 +13,9 @@ async function verifyConversationJwt(token: string): Promise<{
   teamId: string;
 } | null> {
   try {
-    const secret = new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET);
+    const secret = new TextEncoder().encode(
+      env.CMUX_CONVERSATION_JWT_SECRET ?? env.CMUX_TASK_RUN_JWT_SECRET,
+    );
     const { payload } = await jwtVerify(token, secret);
 
     if (

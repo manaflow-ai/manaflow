@@ -32,6 +32,14 @@ export const update = authMutation({
         token: v.object({ start: v.string(), end: v.string() }),
       })
     ),
+    conversationTitleStyle: v.optional(
+      v.union(
+        v.literal("sentence"),
+        v.literal("lowercase"),
+        v.literal("title")
+      )
+    ),
+    conversationTitleCustomPrompt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -55,6 +63,8 @@ export const update = authMutation({
           line: { start: string; end: string };
           token: { start: string; end: string };
         };
+        conversationTitleStyle?: "sentence" | "lowercase" | "title";
+        conversationTitleCustomPrompt?: string;
         updatedAt: number;
       } = { updatedAt: now };
 
@@ -76,6 +86,12 @@ export const update = authMutation({
       if (args.heatmapColors !== undefined) {
         updates.heatmapColors = args.heatmapColors;
       }
+      if (args.conversationTitleStyle !== undefined) {
+        updates.conversationTitleStyle = args.conversationTitleStyle;
+      }
+      if (args.conversationTitleCustomPrompt !== undefined) {
+        updates.conversationTitleCustomPrompt = args.conversationTitleCustomPrompt;
+      }
 
       await ctx.db.patch(existing._id, updates);
     } else {
@@ -86,6 +102,8 @@ export const update = authMutation({
         heatmapThreshold: args.heatmapThreshold,
         heatmapTooltipLanguage: args.heatmapTooltipLanguage,
         heatmapColors: args.heatmapColors,
+        conversationTitleStyle: args.conversationTitleStyle,
+        conversationTitleCustomPrompt: args.conversationTitleCustomPrompt,
         nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,

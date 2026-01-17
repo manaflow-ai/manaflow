@@ -128,9 +128,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
         await Promise.race([
           new Promise((resolve, reject) => {
+            let stallRejected = false;
             docker.modem.followProgress(
               stream,
               (err: Error | null, res: unknown[]) => {
+                if (stallRejected) return;
                 if (err) {
                   reject(err);
                 } else {
@@ -138,6 +140,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                 }
               },
               (event: { status: string; progress: string; id?: string }) => {
+                if (stallRejected) return;
                 lastProgressTime = Date.now();
                 // Log pull progress
                 if (event.status) {
@@ -153,7 +156,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                 }
 
                 if (pullTimedOut) {
-                  throw new Error('Docker pull stalled - no progress for 2 minutes');
+                  stallRejected = true;
+                  reject(new Error('Docker pull stalled - no progress for 2 minutes'));
                 }
               }
             );

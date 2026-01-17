@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -20,7 +21,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
 
 use super::api_proxy::ConversationApiProxies;
-use super::callback::{CallbackClient, CallbackToolCall, CallbackToolCallStatus, StopReason};
+use super::callback::{
+    CallbackClient, CallbackRawEvent, CallbackToolCall, CallbackToolCallStatus, StopReason,
+};
 use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationMode};
 
 /// State for a single conversation.
@@ -375,6 +378,26 @@ pub struct PromptResponse {
     pub error: Option<String>,
 }
 
+/// Request to send a raw JSON-RPC payload to an active conversation.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RpcRequest {
+    /// Convex conversation ID
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
+    /// Raw JSON-RPC payload to forward to the CLI
+    pub payload: serde_json::Value,
+}
+
+/// Response from receiving a JSON-RPC payload.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RpcResponse {
+    /// Whether the payload was accepted
+    pub accepted: bool,
+    /// Error message if not accepted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Request to configure the sandbox after spawn.
 /// Called by Convex to inject callback settings into a running sandbox.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -583,6 +606,7 @@ pub async fn init_conversation(
     let callback_client = state.get_callback_client().await;
     let conversation_id = request.conversation_id.clone();
     let current_message_id = conversation_state.current_message_id.clone();
+    let stdin_for_responses = conversation_state.stdin.clone();
 
     tokio::spawn(async move {
         let mut line = String::new();
@@ -592,6 +616,15 @@ pub async fn init_conversation(
         let mut message_buffer = String::new();
         let mut reasoning_buffer = String::new();
         let mut pending_tool_calls: Vec<CallbackToolCall> = Vec::new();
+        let mut last_message_event_at: Option<u64> = None;
+        let mut last_message_event_seq: Option<u64> = None;
+
+        // Raw ACP event buffering for full replay/debugging
+        let mut raw_events: Vec<CallbackRawEvent> = Vec::new();
+        let mut raw_seq: u64 = 0;
+        let mut last_raw_flush = Instant::now();
+        let raw_flush_interval = Duration::from_millis(250);
+        const RAW_EVENT_BATCH_SIZE: usize = 50;
 
         loop {
             line.clear();
@@ -604,6 +637,101 @@ pub async fn init_conversation(
                 Ok(_) => {
                     debug!(conversation_id = %conversation_id, line = %line.trim(), "CLI stdout output");
 
+                    // Persist raw ACP event line (best-effort, buffered)
+                    raw_seq += 1;
+                    let created_at = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                        Ok(duration) => duration.as_millis() as u64,
+                        Err(error) => {
+                            warn!(error = %error, "System time before UNIX_EPOCH");
+                            0
+                        }
+                    };
+                    let line_created_at = created_at;
+                    raw_events.push(CallbackRawEvent {
+                        seq: raw_seq,
+                        raw: line.trim_end().to_string(),
+                        created_at,
+                    });
+                    if raw_events.len() >= RAW_EVENT_BATCH_SIZE
+                        || last_raw_flush.elapsed() >= raw_flush_interval
+                    {
+                        flush_raw_events(&callback_client, &conversation_id, &mut raw_events).await;
+                        last_raw_flush = Instant::now();
+                    }
+
+                    // Handle JSON-RPC requests that need responses (e.g., permission requests)
+                    // Check for permission request pattern first (before full parse for logging)
+                    if line.contains("session/request_permission") {
+                        info!(
+                            conversation_id = %conversation_id,
+                            line = %line.trim(),
+                            "Detected permission request in line"
+                        );
+                    }
+
+                    if let Some((_request_id, response)) = handle_permission_request(&line) {
+                        let option_id = response
+                            .get("result")
+                            .and_then(|r| r.get("outcome"))
+                            .and_then(|o| o.get("optionId"))
+                            .and_then(|id| id.as_str())
+                            .unwrap_or("unknown");
+
+                        info!(
+                            conversation_id = %conversation_id,
+                            option_id = %option_id,
+                            response = %response,
+                            "Auto-approving permission request"
+                        );
+
+                        // Send response back to CLI stdin
+                        let mut stdin_guard = stdin_for_responses.lock().await;
+                        if let Some(ref mut stdin) = *stdin_guard {
+                            let response_str = format!("{}\n", response);
+                            info!(
+                                conversation_id = %conversation_id,
+                                response_len = response_str.len(),
+                                "Writing permission response to stdin"
+                            );
+                            if let Err(e) = stdin.write_all(response_str.as_bytes()).await {
+                                error!(
+                                    conversation_id = %conversation_id,
+                                    error = %e,
+                                    "Failed to send permission response"
+                                );
+                            } else {
+                                info!(
+                                    conversation_id = %conversation_id,
+                                    "Permission response written successfully"
+                                );
+                            }
+                            if let Err(e) = stdin.flush().await {
+                                error!(
+                                    conversation_id = %conversation_id,
+                                    error = %e,
+                                    "Failed to flush permission response"
+                                );
+                            } else {
+                                info!(
+                                    conversation_id = %conversation_id,
+                                    "Permission response flushed successfully"
+                                );
+                            }
+                        } else {
+                            error!(
+                                conversation_id = %conversation_id,
+                                "Stdin not available for permission response"
+                            );
+                        }
+                    } else if line.contains("session/request_permission") {
+                        // We detected the permission string but parsing failed
+                        error!(
+                            conversation_id = %conversation_id,
+                            line = %line.trim(),
+                            "Permission request detected but handle_permission_request returned None"
+                        );
+                    }
+
                     // Parse ACP event and handle appropriately
                     if let Some(event) = parse_acp_event(&line) {
                         match event {
@@ -611,13 +739,21 @@ pub async fn init_conversation(
                                 // Buffer text - only persist at message boundaries
                                 debug!(conversation_id = %conversation_id, text_len = %text.len(), "Buffering message chunk");
                                 message_buffer.push_str(&text);
+                                last_message_event_at = Some(line_created_at);
+                                last_message_event_seq = Some(raw_seq);
                             }
                             AcpEvent::ReasoningChunk(text) => {
                                 // Buffer reasoning - only persist at message boundaries
                                 debug!(conversation_id = %conversation_id, text_len = %text.len(), "Buffering reasoning chunk");
                                 reasoning_buffer.push_str(&text);
+                                last_message_event_at = Some(line_created_at);
+                                last_message_event_seq = Some(raw_seq);
                             }
-                            AcpEvent::ToolCall { id, name, arguments } => {
+                            AcpEvent::ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            } => {
                                 // Buffer tool calls - persist with message complete
                                 debug!(
                                     conversation_id = %conversation_id,
@@ -625,6 +761,39 @@ pub async fn init_conversation(
                                     tool_name = %name,
                                     "Buffering tool call"
                                 );
+                                if !message_buffer.is_empty() || !reasoning_buffer.is_empty() {
+                                    if let Some(ref client) = callback_client {
+                                        let mut msg_id = current_message_id.lock().await;
+                                        if !reasoning_buffer.is_empty() {
+                                            client
+                                                .send_reasoning_chunk(
+                                                    &conversation_id,
+                                                    msg_id.as_deref(),
+                                                    last_message_event_at,
+                                                    last_message_event_seq,
+                                                    &reasoning_buffer,
+                                                )
+                                                .await;
+                                        }
+                                        if !message_buffer.is_empty() {
+                                            client
+                                                .send_text_chunk(
+                                                    &conversation_id,
+                                                    msg_id.as_deref(),
+                                                    last_message_event_at,
+                                                    last_message_event_seq,
+                                                    &message_buffer,
+                                                )
+                                                .await;
+                                        }
+                                        *msg_id = None;
+                                    }
+
+                                    message_buffer.clear();
+                                    reasoning_buffer.clear();
+                                    last_message_event_at = None;
+                                    last_message_event_seq = None;
+                                }
                                 pending_tool_calls.push(CallbackToolCall {
                                     id,
                                     name,
@@ -647,7 +816,9 @@ pub async fn init_conversation(
                                     "failed" => CallbackToolCallStatus::Failed,
                                     _ => CallbackToolCallStatus::Pending,
                                 };
-                                if let Some(tc) = pending_tool_calls.iter_mut().find(|tc| tc.id == id) {
+                                if let Some(tc) =
+                                    pending_tool_calls.iter_mut().find(|tc| tc.id == id)
+                                {
                                     tc.status = tool_status;
                                     if result.is_some() {
                                         tc.result = result;
@@ -671,21 +842,39 @@ pub async fn init_conversation(
                                     // Send buffered reasoning if any
                                     if !reasoning_buffer.is_empty() {
                                         client
-                                            .send_reasoning_chunk(&conversation_id, msg_id.as_deref(), &reasoning_buffer)
+                                            .send_reasoning_chunk(
+                                                &conversation_id,
+                                                msg_id.as_deref(),
+                                                last_message_event_at,
+                                                last_message_event_seq,
+                                                &reasoning_buffer,
+                                            )
                                             .await;
                                     }
 
                                     // Send buffered message text if any
                                     if !message_buffer.is_empty() {
                                         client
-                                            .send_text_chunk(&conversation_id, msg_id.as_deref(), &message_buffer)
+                                            .send_text_chunk(
+                                                &conversation_id,
+                                                msg_id.as_deref(),
+                                                last_message_event_at,
+                                                last_message_event_seq,
+                                                &message_buffer,
+                                            )
                                             .await;
                                     }
 
                                     // Send buffered tool calls
                                     for tool_call in &pending_tool_calls {
                                         if let Some(ref msg) = *msg_id {
-                                            client.record_tool_call(&conversation_id, msg, tool_call.clone()).await;
+                                            client
+                                                .record_tool_call(
+                                                    &conversation_id,
+                                                    msg,
+                                                    tool_call.clone(),
+                                                )
+                                                .await;
                                         }
                                     }
 
@@ -702,10 +891,21 @@ pub async fn init_conversation(
                                     }
                                 }
 
+                                // Flush raw events after message boundary for timely replay
+                                flush_raw_events(
+                                    &callback_client,
+                                    &conversation_id,
+                                    &mut raw_events,
+                                )
+                                .await;
+                                last_raw_flush = Instant::now();
+
                                 // Clear buffers for next message turn
                                 message_buffer.clear();
                                 reasoning_buffer.clear();
                                 pending_tool_calls.clear();
+                                last_message_event_at = None;
+                                last_message_event_seq = None;
                             }
                         }
                     } else {
@@ -735,19 +935,35 @@ pub async fn init_conversation(
                 let msg_id = current_message_id.lock().await;
                 if !reasoning_buffer.is_empty() {
                     client
-                        .send_reasoning_chunk(&conversation_id, msg_id.as_deref(), &reasoning_buffer)
+                        .send_reasoning_chunk(
+                            &conversation_id,
+                            msg_id.as_deref(),
+                            last_message_event_at,
+                            last_message_event_seq,
+                            &reasoning_buffer,
+                        )
                         .await;
                 }
                 if !message_buffer.is_empty() {
                     client
-                        .send_text_chunk(&conversation_id, msg_id.as_deref(), &message_buffer)
+                        .send_text_chunk(
+                            &conversation_id,
+                            msg_id.as_deref(),
+                            last_message_event_at,
+                            last_message_event_seq,
+                            &message_buffer,
+                        )
                         .await;
                 }
                 if let Some(ref id) = *msg_id {
-                    client.complete_message(&conversation_id, id, StopReason::EndTurn).await;
+                    client
+                        .complete_message(&conversation_id, id, StopReason::EndTurn)
+                        .await;
                 }
             }
         }
+
+        flush_raw_events(&callback_client, &conversation_id, &mut raw_events).await;
     });
 
     info!(
@@ -833,8 +1049,12 @@ fn parse_acp_event(line: &str) -> Option<AcpEvent> {
                     }
                 }
                 Some("tool_call") => {
-                    // Parse tool call from update
-                    if let Some(id) = update.get("id").and_then(|v| v.as_str()) {
+                    // Parse tool call from update (Claude Code + Codex variants)
+                    if let Some(id) = update
+                        .get("toolCallId")
+                        .or_else(|| update.get("id"))
+                        .and_then(|v| v.as_str())
+                    {
                         let name = update
                             .get("title")
                             .or_else(|| update.get("name"))
@@ -842,7 +1062,8 @@ fn parse_acp_event(line: &str) -> Option<AcpEvent> {
                             .unwrap_or("unknown")
                             .to_string();
                         let arguments = update
-                            .get("input")
+                            .get("rawInput")
+                            .or_else(|| update.get("input"))
                             .map(|v| v.to_string())
                             .unwrap_or_else(|| "{}".to_string());
                         return Some(AcpEvent::ToolCall {
@@ -853,20 +1074,24 @@ fn parse_acp_event(line: &str) -> Option<AcpEvent> {
                     }
                 }
                 Some("tool_call_update") => {
-                    if let Some(fields) = update.get("fields") {
-                        if let Some(id) = update.get("id").and_then(|v| v.as_str()) {
-                            let status = fields
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let result = fields.get("result").and_then(|v| v.as_str()).map(|s| s.to_string());
-                            return Some(AcpEvent::ToolCallUpdate {
-                                id: id.to_string(),
-                                status,
-                                result,
-                            });
-                        }
+                    let id = update
+                        .get("toolCallId")
+                        .or_else(|| update.get("id"))
+                        .and_then(|v| v.as_str());
+                    let status = update
+                        .get("status")
+                        .or_else(|| update.get("fields").and_then(|f| f.get("status")))
+                        .and_then(|v| v.as_str());
+                    let result = update
+                        .get("result")
+                        .or_else(|| update.get("fields").and_then(|f| f.get("result")))
+                        .and_then(|v| v.as_str());
+                    if let Some(id) = id {
+                        return Some(AcpEvent::ToolCallUpdate {
+                            id: id.to_string(),
+                            status: status.unwrap_or("unknown").to_string(),
+                            result: result.map(|s| s.to_string()),
+                        });
                     }
                 }
                 _ => {}
@@ -895,7 +1120,64 @@ fn extract_text_from_result(result: &serde_json::Value) -> Option<String> {
         }
     }
     // Check result.text directly
-    result.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+    result
+        .get("text")
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Check if a JSON-RPC message is a permission request and generate a response.
+/// Returns Some((request_id, response_json)) if it's a permission request, None otherwise.
+fn handle_permission_request(line: &str) -> Option<(serde_json::Value, serde_json::Value)> {
+    let json_value: serde_json::Value = serde_json::from_str(line).ok()?;
+
+    // Check if this is a request (has "id" and "method")
+    let id = json_value.get("id")?;
+    let method = json_value.get("method").and_then(|m| m.as_str())?;
+
+    if method != "session/request_permission" {
+        return None;
+    }
+
+    // Auto-approve permission requests by selecting the first option
+    let option_id = json_value
+        .get("params")
+        .and_then(|p| p.get("options"))
+        .and_then(|o| o.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|opt| opt.get("optionId"))
+        .and_then(|id| id.as_str())
+        .unwrap_or("allow");
+
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "outcome": {
+                "outcome": "selected",
+                "optionId": option_id
+            }
+        }
+    });
+
+    Some((id.clone(), response))
+}
+
+async fn flush_raw_events(
+    callback_client: &Option<Arc<CallbackClient>>,
+    conversation_id: &str,
+    raw_events: &mut Vec<CallbackRawEvent>,
+) {
+    if raw_events.is_empty() {
+        return;
+    }
+
+    if let Some(ref client) = callback_client {
+        let events = std::mem::take(raw_events);
+        client.record_raw_events(conversation_id, events).await;
+    } else {
+        raw_events.clear();
+    }
 }
 
 /// Extract text from a content value (can be object or array).
@@ -906,7 +1188,10 @@ fn extract_text_from_content(content: Option<&serde_json::Value>) -> Option<Stri
     if content.is_object() {
         let content_type = content.get("type").and_then(|t| t.as_str());
         if matches!(content_type, Some("text") | Some("output_text")) {
-            return content.get("text").and_then(|t| t.as_str()).map(|s| s.to_string());
+            return content
+                .get("text")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string());
         }
     }
 
@@ -1073,6 +1358,161 @@ pub async fn receive_prompt(
     }))
 }
 
+/// Receive a JSON-RPC payload for a conversation.
+///
+/// This endpoint forwards arbitrary JSON-RPC messages to the running CLI.
+#[utoipa::path(
+    post,
+    path = "/api/acp/rpc",
+    request_body = RpcRequest,
+    responses(
+        (status = 200, description = "RPC accepted", body = RpcResponse),
+        (status = 400, description = "Bad request", body = ErrorResponse),
+        (status = 404, description = "Conversation not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "acp"
+)]
+pub async fn send_rpc(
+    State(state): State<RestApiState>,
+    Json(request): Json<RpcRequest>,
+) -> Result<Json<RpcResponse>, (StatusCode, Json<ErrorResponse>)> {
+    debug!(
+        conversation_id = %request.conversation_id,
+        "Received JSON-RPC payload for conversation"
+    );
+
+    // Look up conversation state
+    let conversation = match state.conversations.get(&request.conversation_id) {
+        Some(conv) => conv.clone(),
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Conversation not found: {}", request.conversation_id),
+                    code: Some("NOT_FOUND".to_string()),
+                }),
+            ));
+        }
+    };
+
+    // Get the ACP session ID from conversation state
+    let acp_session_id = {
+        let session_id_guard = conversation.acp_session_id.lock().await;
+        session_id_guard.clone().ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "ACP session not initialized".to_string(),
+                    code: Some("SESSION_NOT_INITIALIZED".to_string()),
+                }),
+            )
+        })?
+    };
+
+    let mut payload = request.payload;
+    let payload_obj = payload.as_object_mut().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "RPC payload must be an object".to_string(),
+                code: Some("RPC_INVALID_PAYLOAD".to_string()),
+            }),
+        )
+    })?;
+
+    if !payload_obj.contains_key("jsonrpc") {
+        payload_obj.insert(
+            "jsonrpc".to_string(),
+            serde_json::Value::String("2.0".to_string()),
+        );
+    }
+
+    if let Some(method) = payload_obj.get("method").and_then(|v| v.as_str()) {
+        const ALLOWED_METHODS: [&str; 2] = ["session/cancel", "session/set_model"];
+        if !ALLOWED_METHODS.contains(&method) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("RPC method not allowed: {}", method),
+                    code: Some("RPC_METHOD_NOT_ALLOWED".to_string()),
+                }),
+            ));
+        }
+
+        if let Some(params) = payload_obj.get_mut("params") {
+            if let Some(params_obj) = params.as_object_mut() {
+                if !params_obj.contains_key("sessionId") {
+                    params_obj.insert(
+                        "sessionId".to_string(),
+                        serde_json::Value::String(acp_session_id.clone()),
+                    );
+                }
+            }
+        } else {
+            payload_obj.insert(
+                "params".to_string(),
+                serde_json::Value::Object(serde_json::Map::from_iter([(
+                    "sessionId".to_string(),
+                    serde_json::Value::String(acp_session_id.clone()),
+                )])),
+            );
+        }
+    } else {
+        let has_id = payload_obj.get("id").is_some();
+        let has_result = payload_obj.get("result").is_some() || payload_obj.get("error").is_some();
+        if !has_id || !has_result {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "RPC response must include id and result/error".to_string(),
+                    code: Some("RPC_INVALID_RESPONSE".to_string()),
+                }),
+            ));
+        }
+    }
+
+    // Send to CLI stdin
+    let mut stdin = conversation.stdin.lock().await;
+    if let Some(ref mut stdin_handle) = *stdin {
+        let message = format!("{}\n", serde_json::to_string(&payload).unwrap_or_default());
+        if let Err(e) = stdin_handle.write_all(message.as_bytes()).await {
+            error!(
+                conversation_id = %request.conversation_id,
+                error = %e,
+                "Failed to write RPC to CLI stdin"
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to send RPC to CLI: {}", e),
+                    code: Some("STDIN_ERROR".to_string()),
+                }),
+            ));
+        }
+        if let Err(e) = stdin_handle.flush().await {
+            warn!(
+                conversation_id = %request.conversation_id,
+                error = %e,
+                "Failed to flush CLI stdin"
+            );
+        }
+    } else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "CLI stdin not available".to_string(),
+                code: Some("STDIN_UNAVAILABLE".to_string()),
+            }),
+        ));
+    }
+
+    Ok(Json(RpcResponse {
+        accepted: true,
+        error: None,
+    }))
+}
+
 /// Update Codex config.toml with the proxy base_url.
 ///
 /// Codex custom providers require `base_url` in the config file - they don't
@@ -1103,7 +1543,10 @@ async fn update_codex_config_base_url(openai_base_url: &str) -> Result<(), Strin
         let re = regex::Regex::new(r#"base_url\s*=\s*"[^"]*""#)
             .map_err(|e| format!("Regex error: {}", e))?;
         config_content = re
-            .replace_all(&config_content, &format!(r#"base_url = "{}""#, openai_base_url))
+            .replace_all(
+                &config_content,
+                &format!(r#"base_url = "{}""#, openai_base_url),
+            )
             .to_string();
     } else {
         // Add base_url after [model_providers.cmux-proxy] section
@@ -1133,6 +1576,7 @@ async fn update_codex_config_base_url(openai_base_url: &str) -> Result<(), Strin
     paths(
         init_conversation,
         receive_prompt,
+        send_rpc,
     ),
     components(schemas(
         ContentBlock,
@@ -1141,9 +1585,71 @@ async fn update_codex_config_base_url(openai_base_url: &str) -> Result<(), Strin
         InitConversationResponse,
         PromptRequest,
         PromptResponse,
+        RpcRequest,
+        RpcResponse,
     )),
     tags(
         (name = "acp", description = "ACP sandbox control endpoints")
     )
 )]
 pub struct RestApiDoc;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handle_permission_request_valid() {
+        let request = r#"{"jsonrpc":"2.0","id":0,"method":"session/request_permission","params":{"options":[{"kind":"allow_always","name":"Always Allow","optionId":"allow_always"},{"kind":"allow_once","name":"Allow","optionId":"allow"},{"kind":"reject_once","name":"Reject","optionId":"reject"}],"sessionId":"test-session","toolCall":{"toolCallId":"tool123","rawInput":{"command":"ls"},"title":"ls"}}}"#;
+
+        let result = handle_permission_request(request);
+        assert!(result.is_some());
+
+        let (id, response) = result.unwrap();
+        assert_eq!(id, serde_json::json!(0));
+
+        // Check response structure
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 0);
+        assert_eq!(response["result"]["outcome"]["outcome"], "selected");
+        // Should select first option (allow_always)
+        assert_eq!(response["result"]["outcome"]["optionId"], "allow_always");
+    }
+
+    #[test]
+    fn test_handle_permission_request_fallback_option() {
+        // Request with empty options array - should fallback to "allow"
+        let request = r#"{"jsonrpc":"2.0","id":123,"method":"session/request_permission","params":{"options":[]}}"#;
+
+        let result = handle_permission_request(request);
+        assert!(result.is_some());
+
+        let (_id, response) = result.unwrap();
+        assert_eq!(response["result"]["outcome"]["optionId"], "allow");
+    }
+
+    #[test]
+    fn test_handle_permission_request_not_permission_method() {
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"session/update","params":{}}"#;
+
+        let result = handle_permission_request(request);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_handle_permission_request_notification_no_id() {
+        // Notifications don't have an id field
+        let request = r#"{"jsonrpc":"2.0","method":"session/request_permission","params":{}}"#;
+
+        let result = handle_permission_request(request);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_handle_permission_request_invalid_json() {
+        let request = "not valid json";
+
+        let result = handle_permission_request(request);
+        assert!(result.is_none());
+    }
+}
