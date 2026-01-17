@@ -8,11 +8,13 @@ type CliOptions = {
   apiPath: string;
   outFile: string;
   include: string[];
+  exclude: string[];
   format: boolean;
 };
 
 type FunctionShape = {
   path: string;
+  visibility: "public" | "internal";
   argsType: ts.Type;
   returnType: ts.Type;
 };
@@ -21,6 +23,7 @@ type FieldSchema = {
   name: string;
   schema: Schema;
   optional: boolean;
+  nullable: boolean;
 };
 
 type Schema =
@@ -49,6 +52,47 @@ type SwiftArgStruct = {
   name: string;
   body: string;
 };
+
+type TypeVisitContext = {
+  visitedTypeIds: Set<number>;
+  depth: number;
+};
+
+// Maximum recursion depth for type traversal - handles any reasonable nesting while catching pathological cases
+const MAX_TYPE_DEPTH = 30;
+
+// Built-in JavaScript prototype properties that should be filtered out from object fields.
+// These appear when TypeScript's getPropertiesOfType expands primitive wrapper types.
+const builtInProperties = new Set<string>([
+  // String prototype
+  "toString", "charAt", "charCodeAt", "concat", "indexOf", "lastIndexOf",
+  "localeCompare", "match", "replace", "search", "slice", "split",
+  "substring", "toLowerCase", "toUpperCase", "trim", "trimLeft", "trimRight",
+  "trimStart", "trimEnd", "padStart", "padEnd", "repeat", "startsWith",
+  "endsWith", "includes", "normalize", "at", "matchAll", "replaceAll",
+  "toLocaleLowerCase", "toLocaleUpperCase", "valueOf", "codePointAt",
+  "substr", "anchor", "big", "blink", "bold", "fixed", "fontcolor",
+  "fontsize", "italics", "link", "small", "strike", "sub", "sup",
+  // Number prototype
+  "toFixed", "toExponential", "toPrecision", "toLocaleString",
+  // Array prototype (but NOT length - it's commonly used in user schemas)
+  "pop", "push", "shift", "unshift", "reverse", "sort",
+  "splice", "join", "every", "some", "forEach", "map", "filter",
+  "reduce", "reduceRight", "find", "findIndex", "fill", "copyWithin",
+  "entries", "keys", "values", "flat", "flatMap", "findLast", "findLastIndex",
+  "toReversed", "toSorted", "toSpliced", "with",
+  // Object prototype
+  "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable",
+  "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
+function isBuiltInProperty(name: string): boolean {
+  // Check for well-known symbols like __@iterator@123
+  if (name.startsWith("__@") || name.startsWith("@@")) return true;
+  if (builtInProperties.has(name)) return true;
+  return false;
+}
 
 const swiftKeywords = new Set<string>([
   "associatedtype",
@@ -135,10 +179,17 @@ try {
   const apiSymbol = getApiSymbol(checker, sourceFile, "api");
   const functions = collectFunctions(checker, sourceFile, apiSymbol);
 
-  const selected = selectFunctions(functions, options.include);
+  const selected = selectFunctions(functions, options.include, options.exclude);
   if (selected.length === 0) {
-    throw new Error(`No functions matched: ${options.include.join(", ")}`);
+    if (options.include.length > 0) {
+      throw new Error(`No functions matched: ${options.include.join(", ")}`);
+    }
+    throw new Error("No public functions found in the API");
   }
+
+  console.log(
+    `Generating types for ${selected.length} function(s): ${selected.map((fn) => fn.path.replace(/^api\./, "")).join(", ")}`
+  );
 
   const defs: SwiftDefs = {
     structs: new Map<string, string>(),
@@ -167,7 +218,8 @@ try {
       }
     );
 
-    const optionalSuffix = returnSchema.optional && !returnType.type.endsWith("?") ? "?" : "";
+    const isOptionalReturn = returnSchema.optional || returnSchema.nullable;
+    const optionalSuffix = isOptionalReturn && !returnType.type.endsWith("?") ? "?" : "";
     const resolvedReturn = `${stripOptional(returnType.type)}${optionalSuffix}`;
     const baseReturn = stripOptional(resolvedReturn);
     if (resolvedReturn !== returnName && baseReturn !== returnName) {
@@ -191,14 +243,8 @@ try {
 function parseArgs(args: string[]): CliOptions {
   let apiPath = defaultApiPath;
   let outFile = defaultOutFile;
-  let include: string[] = [
-    "acp.startConversation",
-    "acp.sendMessage",
-    "conversationMessages.listByConversation",
-    "conversations.list",
-    "teams.listTeamMemberships",
-    "codexTokens.get",
-  ];
+  let include: string[] = []; // Empty means "all public functions"
+  let exclude: string[] = [];
   let format = true;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -218,7 +264,7 @@ function parseArgs(args: string[]): CliOptions {
       continue;
     }
 
-    if (arg === "--api" || arg === "--out" || arg === "--include") {
+    if (arg === "--api" || arg === "--out" || arg === "--include" || arg === "--exclude") {
       const value = args[index + 1];
       if (!value) {
         throw new Error(`Missing value after ${arg}.`);
@@ -227,8 +273,13 @@ function parseArgs(args: string[]): CliOptions {
         apiPath = resolve(repoRoot, value);
       } else if (arg === "--out") {
         outFile = resolve(repoRoot, value);
-      } else {
+      } else if (arg === "--include") {
         include = value
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+      } else {
+        exclude = value
           .split(",")
           .map((entry) => entry.trim())
           .filter(Boolean);
@@ -256,21 +307,33 @@ function parseArgs(args: string[]): CliOptions {
       continue;
     }
 
+    if (arg.startsWith("--exclude=")) {
+      exclude = arg
+        .slice("--exclude=".length)
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      continue;
+    }
+
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { apiPath, outFile, include, format };
+  return { apiPath, outFile, include, exclude, format };
 }
 
 function printUsage(): void {
   const lines = [
     "Usage:",
-    "  bun run tools/convex-swift-gen/generate-swift-api.ts --include tasks.get",
+    "  bun run tools/convex-swift-gen/generate-swift-api.ts",
+    "",
+    "By default, generates types for ALL public (non-internal) Convex functions.",
     "",
     "Options:",
     `  --api=PATH      Defaults to ${defaultApiPath}`,
     `  --out=PATH      Defaults to ${defaultOutFile}`,
-    "  --include=LIST  Comma-separated function paths (default: tasks.get + related)",
+    "  --include=LIST  Comma-separated function paths (overrides default of all public)",
+    "  --exclude=LIST  Comma-separated function paths to exclude",
     "  --format        Run swift-format after generating (default: true)",
     "  --no-format     Disable formatting",
   ];
@@ -313,7 +376,17 @@ function collectFunctions(
       if (isFunctionReferenceType(checker, propType)) {
         const argsSymbol = checker.getPropertyOfType(propType, "_args");
         const returnSymbol = checker.getPropertyOfType(propType, "_returnType");
-        if (!argsSymbol || !returnSymbol) continue;
+        const visibilitySymbol = checker.getPropertyOfType(propType, "_visibility");
+        if (!argsSymbol || !returnSymbol || !visibilitySymbol) continue;
+
+        const visibilityType = checker.getTypeOfSymbolAtLocation(
+          visibilitySymbol,
+          visibilitySymbol.valueDeclaration ?? sourceFile
+        );
+        const visibilityString = safeTypeToString(checker, visibilityType, sourceFile);
+        // Extract "public" or "internal" from the type string (it's a string literal type like '"public"')
+        const visibility = visibilityString.replace(/"/g, "") as "public" | "internal";
+
         const argsType = checker.getTypeOfSymbolAtLocation(
           argsSymbol,
           argsSymbol.valueDeclaration ?? sourceFile
@@ -322,7 +395,7 @@ function collectFunctions(
           returnSymbol,
           returnSymbol.valueDeclaration ?? sourceFile
         );
-        result.push({ path: path.concat(propName).join("."), argsType, returnType });
+        result.push({ path: path.concat(propName).join("."), visibility, argsType, returnType });
         continue;
       }
 
@@ -333,9 +406,21 @@ function collectFunctions(
   }
 }
 
-function selectFunctions(functions: FunctionShape[], include: string[]): FunctionShape[] {
-  const normalized = include.map((entry) => normalizeFunctionPath(entry));
-  return functions.filter((fn) => normalized.includes(fn.path));
+function selectFunctions(functions: FunctionShape[], include: string[], exclude: string[]): FunctionShape[] {
+  const normalizedExclude = exclude.map((entry) => normalizeFunctionPath(entry));
+
+  // If include list is empty, include all public functions
+  if (include.length === 0) {
+    return functions.filter(
+      (fn) => fn.visibility === "public" && !normalizedExclude.includes(fn.path)
+    );
+  }
+
+  // Otherwise, use explicit include list (still respecting exclude)
+  const normalizedInclude = include.map((entry) => normalizeFunctionPath(entry));
+  return functions.filter(
+    (fn) => normalizedInclude.includes(fn.path) && !normalizedExclude.includes(fn.path)
+  );
 }
 
 function normalizeFunctionPath(value: string): string {
@@ -371,7 +456,8 @@ function buildArgsStruct(
   for (const field of fields) {
     const swift = renderSwiftArgType(checker, defs, field.schema, [baseName, "Args", field.name], sourceFile);
     const name = escapeSwiftIdentifier(field.name);
-    const optionalSuffix = field.optional && !swift.type.endsWith("?") ? "?" : "";
+    const isOptional = field.optional || field.nullable;
+    const optionalSuffix = isOptional && !swift.type.endsWith("?") ? "?" : "";
     const typeName = `${stripOptional(swift.type)}${optionalSuffix}`;
     lines.push(`    let ${name}: ${typeName}`);
   }
@@ -386,6 +472,8 @@ function buildArgsStruct(
     const directExpr = renderConvexValueExpression(field.schema, name);
     if (field.optional) {
       dictLines.push(`        if let value = ${name} { result["${key}"] = ${valueExpr} }`);
+    } else if (field.nullable) {
+      dictLines.push(`        if let value = ${name} { result["${key}"] = ${valueExpr} } else { result["${key}"] = ConvexNull() }`);
     } else {
       dictLines.push(`        result["${key}"] = ${directExpr}`);
     }
@@ -459,8 +547,9 @@ function renderSwiftType(
       if (!defs.structs.has(structName)) {
         const fields = schema.fields.map((field) => {
           const swift = renderSwiftType(checker, defs, field.schema, path.concat(field.name), sourceFile);
-          const optionalSuffix = field.optional && !swift.type.endsWith("?") ? "?" : "";
-          const wrapper = field.optional && swift.wrapper === "@ConvexFloat"
+          const isOptional = field.optional || field.nullable;
+          const optionalSuffix = isOptional && !swift.type.endsWith("?") ? "?" : "";
+          const wrapper = isOptional && swift.wrapper === "@ConvexFloat"
             ? "@OptionalConvexFloat"
             : swift.wrapper ?? "";
           const needsVar = wrapper !== "";
@@ -528,7 +617,8 @@ function renderSwiftArgType(
         const fields = schema.fields.map((field) => {
           const swift = renderSwiftArgType(checker, defs, field.schema, path.concat(field.name), sourceFile);
           const fieldName = escapeSwiftIdentifier(field.name);
-          const optionalSuffix = field.optional && !swift.type.endsWith("?") ? "?" : "";
+          const isOptional = field.optional || field.nullable;
+          const optionalSuffix = isOptional && !swift.type.endsWith("?") ? "?" : "";
           const typeName = `${stripOptional(swift.type)}${optionalSuffix}`;
           return `    let ${fieldName}: ${typeName}`;
         });
@@ -542,6 +632,8 @@ function renderSwiftArgType(
           const directExpr = renderConvexValueExpression(field.schema, fieldName);
           if (field.optional) {
             encodeLines.push(`        if let value = ${fieldName} { result["${key}"] = ${valueExpr} }`);
+          } else if (field.nullable) {
+            encodeLines.push(`        if let value = ${fieldName} { result["${key}"] = ${valueExpr} } else { result["${key}"] = ConvexNull() }`);
           } else {
             encodeLines.push(`        result["${key}"] = ${directExpr}`);
           }
@@ -580,76 +672,97 @@ function renderSwiftArgType(
 function schemaFromType(
   checker: ts.TypeChecker,
   type: ts.Type,
-  sourceFile: ts.SourceFile
-): { schema: Schema; optional: boolean } {
-  const { baseType, optional } = unwrapOptional(checker, type);
+  sourceFile: ts.SourceFile,
+  ctx: TypeVisitContext = createVisitContext()
+): { schema: Schema; optional: boolean; nullable: boolean } {
+  // Check depth limit
+  if (ctx.depth > MAX_TYPE_DEPTH) {
+    return { schema: { kind: "unknown" }, optional: false, nullable: false };
+  }
 
-  const typeString = checker.typeToString(baseType, sourceFile, ts.TypeFormatFlags.NoTruncation);
+  const { baseType, optional, nullable } = unwrapOptional(checker, type);
+
+  const typeString = safeTypeToString(checker, baseType, sourceFile);
   const idMatch =
     /^Id<"([^"]+)">$/.exec(typeString) ?? /^import\(.+\)\.Id<"([^"]+)">$/.exec(typeString);
   const aliasName = baseType.aliasSymbol?.getName();
   if (aliasName === "Id" || idMatch) {
-    return { schema: { kind: "id", table: idMatch?.[1] ?? null }, optional };
+    return { schema: { kind: "id", table: idMatch?.[1] ?? null }, optional, nullable };
   }
 
-  if (isStringType(baseType)) return { schema: { kind: "string" }, optional };
-  if (isBooleanType(baseType)) return { schema: { kind: "boolean" }, optional };
-  if (isNumberType(baseType)) return { schema: { kind: "number" }, optional };
+  if (isStringType(baseType)) return { schema: { kind: "string" }, optional, nullable };
+  if (isBooleanType(baseType)) return { schema: { kind: "boolean" }, optional, nullable };
+  if (isNumberType(baseType)) return { schema: { kind: "number" }, optional, nullable };
+
+  // For complex types that can recurse, check for cycles
+  const nextCtx = withVisitedType(ctx, baseType);
+  if (!nextCtx) {
+    // Cycle detected - return unknown to break the recursion
+    return { schema: { kind: "unknown" }, optional };
+  }
 
   if (checker.isArrayType(baseType)) {
     const element = checker.getElementTypeOfArrayType(baseType);
     if (element) {
-      const inner = schemaFromType(checker, element, sourceFile);
-      return { schema: { kind: "array", element: inner.schema }, optional };
+      const inner = schemaFromType(checker, element, sourceFile, nextCtx);
+      return { schema: { kind: "array", element: inner.schema }, optional, nullable };
     }
   }
 
   const indexType = baseType.getStringIndexType();
   if (indexType) {
-    const inner = schemaFromType(checker, indexType, sourceFile);
-    return { schema: { kind: "record", value: inner.schema }, optional };
+    const inner = schemaFromType(checker, indexType, sourceFile, nextCtx);
+    return { schema: { kind: "record", value: inner.schema }, optional, nullable };
   }
 
   if (baseType.isUnion()) {
     const literals = extractStringLiteralUnion(checker, baseType, sourceFile);
     if (literals) {
-      return { schema: { kind: "enum", cases: literals }, optional };
+      return { schema: { kind: "enum", cases: literals }, optional, nullable };
     }
   }
 
-  const objectFields = extractObjectFields(checker, baseType, sourceFile);
+  const objectFields = extractObjectFields(checker, baseType, sourceFile, nextCtx);
   if (objectFields) {
-    return { schema: { kind: "object", fields: objectFields }, optional };
+    return { schema: { kind: "object", fields: objectFields }, optional, nullable };
   }
 
-  return { schema: { kind: "unknown" }, optional };
+  return { schema: { kind: "unknown" }, optional, nullable };
 }
 
 function unwrapOptional(
   checker: ts.TypeChecker,
   type: ts.Type
-): { baseType: ts.Type; optional: boolean } {
-  if (!type.isUnion()) return { baseType: type, optional: false };
+): { baseType: ts.Type; optional: boolean; nullable: boolean } {
+  if (!type.isUnion()) return { baseType: type, optional: false, nullable: false };
 
-  const remaining = type.types.filter((member) => !isNullOrUndefined(checker, member));
-  const optional = remaining.length !== type.types.length;
+  const nullable = type.types.some((member) => isNullType(checker, member));
+  const optional = type.types.some((member) => isUndefinedType(checker, member));
+  const remaining = type.types.filter(
+    (member) => !isNullType(checker, member) && !isUndefinedType(checker, member)
+  );
   if (remaining.length === 1) {
-    return { baseType: remaining[0], optional };
+    return { baseType: remaining[0], optional, nullable };
   }
 
   if (remaining.length === 0) {
-    return { baseType: type, optional: true };
+    return { baseType: type, optional: true, nullable };
   }
 
   const unionType = checker.getUnionType(remaining, ts.UnionReduction.None);
-  return { baseType: unionType, optional };
+  return { baseType: unionType, optional, nullable };
 }
 
-function isNullOrUndefined(checker: ts.TypeChecker, type: ts.Type): boolean {
+function isNullType(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.flags & ts.TypeFlags.Null) return true;
+  const typeString = safeTypeToString(checker, type);
+  return typeString === "null";
+}
+
+function isUndefinedType(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.flags & ts.TypeFlags.Undefined) return true;
-  const typeString = checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
-  return typeString === "null" || typeString === "undefined";
+  const typeString = safeTypeToString(checker, type);
+  return typeString === "undefined";
 }
 
 function extractStringLiteralUnion(
@@ -660,7 +773,7 @@ function extractStringLiteralUnion(
   if (!type.isUnion()) return null;
   const values: string[] = [];
   for (const member of type.types) {
-    const text = checker.typeToString(member, sourceFile, ts.TypeFormatFlags.NoTruncation);
+    const text = safeTypeToString(checker, member, sourceFile);
     if (!/^".*"$/.test(text)) return null;
     values.push(text.slice(1, -1));
   }
@@ -670,12 +783,13 @@ function extractStringLiteralUnion(
 function extractObjectFields(
   checker: ts.TypeChecker,
   type: ts.Type,
-  sourceFile: ts.SourceFile
+  sourceFile: ts.SourceFile,
+  ctx: TypeVisitContext
 ): FieldSchema[] | null {
   if (type.isIntersection()) {
     const merged: FieldSchema[] = [];
     for (const member of type.types) {
-      const memberFields = extractObjectFields(checker, member, sourceFile);
+      const memberFields = extractObjectFields(checker, member, sourceFile, ctx);
       if (!memberFields) return null;
       merged.push(...memberFields);
     }
@@ -685,14 +799,21 @@ function extractObjectFields(
   const properties = checker.getPropertiesOfType(type);
   if (properties.length === 0) return null;
 
-  return properties.map((prop) => {
+  // Filter out built-in JavaScript prototype properties that leak through from
+  // TypeScript's type checker when it expands primitive wrapper types
+  const userProperties = properties.filter((prop) => !isBuiltInProperty(prop.getName()));
+
+  if (userProperties.length === 0) return null;
+
+  return userProperties.map((prop) => {
     const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration ?? sourceFile);
-    const schemaResult = schemaFromType(checker, propType, sourceFile);
+    const schemaResult = schemaFromType(checker, propType, sourceFile, ctx);
     const optional = schemaResult.optional || (prop.flags & ts.SymbolFlags.Optional) !== 0;
     return {
       name: prop.getName(),
       schema: schemaResult.schema,
       optional,
+      nullable: schemaResult.nullable,
     };
   });
 }
@@ -746,6 +867,12 @@ function renderSwiftFile(
     "",
     "  func convexEncode() throws -> String {",
     "    try rawValue.convexEncode()",
+    "  }",
+    "}",
+    "",
+    "struct ConvexNull: ConvexEncodable {",
+    "  func convexEncode() throws -> String {",
+    "    \"null\"",
     "  }",
     "}",
     "",
@@ -830,4 +957,45 @@ function escapeSwiftIdentifier(name: string): string {
 
 function stripOptional(value: string): string {
   return value.endsWith("?") ? value.slice(0, -1) : value;
+}
+
+function getTypeId(type: ts.Type): number {
+  // TypeScript types have internal IDs we can use for cycle detection
+  return (type as { id?: number }).id ?? 0;
+}
+
+function safeTypeToString(
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  sourceFile?: ts.SourceFile,
+  flags: ts.TypeFormatFlags = ts.TypeFormatFlags.NoTruncation
+): string {
+  try {
+    return checker.typeToString(type, sourceFile, flags);
+  } catch {
+    return "[complex type]";
+  }
+}
+
+function createVisitContext(): TypeVisitContext {
+  return {
+    visitedTypeIds: new Set<number>(),
+    depth: 0,
+  };
+}
+
+function withVisitedType(ctx: TypeVisitContext, type: ts.Type): TypeVisitContext | null {
+  const typeId = getTypeId(type);
+  if (typeId !== 0 && ctx.visitedTypeIds.has(typeId)) {
+    // Cycle detected
+    return null;
+  }
+  const newVisited = new Set(ctx.visitedTypeIds);
+  if (typeId !== 0) {
+    newVisited.add(typeId);
+  }
+  return {
+    visitedTypeIds: newVisited,
+    depth: ctx.depth + 1,
+  };
 }

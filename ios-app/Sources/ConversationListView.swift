@@ -197,6 +197,23 @@ struct ConversationListView: View {
                     .tint(.blue)
                 }
             }
+
+            if viewModel.hasMore {
+                HStack {
+                    Spacer()
+                    if viewModel.isLoadingMore {
+                        ProgressView()
+                    } else {
+                        Text("Loading more...")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .listRowSeparator(.hidden)
+                .onAppear {
+                    Task { await viewModel.loadMore() }
+                }
+            }
         }
     }
 }

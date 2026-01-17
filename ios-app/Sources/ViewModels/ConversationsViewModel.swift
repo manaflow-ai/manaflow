@@ -8,11 +8,18 @@ class ConversationsViewModel: ObservableObject {
     @Published var conversations: [ConvexConversation] = []
     @Published var isLoading = true
     @Published var error: String?
+    @Published var isLoadingMore = false
+    @Published var hasMore = false
 
     private var cancellables = Set<AnyCancellable>()
     private var teamId: String?
     private let convex = ConvexClientManager.shared
     private var lastPrewarmAt: Date?
+    private var firstPage: [ConvexConversation] = []
+    private var extraConversations: [ConvexConversation] = []
+    private var continueCursor: String?
+    private var lastLoadedCursor: String?
+    private let pageSize: Double = 50
 
     init() {
         // Start loading when auth is ready
@@ -98,12 +105,34 @@ class ConversationsViewModel: ObservableObject {
         }
 
         self.teamId = teamId
-        print("📱 ConversationsViewModel: Using team \(teamId)")
+        self.firstPage = []
+        self.extraConversations = []
+        self.continueCursor = nil
+        self.lastLoadedCursor = nil
+        self.hasMore = false
+        self.isLoadingMore = false
+        NSLog("📱 ConversationsViewModel: Using team \(teamId)")
 
         // Subscribe to conversations (paginated response)
-        let listArgs = ConversationsListArgs(status: nil, limit: nil, cursor: nil, teamSlugOrId: teamId)
+        let paginationOpts = ConversationsListPagedWithLatestArgsPaginationOpts(
+            id: nil,
+            endCursor: nil,
+            maximumRowsRead: nil,
+            maximumBytesRead: nil,
+            numItems: pageSize,
+            cursor: nil
+        )
+        let listArgs = ConversationsListPagedWithLatestArgs(
+            teamSlugOrId: teamId,
+            paginationOpts: paginationOpts,
+            scope: .all
+        )
         convex.client
-            .subscribe(to: "conversations:list", with: listArgs.asDictionary(), yielding: ConversationsPage.self)
+            .subscribe(
+                to: "conversations:listPagedWithLatest",
+                with: listArgs.asDictionary(),
+                yielding: ConversationsPage.self
+            )
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
@@ -114,12 +143,69 @@ class ConversationsViewModel: ObservableObject {
                     }
                 },
                 receiveValue: { [weak self] page in
-                    print("📱 ConversationsViewModel: Received \(page.conversations.count) conversations")
-                    self?.conversations = page.conversations
-                    self?.isLoading = false
+                    guard let self else { return }
+                    NSLog("📱 ConversationsViewModel: Received \(page.page.count) conversations (isDone: \(page.isDone), cursor: \(page.continueCursor))")
+                    self.firstPage = page.page
+                    if self.extraConversations.isEmpty && self.lastLoadedCursor == nil {
+                        self.continueCursor = page.isDone ? nil : page.continueCursor
+                        self.hasMore = !page.isDone
+                    }
+                    self.conversations = self.mergeConversations(firstPage: page.page)
+                    self.isLoading = false
                 }
             )
             .store(in: &cancellables)
+    }
+
+    func loadMore() async {
+        guard !isLoadingMore, hasMore else {
+            return
+        }
+        guard let teamId else {
+            return
+        }
+        guard let cursor = continueCursor else {
+            hasMore = false
+            return
+        }
+        if cursor == lastLoadedCursor {
+            NSLog("📱 ConversationsViewModel: Skipping load; cursor already loaded")
+            return
+        }
+
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        do {
+            NSLog("📱 ConversationsViewModel: Loading more (cursor: \(cursor))")
+            let paginationOpts = ConversationsListPagedWithLatestArgsPaginationOpts(
+                id: nil,
+                endCursor: nil,
+                maximumRowsRead: nil,
+                maximumBytesRead: nil,
+                numItems: pageSize,
+                cursor: cursor
+            )
+            let listArgs = ConversationsListPagedWithLatestArgs(
+                teamSlugOrId: teamId,
+                paginationOpts: paginationOpts,
+                scope: .all
+            )
+
+            let page = try await fetchPage(args: listArgs)
+            NSLog("📱 ConversationsViewModel: Load more received \(page.page.count) conversations")
+            let appendedCount = appendExtraConversations(page.page)
+            lastLoadedCursor = cursor
+            continueCursor = page.isDone ? nil : page.continueCursor
+            hasMore = !page.isDone
+            if appendedCount == 0 {
+                NSLog("📱 ConversationsViewModel: No new conversations appended; stopping pagination")
+                hasMore = false
+            }
+            conversations = mergeConversations(firstPage: firstPage)
+        } catch {
+            NSLog("📱 ConversationsViewModel: Load more failed: \(error)")
+        }
     }
 
     func prewarmSandbox() async {
@@ -174,6 +260,46 @@ class ConversationsViewModel: ObservableObject {
                     }
                 )
         }
+    }
+
+    private func fetchPage(args: ConversationsListPagedWithLatestArgs) async throws -> ConversationsListPagedWithLatestReturn {
+        try await withCheckedThrowingContinuation { continuation in
+            var cancellable: AnyCancellable?
+            cancellable = convex.client
+                .subscribe(
+                    to: "conversations:listPagedWithLatest",
+                    with: args.asDictionary(),
+                    yielding: ConversationsPage.self
+                )
+                .first()
+                .receive(on: DispatchQueue.main)
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            print("📱 ConversationsViewModel: Page fetch error: \(error)")
+                            continuation.resume(throwing: error)
+                        }
+                        cancellable?.cancel()
+                    },
+                    receiveValue: { page in
+                        continuation.resume(returning: page)
+                    }
+                )
+        }
+    }
+
+    private func appendExtraConversations(_ page: [ConvexConversation]) -> Int {
+        let existingIds = Set(extraConversations.map(\.id))
+        let firstPageIds = Set(firstPage.map(\.id))
+        let newItems = page.filter { !existingIds.contains($0.id) && !firstPageIds.contains($0.id) }
+        extraConversations.append(contentsOf: newItems)
+        return newItems.count
+    }
+
+    private func mergeConversations(firstPage: [ConvexConversation]) -> [ConvexConversation] {
+        let firstIds = Set(firstPage.map(\.id))
+        let extras = extraConversations.filter { !firstIds.contains($0.id) }
+        return firstPage + extras
     }
 }
 

@@ -2,22 +2,33 @@ import Foundation
 
 // Convenience aliases for generated Convex API types
 
-typealias ConversationsPage = ConversationsListReturn
-typealias ConvexConversation = ConversationsListReturnConversationsItem
+typealias ConversationsPage = ConversationsListPagedWithLatestReturn
+typealias ConvexConversation = ConversationsListPagedWithLatestReturnPageItem
 typealias MessagesPage = ConversationMessagesListByConversationReturn
 typealias ConvexMessage = ConversationMessagesListByConversationReturnMessagesItem
 typealias ConvexContentBlock = ConversationMessagesListByConversationReturnMessagesItemContentItem
 typealias ConvexToolCall = ConversationMessagesListByConversationReturnMessagesItemToolCallsItem
 
-extension ConversationsListReturnConversationsItem: Identifiable {
-    var id: String { _id.rawValue }
+extension ConversationsListPagedWithLatestReturnPageItem: Identifiable {
+    var id: String { conversation._id.rawValue }
 }
 
-extension ConversationsListReturnConversationsItem {
+extension ConversationsListPagedWithLatestReturnPageItem {
+    var _id: ConvexId<ConvexTableConversations> { conversation._id }
+    var providerId: String { conversation.providerId }
+    var cwd: String { conversation.cwd }
+    var status: ConversationsListPagedWithLatestReturnPageItemConversationStatusEnum { conversation.status }
+    var lastMessageAt: Double? { conversation.lastMessageAt }
+    var updatedAt: Double { conversation.updatedAt }
+    var createdAt: Double { conversation.createdAt }
+
     /// Display name for the conversation - uses title if available, otherwise falls back to provider name
     var displayName: String {
         if let title, !title.isEmpty {
             return title
+        }
+        if let conversationTitle = conversation.title, !conversationTitle.isEmpty {
+            return conversationTitle
         }
         return providerDisplayName
     }
@@ -43,7 +54,7 @@ extension ConversationsListReturnConversationsItem {
     }
 
     var displayTimestamp: Date {
-        let timestamp = lastMessageAt ?? updatedAt
+        let timestamp = latestMessageAt
         return Date(timeIntervalSince1970: timestamp / 1000)
     }
 

@@ -234,42 +234,6 @@ export const getBySessionId = authQuery({
   },
 });
 
-// List conversations for a team (paginated)
-export const list = authQuery({
-  args: {
-    teamSlugOrId: v.string(),
-    status: v.optional(statusValidator),
-    limit: v.optional(v.number()),
-    cursor: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const { teamId } = await requireTeamMembership(ctx, args.teamSlugOrId);
-    const limit = args.limit ?? 50;
-
-    let query;
-    if (args.status) {
-      query = ctx.db
-        .query("conversations")
-        .withIndex("by_team_status", (q) =>
-          q.eq("teamId", teamId).eq("status", args.status!)
-        )
-        .order("desc");
-    } else {
-      query = ctx.db
-        .query("conversations")
-        .withIndex("by_team", (q) => q.eq("teamId", teamId))
-        .order("desc");
-    }
-
-    const result = await query.paginate({ numItems: limit, cursor: args.cursor ?? null });
-    return {
-      conversations: result.page,
-      nextCursor: result.continueCursor,
-      isDone: result.isDone,
-    };
-  },
-});
-
 export const listPagedWithLatest = authQuery({
   args: {
     teamSlugOrId: v.string(),
