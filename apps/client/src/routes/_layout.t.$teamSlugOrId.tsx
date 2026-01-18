@@ -91,7 +91,6 @@ function ConversationsLayout() {
   const activeConversationId = match?.params.conversationId;
 
   const startConversation = useAction(api.acp.startConversation);
-  const sendMessage = useAction(api.acp.sendMessage);
   const prewarmSandbox = useAction(api.acp.prewarmSandbox);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedProvider, setSelectedProvider] =
@@ -271,18 +270,11 @@ function ConversationsLayout() {
           conversationId: result.conversationId,
         },
         replace: true,
+        state: {
+          initialPrompt: trimmedPrompt,
+          clientMessageId: trimmedPrompt ? crypto.randomUUID() : null,
+        },
       });
-      if (initialPrompt?.trim()) {
-        try {
-          await sendMessage({
-            conversationId: result.conversationId,
-            content: [{ type: "text", text: initialPrompt.trim() }],
-          });
-        } catch (error) {
-          console.error("Failed to send initial prompt", error);
-          toast.error("Failed to send initial prompt");
-        }
-      }
     } catch (error) {
       console.error("Failed to start conversation", error);
       toast.error("Failed to start conversation");

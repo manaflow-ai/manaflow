@@ -1,6 +1,6 @@
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import {
   useAction,
   useConvex,
@@ -36,6 +36,10 @@ const storageIdSchema = z.custom<Id<"_storage">>(
   (value) => typeof value === "string"
 );
 const uploadResponseSchema = z.object({ storageId: storageIdSchema });
+const initialPromptStateSchema = z.object({
+  initialPrompt: z.string().nullable().optional(),
+  clientMessageId: z.string().nullable().optional(),
+});
 
 export const Route = createFileRoute(
   "/_layout/t/$teamSlugOrId/$conversationId"
@@ -159,6 +163,7 @@ const providerLabel: Record<string, string> = {
 
 function ConversationThread() {
   const { teamSlugOrId, conversationId: conversationIdParam } = Route.useParams();
+  const location = useLocation();
   const isOptimisticConversation = conversationIdParam.startsWith(
     OPTIMISTIC_CONVERSATION_PREFIX
   );
@@ -254,6 +259,7 @@ function ConversationThread() {
     string[]
   >([]);
   const lastAutoPermissionId = useRef<string | null>(null);
+  const consumedInitialPromptRef = useRef<Set<string>>(new Set());
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -278,6 +284,11 @@ function ConversationThread() {
   const isSending = pendingMessages.some(
     (pending) => pending.status === "sending"
   );
+
+  const initialPromptState = useMemo(() => {
+    const parsed = initialPromptStateSchema.safeParse(location.state);
+    return parsed.success ? parsed.data : null;
+  }, [location.state]);
 
   useEffect(() => {
     if (isOptimisticConversation) return;
@@ -481,31 +492,8 @@ function ConversationThread() {
     }
   };
 
-  const handleSend = async () => {
-    if (isOptimisticConversation) {
-      toast.message("Conversation is still starting");
-      return;
-    }
-    const trimmed = text.trim();
-    if (!trimmed && attachments.length === 0) return;
-
-    const localId = crypto.randomUUID();
-    const pending: PendingMessage = {
-      localId,
-      text: trimmed,
-      attachments: [...attachments],
-      createdAt: Date.now(),
-      status: "sending",
-    };
-
-    setPendingMessages((current) => [pending, ...current]);
-    setText("");
-    setAttachments([]);
-
-    await sendPendingMessage(pending);
-  };
-
-  const sendPendingMessage = async (pendingOrId: PendingMessage | string) => {
+  const sendPendingMessage = useCallback(
+    async (pendingOrId: PendingMessage | string) => {
     const pending =
       typeof pendingOrId === "string"
         ? pendingMessages.find((entry) => entry.localId === pendingOrId)
@@ -656,7 +644,66 @@ function ConversationThread() {
       );
       toast.error("Failed to send message");
     }
+  },
+  [
+    conversationId,
+    convex,
+    generateUploadUrl,
+    pendingMessages,
+    retryMessage,
+    sendMessage,
+    teamSlugOrId,
+  ]
+  );
+
+  const handleSend = async () => {
+    if (isOptimisticConversation) {
+      toast.message("Conversation is still starting");
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed && attachments.length === 0) return;
+
+    const localId = crypto.randomUUID();
+    const pending: PendingMessage = {
+      localId,
+      text: trimmed,
+      attachments: [...attachments],
+      createdAt: Date.now(),
+      status: "sending",
+    };
+
+    setPendingMessages((current) => [pending, ...current]);
+    setText("");
+    setAttachments([]);
+
+    await sendPendingMessage(pending);
   };
+
+  useEffect(() => {
+    if (isOptimisticConversation) return;
+    const prompt = initialPromptState?.initialPrompt?.trim() ?? "";
+    const clientMessageId = initialPromptState?.clientMessageId ?? null;
+    if (!prompt || !clientMessageId) return;
+    const key = `${conversationId}-${clientMessageId}`;
+    if (consumedInitialPromptRef.current.has(key)) return;
+    consumedInitialPromptRef.current.add(key);
+
+    const pending: PendingMessage = {
+      localId: clientMessageId,
+      text: prompt,
+      attachments: [],
+      createdAt: Date.now(),
+      status: "sending",
+    };
+    setPendingMessages((current) => [pending, ...current]);
+    void sendPendingMessage(pending);
+  }, [
+    conversationId,
+    initialPromptState,
+    isOptimisticConversation,
+    sendPendingMessage,
+  ]);
 
   const pendingByServerId = useMemo(() => {
     const map = new Map<Id<"conversationMessages">, PendingMessage>();

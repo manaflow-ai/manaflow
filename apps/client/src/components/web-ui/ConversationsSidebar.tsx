@@ -459,7 +459,7 @@ function ConversationRow({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[12px] text-neutral-500 dark:text-neutral-400">
+            <span className="whitespace-nowrap text-[12px] text-neutral-500 dark:text-neutral-400">
               {timeLabel}
             </span>
             <ChevronRight className="h-3 w-3 text-neutral-400 dark:text-neutral-600" />
