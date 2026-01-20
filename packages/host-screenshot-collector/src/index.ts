@@ -9,9 +9,19 @@ import { formatClaudeMessage } from "./claudeMessageFormatter";
 export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov"]);
+const MEDIA_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS]);
 
 function isScreenshotFile(fileName: string): boolean {
   return IMAGE_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+function isVideoFile(fileName: string): boolean {
+  return VIDEO_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+function isMediaFile(fileName: string): boolean {
+  return MEDIA_EXTENSIONS.has(path.extname(fileName).toLowerCase());
 }
 
 const screenshotOutputSchema = z.object({
@@ -50,7 +60,7 @@ const screenshotOutputJsonSchema = {
   },
 } as const;
 
-async function collectScreenshotFiles(
+async function collectMediaFiles(
   directory: string
 ): Promise<{ files: string[]; hasNestedDirectories: boolean }> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -61,15 +71,18 @@ async function collectScreenshotFiles(
     const fullPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       hasNestedDirectories = true;
-      const nested = await collectScreenshotFiles(fullPath);
+      const nested = await collectMediaFiles(fullPath);
       files.push(...nested.files);
-    } else if (entry.isFile() && isScreenshotFile(entry.name)) {
+    } else if (entry.isFile() && isMediaFile(entry.name)) {
       files.push(fullPath);
     }
   }
 
   return { files, hasNestedDirectories };
 }
+
+// Alias for backwards compatibility
+const collectScreenshotFiles = collectMediaFiles;
 
 export function normalizeScreenshotOutputDir(outputDir: string): string {
   if (path.isAbsolute(outputDir)) {
@@ -294,7 +307,7 @@ Be ruthless about quality. A few excellent screenshots are far more valuable tha
 </PHASE_3_QUALITY_VERIFICATION>
 
 <WHAT_TO_CAPTURE>
-Screenshot the UI states that the PR actually modifies. Be intentional:
+Screenshot or record video of the UI states that the PR actually modifies. Be intentional:
 
 - If the PR changes a loading spinner → screenshot the loading state
 - If the PR changes error handling UI → screenshot the error state
@@ -304,6 +317,37 @@ Screenshot the UI states that the PR actually modifies. Be intentional:
 
 Don't screenshot loading/error states incidentally while waiting for the "real" UI. Screenshot them when they ARE the change.
 </WHAT_TO_CAPTURE>
+
+<VIDEO_RECORDING>
+For ANIMATIONS, TRANSITIONS, or INTERACTIVE FLOWS, record a short video clip instead of (or in addition to) a screenshot.
+
+Use ffmpeg to record video clips of the display. The display is :99. Record for 3-10 seconds depending on the interaction complexity.
+
+Example ffmpeg command to record a 5-second video clip:
+\`\`\`bash
+ffmpeg -y -f x11grab -video_size 1920x1080 -framerate 30 -i :99 -t 5 -c:v libx264 -preset ultrafast -pix_fmt yuv420p "${outputDir}/animation-name-${branch}.mp4"
+\`\`\`
+
+When to record video instead of screenshot:
+- Animations (loading spinners in motion, skeleton pulse effects, transitions)
+- Hover/focus transitions with animations
+- Drag and drop interactions
+- Form submission flows
+- Modal open/close animations
+- Dropdown/accordion expand/collapse
+- Page navigation transitions
+- Any time-based or motion-based UI change
+
+Video recording workflow:
+1. Position the browser to show the relevant UI
+2. Start the ffmpeg recording
+3. Perform the interaction (hover, click, drag, etc.)
+4. Wait for the animation to complete
+5. The recording will auto-stop after the specified duration
+6. Verify the video file was created and contains the expected content
+
+Save videos to ${outputDir} with descriptive names like "modal-open-animation-${branch}.mp4"
+</VIDEO_RECORDING>
 
 <CRITICAL_MISTAKES>
 Avoid these failure modes:

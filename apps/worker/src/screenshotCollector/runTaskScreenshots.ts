@@ -22,12 +22,27 @@ export interface RunTaskScreenshotsOptions {
 
 function resolveContentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
+  // Image types
   if (extension === ".jpg" || extension === ".jpeg") {
     return "image/jpeg";
   }
   if (extension === ".webp") {
     return "image/webp";
   }
+  if (extension === ".png") {
+    return "image/png";
+  }
+  // Video types
+  if (extension === ".mp4") {
+    return "video/mp4";
+  }
+  if (extension === ".webm") {
+    return "video/webm";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  // Default to png for unknown image types
   return "image/png";
 }
 
