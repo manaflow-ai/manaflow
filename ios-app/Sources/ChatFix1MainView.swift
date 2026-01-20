@@ -1148,7 +1148,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     @objc private func handleKeyboardFrameChange(_ notification: Notification) {
         guard let userInfo = notification.userInfo else { return }
-        let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let rawDuration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
+        let endValue = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
+        let endFrame = endValue?.cgRectValue ?? .zero
+        let endInView = view.convert(endFrame, from: nil)
+        let viewMaxY = view.bounds.maxY
+        let endTop = min(viewMaxY, endInView.minY)
+        let willBeVisible = endTop < viewMaxY - 1
+        let isInteractiveDismiss = isDismissingKeyboardGesture()
+            || scrollView.isTracking
+            || scrollView.isDecelerating
+        let duration: Double
+        if rawDuration > 0 {
+            duration = rawDuration
+        } else if !willBeVisible && !isInteractiveDismiss {
+            duration = 0.25
+        } else {
+            duration = 0
+        }
         let curveRaw = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? UIView.AnimationCurve.easeInOut.rawValue
         let curve = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
         keyboardAnimationDuration = duration
