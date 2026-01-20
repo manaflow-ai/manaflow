@@ -1,7 +1,6 @@
 import { WebShell } from "@/components/web-ui/WebShell";
 import {
   ConversationsSidebar,
-  type ConversationScope,
   type ProviderId,
 } from "@/components/web-ui/ConversationsSidebar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
@@ -18,23 +17,12 @@ import {
 import { useAction, usePaginatedQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { z } from "zod";
 import { useSendMessageOptimistic } from "@/hooks/useSendMessageOptimistic";
-
-const searchSchema = z.object({
-  scope: z.enum(["mine", "all"]).optional(),
-});
-
-type SearchParams = z.infer<typeof searchSchema>;
-
-const DEFAULT_SCOPE: ConversationScope = "mine";
 const PAGE_SIZE = 30;
 const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
 
 export const Route = createFileRoute("/_layout/t/$teamSlugOrId")({
   component: ConversationsLayout,
-  validateSearch: (search: Record<string, unknown>): SearchParams =>
-    searchSchema.parse(search),
   beforeLoad: async ({ params, location }) => {
     const user = await cachedGetUser(stackClientApp);
     if (!user) {
@@ -65,9 +53,8 @@ export const Route = createFileRoute("/_layout/t/$teamSlugOrId")({
 
 function ConversationsLayout() {
   const { teamSlugOrId } = Route.useParams();
-  const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const scope = search.scope ?? DEFAULT_SCOPE;
+  const scope = "mine" as const;
   const { results, status, loadMore } = usePaginatedQuery(
     api.conversations.listPagedWithLatest,
     { teamSlugOrId, scope },
@@ -112,13 +99,6 @@ function ConversationsLayout() {
     setLastTeamSlugOrId(teamSlugOrId);
   }, [teamSlugOrId]);
 
-
-  const handleScopeChange = (next: ConversationScope) => {
-    if (next === scope) return;
-    void navigate({
-      search: { scope: next },
-    });
-  };
 
   const handleNewConversation = async (
     initialPrompt?: string,
@@ -235,8 +215,6 @@ function ConversationsLayout() {
       sidebar={
         <ConversationsSidebar
           teamSlugOrId={teamSlugOrId}
-          scope={scope}
-          onScopeChange={handleScopeChange}
           entries={entries}
           status={status}
           onLoadMore={loadMore}

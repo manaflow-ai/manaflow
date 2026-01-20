@@ -57,6 +57,17 @@ const STYLE_PROMPTS: Record<TitleStyle, { instruction: string; examples: string 
   },
 };
 
+const FIRST_PERSON_INSTRUCTION =
+  "Avoid first-person pronouns (I, we, my, our, us, me). Use third-person phrasing.";
+
+const FIRST_PERSON_PATTERN =
+  /\b(i|me|my|mine|myself|we|us|our|ours|ourselves)\b/i;
+
+export function containsFirstPersonPronoun(text: string): boolean {
+  const normalized = text.replace(/I\/O/gi, "IO");
+  return FIRST_PERSON_PATTERN.test(normalized);
+}
+
 function buildSystemPrompt(style: TitleStyle): string {
   const styleConfig = STYLE_PROMPTS[style];
   return [
@@ -64,6 +75,7 @@ function buildSystemPrompt(style: TitleStyle): string {
     "Output ONLY the title as plain text. No quotes, no punctuation at the end.",
     `Focus on the main action or topic. ${styleConfig.instruction}`,
     "If it's a shell command, describe what it does briefly.",
+    FIRST_PERSON_INSTRUCTION,
   ].join("\n");
 }
 
@@ -108,7 +120,9 @@ export const generateTitle = internalAction({
         : args.firstMessageText;
 
     // Use custom prompt if provided, otherwise use style-based prompt
-    const system = customPrompt || buildSystemPrompt(titleStyle);
+    const system = customPrompt
+      ? `${customPrompt}\n${FIRST_PERSON_INSTRUCTION}`
+      : buildSystemPrompt(titleStyle);
     const examples = buildExamples(titleStyle);
 
     const prompt = [
@@ -120,23 +134,46 @@ export const generateTitle = internalAction({
 
     try {
       const openai = createOpenAI({ apiKey });
-      const { text } = await generateText({
-        model: openai("gpt-4.1-nano"),
-        system,
-        prompt,
-        maxRetries: 2,
-      });
-
-      const title = text.trim().slice(0, 100); // Cap at 100 chars just in case
-      if (title) {
-        await ctx.runMutation(internal.conversationTitle.setTitle, {
-          conversationId: args.conversationId,
-          title,
+      const generateTitle = async (systemPrompt: string): Promise<string> => {
+        const { text } = await generateText({
+          model: openai("gpt-4.1-nano"),
+          system: systemPrompt,
+          prompt,
+          maxRetries: 2,
         });
-        console.log(
-          `[conversationTitle] Generated title for ${args.conversationId}: ${title}`
+        return text.trim().slice(0, 100); // Cap at 100 chars just in case
+      };
+
+      let title = await generateTitle(system);
+      if (title && containsFirstPersonPronoun(title)) {
+        console.warn(
+          "[conversationTitle] First-person title detected, retrying",
+          { title }
         );
+        const retryTitle = await generateTitle(
+          `${system}\nRewrite any first-person phrasing into third-person wording.`
+        );
+        if (!retryTitle || containsFirstPersonPronoun(retryTitle)) {
+          console.warn(
+            "[conversationTitle] First-person title persisted after retry",
+            { title: retryTitle || title }
+          );
+          return;
+        }
+        title = retryTitle;
       }
+
+      if (!title) {
+        return;
+      }
+
+      await ctx.runMutation(internal.conversationTitle.setTitle, {
+        conversationId: args.conversationId,
+        title,
+      });
+      console.log(
+        `[conversationTitle] Generated title for ${args.conversationId}: ${title}`
+      );
     } catch (error) {
       console.error("[conversationTitle] Failed to generate title:", error);
       // Non-critical - don't throw, just log

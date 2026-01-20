@@ -6,15 +6,18 @@ import {
   TerminalSquare,
   ChevronDown,
   ChevronRight,
-  Plus,
-  Send,
+  SquarePen,
+  ArrowUp,
   Settings,
+  ImagePlus,
 } from "lucide-react";
 import clsx from "clsx";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-
-export type ConversationScope = "mine" | "all";
+import SearchableSelect, {
+  type SelectOptionObject,
+} from "@/components/ui/searchable-select";
+import { AgentLogo } from "@/components/icons/agent-logos";
 
 export const AVAILABLE_PROVIDERS = [
   "claude",
@@ -43,8 +46,6 @@ export type ConversationListEntry = {
 
 interface ConversationsSidebarProps {
   teamSlugOrId: string;
-  scope: ConversationScope;
-  onScopeChange: (scope: ConversationScope) => void;
   entries: ConversationListEntry[];
   status: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
   onLoadMore: (count: number) => void;
@@ -59,12 +60,32 @@ interface ConversationsSidebarProps {
 
 const PAGE_SIZE = 30;
 
-const providerMeta: Record<ProviderId, { label: string; icon: LucideIcon; tone: string }> = {
+const providerMeta: Record<
+  ProviderId,
+  { label: string; icon: LucideIcon; tone: string }
+> = {
   claude: { label: "claude", icon: Bot, tone: "text-emerald-500" },
   codex: { label: "codex", icon: TerminalSquare, tone: "text-sky-500" },
   gemini: { label: "gemini", icon: Sparkles, tone: "text-amber-500" },
   opencode: { label: "opencode", icon: Cpu, tone: "text-violet-500" },
 };
+
+const providerOptions: SelectOptionObject[] = AVAILABLE_PROVIDERS.map(
+  (provider) => {
+    const meta = providerMeta[provider];
+    return {
+      label: meta.label,
+      value: provider,
+      icon: (
+        <AgentLogo
+          agentName={`${provider}/`}
+          className="h-4 w-4 text-neutral-900 dark:text-neutral-100"
+        />
+      ),
+      iconKey: provider,
+    };
+  }
+);
 
 const providerSet = new Set<string>(AVAILABLE_PROVIDERS);
 
@@ -116,10 +137,177 @@ function getProviderMeta(providerId: string | undefined): {
   return { label: providerId ?? "agent", icon: Cpu, tone: "text-neutral-500" };
 }
 
+function SidebarComposeVariantC({
+  draft,
+  isCreating,
+  providerId,
+  onProviderChange,
+  onDraftChange,
+  onSubmit,
+}: {
+  draft: string;
+  isCreating: boolean;
+  providerId: ProviderId;
+  onProviderChange: (providerId: ProviderId) => void;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/80 dark:border-neutral-800/80 dark:bg-neutral-900/70">
+      <div className="px-3 py-2">
+        <SidebarDraftInput
+          value={draft}
+          onChange={onDraftChange}
+          onSubmit={onSubmit}
+          placeholder="Start a new conversation…"
+          minRows={3}
+          className={clsx(
+            "w-full bg-transparent text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none",
+            "dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          )}
+        />
+      </div>
+      <div className="flex items-center justify-between border-t border-neutral-200/70 px-1.5 py-1 dark:border-neutral-800/70">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled
+            className="flex h-8 w-8 items-center justify-center text-neutral-400 opacity-60 dark:text-neutral-500"
+            aria-label="attach image"
+          >
+            <ImagePlus className="h-4 w-4" aria-hidden />
+          </button>
+          <SidebarProviderPicker
+            providerId={providerId}
+            onProviderChange={onProviderChange}
+            disabled={isCreating}
+            variant="compact"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={draft.trim().length === 0 || isCreating}
+          className={clsx(
+            "flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm transition",
+            "hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-500 dark:hover:bg-blue-400"
+          )}
+          aria-label="create conversation"
+        >
+          <ArrowUp className="h-4 w-4" aria-hidden />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SidebarProviderPicker({
+  providerId,
+  onProviderChange,
+  disabled,
+  variant,
+}: {
+  providerId: ProviderId;
+  onProviderChange: (providerId: ProviderId) => void;
+  disabled: boolean;
+  variant: "compact" | "pill" | "ghost";
+}) {
+  const triggerClassName =
+    variant === "compact"
+      ? "h-6 rounded-full border-neutral-200/70 bg-white/80 px-2 text-[11px] font-normal text-neutral-600 dark:border-neutral-800/70 dark:bg-neutral-950/70 dark:text-neutral-300"
+      : variant === "ghost"
+        ? "h-7 rounded-full border-transparent bg-transparent px-2 text-[11px] font-normal text-neutral-400 hover:text-neutral-700 dark:text-neutral-500 dark:hover:text-neutral-200"
+        : "h-7 rounded-full border-neutral-200/70 bg-white/80 px-2 text-[11px] font-normal text-neutral-600 dark:border-neutral-800/70 dark:bg-neutral-950/70 dark:text-neutral-300";
+
+  return (
+    <SearchableSelect
+      options={providerOptions}
+      value={[providerId]}
+      onChange={(next) => {
+        const nextValue = next[0];
+        if (nextValue && isProviderId(nextValue)) {
+          onProviderChange(nextValue);
+        }
+      }}
+      singleSelect
+      showSearch={false}
+      disabled={disabled}
+      classNames={{
+        trigger: triggerClassName,
+        popover:
+          "w-[220px] rounded-xl border-neutral-200/80 dark:border-neutral-800/80",
+        commandGroup: "p-2",
+        commandItem:
+          "rounded-lg data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-900",
+      }}
+      placeholder="Select model"
+    />
+  );
+}
+
+function SidebarDraftInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder,
+  className,
+  minRows = 3,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  placeholder: string;
+  className: string;
+  minRows?: number;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    const computed = window.getComputedStyle(textarea);
+    const lineHeight = Number.parseFloat(computed.lineHeight);
+    const fontSize = Number.parseFloat(computed.fontSize);
+    const paddingTop = Number.parseFloat(computed.paddingTop);
+    const paddingBottom = Number.parseFloat(computed.paddingBottom);
+    const borderTop = Number.parseFloat(computed.borderTopWidth);
+    const borderBottom = Number.parseFloat(computed.borderBottomWidth);
+    const resolvedLineHeight = Number.isFinite(lineHeight)
+      ? lineHeight
+      : Number.isFinite(fontSize)
+        ? fontSize * 1.4
+        : 16;
+    const minHeight =
+      resolvedLineHeight * minRows +
+      paddingTop +
+      paddingBottom +
+      borderTop +
+      borderBottom;
+    textarea.style.height = "0px";
+    textarea.style.minHeight = `${minHeight}px`;
+    textarea.style.height = `${Math.max(textarea.scrollHeight, minHeight)}px`;
+  }, [value, minRows]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          onSubmit();
+        }
+      }}
+      rows={minRows}
+      placeholder={placeholder}
+      className={clsx("resize-none", className)}
+    />
+  );
+}
+
 export function ConversationsSidebar({
   teamSlugOrId,
-  scope,
-  onScopeChange,
   entries,
   status,
   onLoadMore,
@@ -221,14 +409,9 @@ export function ConversationsSidebar({
 
   return (
     <aside className="flex h-dvh w-full flex-col border-b border-neutral-200/70 bg-white dark:border-neutral-800/70 dark:bg-neutral-950 md:w-[320px] md:border-b-0 md:border-r">
-      <div className="flex items-center justify-between px-5 pt-6">
-        <div>
-          <div className="text-[11px] font-semibold text-neutral-400 dark:text-neutral-500">
-            conversations
-          </div>
-          <div className="mt-1 text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-            {teamSlugOrId}
-          </div>
+      <div className="flex items-center justify-between px-4 py-2">
+        <div className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+          cmux
         </div>
         <div className="flex items-center gap-2">
           <Link
@@ -252,87 +435,20 @@ export function ConversationsSidebar({
               "disabled:cursor-not-allowed disabled:opacity-60"
             )}
           >
-            <Plus className="h-4 w-4" aria-hidden />
+            <SquarePen className="h-4 w-4" aria-hidden />
           </button>
         </div>
       </div>
 
-      <div className="mt-5 px-5">
-        <div className="flex items-center gap-2 rounded-2xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 dark:border-neutral-800/80 dark:bg-neutral-900/70">
-          <select
-            value={providerId}
-            onChange={(event) => {
-              const selected = AVAILABLE_PROVIDERS.find(
-                (value) => value === event.target.value
-              );
-              if (selected) {
-                onProviderChange(selected);
-              }
-            }}
-            className={clsx(
-              "min-w-[96px] appearance-none rounded-full border border-neutral-200/80 bg-white/80 px-2 py-1 text-[11px] font-semibold text-neutral-600",
-              "dark:border-neutral-800/80 dark:bg-neutral-950/70 dark:text-neutral-300"
-            )}
-            aria-label="agent"
-          >
-            {AVAILABLE_PROVIDERS.map((provider) => (
-              <option key={provider} value={provider}>
-                {providerMeta[provider].label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            value={draft}
-            onChange={(event) => handleDraftChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                submitDraft();
-              }
-            }}
-            placeholder="start a new conversation…"
-            className={clsx(
-              "w-full bg-transparent px-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none",
-              "dark:text-neutral-100 dark:placeholder:text-neutral-500"
-            )}
-          />
-          <button
-            type="button"
-            onClick={submitDraft}
-            disabled={draft.trim().length === 0 || isCreating}
-            className={clsx(
-              "flex h-8 w-8 items-center justify-center rounded-full bg-neutral-900 text-neutral-50 transition",
-              "hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-neutral-200"
-            )}
-            aria-label="create conversation"
-          >
-            <Send className="h-4 w-4" aria-hidden />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4 px-5">
-        <div className="flex rounded-full border border-neutral-200/80 bg-neutral-100/70 p-1 text-xs dark:border-neutral-800/80 dark:bg-neutral-900/70">
-          {([
-            { value: "mine", label: "mine" },
-            { value: "all", label: "all" },
-          ] as const).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onScopeChange(option.value)}
-              className={clsx(
-                "flex-1 rounded-full px-3 py-2 text-[11px] font-semibold transition",
-                scope === option.value
-                  ? "bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100"
-                  : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+      <div className="mt-3 px-4">
+        <SidebarComposeVariantC
+          draft={draft}
+          isCreating={isCreating}
+          providerId={providerId}
+          onProviderChange={onProviderChange}
+          onDraftChange={handleDraftChange}
+          onSubmit={submitDraft}
+        />
       </div>
 
       <div ref={scrollRef} className="mt-6 flex-1 overflow-y-auto pb-6">
