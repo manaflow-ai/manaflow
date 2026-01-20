@@ -1,5 +1,6 @@
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ChatLayoutProvider } from "@/contexts/ChatLayoutContext";
 import { HeroUIProvider } from "@heroui/react";
 import { StackProvider, StackTheme } from "@stackframe/react";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -29,7 +30,9 @@ export function Providers({ children }: ProvidersProps) {
               <TooltipProvider delayDuration={700} skipDelayDuration={300}>
                 <HeroUIProvider>
                   <RootErrorBoundary>
-                    <AntdProvider>{children}</AntdProvider>
+                    <AntdProvider>
+                      <ChatLayoutProvider>{children}</ChatLayoutProvider>
+                    </AntdProvider>
                   </RootErrorBoundary>
                 </HeroUIProvider>
               </TooltipProvider>

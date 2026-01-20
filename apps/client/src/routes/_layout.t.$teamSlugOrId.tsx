@@ -2,6 +2,7 @@ import { WebShell } from "@/components/web-ui/WebShell";
 import {
   ConversationsSidebar,
   type ProviderId,
+  type ConversationFilterMode,
 } from "@/components/web-ui/ConversationsSidebar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { cachedGetUser } from "@/lib/cachedGetUser";
@@ -55,9 +56,23 @@ function ConversationsLayout() {
   const { teamSlugOrId } = Route.useParams();
   const navigate = Route.useNavigate();
   const scope = "mine" as const;
-  const { results, status, loadMore } = usePaginatedQuery(
+  const [filterMode, setFilterMode] =
+    useState<ConversationFilterMode>("all");
+  const activeQuery = usePaginatedQuery(
     api.conversations.listPagedWithLatest,
-    { teamSlugOrId, scope },
+    {
+      teamSlugOrId,
+      scope,
+    },
+    { initialNumItems: PAGE_SIZE }
+  );
+  const archivedQuery = usePaginatedQuery(
+    api.conversations.listPagedWithLatest,
+    {
+      teamSlugOrId,
+      scope,
+      includeArchived: true,
+    },
     { initialNumItems: PAGE_SIZE }
   );
 
@@ -76,7 +91,10 @@ function ConversationsLayout() {
   const latestStartRef = useRef(0);
 
   const entries = useMemo(() => {
-    const base = results ?? [];
+    const base =
+      filterMode === "archived"
+        ? archivedQuery.results ?? []
+        : activeQuery.results ?? [];
     return base
       .map((entry) => ({
         conversationId: entry.conversation._id,
@@ -85,6 +103,8 @@ function ConversationsLayout() {
         modelId: entry.conversation.modelId ?? null,
         cwd: entry.conversation.cwd,
         title: entry.title,
+        pinned: entry.conversation.pinned ?? false,
+        isArchived: entry.conversation.isArchived ?? false,
         preview: entry.preview,
         unread: entry.unread,
         latestMessageAt: entry.latestMessageAt,
@@ -92,8 +112,29 @@ function ConversationsLayout() {
           OPTIMISTIC_CONVERSATION_PREFIX
         ),
       }))
-      .sort((a, b) => b.latestMessageAt - a.latestMessageAt);
-  }, [results]);
+      .sort((a, b) => {
+        const pinnedDelta = Number(b.pinned) - Number(a.pinned);
+        if (pinnedDelta !== 0) {
+          return pinnedDelta;
+        }
+        return b.latestMessageAt - a.latestMessageAt;
+      });
+  }, [activeQuery.results, archivedQuery.results, filterMode]);
+
+  const filteredEntries = useMemo(() => {
+    if (filterMode === "archived") {
+      return entries.filter((entry) => entry.isArchived);
+    }
+    if (filterMode === "unread") {
+      return entries.filter((entry) => entry.unread);
+    }
+    return entries;
+  }, [entries, filterMode]);
+
+  const status =
+    filterMode === "archived" ? archivedQuery.status : activeQuery.status;
+  const loadMore =
+    filterMode === "archived" ? archivedQuery.loadMore : activeQuery.loadMore;
 
   useEffect(() => {
     setLastTeamSlugOrId(teamSlugOrId);
@@ -215,7 +256,7 @@ function ConversationsLayout() {
       sidebar={
         <ConversationsSidebar
           teamSlugOrId={teamSlugOrId}
-          entries={entries}
+          entries={filteredEntries}
           status={status}
           onLoadMore={loadMore}
           activeConversationId={activeConversationId}
@@ -225,6 +266,8 @@ function ConversationsLayout() {
           isCreating={isCreating}
           providerId={selectedProvider}
           onProviderChange={setSelectedProvider}
+          filterMode={filterMode}
+          onFilterChange={setFilterMode}
         />
       }
     >

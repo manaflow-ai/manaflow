@@ -115,6 +115,7 @@ export function useAcpSandboxStream(options: StreamOptions): {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [status, setStatus] = useState<AcpStreamStatus>("idle");
   const lastOffsetRef = useRef<number>(startOffset);
+  const startOffsetRef = useRef<number>(startOffset);
   const eventsMapRef = useRef<Map<number, StreamEvent>>(new Map());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -157,6 +158,24 @@ export function useAcpSandboxStream(options: StreamOptions): {
       lastOffsetRef.current = startOffset;
     }
   }, [startOffset]);
+
+  useEffect(() => {
+    startOffsetRef.current = startOffset;
+  }, [startOffset]);
+
+  const streamKey = `${streamUrl ?? "none"}|${token ?? "none"}`;
+
+  useEffect(() => {
+    eventsMapRef.current = new Map();
+    setEvents([]);
+    lastOffsetRef.current = startOffsetRef.current;
+    reconnectAttemptRef.current = 0;
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    controllerRef.current?.abort();
+  }, [streamKey]);
 
   useEffect(() => {
     if (!enabled || !streamUrl || !token) {

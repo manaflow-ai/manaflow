@@ -9,16 +9,8 @@ import {
   useQuery,
 } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
-import {
-  CircleAlert,
-  CircleCheck,
-  CircleDashed,
-  CircleSlash,
-  ImagePlus,
-  Loader2,
-  Send,
-} from "lucide-react";
-import type { Dispatch, KeyboardEvent, SetStateAction } from "react";
+import { Loader2 } from "lucide-react";
+import type { SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -29,6 +21,14 @@ import {
   type AcpStreamStatus,
 } from "@/hooks/useAcpSandboxStream";
 import { useSendMessageOptimistic } from "@/hooks/useSendMessageOptimistic";
+import {
+  ChatLayout,
+  MessageWrapper,
+  StreamingMessageWrapper,
+  ComposerVariant,
+  HeaderVariant,
+} from "@/components/chat-layouts";
+import { isConversationManualUnread } from "@/lib/conversationReadOverrides";
 
 const PAGE_SIZE = 40;
 const RAW_EVENTS_PAGE_SIZE = 120;
@@ -195,6 +195,12 @@ function ConversationThread() {
     { teamSlugOrId, conversationId },
     { initialNumItems: PAGE_SIZE }
   );
+  const firstPageMessages = useQuery(
+    api.conversationMessages.listByConversationFirstPage,
+    isOptimisticConversation
+      ? "skip"
+      : { teamSlugOrId, conversationId, numItems: PAGE_SIZE }
+  );
   const {
     results: rawEventsResults,
     status: rawEventsStatus,
@@ -203,6 +209,12 @@ function ConversationThread() {
     api.acpRawEvents.listByConversationPaginated,
     isOptimisticConversation ? "skip" : { teamSlugOrId, conversationId },
     { initialNumItems: RAW_EVENTS_PAGE_SIZE }
+  );
+  const firstPageRawEvents = useQuery(
+    api.acpRawEvents.listByConversationFirstPage,
+    isOptimisticConversation
+      ? "skip"
+      : { teamSlugOrId, conversationId, numItems: RAW_EVENTS_PAGE_SIZE }
   );
 
   const optimisticMessage = useMemo(() => {
@@ -230,11 +242,24 @@ function ConversationThread() {
     optimisticCreatedAt,
     optimisticText,
   ]);
-  const messages = useMemo(() => results ?? [], [results]);
-  const convexRawEvents = useMemo(
-    () => rawEventsResults ?? [],
-    [rawEventsResults]
-  );
+  const messages = useMemo(() => {
+    if (results !== undefined) {
+      return results;
+    }
+    if (firstPageMessages && firstPageMessages.page) {
+      return firstPageMessages.page;
+    }
+    return [];
+  }, [firstPageMessages, results]);
+  const convexRawEvents = useMemo(() => {
+    if (rawEventsResults !== undefined) {
+      return rawEventsResults;
+    }
+    if (firstPageRawEvents && firstPageRawEvents.page) {
+      return firstPageRawEvents.page;
+    }
+    return [];
+  }, [firstPageRawEvents, rawEventsResults]);
   const latestConvexSeq = useMemo(() => {
     if (convexRawEvents.length === 0) return 0;
     return convexRawEvents.reduce(
@@ -297,7 +322,7 @@ function ConversationThread() {
     string[]
   >([]);
   const lastAutoPermissionId = useRef<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const lastMarkedAtByConversation = useRef<Map<string, number>>(new Map());
   const currentDraft = draftsByConversation.get(conversationKey) ??
@@ -363,6 +388,9 @@ function ConversationThread() {
       if (!isFocused) {
         return;
       }
+      if (isConversationManualUnread(conversationId)) {
+        return;
+      }
       const lastMarkedAt = lastMarkedAtByConversation.current.get(
         conversationId
       );
@@ -395,14 +423,10 @@ function ConversationThread() {
     teamSlugOrId,
   ]);
 
-  useEffect(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = 0;
-  }, [conversationId]);
 
   useEffect(() => {
     if (isOptimisticConversation) return;
-    const root = scrollRef.current;
+    const root = scrollContainerRef.current;
     const target = loadMoreRef.current;
     if (!root || !target) return;
     if (status !== "CanLoadMore") return;
@@ -913,205 +937,110 @@ function ConversationThread() {
       }
     : null;
 
-  return (
-    <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden">
-      <ConversationHeader
-        providerName={providerName}
-        cwd={cwd}
-        modelLabel={modelLabel}
-        sandbox={sandboxMeta}
-        showRawEvents={showRawEvents}
-        onToggleRawEvents={() => setShowRawEvents((current) => !current)}
-        permissionMode={effectivePermissionMode}
-        onPermissionModeChange={(mode) => {
-          void updatePermissionMode({
-            conversationId,
-            permissionMode: mode,
-          }).catch((error) => {
-            console.error("Failed to update permission mode", error);
-            toast.error("Failed to update permission mode");
-          });
-        }}
-      />
+  const headerContent = (
+    <HeaderVariant
+      providerName={providerName}
+      cwd={cwd}
+      modelLabel={modelLabel}
+      sandbox={sandboxMeta}
+      showRawEvents={showRawEvents}
+      onToggleRawEvents={() => setShowRawEvents((current) => !current)}
+      permissionMode={effectivePermissionMode}
+      onPermissionModeChange={(mode) => {
+        void updatePermissionMode({
+          conversationId,
+          permissionMode: mode,
+        }).catch((error) => {
+          console.error("Failed to update permission mode", error);
+          toast.error("Failed to update permission mode");
+        });
+      }}
+    />
+  );
 
-      <div className="flex flex-1 min-h-0 flex-col overflow-hidden lg:flex-row">
-        <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
-            <div className="flex flex-col-reverse gap-4">
-              {combinedItems.map((item) =>
-                item.kind === "stream" ? (
-                  <StreamingConversationMessage
-                    key={`stream-${item.message.lastSeq}`}
-                    message={item.message}
-                  />
-                ) : item.kind === "server" ? (
-                  <ConversationMessage
-                    key={item.message._id}
-                    message={item.message}
-                    isOwn={item.message.role === "user"}
-                    onRetry={
-                      item.message.role === "user" &&
-                      item.message.deliveryStatus === "error"
-                        ? () => handleRetryMessage(item.message._id)
-                        : undefined
-                    }
-                  />
-                ) : (
-                  <ToolCallMessage key={item.toolCall.id} call={item.toolCall} />
-                )
-              )}
-              <div ref={loadMoreRef} />
-              {status === "LoadingMore" ? (
-                <div className="flex items-center justify-center py-4 text-xs text-neutral-400">
-                  Loading older messages…
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          {activePermissionRequest && effectivePermissionMode === "manual" ? (
-            <PermissionPrompt
-              request={activePermissionRequest}
-              busy={
-                permissionInFlight === activePermissionRequest.id.toString()
-              }
-              onSelect={handlePermissionDecision}
-            />
-          ) : null}
-
-          <ConversationComposer
-            text={text}
-            setText={setText}
-            attachments={attachments}
-            setAttachments={setAttachments}
-            onAttachFiles={handleAttachFiles}
-            onSend={handleSend}
-            isSending={isSending}
-            isLocked={isOptimisticConversation}
-            autoFocusKey={conversationIdParam}
-            statusMessage={
-              isOptimisticConversation
-                ? "Creating conversation…"
-                : isAwaitingResponse
-                  ? "Waiting for agent response…"
-                  : null
+  const messagesContent = (
+    <>
+      {combinedItems.map((item) =>
+        item.kind === "stream" ? (
+          <StreamingConversationMessage
+            key={`stream-${item.message.lastSeq}`}
+            message={item.message}
+          />
+        ) : item.kind === "server" ? (
+          <ConversationMessage
+            key={item.message._id}
+            message={item.message}
+            isOwn={item.message.role === "user"}
+            onRetry={
+              item.message.role === "user" &&
+              item.message.deliveryStatus === "error"
+                ? () => handleRetryMessage(item.message._id)
+                : undefined
             }
           />
-        </div>
-
-        {showRawEvents ? (
-          <RawAcpEventsPanel
-            rawEvents={rawEvents}
-            status={rawEventsStatus}
-            streamStatus={stream.status}
-            onLoadMore={() => loadMoreRawEvents(RAW_EVENTS_PAGE_SIZE)}
-          />
-        ) : null}
-      </div>
-    </div>
+        ) : (
+          <ToolCallMessage key={item.toolCall.id} call={item.toolCall} />
+        )
+      )}
+    </>
   );
-}
 
-function ConversationHeader({
-  providerName,
-  cwd,
-  modelLabel,
-  sandbox,
-  showRawEvents,
-  onToggleRawEvents,
-  permissionMode,
-  onPermissionModeChange,
-}: {
-  providerName: string;
-  cwd: string;
-  modelLabel: string;
-  sandbox: SandboxMeta | null;
-  showRawEvents: boolean;
-  onToggleRawEvents: () => void;
-  permissionMode: PermissionMode;
-  onPermissionModeChange: (mode: PermissionMode) => void;
-}) {
-  const status = sandbox?.status ?? "offline";
-  const statusLabel = sandbox ? `Sandbox ${status}` : "Sandbox offline";
+  const composerContent = (
+    <ComposerVariant
+      text={text}
+      setText={setText}
+      attachments={attachments}
+      setAttachments={setAttachments}
+      onAttachFiles={handleAttachFiles}
+      onSend={handleSend}
+      isSending={isSending}
+      isLocked={isOptimisticConversation}
+      autoFocusKey={conversationIdParam}
+      statusMessage={
+        isOptimisticConversation
+          ? "Creating conversation..."
+          : isAwaitingResponse
+            ? "Waiting for agent response..."
+            : null
+      }
+    />
+  );
+
+  const permissionPromptContent =
+    activePermissionRequest && effectivePermissionMode === "manual" ? (
+      <PermissionPrompt
+        request={activePermissionRequest}
+        busy={permissionInFlight === activePermissionRequest.id.toString()}
+        onSelect={handlePermissionDecision}
+      />
+    ) : null;
 
   return (
-    <div className="border-b border-neutral-200/70 bg-white/80 px-6 py-4 dark:border-neutral-800/70 dark:bg-neutral-950/80">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="text-xs text-neutral-400 dark:text-neutral-500">
-            {providerName}
-          </div>
-          <div className="mt-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            {cwd}
-          </div>
-          <div className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
-            Model: {modelLabel}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center rounded-full border border-neutral-200/70 bg-white/80 p-1 text-[10px] font-semibold text-neutral-500 dark:border-neutral-800/70 dark:bg-neutral-950/60 dark:text-neutral-400">
-            {([
-              { value: "auto_allow_always", label: "Auto" },
-              { value: "manual", label: "Ask" },
-            ] as const).map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onPermissionModeChange(option.value)}
-                className={clsx(
-                  "rounded-full px-3 py-1 transition",
-                  permissionMode === option.value
-                    ? "bg-neutral-900 text-neutral-50 dark:bg-neutral-100 dark:text-neutral-950"
-                    : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={onToggleRawEvents}
-            className={clsx(
-              "rounded-full border px-3 py-1 text-[10px] font-semibold transition",
-              showRawEvents
-                ? "border-neutral-900 bg-neutral-900 text-neutral-50 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950"
-                : "border-neutral-200/70 text-neutral-400 hover:border-neutral-300 hover:text-neutral-700 dark:border-neutral-800/70 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-200"
-            )}
-            aria-pressed={showRawEvents}
-          >
-            Raw events
-          </button>
-          <div
-            className="flex items-center gap-2 text-xs text-neutral-400"
-            title={statusLabel}
-          >
-            <SandboxStatusIcon status={status} />
-            <span>{status}</span>
-          </div>
-        </div>
+    <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden lg:flex-row">
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+        <ChatLayout
+          header={headerContent}
+          messages={messagesContent}
+          composer={composerContent}
+          permissionPrompt={permissionPromptContent}
+          scrollContainerRef={scrollContainerRef}
+          loadMoreRef={loadMoreRef}
+          isLoadingMore={status === "LoadingMore"}
+          scrollToBottomKey={conversationIdParam}
+          shouldScrollToBottom={messages.length > 0}
+        />
       </div>
+
+      {showRawEvents ? (
+        <RawAcpEventsPanel
+          rawEvents={rawEvents}
+          status={rawEventsStatus}
+          streamStatus={stream.status}
+          onLoadMore={() => loadMoreRawEvents(RAW_EVENTS_PAGE_SIZE)}
+        />
+      ) : null}
     </div>
   );
-}
-
-
-function SandboxStatusIcon({ status }: { status: ConversationSandboxStatus }) {
-  switch (status) {
-    case "running":
-      return <CircleCheck className="h-4 w-4 text-emerald-500" aria-hidden />;
-    case "paused":
-      return <CircleSlash className="h-4 w-4 text-amber-500" aria-hidden />;
-    case "stopped":
-      return <CircleAlert className="h-4 w-4 text-neutral-400" aria-hidden />;
-    case "offline":
-      return <CircleAlert className="h-4 w-4 text-neutral-400" aria-hidden />;
-    case "error":
-      return <CircleAlert className="h-4 w-4 text-rose-500" aria-hidden />;
-    case "starting":
-    default:
-      return <CircleDashed className="h-4 w-4 text-neutral-400" aria-hidden />;
-  }
 }
 
 function StreamingConversationMessage({
@@ -1120,12 +1049,9 @@ function StreamingConversationMessage({
   message: StreamingMessage;
 }) {
   return (
-    <div className="flex flex-col gap-2 items-start">
-      <div className="max-w-[680px] rounded-2xl bg-white px-4 py-3 text-sm leading-relaxed text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
-        <MessageContent blocks={message.content} renderMarkdown />
-      </div>
-      <div className="text-[11px] text-neutral-400">Streaming…</div>
-    </div>
+    <StreamingMessageWrapper>
+      <MessageContent blocks={message.content} renderMarkdown />
+    </StreamingMessageWrapper>
   );
 }
 
@@ -1142,36 +1068,21 @@ function ConversationMessage({
     addSuffix: true,
   });
 
+  const footer = isOwn ? (
+    <MessageDeliveryStatus
+      status={message.deliveryStatus}
+      error={message.deliveryError}
+      timeLabel={timeLabel}
+      onRetry={onRetry}
+    />
+  ) : (
+    <div className="text-[11px] text-neutral-400">Received · {timeLabel}</div>
+  );
+
   return (
-    <div
-      className={clsx(
-        "flex flex-col gap-2",
-        isOwn ? "items-end" : "items-start"
-      )}
-    >
-      <div
-        className={clsx(
-          "max-w-[680px] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-        isOwn
-          ? "bg-neutral-900 text-neutral-50 dark:bg-neutral-100 dark:text-neutral-950"
-          : "bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
-        )}
-      >
-        <MessageContent blocks={message.content} renderMarkdown={!isOwn} />
-      </div>
-      {isOwn ? (
-        <MessageDeliveryStatus
-          status={message.deliveryStatus}
-          error={message.deliveryError}
-          timeLabel={timeLabel}
-          onRetry={onRetry}
-        />
-      ) : (
-        <div className="text-[11px] text-neutral-400">
-          Received · {timeLabel}
-        </div>
-      )}
-    </div>
+    <MessageWrapper isOwn={isOwn} footer={footer}>
+      <MessageContent blocks={message.content} renderMarkdown={!isOwn} />
+    </MessageWrapper>
   );
 }
 
@@ -1370,174 +1281,11 @@ function PermissionPrompt({
   );
 }
 
-function ConversationComposer({
-  text,
-  setText,
-  attachments,
-  setAttachments,
-  onAttachFiles,
-  onSend,
-  isSending,
-  isLocked,
-  autoFocusKey,
-  statusMessage,
+function ToolCallMessage({
+  call,
 }: {
-  text: string;
-  setText: (value: string) => void;
-  attachments: PendingImage[];
-  setAttachments: Dispatch<SetStateAction<PendingImage[]>>;
-  onAttachFiles: (files: FileList | null) => void;
-  onSend: () => void;
-  isSending: boolean;
-  isLocked: boolean;
-  autoFocusKey: string;
-  statusMessage: string | null;
+  call: ToolCallEntry;
 }) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
-  const isComposingRef = useRef(false);
-
-  useEffect(() => {
-    if (!textAreaRef.current) return;
-    const handle = requestAnimationFrame(() => {
-      textAreaRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(handle);
-  }, [autoFocusKey]);
-
-  useEffect(() => {
-    const textArea = textAreaRef.current;
-    if (!textArea) return;
-    textArea.style.height = "0px";
-    textArea.style.height = `${textArea.scrollHeight}px`;
-  }, [text]);
-
-  const canSend =
-    !isLocked &&
-    !isSending &&
-    (text.trim().length > 0 || attachments.length > 0);
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !isComposingRef.current) {
-      event.preventDefault();
-      if (canSend) {
-        onSend();
-      }
-    }
-  };
-
-  const handleRemoveAttachment = (id: string) => {
-    setAttachments((current) => {
-      const next = current.filter((attachment) => {
-        if (attachment.id === id) {
-          URL.revokeObjectURL(attachment.previewUrl);
-          return false;
-        }
-        return true;
-      });
-      return next;
-    });
-  };
-
-
-  return (
-    <div className="border-t border-neutral-200/70 bg-white/80 px-6 py-4 dark:border-neutral-800/70 dark:bg-neutral-950/80">
-      {statusMessage ? (
-        <div className="mb-2 text-[11px] text-neutral-400">
-          {statusMessage}
-        </div>
-      ) : null}
-      {attachments.length > 0 ? (
-        <div className="mb-3 flex flex-wrap gap-2">
-          {attachments.map((attachment) => (
-            <div
-              key={attachment.id}
-              className="relative h-20 w-20 overflow-hidden rounded-xl border border-neutral-200/70 dark:border-neutral-800/70"
-            >
-              <img
-                src={attachment.previewUrl}
-                alt={attachment.file.name}
-                className="h-full w-full object-cover"
-              />
-              <button
-                type="button"
-                onClick={() => handleRemoveAttachment(attachment.id)}
-                className="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white"
-              >
-                x
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="flex items-end gap-3">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/70 bg-white text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-800 dark:border-neutral-800/70 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-700 dark:hover:text-neutral-100"
-          disabled={isLocked}
-        >
-          <ImagePlus className="h-4 w-4" aria-hidden />
-        </button>
-        <div className="flex-1">
-          <textarea
-            ref={textAreaRef}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={handleKeyDown}
-            onCompositionStart={() => {
-              isComposingRef.current = true;
-            }}
-            onCompositionEnd={() => {
-              isComposingRef.current = false;
-            }}
-            rows={1}
-            placeholder="write a message · enter to send"
-            className={clsx(
-              "w-full resize-none rounded-2xl border border-neutral-200/80 bg-white/80 px-4 py-3 text-sm text-neutral-900",
-              "focus:border-neutral-400 focus:outline-none dark:border-neutral-800/80 dark:bg-neutral-900/70 dark:text-neutral-100",
-              "max-h-40 overflow-y-auto"
-            )}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={onSend}
-          disabled={!canSend}
-          aria-label="send message"
-          className={clsx(
-            "flex h-10 items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 text-neutral-50 transition",
-            "hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-neutral-200"
-          )}
-        >
-          {isSending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : (
-            <Send className="h-4 w-4" aria-hidden />
-          )}
-          <span className="text-[11px] font-semibold">send</span>
-        </button>
-      </div>
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={(event) => {
-          onAttachFiles(event.target.files);
-          if (event.currentTarget) {
-            event.currentTarget.value = "";
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-function ToolCallMessage({ call }: { call: ToolCallEntry }) {
   const status = call.status ?? "pending";
   const [collapsed, setCollapsed] = useState(true);
   const [expanded, setExpanded] = useState(false);
@@ -1570,7 +1318,10 @@ function ToolCallMessage({ call }: { call: ToolCallEntry }) {
           hasOutput ? "cursor-pointer hover:opacity-80" : "cursor-default"
         )}
       >
-        <span className={clsx("mt-1 h-2 w-2 rounded-full", statusDot)} />
+        <span
+          className={clsx("mt-1 h-2 w-2 rounded-full", statusDot)}
+          title={status}
+        />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="text-[12px] font-semibold text-neutral-900 dark:text-neutral-100">
@@ -1583,13 +1334,10 @@ function ToolCallMessage({ call }: { call: ToolCallEntry }) {
             ) : null}
           </div>
         </div>
-        <span className="text-[10px] font-semibold text-neutral-400">
-          {status}
-        </span>
       </button>
       {hasOutput && !collapsed ? (
-        <div className="ml-4 mt-1 pt-1 border-l border-neutral-200/70 pl-3 dark:border-neutral-800/70">
-          <pre className="m-0 max-h-36 overflow-auto rounded-lg border border-neutral-200/70 bg-neutral-50 px-3 py-2 text-[11px] text-neutral-600 dark:border-neutral-800/70 dark:bg-neutral-900/60 dark:text-neutral-200">
+        <div className="ml-4 mt-1 pt-1 border-l pl-3 border-neutral-200/70 dark:border-neutral-800/70">
+          <pre className="m-0 max-h-36 overflow-auto rounded-lg border px-3 py-2 text-[11px] border-neutral-200/70 bg-neutral-50 text-neutral-600 dark:border-neutral-800/70 dark:bg-neutral-900/60 dark:text-neutral-200">
             {displayOutput}
           </pre>
           {shouldTruncate ? (

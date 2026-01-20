@@ -3,9 +3,11 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
-import { ArrowLeft, ChevronDown, Info } from "lucide-react";
+import { ArrowLeft, ChevronDown, Info, Monitor, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useTheme } from "@/components/theme/use-theme";
+import type { Theme } from "@/components/theme/theme-context";
 
 export const Route = createFileRoute("/_layout/t/$teamSlugOrId/settings")({
   component: ConversationSettingsPage,
@@ -31,9 +33,16 @@ const TITLE_STYLE_OPTIONS: { value: TitleStyle; label: string; example: string }
   },
 ];
 
+const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+];
+
 function ConversationSettingsPage() {
   const { teamSlugOrId } = Route.useParams();
   const convex = useConvex();
+  const { resolvedTheme, setTheme } = useTheme();
 
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
@@ -120,6 +129,47 @@ function ConversationSettingsPage() {
 
           {/* Settings Sections */}
           <div className="space-y-6">
+            {/* Appearance Section */}
+            <section className="rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+              <div className="border-b border-neutral-200 px-5 py-4 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Appearance
+                </h2>
+                <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+                  Customize the look and feel of the app
+                </p>
+              </div>
+
+              <div className="p-5">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-3">
+                    Theme
+                  </label>
+                  <div className="flex gap-2">
+                    {THEME_OPTIONS.map((option) => {
+                      const Icon = option.icon;
+                      const isSelected = resolvedTheme === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setTheme(option.value)}
+                          className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all ${
+                            isSelected
+                              ? "border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950/50 dark:text-blue-300"
+                              : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:bg-neutral-700"
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </section>
+
             {/* Title Generation Section */}
             <section className="rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
               <div className="border-b border-neutral-200 px-5 py-4 dark:border-neutral-800">

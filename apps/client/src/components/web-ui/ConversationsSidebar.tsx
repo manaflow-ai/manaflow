@@ -1,9 +1,17 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  Archive,
+  ArchiveRestore,
   Bot,
+  Check,
+  CircleDot,
   Cpu,
+  Pencil,
+  Pin,
+  PinOff,
   Sparkles,
   TerminalSquare,
+  Trash2,
   ChevronDown,
   ChevronRight,
   SquarePen,
@@ -13,11 +21,66 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import SearchableSelect, {
   type SelectOptionObject,
 } from "@/components/ui/searchable-select";
 import { AgentLogo } from "@/components/icons/agent-logos";
+import { ContextMenu } from "@base-ui-components/react/context-menu";
+import { api } from "@cmux/convex/api";
+import type { Id } from "@cmux/convex/dataModel";
+import { useMutation } from "convex/react";
+import { useConversationRename } from "@/hooks/useConversationRename";
+import { toast } from "sonner";
+import {
+  clearConversationManualUnread,
+  markConversationManualUnread,
+} from "@/lib/conversationReadOverrides";
+import { Menu } from "@base-ui-components/react/menu";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+
+const PREWARM_MESSAGES_PAGE_SIZE = 40;
+const PREWARM_RAW_EVENTS_PAGE_SIZE = 120;
+
+function ListFilterIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={className}
+      role="img"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <line
+        x1="2"
+        y1="3.5"
+        x2="14"
+        y2="3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <line
+        x1="3"
+        y1="7.5"
+        x2="13"
+        y2="7.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <line
+        x1="4"
+        y1="11.5"
+        x2="12"
+        y2="11.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 export const AVAILABLE_PROVIDERS = [
   "claude",
@@ -28,6 +91,8 @@ export const AVAILABLE_PROVIDERS = [
 
 export type ProviderId = (typeof AVAILABLE_PROVIDERS)[number];
 
+export type ConversationFilterMode = "all" | "unread" | "archived";
+
 export type ConversationListEntry = {
   conversationId: string;
   clientConversationId?: string | null;
@@ -35,6 +100,8 @@ export type ConversationListEntry = {
   modelId: string | null;
   cwd: string;
   title: string | null;
+  pinned: boolean;
+  isArchived: boolean;
   preview: {
     text: string | null;
     kind: "text" | "image" | "resource" | "empty";
@@ -56,9 +123,13 @@ interface ConversationsSidebarProps {
   isCreating: boolean;
   providerId: ProviderId;
   onProviderChange: (providerId: ProviderId) => void;
+  filterMode: ConversationFilterMode;
+  onFilterChange: (next: ConversationFilterMode) => void;
 }
 
 const PAGE_SIZE = 30;
+const DEFAULT_PIN_LEFT_PX = 7;
+const DEFAULT_PIN_TOP_PX = 16;
 
 const providerMeta: Record<
   ProviderId,
@@ -135,6 +206,12 @@ function getProviderMeta(providerId: string | undefined): {
     return providerMeta[providerId];
   }
   return { label: providerId ?? "agent", icon: Cpu, tone: "text-neutral-500" };
+}
+
+function isRealConversationEntry(
+  entry: ConversationListEntry
+): entry is ConversationListEntry & { conversationId: Id<"conversations"> } {
+  return !entry.isOptimistic;
 }
 
 function SidebarComposeVariantC({
@@ -318,6 +395,8 @@ export function ConversationsSidebar({
   isCreating,
   providerId,
   onProviderChange,
+  filterMode,
+  onFilterChange,
 }: ConversationsSidebarProps) {
   const canLoadMore = status === "CanLoadMore";
 
@@ -407,6 +486,9 @@ export function ConversationsSidebar({
     }, 600);
   };
 
+  const pinLeftPx = DEFAULT_PIN_LEFT_PX;
+  const pinTopPx = DEFAULT_PIN_TOP_PX;
+
   return (
     <aside className="flex h-dvh w-full flex-col border-b border-neutral-200/70 bg-white dark:border-neutral-800/70 dark:bg-neutral-950 md:w-[320px] md:border-b-0 md:border-r">
       <div className="flex items-center justify-between px-4 py-2">
@@ -414,6 +496,50 @@ export function ConversationsSidebar({
           cmux
         </div>
         <div className="flex items-center gap-2">
+          <Menu.Root>
+            <Menu.Trigger
+              className={clsx(
+                "flex h-8 w-8 items-center justify-center rounded-full transition",
+                "text-neutral-500 hover:bg-neutral-200/80 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800/80 dark:hover:text-neutral-200"
+              )}
+              aria-label="Filter conversations"
+            >
+              <ListFilterIcon className="h-4 w-4" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner
+                sideOffset={6}
+                align="end"
+                className="outline-none z-[var(--z-context-menu)]"
+              >
+                <Menu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-neutral-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+                  <Menu.RadioGroup
+                    value={filterMode}
+                    onValueChange={(value) =>
+                      onFilterChange(value as ConversationFilterMode)
+                    }
+                  >
+                    {[
+                      { value: "all", label: "All conversations" },
+                      { value: "unread", label: "Unread" },
+                      { value: "archived", label: "Archived" },
+                    ].map((option) => (
+                      <Menu.RadioItem
+                        key={option.value}
+                        value={option.value}
+                        className="grid cursor-default grid-cols-[0.75rem_1fr] items-center gap-2 py-1.5 pr-8 pl-2.5 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                      >
+                        <Menu.RadioItemIndicator className="col-start-1 flex items-center justify-center">
+                          <Check className="h-3 w-3" />
+                        </Menu.RadioItemIndicator>
+                        <span className="col-start-2">{option.label}</span>
+                      </Menu.RadioItem>
+                    ))}
+                  </Menu.RadioGroup>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
           <Link
             to="/t/$teamSlugOrId/settings"
             params={{ teamSlugOrId }}
@@ -467,6 +593,8 @@ export function ConversationsSidebar({
             activeConversationId={activeConversationId}
             isWindowFocused={isWindowFocused}
             status={status}
+            pinLeftPx={pinLeftPx}
+            pinTopPx={pinTopPx}
           />
         )}
       </div>
@@ -480,6 +608,8 @@ interface ConversationListProps {
   activeConversationId?: string;
   isWindowFocused: boolean;
   status: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
+  pinLeftPx: number;
+  pinTopPx: number;
 }
 
 function ConversationList({
@@ -488,6 +618,8 @@ function ConversationList({
   activeConversationId,
   isWindowFocused,
   status,
+  pinLeftPx,
+  pinTopPx,
 }: ConversationListProps) {
   const isLoadingMore = status === "LoadingMore";
 
@@ -500,6 +632,8 @@ function ConversationList({
           teamSlugOrId={teamSlugOrId}
           isActive={activeConversationId === entry.conversationId}
           isWindowFocused={isWindowFocused}
+          pinLeftPx={pinLeftPx}
+          pinTopPx={pinTopPx}
         />
       ))}
       {isLoadingMore ? (
@@ -522,13 +656,22 @@ function ConversationRow({
   teamSlugOrId,
   isActive,
   isWindowFocused,
+  pinLeftPx,
+  pinTopPx,
 }: {
   entry: ConversationListEntry;
   teamSlugOrId: string;
   isActive: boolean;
   isWindowFocused: boolean;
+  pinLeftPx: number;
+  pinTopPx: number;
 }) {
   const { preview, unread, latestMessageAt, isOptimistic, title } = entry;
+  const navigate = useNavigate();
+  const conversationId = isRealConversationEntry(entry)
+    ? entry.conversationId
+    : null;
+  const canMutate = conversationId !== null;
   const provider = getProviderMeta(entry.providerId);
   const timeLabel = formatTimestamp(latestMessageAt);
   // Show title if available, otherwise fallback to provider label (e.g., "claude")
@@ -540,51 +683,646 @@ function ConversationRow({
         ? "attachment"
         : "no messages yet";
   const optimisticSubtitle =
-    preview.text ?? (preview.kind === "empty" ? "creating conversation…" : fallbackSubtitle);
-  const subtitle = isOptimistic ? optimisticSubtitle : preview.text ?? fallbackSubtitle;
+    preview.text ??
+    (preview.kind === "empty" ? "creating conversation…" : fallbackSubtitle);
+  const subtitle = isOptimistic
+    ? optimisticSubtitle
+    : preview.text ?? fallbackSubtitle;
   const showUnread = unread && !(isActive && isWindowFocused);
+  const hasPrefetchedRef = useRef(false);
+
+  const {
+    isRenaming,
+    renameValue,
+    renameError,
+    isRenamePending,
+    renameInputRef,
+    handleRenameChange,
+    handleRenameKeyDown,
+    handleRenameBlur,
+    handleRenameFocus,
+    handleStartRenaming,
+  } = useConversationRename({
+    conversationId,
+    teamSlugOrId,
+    currentText: displayTitle,
+    canRename: canMutate,
+  });
+
+  const pinConversation = useMutation(
+    api.conversations.pin
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const nextPage = value.page.map((item) =>
+        item.conversation._id === args.conversationId
+          ? {
+              ...item,
+              conversation: {
+                ...item.conversation,
+                pinned: true,
+              },
+            }
+          : item
+      );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, {
+        ...value,
+        conversation: {
+          ...value.conversation,
+          pinned: true,
+        },
+      });
+    }
+  });
+
+  const unpinConversation = useMutation(
+    api.conversations.unpin
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const nextPage = value.page.map((item) =>
+        item.conversation._id === args.conversationId
+          ? {
+              ...item,
+              conversation: {
+                ...item.conversation,
+                pinned: false,
+              },
+            }
+          : item
+      );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, {
+        ...value,
+        conversation: {
+          ...value.conversation,
+          pinned: false,
+        },
+      });
+    }
+  });
+
+  const archiveConversation = useMutation(
+    api.conversations.archive
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const includeArchived =
+        (queryArgs as { includeArchived?: boolean }).includeArchived === true;
+      const nextPage = includeArchived
+        ? value.page.map((item) =>
+            item.conversation._id === args.conversationId
+              ? {
+                  ...item,
+                  conversation: {
+                    ...item.conversation,
+                    isArchived: true,
+                  },
+                }
+              : item
+          )
+        : value.page.filter(
+            (item) => item.conversation._id !== args.conversationId
+          );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, {
+        ...value,
+        conversation: {
+          ...value.conversation,
+          isArchived: true,
+        },
+      });
+    }
+  });
+
+  const unarchiveConversation = useMutation(
+    api.conversations.unarchive
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const nextPage = value.page.map((item) =>
+        item.conversation._id === args.conversationId
+          ? {
+              ...item,
+              conversation: {
+                ...item.conversation,
+                isArchived: false,
+              },
+            }
+          : item
+      );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, {
+        ...value,
+        conversation: {
+          ...value.conversation,
+          isArchived: false,
+        },
+      });
+    }
+  });
+
+  const removeConversation = useMutation(
+    api.conversations.remove
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const nextPage = value.page.filter(
+        (item) => item.conversation._id !== args.conversationId
+      );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, null);
+    }
+
+    const byIdQueries = localStore.getAllQueries(api.conversations.getById);
+    for (const { args: queryArgs, value } of byIdQueries) {
+      if (!value || value._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getById, queryArgs, null);
+    }
+  });
+
+  const markUnread = useMutation(
+    api.conversationReads.markUnread
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const nextPage = value.page.map((item) =>
+        item.conversation._id === args.conversationId
+          ? { ...item, unread: true }
+          : item
+      );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, {
+        ...value,
+        lastReadAt: 0,
+      });
+    }
+  });
+
+  const markRead = useMutation(
+    api.conversationReads.markRead
+  ).withOptimisticUpdate((localStore, args) => {
+    const queries = localStore.getAllQueries(
+      api.conversations.listPagedWithLatest
+    );
+    for (const { args: queryArgs, value } of queries) {
+      if (!value) {
+        continue;
+      }
+      const nextPage = value.page.map((item) =>
+        item.conversation._id === args.conversationId
+          ? { ...item, unread: false }
+          : item
+      );
+      localStore.setQuery(api.conversations.listPagedWithLatest, queryArgs, {
+        ...value,
+        page: nextPage,
+      });
+    }
+
+    const detailQueries = localStore.getAllQueries(api.conversations.getDetail);
+    for (const { args: queryArgs, value } of detailQueries) {
+      if (!value?.conversation) {
+        continue;
+      }
+      if (value.conversation._id !== args.conversationId) {
+        continue;
+      }
+      localStore.setQuery(api.conversations.getDetail, queryArgs, {
+        ...value,
+        lastReadAt: args.lastReadAt ?? Date.now(),
+      });
+    }
+  });
+
+  const handleLinkClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (isRenaming || event.defaultPrevented) {
+        event.preventDefault();
+      }
+    },
+    [isRenaming]
+  );
+
+  const handlePrefetch = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    if (hasPrefetchedRef.current) {
+      return;
+    }
+    hasPrefetchedRef.current = true;
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.conversations.getDetail,
+      args: { teamSlugOrId, conversationId },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.acp.getStreamInfo,
+      args: { teamSlugOrId, conversationId },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.conversationMessages.listByConversationFirstPage,
+      args: {
+        teamSlugOrId,
+        conversationId,
+        numItems: PREWARM_MESSAGES_PAGE_SIZE,
+      },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.acpRawEvents.listByConversationFirstPage,
+      args: {
+        teamSlugOrId,
+        conversationId,
+        numItems: PREWARM_RAW_EVENTS_PAGE_SIZE,
+      },
+    });
+  }, [conversationId, teamSlugOrId]);
+
+  const handlePinFromMenu = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    void pinConversation({ teamSlugOrId, conversationId }).catch((error) => {
+      console.error("Failed to pin conversation", error);
+      toast.error("Failed to pin conversation");
+    });
+  }, [conversationId, pinConversation, teamSlugOrId]);
+
+  const handleUnpinFromMenu = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    void unpinConversation({ teamSlugOrId, conversationId }).catch((error) => {
+      console.error("Failed to unpin conversation", error);
+      toast.error("Failed to unpin conversation");
+    });
+  }, [conversationId, teamSlugOrId, unpinConversation]);
+
+  const handleArchiveFromMenu = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    void archiveConversation({ teamSlugOrId, conversationId })
+      .then(() => {
+        if (isActive) {
+          void navigate({
+            to: "/t/$teamSlugOrId",
+            params: { teamSlugOrId },
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to archive conversation", error);
+        toast.error("Failed to archive conversation");
+      });
+  }, [archiveConversation, conversationId, isActive, navigate, teamSlugOrId]);
+
+  const handleUnarchiveFromMenu = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    void unarchiveConversation({ teamSlugOrId, conversationId }).catch(
+      (error) => {
+        console.error("Failed to unarchive conversation", error);
+        toast.error("Failed to unarchive conversation");
+      }
+    );
+  }, [conversationId, teamSlugOrId, unarchiveConversation]);
+
+  const handleDeleteFromMenu = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    if (
+      !confirm(
+        "Are you sure you want to delete this conversation? This action cannot be undone."
+      )
+    ) {
+      return;
+    }
+    void removeConversation({ teamSlugOrId, conversationId })
+      .then(() => {
+        if (isActive) {
+          void navigate({
+            to: "/t/$teamSlugOrId",
+            params: { teamSlugOrId },
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to delete conversation", error);
+        toast.error("Failed to delete conversation");
+      });
+  }, [conversationId, isActive, navigate, removeConversation, teamSlugOrId]);
+
+  const handleMarkUnread = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    markConversationManualUnread(conversationId);
+    void markUnread({ teamSlugOrId, conversationId }).catch((error) => {
+      clearConversationManualUnread(conversationId);
+      console.error("Failed to mark conversation unread", error);
+      toast.error("Failed to mark conversation unread");
+    });
+  }, [conversationId, markUnread, teamSlugOrId]);
+
+  const handleMarkRead = useCallback(() => {
+    if (!conversationId) {
+      return;
+    }
+    clearConversationManualUnread(conversationId);
+    void markRead({
+      teamSlugOrId,
+      conversationId,
+      lastReadAt: Date.now(),
+    }).catch((error) => {
+      console.error("Failed to mark conversation read", error);
+      toast.error("Failed to mark conversation read");
+    });
+  }, [conversationId, markRead, teamSlugOrId]);
+
+  const menuItemClassName =
+    "flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700";
 
   return (
-    <Link
-      to="/t/$teamSlugOrId/$conversationId"
-      params={{
-        teamSlugOrId,
-        conversationId: entry.conversationId,
-      }}
-      className={clsx(
-        "group relative flex h-20 items-center gap-3 border-b border-neutral-200/70 pl-6 pr-4 transition-colors",
-        "hover:bg-neutral-100/80 dark:border-neutral-800/70 dark:hover:bg-neutral-900/60",
-        isActive && "bg-neutral-200/60 dark:bg-neutral-900"
-      )}
-      activeProps={{
-        className: "bg-neutral-200/60 dark:bg-neutral-900",
-      }}
-    >
-      <span
-        className={clsx(
-          "pointer-events-none absolute left-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-[#007AFF] transition-opacity",
-          showUnread ? "opacity-100" : "opacity-0"
-        )}
-        aria-hidden
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-[14px] font-semibold text-neutral-900 dark:text-neutral-100">
-              {displayTitle}
-            </span>
+    <div className="relative">
+      <ContextMenu.Root>
+        <ContextMenu.Trigger>
+          <Link
+            to="/t/$teamSlugOrId/$conversationId"
+            params={{
+              teamSlugOrId,
+              conversationId: entry.conversationId,
+            }}
+            onClick={handleLinkClick}
+            onMouseEnter={handlePrefetch}
+            onFocus={handlePrefetch}
+            className={clsx(
+              "group relative flex h-20 items-center gap-3 border-b border-neutral-200/70 pl-6 pr-4 transition-colors",
+              "hover:bg-neutral-100/80 dark:border-neutral-800/70 dark:hover:bg-neutral-900/60",
+              isActive && "bg-neutral-200/60 dark:bg-neutral-900"
+            )}
+            activeProps={{
+              className: "bg-neutral-200/60 dark:bg-neutral-900",
+            }}
+          >
+            <span
+              className={clsx(
+                "pointer-events-none absolute left-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-[#007AFF] transition-opacity",
+                showUnread ? "opacity-100" : "opacity-0"
+              )}
+              aria-hidden
+            />
+            {entry.pinned ? (
+              <Pin
+                className="pointer-events-none absolute h-2.5 w-2.5 text-neutral-400 dark:text-neutral-500"
+                style={{ left: pinLeftPx, top: pinTopPx }}
+                aria-hidden
+              />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  {isRenaming ? (
+                    <input
+                      ref={renameInputRef}
+                      type="text"
+                      value={renameValue}
+                      onChange={handleRenameChange}
+                      onKeyDown={handleRenameKeyDown}
+                      onBlur={handleRenameBlur}
+                      onFocus={handleRenameFocus}
+                      disabled={isRenamePending}
+                      autoFocus
+                      placeholder="Conversation title"
+                      aria-label="Conversation title"
+                      aria-invalid={renameError ? true : undefined}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className={clsx(
+                        "w-full bg-transparent text-[14px] font-semibold text-neutral-900 outline-none placeholder:text-neutral-400",
+                        "dark:text-neutral-100 dark:placeholder:text-neutral-500",
+                        isRenamePending &&
+                          "text-neutral-400/70 dark:text-neutral-500/70 cursor-wait"
+                      )}
+                    />
+                  ) : (
+                    <span className="truncate text-[14px] font-semibold text-neutral-900 dark:text-neutral-100">
+                      {displayTitle}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="whitespace-nowrap text-[12px] text-neutral-500 dark:text-neutral-400">
+                    {timeLabel}
+                  </span>
+                  <ChevronRight className="h-3 w-3 text-neutral-400 dark:text-neutral-600" />
+                </div>
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-[12px] text-neutral-500 dark:text-neutral-400">
+                {subtitle}
+              </div>
+            </div>
+          </Link>
+        </ContextMenu.Trigger>
+        {renameError ? (
+          <div className="mt-1 pl-6 pr-4 text-[11px] text-red-500 dark:text-red-400">
+            {renameError}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="whitespace-nowrap text-[12px] text-neutral-500 dark:text-neutral-400">
-              {timeLabel}
-            </span>
-            <ChevronRight className="h-3 w-3 text-neutral-400 dark:text-neutral-600" />
-          </div>
-        </div>
-        <div className="mt-0.5 line-clamp-2 text-[12px] text-neutral-500 dark:text-neutral-400">
-          {subtitle}
-        </div>
-      </div>
-    </Link>
+        ) : null}
+        <ContextMenu.Portal>
+          <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
+            <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-neutral-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+              {canMutate && unread ? (
+                <ContextMenu.Item
+                  className={menuItemClassName}
+                  onClick={handleMarkRead}
+                >
+                  <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>Mark as read</span>
+                </ContextMenu.Item>
+              ) : null}
+              {canMutate && !unread ? (
+                <ContextMenu.Item
+                  className={menuItemClassName}
+                  onClick={handleMarkUnread}
+                >
+                  <CircleDot className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>Mark as unread</span>
+                </ContextMenu.Item>
+              ) : null}
+              {canMutate ? (
+                <ContextMenu.Item
+                  className={menuItemClassName}
+                  onClick={handleStartRenaming}
+                >
+                  <Pencil className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>Rename</span>
+                </ContextMenu.Item>
+              ) : null}
+              {canMutate ? (
+                entry.pinned ? (
+                  <ContextMenu.Item
+                    className={menuItemClassName}
+                    onClick={handleUnpinFromMenu}
+                  >
+                    <PinOff className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Unpin</span>
+                  </ContextMenu.Item>
+                ) : (
+                  <ContextMenu.Item
+                    className={menuItemClassName}
+                    onClick={handlePinFromMenu}
+                  >
+                    <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Pin</span>
+                  </ContextMenu.Item>
+                )
+              ) : null}
+              {canMutate ? (
+                entry.isArchived ? (
+                  <ContextMenu.Item
+                    className={menuItemClassName}
+                    onClick={handleUnarchiveFromMenu}
+                  >
+                    <ArchiveRestore className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Unarchive</span>
+                  </ContextMenu.Item>
+                ) : (
+                  <ContextMenu.Item
+                    className={menuItemClassName}
+                    onClick={handleArchiveFromMenu}
+                  >
+                    <Archive className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Archive</span>
+                  </ContextMenu.Item>
+                )
+              ) : null}
+              {canMutate ? (
+                <ContextMenu.Item
+                  className={clsx(menuItemClassName, "text-red-600 dark:text-red-400")}
+                  onClick={handleDeleteFromMenu}
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                  <span>Delete</span>
+                </ContextMenu.Item>
+              ) : null}
+            </ContextMenu.Popup>
+          </ContextMenu.Positioner>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+    </div>
   );
 }

@@ -187,6 +187,7 @@ export function useSendMessageOptimistic() {
           paginationOpts: { cursor: string | null };
           teamSlugOrId: string;
           scope: "mine" | "all";
+          includeArchived?: boolean;
         };
         if (rest.teamSlugOrId !== args.teamSlugOrId) continue;
 
