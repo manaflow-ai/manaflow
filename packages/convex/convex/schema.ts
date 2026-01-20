@@ -1173,6 +1173,8 @@ const convexSchema = defineSchema({
     cwd: v.string(), // Working directory for the session
     // Brief AI-generated title of the conversation (3-8 words)
     title: v.optional(v.string()),
+    pinned: v.optional(v.boolean()),
+    isArchived: v.optional(v.boolean()),
     permissionMode: v.optional(
       v.union(
         v.literal("manual"),

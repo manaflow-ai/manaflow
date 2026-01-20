@@ -766,6 +766,7 @@ export const startConversation = action({
               sessionId,
               args.providerId,
               args.cwd,
+              "auto_allow_always", // Default permission mode for all ACP conversations
             );
             await ensureConversationModel(
               ctx,
@@ -1131,6 +1132,7 @@ export const sendMessage = action({
             conversation.sessionId,
             conversation.providerId,
             conversation.cwd,
+            conversation.permissionMode ?? "auto_allow_always",
           );
           await ensureConversationModel(
             ctx,
@@ -1347,6 +1349,7 @@ export const retryMessage = action({
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversation.permissionMode ?? "auto_allow_always",
         );
         await ensureConversationModel(
           ctx,
@@ -1519,6 +1522,7 @@ export const sendRpc = action({
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversation.permissionMode ?? "auto_allow_always",
         );
         await ctx.runMutation(internal.acp.markConversationInitialized, {
           conversationId: args.conversationId,
@@ -2089,6 +2093,7 @@ export const deliverMessageInternal = internalAction({
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversation.permissionMode ?? "auto_allow_always",
         );
         await ensureConversationModel(
           ctx,
@@ -2319,6 +2324,7 @@ async function initConversationOnSandbox(
   sessionId: string,
   providerId: string,
   cwd: string,
+  permissionMode?: string,
 ): Promise<void> {
   const response = await fetch(`${sandboxUrl}/api/acp/init`, {
     method: "POST",
@@ -2330,6 +2336,7 @@ async function initConversationOnSandbox(
       session_id: sessionId,
       provider_id: providerId,
       cwd,
+      permission_mode: permissionMode,
     }),
   });
 

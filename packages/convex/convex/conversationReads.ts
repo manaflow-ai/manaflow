@@ -70,3 +70,47 @@ export const markRead = authMutation({
     return { lastReadAt: now };
   },
 });
+
+export const markUnread = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const { teamId, userId } = await requireTeamMembership(
+      ctx,
+      args.teamSlugOrId
+    );
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.teamId !== teamId) {
+      throw new Error("Conversation not found");
+    }
+
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("conversationReads")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", args.conversationId).eq("userId", userId)
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        lastReadAt: 0,
+        updatedAt: now,
+      });
+      return { lastReadAt: 0 };
+    }
+
+    await ctx.db.insert("conversationReads", {
+      conversationId: args.conversationId,
+      teamId,
+      userId,
+      lastReadAt: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return { lastReadAt: 0 };
+  },
+});

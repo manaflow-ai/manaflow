@@ -3,8 +3,8 @@ import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId } from "../_shared/team";
-import type { Doc } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   internalMutation,
   internalQuery,
@@ -110,7 +110,7 @@ function isUnreadCandidateMessage(
 }
 
 async function requireTeamMembership(
-  ctx: QueryCtx,
+  ctx: QueryCtx | MutationCtx,
   teamSlugOrId: string
 ): Promise<{ teamId: string; userId: string }> {
   const identity = await ctx.auth.getUserIdentity();
@@ -122,6 +122,26 @@ async function requireTeamMembership(
   const teamId = await getTeamId(ctx, teamSlugOrId);
 
   return { teamId, userId: identity.subject };
+}
+
+async function requireConversationOwner(
+  ctx: MutationCtx,
+  teamSlugOrId: string,
+  conversationId: Id<"conversations">
+): Promise<{
+  conversation: Doc<"conversations">;
+  teamId: string;
+  userId: string;
+}> {
+  const { teamId, userId } = await requireTeamMembership(ctx, teamSlugOrId);
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation || conversation.teamId !== teamId) {
+    throw new Error("Conversation not found");
+  }
+  if (conversation.userId && conversation.userId !== userId) {
+    throw new Error("Conversation not found or unauthorized");
+  }
+  return { conversation, teamId, userId };
 }
 
 // Create a new conversation
@@ -265,6 +285,7 @@ export const listPagedWithLatest = authQuery({
     teamSlugOrId: v.string(),
     scope: conversationScopeValidator,
     paginationOpts: paginationOptsValidator,
+    includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { teamId, userId } = await requireTeamMembership(
@@ -272,7 +293,7 @@ export const listPagedWithLatest = authQuery({
       args.teamSlugOrId
     );
 
-    const baseQuery =
+    let baseQuery =
       args.scope === "all"
         ? ctx.db
             .query("conversations")
@@ -282,6 +303,12 @@ export const listPagedWithLatest = authQuery({
             .withIndex("by_team_user_updated", (q) =>
               q.eq("teamId", teamId).eq("userId", userId)
             );
+
+    if (args.includeArchived !== true) {
+      baseQuery = baseQuery.filter((q) =>
+        q.neq(q.field("isArchived"), true)
+      );
+    }
 
     const page = await baseQuery.order("desc").paginate(args.paginationOpts);
 
@@ -442,6 +469,128 @@ export const updatePermissionMode = authMutation({
       updatedAt: Date.now(),
     });
 
+    return { success: true };
+  },
+});
+
+export const rename = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireConversationOwner(ctx, args.teamSlugOrId, args.conversationId);
+    await ctx.db.patch(args.conversationId, {
+      title: args.title,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+export const pin = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    await requireConversationOwner(ctx, args.teamSlugOrId, args.conversationId);
+    await ctx.db.patch(args.conversationId, {
+      pinned: true,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+export const unpin = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    await requireConversationOwner(ctx, args.teamSlugOrId, args.conversationId);
+    await ctx.db.patch(args.conversationId, {
+      pinned: false,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+export const archive = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    await requireConversationOwner(ctx, args.teamSlugOrId, args.conversationId);
+    await ctx.db.patch(args.conversationId, {
+      isArchived: true,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+export const unarchive = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    await requireConversationOwner(ctx, args.teamSlugOrId, args.conversationId);
+    await ctx.db.patch(args.conversationId, {
+      isArchived: false,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+async function deleteConversationData(
+  ctx: MutationCtx,
+  conversationId: Id<"conversations">
+): Promise<void> {
+  const messages = await ctx.db
+    .query("conversationMessages")
+    .withIndex("by_conversation", (q) =>
+      q.eq("conversationId", conversationId)
+    )
+    .collect();
+  for (const message of messages) {
+    await ctx.db.delete(message._id);
+  }
+
+  const reads = await ctx.db
+    .query("conversationReads")
+    .filter((q) => q.eq(q.field("conversationId"), conversationId))
+    .collect();
+  for (const read of reads) {
+    await ctx.db.delete(read._id);
+  }
+
+  const events = await ctx.db
+    .query("acpRawEvents")
+    .withIndex("by_conversation", (q) =>
+      q.eq("conversationId", conversationId)
+    )
+    .collect();
+  for (const event of events) {
+    await ctx.db.delete(event._id);
+  }
+}
+
+export const remove = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    await requireConversationOwner(ctx, args.teamSlugOrId, args.conversationId);
+    await deleteConversationData(ctx, args.conversationId);
+    await ctx.db.delete(args.conversationId);
     return { success: true };
   },
 });

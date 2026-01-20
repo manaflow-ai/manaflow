@@ -4,6 +4,16 @@ import { resolveTeamIdLoose } from "../_shared/team";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { authQuery } from "./users/utils";
 
+const DEFAULT_FIRST_PAGE_SIZE = 120;
+const MAX_FIRST_PAGE_SIZE = 500;
+
+function clampPageSize(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.floor(value), MAX_FIRST_PAGE_SIZE);
+}
+
 async function requireTeamMembership(
   ctx: QueryCtx,
   teamSlugOrId: string
@@ -47,6 +57,30 @@ export const listByConversationPaginated = authQuery({
       )
       .order("desc")
       .paginate(args.paginationOpts);
+  },
+});
+
+export const listByConversationFirstPage = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+    numItems: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await requireTeamMembership(ctx, args.teamSlugOrId);
+    const conversation = await ctx.db.get(args.conversationId);
+    if (conversation && conversation.teamId !== teamId) {
+      throw new Error("Conversation not found");
+    }
+
+    const numItems = clampPageSize(args.numItems, DEFAULT_FIRST_PAGE_SIZE);
+    return await ctx.db
+      .query("acpRawEvents")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId)
+      )
+      .order("desc")
+      .paginate({ numItems, cursor: null });
   },
 });
 
