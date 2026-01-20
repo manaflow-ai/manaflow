@@ -184,7 +184,11 @@ impl RestApiState {
     pub async fn get_cli_env_vars(&self) -> Vec<(String, String)> {
         // Always include HOME so CLIs can find their config files
         // (e.g., ~/.codex/config.toml)
-        let mut env_vars = vec![("HOME".to_string(), "/root".to_string())];
+        // Include IS_SANDBOX=1 to signal to CLIs that they're running in a sandbox
+        let mut env_vars = vec![
+            ("HOME".to_string(), "/root".to_string()),
+            ("IS_SANDBOX".to_string(), "1".to_string()),
+        ];
 
         let guard = self.api_proxies.read().await;
         if let Some(ref proxies) = *guard {
@@ -281,8 +285,8 @@ async fn perform_acp_handshake(
             "protocolVersion": 1,
             "clientCapabilities": {
                 "fs": {
-                    "readTextFile": true,
-                    "writeTextFile": true
+                    "readTextFile": false,
+                    "writeTextFile": false
                 },
                 "terminal": false
             }
@@ -395,6 +399,11 @@ pub struct InitConversationRequest {
     pub provider_id: String,
     /// Working directory for the CLI
     pub cwd: String,
+    /// Permission mode for the session (optional).
+    /// If set to "bypassPermissions" or "auto_allow_always", will configure the CLI
+    /// to auto-approve all tool uses without prompting.
+    #[serde(rename = "permission_mode", default)]
+    pub permission_mode: Option<String>,
 }
 
 /// Response from init conversation.
@@ -1088,6 +1097,74 @@ pub async fn init_conversation(
         acp_session_id = %acp_session_id,
         "ACP handshake completed"
     );
+
+    // Set permission mode if specified (auto_allow_always -> bypassPermissions)
+    // This must happen before we move stdin into the conversation state
+    if let Some(ref mode) = request.permission_mode {
+        let acp_mode = match mode.as_str() {
+            "auto_allow_always" | "bypassPermissions" => Some("bypassPermissions"),
+            "acceptEdits" => Some("acceptEdits"),
+            "plan" => Some("plan"),
+            "dontAsk" => Some("dontAsk"),
+            "default" => Some("default"),
+            _ => {
+                warn!(
+                    conversation_id = %request.conversation_id,
+                    mode = %mode,
+                    "Unknown permission mode, ignoring"
+                );
+                None
+            }
+        };
+
+        if let Some(acp_mode) = acp_mode {
+            let set_mode_request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": format!("set_mode_{}", request.conversation_id),
+                "method": "session/set_mode",
+                "params": {
+                    "sessionId": acp_session_id,
+                    "modeId": acp_mode
+                }
+            });
+
+            let message = format!("{}\n", set_mode_request);
+            if let Err(e) = stdin.write_all(message.as_bytes()).await {
+                error!(
+                    conversation_id = %request.conversation_id,
+                    error = %e,
+                    "Failed to send session/set_mode"
+                );
+            } else if let Err(e) = stdin.flush().await {
+                error!(
+                    conversation_id = %request.conversation_id,
+                    error = %e,
+                    "Failed to flush session/set_mode"
+                );
+            } else {
+                info!(
+                    conversation_id = %request.conversation_id,
+                    mode = %acp_mode,
+                    "Set permission mode"
+                );
+                // Read the response (we don't need to process it, just consume it)
+                let mut response_line = String::new();
+                if let Err(e) = reader.read_line(&mut response_line).await {
+                    warn!(
+                        conversation_id = %request.conversation_id,
+                        error = %e,
+                        "Failed to read session/set_mode response"
+                    );
+                } else {
+                    debug!(
+                        conversation_id = %request.conversation_id,
+                        response = %response_line.trim(),
+                        "session/set_mode response"
+                    );
+                }
+            }
+        }
+    }
 
     // Create conversation state with ACP session ID
     let conversation_state = Arc::new(ConversationState {
