@@ -12,12 +12,19 @@ export type ScreenshotCollectionStatus = z.infer<
   typeof ScreenshotCollectionStatusSchema
 >;
 
+export const MediaTypeSchema = z.enum(["image", "video"]);
+export type MediaType = z.infer<typeof MediaTypeSchema>;
+
 export const ScreenshotStoredImageSchema = z.object({
   storageId: z.string(),
   mimeType: z.string(),
   fileName: z.string().optional(),
   commitSha: z.string(),
   description: z.string().optional(),
+  // Media type: "image" or "video" (defaults to "image" for backwards compatibility)
+  mediaType: MediaTypeSchema.optional(),
+  // Video-specific fields
+  durationMs: z.number().optional(), // Video duration in milliseconds
 });
 export type ScreenshotStoredImage = z.infer<
   typeof ScreenshotStoredImageSchema

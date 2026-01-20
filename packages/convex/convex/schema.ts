@@ -333,6 +333,7 @@ const convexSchema = defineSchema({
     commitSha: v.optional(v.string()),
     capturedAt: v.number(),
     error: v.optional(v.string()),
+    // Media items (images and videos) - named "images" for backwards compatibility
     images: v.array(
       v.object({
         storageId: v.id("_storage"),
@@ -341,6 +342,10 @@ const convexSchema = defineSchema({
         // @deprecated - use the top-level commitSha field instead
         commitSha: v.optional(v.string()),
         description: v.optional(v.string()),
+        // Media type: "image" or "video" (defaults to "image" for backwards compatibility)
+        mediaType: v.optional(v.union(v.literal("image"), v.literal("video"))),
+        // Video-specific fields
+        durationMs: v.optional(v.number()), // Video duration in milliseconds
       }),
     ),
     createdAt: v.number(),

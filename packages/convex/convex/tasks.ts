@@ -846,6 +846,10 @@ export const recordScreenshotResult = internalMutation({
           fileName: v.optional(v.string()),
           commitSha: v.string(),
           description: v.optional(v.string()),
+          // Media type: "image" or "video" (defaults to "image" for backwards compatibility)
+          mediaType: v.optional(v.union(v.literal("image"), v.literal("video"))),
+          // Video-specific fields
+          durationMs: v.optional(v.number()), // Video duration in milliseconds
         }),
       ),
     ),
@@ -878,6 +882,8 @@ export const recordScreenshotResult = internalMutation({
         mimeType: screenshot.mimeType,
         fileName: screenshot.fileName,
         description: screenshot.description,
+        mediaType: screenshot.mediaType,
+        durationMs: screenshot.durationMs,
       })),
       createdAt: now,
       updatedAt: now,

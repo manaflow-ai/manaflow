@@ -28,6 +28,10 @@ export const createScreenshotSet = internalMutation({
         width: v.optional(v.number()),
         height: v.optional(v.number()),
         description: v.optional(v.string()),
+        // Media type: "image" or "video" (defaults to "image" for backwards compatibility)
+        mediaType: v.optional(v.union(v.literal("image"), v.literal("video"))),
+        // Video-specific fields
+        durationMs: v.optional(v.number()), // Video duration in milliseconds
       })
     ),
   },
@@ -58,6 +62,8 @@ export const createScreenshotSet = internalMutation({
       fileName: image.fileName,
       commitSha: image.commitSha ?? args.commitSha,
       description: image.description,
+      mediaType: image.mediaType,
+      durationMs: image.durationMs,
     }));
 
     const screenshotSetId: Id<"taskRunScreenshotSets"> = await ctx.runMutation(
@@ -279,6 +285,10 @@ export const uploadAndComment = action({
           width: v.optional(v.number()),
           height: v.optional(v.number()),
           description: v.optional(v.string()),
+          // Media type: "image" or "video" (defaults to "image" for backwards compatibility)
+          mediaType: v.optional(v.union(v.literal("image"), v.literal("video"))),
+          // Video-specific fields
+          durationMs: v.optional(v.number()), // Video duration in milliseconds
         })
       )
     ),
@@ -328,6 +338,8 @@ export const uploadAndComment = action({
       width?: number;
       height?: number;
       description?: string;
+      mediaType?: "image" | "video";
+      durationMs?: number;
     }> = (args.images ?? []).map((img) => ({
       storageId: img.storageId as Id<"_storage">,
       mimeType: img.mimeType,
@@ -336,6 +348,8 @@ export const uploadAndComment = action({
       width: img.width,
       height: img.height,
       description: img.description,
+      mediaType: img.mediaType,
+      durationMs: img.durationMs,
     }));
 
     const screenshotSetId = await ctx.runMutation(
