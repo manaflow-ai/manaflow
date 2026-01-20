@@ -1677,11 +1677,14 @@ async def task_upload_repo(ctx: TaskContext) -> None:
     description="Install workspace dependencies via bun",
 )
 async def task_install_repo_dependencies(ctx: TaskContext) -> None:
+    # Note: We don't use --frozen-lockfile here because snapshot provisioning
+    # should install current dependencies. The lockfile check happens locally
+    # before the repo is uploaded.
     cmd = textwrap.dedent(
         f"""
         export PATH="/usr/local/bin:$PATH"
         cd {shlex.quote(ctx.remote_repo_root)}
-        bun install --frozen-lockfile
+        bun install
         """
     )
     await ctx.run("install-repo-dependencies", cmd)

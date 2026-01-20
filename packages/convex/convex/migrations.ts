@@ -124,6 +124,76 @@ export const backfillUnreadTaskRunsTaskId = migrations.define({
   },
 });
 
+// Clean up taskRuns documents to match schema (remove unknown fields, fix types)
+// Run with: bunx convex run migrations:run '{fn: "migrations:cleanupTaskRuns"}'
+export const cleanupTaskRuns = migrations.define({
+  table: "taskRuns",
+  migrateOne: (_ctx, doc) => {
+    // Define the allowed fields based on the schema
+    const allowedFields = new Set([
+      "_id",
+      "_creationTime",
+      "taskId",
+      "parentRunId",
+      "prompt",
+      "agentName",
+      "summary",
+      "status",
+      "isArchived",
+      "isLocalWorkspace",
+      "isCloudWorkspace",
+      "isPreviewJob",
+      "log",
+      "worktreePath",
+      "newBranch",
+      "createdAt",
+      "updatedAt",
+      "completedAt",
+      "exitCode",
+      "environmentError",
+      "errorMessage",
+      "userId",
+      "teamId",
+      "environmentId",
+      "isCrowned",
+      "crownReason",
+      "pullRequestUrl",
+      "pullRequestIsDraft",
+      "pullRequestState",
+      "pullRequestNumber",
+      "pullRequests",
+      "diffsLastUpdated",
+      "claims",
+      "claimsGeneratedAt",
+      "screenshotStorageId",
+      "screenshotCapturedAt",
+      "screenshotMimeType",
+      "screenshotFileName",
+      "screenshotCommitSha",
+      "latestScreenshotSetId",
+      "vscode",
+      "networking",
+      "customPreviews",
+    ]);
+
+    // Find fields to remove
+    const updates: Partial<typeof doc> = {};
+    let hasChanges = false;
+
+    for (const key of Object.keys(doc)) {
+      if (!allowedFields.has(key)) {
+        // Remove unknown field by setting it to undefined
+        (updates as Record<string, unknown>)[key] = undefined;
+        hasChanges = true;
+      }
+    }
+
+    if (hasChanges) {
+      return updates;
+    }
+  },
+});
+
 // Generic runner; choose migrations from CLI or dashboard when invoking
 export const run = migrations.runner();
 

@@ -238,6 +238,23 @@ const convexSchema = defineSchema({
       )
     ),
     diffsLastUpdated: v.optional(v.number()), // Timestamp when diffs were last fetched/updated
+    // Claims extracted from task run for verification
+    claims: v.optional(
+      v.array(
+        v.object({
+          claim: v.string(),
+          evidence: v.object({
+            type: v.string(),
+            screenshotIndex: v.optional(v.number()),
+            filePath: v.optional(v.string()),
+            startLine: v.optional(v.number()),
+            endLine: v.optional(v.number()),
+          }),
+          timestamp: v.number(),
+        })
+      )
+    ),
+    claimsGeneratedAt: v.optional(v.number()), // When claims were generated
     screenshotStorageId: v.optional(v.id("_storage")),
     screenshotCapturedAt: v.optional(v.number()),
     screenshotMimeType: v.optional(v.string()),
