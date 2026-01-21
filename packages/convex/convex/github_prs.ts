@@ -94,6 +94,7 @@ async function upsertBranchMetadata(
 
   const timestamp = activityTimestamp ?? Date.now();
 
+  const patchCount = { patched: 0, skipped: 0 };
   for (const row of rows) {
     const patch: Record<string, unknown> = {};
     if (repoId && row.repoId !== repoId) {
@@ -119,10 +120,25 @@ async function upsertBranchMetadata(
     }
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(row._id, patch);
+      patchCount.patched++;
+    } else {
+      patchCount.skipped++;
     }
   }
 
   const hasSystemRow = rows.some((row) => row.userId === SYSTEM_BRANCH_USER_ID);
+  const action = hasSystemRow ? "update" : "insert";
+
+  console.log("[occ-debug:branches]", {
+    branchName,
+    repoFullName,
+    teamId,
+    rowsFound: rows.length,
+    action,
+    patchCount,
+    repoDocFound: !!repoDoc,
+  });
+
   if (!hasSystemRow) {
     await ctx.db.insert("branches", {
       repo: repoFullName,
@@ -185,6 +201,19 @@ async function upsertCore(
       q.eq("teamId", teamId).eq("repoFullName", repoFullName).eq("number", number)
     )
     .first();
+
+  const action = existing ? "update" : "insert";
+  console.log("[occ-debug:pull_requests]", {
+    prNumber: number,
+    repoFullName,
+    teamId,
+    action,
+    state: record.state,
+    merged: record.merged,
+    baseRef: record.baseRef,
+    headRef: record.headRef,
+  });
+
   if (existing) {
     await ctx.db.patch(existing._id, {
       ...record,

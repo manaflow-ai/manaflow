@@ -316,6 +316,7 @@ export async function startCodeReviewJob({
         await runHeatmapReview({
           jobId: job.jobId,
           teamId: job.teamId ?? undefined,
+          userId: job.requestedByUserId,
           prUrl: payload.githubLink,
           prNumber: job.prNumber ?? undefined,
           accessToken,

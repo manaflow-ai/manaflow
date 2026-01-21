@@ -464,7 +464,7 @@ Do not close the browser when done. Do not create summary documents.
           // and must start with "sk-ant-api03-" so Claude Code CLI accepts it.
           ANTHROPIC_API_KEY: "sk-ant-api03-cmux-placeholder-bedrock-proxy",
           ANTHROPIC_BASE_URL: anthropicBaseUrl,
-          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token: ${auth.taskRunJwt}`,
+          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}\nx-cmux-source:preview-new`,
         }
         : {
           // When using API key auth, set it explicitly

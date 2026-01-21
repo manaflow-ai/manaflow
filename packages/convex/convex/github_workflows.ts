@@ -138,13 +138,25 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
       .withIndex("by_runId", (q) => q.eq("runId", runId))
       .collect();
 
+    const action = existingRecords.length > 0 ? "update" : "insert";
+    console.log("[occ-debug:workflow_runs]", {
+      runId,
+      workflowName,
+      repoFullName,
+      teamId,
+      existingCount: existingRecords.length,
+      action,
+      status: workflowRunDoc.status,
+      conclusion: workflowRunDoc.conclusion,
+    });
+
     if (existingRecords.length > 0) {
       // Update the first record
       await ctx.db.patch(existingRecords[0]._id, workflowRunDoc);
 
       // Delete any duplicates
       if (existingRecords.length > 1) {
-        console.warn("[upsertWorkflowRun] Found duplicates, cleaning up", {
+        console.warn("[occ-debug:workflow_runs] duplicates", {
           runId,
           count: existingRecords.length,
           duplicateIds: existingRecords.slice(1).map(r => r._id),

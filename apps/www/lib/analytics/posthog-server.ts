@@ -19,6 +19,24 @@ function createServerPosthogClient(): PostHog {
   });
 }
 
+/**
+ * Get or create a PostHog client for AI tracing.
+ * Returns null if the API key is not configured or in development mode.
+ * The caller is responsible for calling shutdown() when done.
+ */
+export function getPostHogClientForAITracing(): PostHog | null {
+  if (process.env.NODE_ENV === "development") {
+    return null;
+  }
+
+  if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+    console.warn(missingKeyWarning);
+    return null;
+  }
+
+  return createServerPosthogClient();
+}
+
 export async function captureServerPosthogEvent(
   payload: ServerPosthogEvent
 ): Promise<void> {
