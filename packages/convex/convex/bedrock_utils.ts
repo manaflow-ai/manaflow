@@ -201,6 +201,30 @@ function parseEventStreamHeaders(
 }
 
 /**
+ * Transform Bedrock tool IDs from `toolu_bdrk_*` format to Anthropic `tooluse_*` format.
+ * This is needed because Claude Agent SDK 0.2.8+ only accepts Anthropic-native tool IDs.
+ *
+ * Transforms:
+ * - "id": "toolu_bdrk_01ABC..." → "id": "tooluse_ABC..."
+ * - "tool_use_id": "toolu_bdrk_01ABC..." → "tool_use_id": "tooluse_ABC..."
+ */
+function transformBedrockToolIds(jsonString: string): string {
+  // Quick check - if no Bedrock tool IDs, return as-is
+  if (!jsonString.includes("toolu_bdrk_")) {
+    return jsonString;
+  }
+
+  // Transform toolu_bdrk_* IDs to tooluse_* format
+  // The Bedrock format is: toolu_bdrk_01XXXXXXXXXXXXXXXXXXXXX (toolu_bdrk_ + 01 + 22 chars)
+  // The Anthropic format is: tooluse_XXXXXXXXXXXXXXXXXXXXXXXX (tooluse_ + 26 chars)
+  // We preserve the unique part after "toolu_bdrk_01"
+  return jsonString.replace(
+    /toolu_bdrk_01([A-Za-z0-9]{22})/g,
+    (_, uniquePart) => `tooluse_${uniquePart}`
+  );
+}
+
+/**
  * Parse a single Bedrock event message and convert to SSE format.
  *
  * Bedrock event format:
@@ -265,8 +289,20 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     // The payload has a "bytes" field with base64-encoded Anthropic event
     if (payload.bytes) {
       const decodedBytes = base64Decode(payload.bytes);
-      // Return as SSE format
-      return `data: ${decodedBytes}\n\n`;
+      // Transform Bedrock tool IDs to Anthropic format
+      // SDK 0.2.8+ requires tooluse_* format, not toolu_bdrk_*
+      const transformedBytes = transformBedrockToolIds(decodedBytes);
+
+      // Extract event type from the decoded JSON for proper SSE format
+      // Anthropic SSE format requires both "event: <type>" and "data: <json>" lines
+      try {
+        const eventData = JSON.parse(transformedBytes);
+        const eventType = eventData.type || "message";
+        return `event: ${eventType}\ndata: ${transformedBytes}\n\n`;
+      } catch {
+        // If parsing fails, return without event prefix
+        return `data: ${transformedBytes}\n\n`;
+      }
     }
 
     // Log unexpected payload format for debugging
