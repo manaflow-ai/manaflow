@@ -508,9 +508,42 @@ Do not close the browser when done. Do not create summary documents.
           permissionMode: "bypassPermissions",
           cwd: workspaceDir,
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-          // NOTE: We intentionally don't use outputFormat here because it causes
-          // the SDK to not yield assistant messages (a bug/limitation). Instead,
-          // we instruct Claude to output a JSON code block that we parse manually.
+          // Use outputFormat with a lenient schema for structured output
+          outputFormat: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: {
+                hasUiChanges: {
+                  type: "boolean",
+                  description: "Whether the PR contains UI changes",
+                },
+                images: {
+                  type: "array",
+                  description: "Screenshots captured",
+                  items: {
+                    type: "object",
+                    properties: {
+                      path: { type: "string" },
+                      description: { type: "string" },
+                    },
+                  },
+                },
+                videos: {
+                  type: "array",
+                  description: "Videos captured",
+                  items: {
+                    type: "object",
+                    properties: {
+                      path: { type: "string" },
+                      description: { type: "string" },
+                    },
+                  },
+                },
+              },
+              // No required fields - all optional for leniency
+            },
+          },
           env: claudeEnv,
           // Disable all hooks to prevent interference from user's global settings
           hooks: {},
@@ -523,12 +556,43 @@ Do not close the browser when done. Do not create summary documents.
           `[DEBUG] Message type=${message.type}, full=${JSON.stringify(message).slice(0, 2000)}`
         );
 
-        // If this is a result message, log its subtype for debugging
+        // If this is a result message, log its subtype and extract structured output
         if (message.type === "result") {
-          const resultMsg = message as { subtype?: string; is_success?: boolean };
+          const resultMsg = message as {
+            subtype?: string;
+            is_success?: boolean;
+            errors?: unknown[];
+            is_error?: boolean;
+            total_cost_usd?: number;
+            usage?: { input_tokens?: number; output_tokens?: number };
+            structured_output?: unknown;
+          };
           await logToScreenshotCollector(
-            `[DEBUG RESULT] subtype=${resultMsg.subtype ?? "none"}, success=${resultMsg.is_success ?? "N/A"}`
+            `[DEBUG RESULT] subtype=${resultMsg.subtype ?? "none"}, success=${resultMsg.is_success ?? "N/A"}, is_error=${resultMsg.is_error ?? "N/A"}`
           );
+          // Log more details for error results
+          if (resultMsg.subtype === "error_during_execution" || resultMsg.is_error) {
+            await logToScreenshotCollector(
+              `[DEBUG ERROR] errors=${JSON.stringify(resultMsg.errors ?? [])}, input_tokens=${resultMsg.usage?.input_tokens ?? 0}, output_tokens=${resultMsg.usage?.output_tokens ?? 0}`
+            );
+          }
+          // Extract structured output from result message
+          if (resultMsg.structured_output && resultMsg.subtype === "success") {
+            await logToScreenshotCollector(
+              `[DEBUG] Found structured_output: ${JSON.stringify(resultMsg.structured_output).slice(0, 500)}`
+            );
+            const parsed = screenshotOutputSchema.safeParse(resultMsg.structured_output);
+            if (parsed.success) {
+              structuredOutput = parsed.data;
+              await logToScreenshotCollector(
+                `Structured output captured from result (hasUiChanges=${parsed.data.hasUiChanges}, images=${parsed.data.images.length})`
+              );
+            } else {
+              await logToScreenshotCollector(
+                `Structured output validation failed: ${parsed.error.message}`
+              );
+            }
+          }
         }
 
         // Format and log all message types

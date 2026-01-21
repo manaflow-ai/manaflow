@@ -44,24 +44,24 @@ interface CapturedVideo {
 
 export type ScreenshotCollectionResult =
   | {
-      status: "completed";
-      screenshots: CapturedScreenshot[];
-      videos: CapturedVideo[];
-      commitSha: string;
-      hasUiChanges?: boolean;
-    }
+    status: "completed";
+    screenshots: CapturedScreenshot[];
+    videos: CapturedVideo[];
+    commitSha: string;
+    hasUiChanges?: boolean;
+  }
   | {
-      status: "skipped";
-      reason: string;
-      commitSha?: string;
-      hasUiChanges?: boolean;
-    }
+    status: "skipped";
+    reason: string;
+    commitSha?: string;
+    hasUiChanges?: boolean;
+  }
   | {
-      status: "failed";
-      error: string;
-      commitSha?: string;
-      hasUiChanges?: boolean;
-    };
+    status: "failed";
+    error: string;
+    commitSha?: string;
+    hasUiChanges?: boolean;
+  };
 
 function sanitizeSegment(segment: string | null | undefined): string {
   if (!segment) {
@@ -278,8 +278,8 @@ export async function startScreenshotCollection(
     const reason =
       repoSelectionErrors.length > 0
         ? `Unable to determine a merge base for any repository candidate: ${repoSelectionErrors
-            .map(({ path: repoPath, error }) => `${repoPath}: ${error}`)
-            .join("; ")}`
+          .map(({ path: repoPath, error }) => `${repoPath}: ${error}`)
+          .join("; ")}`
         : `Unable to determine a git repository within ${workspaceRoot}`;
     await logToScreenshotCollector(reason);
     log("ERROR", reason, {
@@ -324,12 +324,12 @@ export async function startScreenshotCollection(
     options.changedFiles && options.changedFiles.length > 0
       ? options.changedFiles
       : parseFileList(
-          await runCommandCapture(
-            "git",
-            ["diff", "--name-only", `${mergeBase}..HEAD`],
-            { cwd: workspaceDir }
-          )
-        );
+        await runCommandCapture(
+          "git",
+          ["diff", "--name-only", `${mergeBase}..HEAD`],
+          { cwd: workspaceDir }
+        )
+      );
 
   let usedWorkingTreeFallback = false;
 
@@ -473,13 +473,11 @@ export async function startScreenshotCollection(
   } else if (trimmedAnthropicKey) {
     claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicKey } };
     await logToScreenshotCollector(
-      `ANTHROPIC_API_KEY source: ${
-        options.anthropicApiKey?.trim() ? "payload" : "environment"
+      `ANTHROPIC_API_KEY source: ${options.anthropicApiKey?.trim() ? "payload" : "environment"
       }`
     );
     await logToScreenshotCollector(
-      `ANTHROPIC_API_KEY (first 8 chars): ${
-        trimmedAnthropicKey.slice(0, 8) ?? "<none>"
+      `ANTHROPIC_API_KEY (first 8 chars): ${trimmedAnthropicKey.slice(0, 8) ?? "<none>"
       }`
     );
   } else {
