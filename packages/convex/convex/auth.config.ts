@@ -1,5 +1,8 @@
 // Use process.env directly to avoid triggering detection of all env vars from convex-env.ts
 const STACK_PROJECT_ID = process.env.NEXT_PUBLIC_STACK_PROJECT_ID;
+if (!STACK_PROJECT_ID) {
+  throw new Error("NEXT_PUBLIC_STACK_PROJECT_ID environment variable is required");
+}
 
 export default {
   providers: [

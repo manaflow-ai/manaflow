@@ -69,22 +69,58 @@ export const upsertDeploymentFromWebhook = internalMutation({
     };
 
 
+    // Use .take(5) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path: cleanup when needed (5 handles rare concurrent webhook storms)
     const existingRecords = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .collect();
+      .take(5);
 
-    if (existingRecords.length > 0) {
-      await ctx.db.patch(existingRecords[0]._id, deploymentDoc);
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
+    const action = existing ? "update" : "insert";
+    console.log("[occ-debug:deployments]", {
+      deploymentId,
+      repoFullName,
+      teamId,
+      action,
+      environment: deploymentDoc.environment,
+    });
 
+    if (existing) {
+      // Skip stale updates - if existing record is newer, don't overwrite
+      if (existing.updatedAt && deploymentDoc.updatedAt && existing.updatedAt >= deploymentDoc.updatedAt) {
+        console.log("[occ-debug:deployments] skipped-stale", { deploymentId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: deploymentDoc.updatedAt });
+        return;
+      }
+
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.updatedAt !== deploymentDoc.updatedAt ||
+        existing.environment !== deploymentDoc.environment ||
+        existing.ref !== deploymentDoc.ref;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, deploymentDoc);
+      } else {
+        console.log("[occ-debug:deployments] skipped-noop", { deploymentId });
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
       if (existingRecords.length > 1) {
-        console.warn("[upsertDeployment] Found duplicates, cleaning up", {
-          deploymentId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
+        console.warn("[occ-debug:deployments] cleaning-duplicates", { deploymentId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
         }
       }
     } else {
@@ -123,29 +159,67 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
 
     const updatedAt = normalizeTimestamp(payload.deployment_status?.updated_at);
 
+    // Use .take(5) for low OCC cost while enabling duplicate cleanup
     const existingRecords = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .collect();
+      .take(5);
 
-    if (existingRecords.length > 0) {
-      await ctx.db.patch(existingRecords[0]._id, {
-        state: normalizedState,
-        statusDescription: payload.deployment_status?.description ?? undefined,
-        logUrl: payload.deployment_status?.log_url ?? undefined,
-        targetUrl: payload.deployment_status?.target_url ?? undefined,
-        environmentUrl: payload.deployment_status?.environment_url ?? undefined,
-        updatedAt,
-      });
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
+    const action = existing ? "update" : "insert";
+    console.log("[occ-debug:deployment_status]", {
+      deploymentId,
+      repoFullName,
+      teamId,
+      action,
+      state: normalizedState,
+    });
 
+    const statusPatch = {
+      state: normalizedState,
+      statusDescription: payload.deployment_status?.description ?? undefined,
+      logUrl: payload.deployment_status?.log_url ?? undefined,
+      targetUrl: payload.deployment_status?.target_url ?? undefined,
+      environmentUrl: payload.deployment_status?.environment_url ?? undefined,
+      updatedAt,
+    };
+
+    if (existing) {
+      // Skip stale updates - if existing record is newer, don't overwrite
+      if (existing.updatedAt && updatedAt && existing.updatedAt >= updatedAt) {
+        console.log("[occ-debug:deployment_status] skipped-stale", { deploymentId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: updatedAt });
+        return;
+      }
+
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.state !== statusPatch.state ||
+        existing.updatedAt !== statusPatch.updatedAt ||
+        existing.statusDescription !== statusPatch.statusDescription ||
+        existing.targetUrl !== statusPatch.targetUrl ||
+        existing.environmentUrl !== statusPatch.environmentUrl;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, statusPatch);
+      } else {
+        console.log("[occ-debug:deployment_status] skipped-noop", { deploymentId });
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
       if (existingRecords.length > 1) {
-        console.warn("[updateDeploymentStatus] Found duplicates, cleaning up", {
-          deploymentId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
+        console.warn("[occ-debug:deployment_status] cleaning-duplicates", { deploymentId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
         }
       }
     } else {

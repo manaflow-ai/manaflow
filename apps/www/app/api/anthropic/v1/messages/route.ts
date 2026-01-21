@@ -2,13 +2,34 @@ import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
 import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "@cmux/shared/utils/anthropic";
 import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
-import { trackAnthropicProxyRequest } from "@/lib/analytics/track-anthropic-proxy";
+import {
+  trackAnthropicProxyRequest,
+  type AnthropicProxySource,
+} from "@/lib/analytics/track-anthropic-proxy";
 
-const ANTHROPIC_API_URL =
+const CLOUDFLARE_ANTHROPIC_API_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
+
+// Toggle between Cloudflare AI Gateway and Convex Anthropic Bedrock endpoint
+// Set to true to use Cloudflare AI Gateway, false to use Convex Anthropic Bedrock
+const USE_CLOUDFLARE_AI_GATEWAY = false;
+
 const TEMPORARY_DISABLE_AUTH = true;
 
 const hardCodedApiKey = CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
+
+function getAnthropicApiUrl(): string {
+  if (USE_CLOUDFLARE_AI_GATEWAY) {
+    return CLOUDFLARE_ANTHROPIC_API_URL;
+  }
+  // Use Convex Anthropic Bedrock endpoint
+  // HTTP routes are served from .convex.site, not .convex.cloud
+  const convexSiteUrl = env.NEXT_PUBLIC_CONVEX_URL.replace(
+    ".convex.cloud",
+    ".convex.site"
+  );
+  return `${convexSiteUrl}/api/anthropic/v1/messages`;
+}
 
 async function requireTaskRunToken(
   request: NextRequest
@@ -25,8 +46,17 @@ function getIsOAuthToken(token: string) {
   return token.includes("sk-ant-oat");
 }
 
+function getSource(request: NextRequest): AnthropicProxySource {
+  const sourceHeader = request.headers.get("x-cmux-source");
+  if (sourceHeader === "preview-new") {
+    return "preview-new";
+  }
+  return "cmux";
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
+  const source = getSource(request);
   let tokenPayload: TaskRunTokenPayload | null = null;
 
   // Try to extract token payload for tracking (even if auth is disabled)
@@ -42,6 +72,7 @@ export async function POST(request: NextRequest) {
       teamId: "unknown",
       userId: "unknown",
       taskRunId: "unknown",
+      source,
       model: "unknown",
       stream: false,
       isOAuthToken: false,
@@ -69,6 +100,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Build headers
+    // When using Convex endpoint with platform credits, send the placeholder key
+    // so Convex routes to Bedrock instead of Cloudflare/Anthropic
+    const apiKeyForRequest = USE_CLOUDFLARE_AI_GATEWAY
+      ? env.ANTHROPIC_API_KEY
+      : hardCodedApiKey;
+
     const headers: Record<string, string> =
       useOriginalApiKey && !TEMPORARY_DISABLE_AUTH
         ? (() => {
@@ -77,7 +114,7 @@ export async function POST(request: NextRequest) {
           })()
         : {
             "Content-Type": "application/json",
-            "x-api-key": env.ANTHROPIC_API_KEY,
+            "x-api-key": apiKeyForRequest,
             "anthropic-version": "2023-06-01",
           };
 
@@ -88,7 +125,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const response = await fetch(getAnthropicApiUrl(), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -106,6 +143,7 @@ export async function POST(request: NextRequest) {
         teamId: tokenPayload?.teamId ?? "unknown",
         userId: tokenPayload?.userId ?? "unknown",
         taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        source,
         model: body.model ?? "unknown",
         stream: true,
         isOAuthToken,
@@ -156,6 +194,7 @@ export async function POST(request: NextRequest) {
         teamId: tokenPayload?.teamId ?? "unknown",
         userId: tokenPayload?.userId ?? "unknown",
         taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        source,
         model: body.model ?? "unknown",
         stream: false,
         isOAuthToken,
@@ -171,6 +210,7 @@ export async function POST(request: NextRequest) {
       teamId: tokenPayload?.teamId ?? "unknown",
       userId: tokenPayload?.userId ?? "unknown",
       taskRunId: tokenPayload?.taskRunId ?? "unknown",
+      source,
       model: data.model ?? body.model ?? "unknown",
       stream: false,
       isOAuthToken,
@@ -189,6 +229,7 @@ export async function POST(request: NextRequest) {
       teamId: tokenPayload?.teamId ?? "unknown",
       userId: tokenPayload?.userId ?? "unknown",
       taskRunId: tokenPayload?.taskRunId ?? "unknown",
+      source,
       model: "unknown",
       stream: false,
       isOAuthToken: false,

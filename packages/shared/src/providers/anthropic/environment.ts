@@ -242,7 +242,7 @@ exit 0`;
         ? {}
         : {
           ANTHROPIC_BASE_URL: `${ctx.callbackUrl}/api/anthropic`,
-          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}`,
+          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}\nx-cmux-source:cmux`,
         }
       ),
     },

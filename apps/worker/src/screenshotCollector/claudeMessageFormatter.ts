@@ -13,7 +13,9 @@ export function formatClaudeMessage(message: SDKMessage): string {
         if (block.type === "text") {
           parts.push(`💬 ${block.text}`);
         } else if (block.type === "tool_use") {
-          parts.push(formatToolUse(block.name, block.input));
+          parts.push(
+            formatToolUse(block.name, block.input as Record<string, unknown>)
+          );
         }
       }
 

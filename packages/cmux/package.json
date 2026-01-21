@@ -49,7 +49,7 @@
     "@cmux/server": "workspace:*",
     "@cmux/shared": "workspace:*",
     "commander": "^11.1.0",
-    "convex": "1.29.3",
+    "convex": "1.31.5",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "socket.io": "^4.7.2"
