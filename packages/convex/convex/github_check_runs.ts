@@ -138,6 +138,16 @@ export const upsertCheckRunFromWebhook = internalMutation({
     });
 
     if (existing) {
+      // Lazy cleanup: delete duplicates first (keep the newest) - must run even for stale updates
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:check_runs] cleaning-duplicates", { checkRunId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
+        }
+      }
+
       // Skip stale updates - if existing record is newer, don't overwrite
       if (existing.updatedAt && checkRunDoc.updatedAt && existing.updatedAt >= checkRunDoc.updatedAt) {
         console.log("[occ-debug:check_runs] skipped-stale", { checkRunId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: checkRunDoc.updatedAt });
@@ -156,16 +166,6 @@ export const upsertCheckRunFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, checkRunDoc);
       } else {
         console.log("[occ-debug:check_runs] skipped-noop", { checkRunId });
-      }
-
-      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:check_runs] cleaning-duplicates", { checkRunId, count: existingRecords.length });
-        for (const dup of existingRecords) {
-          if (dup._id !== existing._id) {
-            await ctx.db.delete(dup._id);
-          }
-        }
       }
     } else {
       // Insert new check run

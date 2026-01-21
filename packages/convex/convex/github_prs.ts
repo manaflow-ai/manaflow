@@ -119,6 +119,16 @@ async function upsertBranchMetadata(
   });
 
   if (systemBranch) {
+    // Lazy cleanup: delete duplicates first (keep the newest) - must run even for stale updates
+    if (existingBranches.length > 1) {
+      console.warn("[occ-debug:branches] cleaning-duplicates", { branchName, count: existingBranches.length });
+      for (const dup of existingBranches) {
+        if (dup._id !== systemBranch._id) {
+          await ctx.db.delete(dup._id);
+        }
+      }
+    }
+
     // Skip stale updates - if existing branch has newer activity, don't overwrite
     if (
       typeof systemBranch.lastActivityAt === "number" &&
@@ -152,16 +162,6 @@ async function upsertBranchMetadata(
       await ctx.db.patch(systemBranch._id, patch);
     } else {
       console.log("[occ-debug:branches] skipped-noop", { branchName });
-    }
-
-    // Lazy cleanup: delete duplicates only when they exist (keep the newest)
-    if (existingBranches.length > 1) {
-      console.warn("[occ-debug:branches] cleaning-duplicates", { branchName, count: existingBranches.length });
-      for (const dup of existingBranches) {
-        if (dup._id !== systemBranch._id) {
-          await ctx.db.delete(dup._id);
-        }
-      }
     }
   } else {
     await ctx.db.insert("branches", {

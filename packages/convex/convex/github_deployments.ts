@@ -96,6 +96,16 @@ export const upsertDeploymentFromWebhook = internalMutation({
     });
 
     if (existing) {
+      // Lazy cleanup: delete duplicates first (keep the newest) - must run even for stale updates
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:deployments] cleaning-duplicates", { deploymentId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
+        }
+      }
+
       // Skip stale updates - if existing record is newer, don't overwrite
       if (existing.updatedAt && deploymentDoc.updatedAt && existing.updatedAt >= deploymentDoc.updatedAt) {
         console.log("[occ-debug:deployments] skipped-stale", { deploymentId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: deploymentDoc.updatedAt });
@@ -112,16 +122,6 @@ export const upsertDeploymentFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, deploymentDoc);
       } else {
         console.log("[occ-debug:deployments] skipped-noop", { deploymentId });
-      }
-
-      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:deployments] cleaning-duplicates", { deploymentId, count: existingRecords.length });
-        for (const dup of existingRecords) {
-          if (dup._id !== existing._id) {
-            await ctx.db.delete(dup._id);
-          }
-        }
       }
     } else {
       await ctx.db.insert("githubDeployments", deploymentDoc);
@@ -193,6 +193,16 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
     };
 
     if (existing) {
+      // Lazy cleanup: delete duplicates first (keep the newest) - must run even for stale updates
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:deployment_status] cleaning-duplicates", { deploymentId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
+        }
+      }
+
       // Skip stale updates - if existing record is newer, don't overwrite
       if (existing.updatedAt && updatedAt && existing.updatedAt >= updatedAt) {
         console.log("[occ-debug:deployment_status] skipped-stale", { deploymentId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: updatedAt });
@@ -211,16 +221,6 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, statusPatch);
       } else {
         console.log("[occ-debug:deployment_status] skipped-noop", { deploymentId });
-      }
-
-      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:deployment_status] cleaning-duplicates", { deploymentId, count: existingRecords.length });
-        for (const dup of existingRecords) {
-          if (dup._id !== existing._id) {
-            await ctx.db.delete(dup._id);
-          }
-        }
       }
     } else {
       const sha = payload.deployment?.sha;

@@ -161,6 +161,16 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
     });
 
     if (existing) {
+      // Lazy cleanup: delete duplicates first (keep the newest) - must run even for stale updates
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:workflow_runs] cleaning-duplicates", { runId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
+        }
+      }
+
       // Skip stale updates - if existing record is newer, don't overwrite
       if (existing.updatedAt && workflowRunDoc.updatedAt && existing.updatedAt >= workflowRunDoc.updatedAt) {
         console.log("[occ-debug:workflow_runs] skipped-stale", { runId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: workflowRunDoc.updatedAt });
@@ -179,16 +189,6 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, workflowRunDoc);
       } else {
         console.log("[occ-debug:workflow_runs] skipped-noop", { runId });
-      }
-
-      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:workflow_runs] cleaning-duplicates", { runId, count: existingRecords.length });
-        for (const dup of existingRecords) {
-          if (dup._id !== existing._id) {
-            await ctx.db.delete(dup._id);
-          }
-        }
       }
     } else {
       // Insert new run
