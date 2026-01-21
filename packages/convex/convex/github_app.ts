@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { env } from "../_shared/convex-env";
 import { base64urlFromBytes } from "../_shared/encoding";
 import { hmacSha256 } from "../_shared/crypto";
+import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation } from "./users/utils";
 
@@ -16,11 +17,39 @@ export const recordWebhookDelivery = internalMutation({
     ctx,
     { provider, deliveryId, installationId, payloadHash }
   ) => {
-    const existing = await ctx.db
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path (2 records): cleanup only when needed
+    const existingRecords = await ctx.db
       .query("webhookDeliveries")
       .withIndex("by_deliveryId", (q) => q.eq("deliveryId", deliveryId))
-      .first();
-    if (existing) return { created: false } as const;
+      .take(2);
+
+    // Find the newest record by receivedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.receivedAt ?? 0) > (existing?.receivedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
+
+    if (existing) {
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:webhook_deliveries] cleaning-duplicates", {
+          deliveryId,
+          count: existingRecords.length,
+        });
+        for (const duplicate of existingRecords) {
+          if (duplicate._id !== existing._id) {
+            await ctx.db.delete(duplicate._id);
+          }
+        }
+      }
+      return { created: false } as const;
+    }
+
     await ctx.db.insert("webhookDeliveries", {
       provider,
       deliveryId,
@@ -58,22 +87,92 @@ export const upsertProviderConnectionFromInstallation = internalMutation({
     }
   ) => {
     const now = Date.now();
-    const existing = await ctx.db
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path (2 records): cleanup only when needed
+    const existingRecords = await ctx.db
       .query("providerConnections")
       .withIndex("by_installationId", (q) =>
         q.eq("installationId", installationId)
       )
-      .first();
+      .take(2);
+
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing?.updatedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
+
+    const action = existing ? "update" : "insert";
+    console.log("[occ-debug:provider_connections]", {
+      installationId,
+      action,
+      accountLogin,
+      accountId,
+      accountType,
+      teamId,
+      isActive,
+    });
+
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        ...(accountLogin !== undefined ? { accountLogin } : {}),
-        ...(accountId !== undefined ? { accountId } : {}),
-        ...(accountType !== undefined ? { accountType } : {}),
-        teamId: teamId ?? existing.teamId,
-        connectedByUserId: connectedByUserId ?? existing.connectedByUserId,
-        isActive: isActive ?? true,
-        updatedAt: now,
-      });
+      if (existing.updatedAt > now) {
+        console.log("[occ-debug:provider_connections] skipped-stale", {
+          installationId,
+          existingUpdatedAt: existing.updatedAt,
+          incomingUpdatedAt: now,
+        });
+      } else {
+        const patch: Partial<Doc<"providerConnections">> = {};
+
+        if (accountLogin !== undefined && existing.accountLogin !== accountLogin) {
+          patch.accountLogin = accountLogin;
+        }
+        if (accountId !== undefined && existing.accountId !== accountId) {
+          patch.accountId = accountId;
+        }
+        if (accountType !== undefined && existing.accountType !== accountType) {
+          patch.accountType = accountType;
+        }
+        if (teamId !== undefined && existing.teamId !== teamId) {
+          patch.teamId = teamId;
+        }
+        if (
+          connectedByUserId !== undefined &&
+          existing.connectedByUserId !== connectedByUserId
+        ) {
+          patch.connectedByUserId = connectedByUserId;
+        }
+        const nextIsActive = isActive ?? true;
+        if (existing.isActive !== nextIsActive) {
+          patch.isActive = nextIsActive;
+        }
+
+        if (Object.keys(patch).length > 0) {
+          patch.updatedAt = now;
+          await ctx.db.patch(existing._id, patch);
+        } else {
+          console.log("[occ-debug:provider_connections] skipped-noop", {
+            installationId,
+          });
+        }
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:provider_connections] cleaning-duplicates", {
+          installationId,
+          count: existingRecords.length,
+        });
+        for (const duplicate of existingRecords) {
+          if (duplicate._id !== existing._id) {
+            await ctx.db.delete(duplicate._id);
+          }
+        }
+      }
       return existing._id;
     }
     const id = await ctx.db.insert("providerConnections", {

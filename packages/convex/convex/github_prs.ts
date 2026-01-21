@@ -85,17 +85,29 @@ async function upsertBranchMetadata(
     .first();
   const repoId = repoDoc?._id;
 
-  // Query only for the system branch using .first() to minimize read set for OCC
-  // User-created branches have their own update paths
-  const systemBranch = await ctx.db
+  // Use .take(2) for low OCC cost while enabling duplicate cleanup
+  // Happy path (0-1 records): same cost as .first()
+  // Duplicate path (2 records): cleanup only when needed
+  const existingBranches = await ctx.db
     .query("branches")
     .withIndex("by_repo", (q) => q.eq("repo", repoFullName))
     .filter((q) => q.eq(q.field("teamId"), teamId))
     .filter((q) => q.eq(q.field("name"), branchName))
     .filter((q) => q.eq(q.field("userId"), SYSTEM_BRANCH_USER_ID))
-    .first();
+    .take(2);
 
   const timestamp = activityTimestamp ?? Date.now();
+
+  // Find the newest record by lastActivityAt (handles duplicates correctly)
+  let systemBranch = existingBranches[0];
+  if (existingBranches.length > 1) {
+    for (const branch of existingBranches) {
+      if ((branch.lastActivityAt ?? 0) > (systemBranch?.lastActivityAt ?? 0)) {
+        systemBranch = branch;
+      }
+    }
+  }
+
   const action = systemBranch ? "update" : "insert";
 
   console.log("[occ-debug:branches]", {
@@ -140,6 +152,16 @@ async function upsertBranchMetadata(
       await ctx.db.patch(systemBranch._id, patch);
     } else {
       console.log("[occ-debug:branches] skipped-noop", { branchName });
+    }
+
+    // Lazy cleanup: delete duplicates only when they exist (keep the newest)
+    if (existingBranches.length > 1) {
+      console.warn("[occ-debug:branches] cleaning-duplicates", { branchName, count: existingBranches.length });
+      for (const dup of existingBranches) {
+        if (dup._id !== systemBranch._id) {
+          await ctx.db.delete(dup._id);
+        }
+      }
     }
   } else {
     await ctx.db.insert("branches", {
@@ -197,12 +219,25 @@ async function upsertCore(
     };
   }
 ) {
-  const existing = await ctx.db
+  // Use .take(2) for low OCC cost while enabling duplicate cleanup
+  // Happy path (0-1 records): same cost as .first()
+  // Duplicate path (2 records): cleanup only when needed
+  const existingRecords = await ctx.db
     .query("pullRequests")
     .withIndex("by_team_repo_number", (q) =>
       q.eq("teamId", teamId).eq("repoFullName", repoFullName).eq("number", number)
     )
-    .first();
+    .take(2);
+
+  // Find the newest record by updatedAt (handles duplicates correctly)
+  let existing = existingRecords[0];
+  if (existingRecords.length > 1) {
+    for (const record of existingRecords) {
+      if ((record.updatedAt ?? 0) > (existing?.updatedAt ?? 0)) {
+        existing = record;
+      }
+    }
+  }
 
   const action = existing ? "update" : "insert";
   console.log("[occ-debug:pull_requests]", {
@@ -217,30 +252,58 @@ async function upsertCore(
   });
 
   if (existing) {
-    // Skip no-op updates - only patch if something actually changed
-    const needsUpdate =
-      existing.title !== record.title ||
-      existing.state !== record.state ||
-      existing.merged !== record.merged ||
-      existing.draft !== record.draft ||
-      existing.updatedAt !== record.updatedAt ||
-      existing.closedAt !== record.closedAt ||
-      existing.mergedAt !== record.mergedAt ||
-      existing.headSha !== record.headSha ||
-      existing.baseSha !== record.baseSha ||
-      existing.mergeCommitSha !== record.mergeCommitSha;
+    const existingUpdatedAt = existing.updatedAt;
+    const incomingUpdatedAt = record.updatedAt;
+    const isStale =
+      typeof existingUpdatedAt === "number" &&
+      typeof incomingUpdatedAt === "number" &&
+      existingUpdatedAt >= incomingUpdatedAt;
 
-    if (needsUpdate) {
-      await ctx.db.patch(existing._id, {
-        ...record,
-        installationId,
-        repoFullName,
-        number,
-        provider: "github",
-        teamId,
+    if (isStale) {
+      console.log("[occ-debug:pull_requests] skipped-stale", {
+        prNumber: number,
+        existingUpdatedAt,
+        incomingUpdatedAt,
       });
     } else {
-      console.log("[occ-debug:pull_requests] skipped-noop", { prNumber: number });
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.title !== record.title ||
+        existing.state !== record.state ||
+        existing.merged !== record.merged ||
+        existing.draft !== record.draft ||
+        existing.updatedAt !== record.updatedAt ||
+        existing.closedAt !== record.closedAt ||
+        existing.mergedAt !== record.mergedAt ||
+        existing.headSha !== record.headSha ||
+        existing.baseSha !== record.baseSha ||
+        existing.mergeCommitSha !== record.mergeCommitSha;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, {
+          ...record,
+          installationId,
+          repoFullName,
+          number,
+          provider: "github",
+          teamId,
+        });
+      } else {
+        console.log("[occ-debug:pull_requests] skipped-noop", { prNumber: number });
+      }
+    }
+
+    // Lazy cleanup: delete duplicates only when they exist (keep the newest)
+    if (existingRecords.length > 1) {
+      console.warn("[occ-debug:pull_requests] cleaning-duplicates", {
+        prNumber: number,
+        count: existingRecords.length,
+      });
+      for (const dup of existingRecords) {
+        if (dup._id !== existing._id) {
+          await ctx.db.delete(dup._id);
+        }
+      }
     }
     return existing._id;
   }
