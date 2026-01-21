@@ -77,7 +77,15 @@ export const upsertDeploymentFromWebhook = internalMutation({
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
       .take(2);
 
-    const existing = existingRecords[0];
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
     const action = existing ? "update" : "insert";
     console.log("[occ-debug:deployments]", {
       deploymentId,
@@ -106,11 +114,13 @@ export const upsertDeploymentFromWebhook = internalMutation({
         console.log("[occ-debug:deployments] skipped-noop", { deploymentId });
       }
 
-      // Lazy cleanup: delete duplicates only when they exist
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
       if (existingRecords.length > 1) {
         console.warn("[occ-debug:deployments] cleaning-duplicates", { deploymentId, count: existingRecords.length });
-        for (const dup of existingRecords.slice(1)) {
-          await ctx.db.delete(dup._id);
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
         }
       }
     } else {
@@ -155,7 +165,15 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
       .take(2);
 
-    const existing = existingRecords[0];
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
     const action = existing ? "update" : "insert";
     console.log("[occ-debug:deployment_status]", {
       deploymentId,
@@ -195,11 +213,13 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
         console.log("[occ-debug:deployment_status] skipped-noop", { deploymentId });
       }
 
-      // Lazy cleanup: delete duplicates only when they exist
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
       if (existingRecords.length > 1) {
         console.warn("[occ-debug:deployment_status] cleaning-duplicates", { deploymentId, count: existingRecords.length });
-        for (const dup of existingRecords.slice(1)) {
-          await ctx.db.delete(dup._id);
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
         }
       }
     } else {

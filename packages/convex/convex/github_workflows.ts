@@ -140,7 +140,15 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
       .withIndex("by_runId", (q) => q.eq("runId", runId))
       .take(2);
 
-    const existing = existingRecords[0];
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          existing = record;
+        }
+      }
+    }
     const action = existing ? "update" : "insert";
     console.log("[occ-debug:workflow_runs]", {
       runId,
@@ -173,11 +181,13 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
         console.log("[occ-debug:workflow_runs] skipped-noop", { runId });
       }
 
-      // Lazy cleanup: delete duplicates only when they exist
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
       if (existingRecords.length > 1) {
         console.warn("[occ-debug:workflow_runs] cleaning-duplicates", { runId, count: existingRecords.length });
-        for (const dup of existingRecords.slice(1)) {
-          await ctx.db.delete(dup._id);
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
         }
       }
     } else {
