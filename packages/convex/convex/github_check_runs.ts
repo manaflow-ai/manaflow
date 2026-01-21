@@ -110,13 +110,13 @@ export const upsertCheckRunFromWebhook = internalMutation({
     };
 
 
-    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Use .take(5) for low OCC cost while enabling duplicate cleanup
     // Happy path (0-1 records): same cost as .first()
-    // Duplicate path (2 records): cleanup only when needed
+    // Duplicate path: cleanup when needed (5 handles rare concurrent webhook storms)
     const existingRecords = await ctx.db
       .query("githubCheckRuns")
       .withIndex("by_checkRunId", (q) => q.eq("checkRunId", checkRunId))
-      .take(2);
+      .take(5);
 
     // Find the newest record by updatedAt (handles duplicates correctly)
     let existing = existingRecords[0];

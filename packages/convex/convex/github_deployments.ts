@@ -69,13 +69,13 @@ export const upsertDeploymentFromWebhook = internalMutation({
     };
 
 
-    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Use .take(5) for low OCC cost while enabling duplicate cleanup
     // Happy path (0-1 records): same cost as .first()
-    // Duplicate path (2 records): cleanup only when needed
+    // Duplicate path: cleanup when needed (5 handles rare concurrent webhook storms)
     const existingRecords = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .take(2);
+      .take(5);
 
     // Find the newest record by updatedAt (handles duplicates correctly)
     let existing = existingRecords[0];
@@ -159,11 +159,11 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
 
     const updatedAt = normalizeTimestamp(payload.deployment_status?.updated_at);
 
-    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Use .take(5) for low OCC cost while enabling duplicate cleanup
     const existingRecords = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .take(2);
+      .take(5);
 
     // Find the newest record by updatedAt (handles duplicates correctly)
     let existing = existingRecords[0];
