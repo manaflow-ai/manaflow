@@ -5,15 +5,29 @@ type MessageWrapperProps = {
   isOwn: boolean;
   children: ReactNode;
   footer?: ReactNode;
+  messageId?: string;
+  messageKey?: string;
+  messageRole?: string;
 };
 
 export function MessageWrapper({
   isOwn,
   children,
   footer,
+  messageId,
+  messageKey,
+  messageRole,
 }: MessageWrapperProps) {
   return (
-    <div className={clsx("flex flex-col gap-1.5", isOwn ? "items-end" : "items-start")}>
+    <div
+      className={clsx(
+        "flex flex-col gap-1.5",
+        isOwn ? "items-end" : "items-start"
+      )}
+      data-message-id={messageId}
+      data-message-key={messageKey}
+      data-message-role={messageRole}
+    >
       <div
         className={clsx(
           "max-w-[90%] text-sm leading-relaxed",

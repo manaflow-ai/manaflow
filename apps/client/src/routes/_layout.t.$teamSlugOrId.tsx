@@ -176,6 +176,12 @@ function ConversationsLayout() {
       }
 
       const optimisticConversationId = `${OPTIMISTIC_CONVERSATION_PREFIX}${clientConversationId}`;
+      const optimisticState = {
+        optimisticText: trimmedPrompt,
+        optimisticClientMessageId: clientMessageId,
+        optimisticCreatedAt,
+        optimisticClientConversationId: clientConversationId,
+      };
       const sendPromise = sendMessage({
         teamSlugOrId,
         providerId,
@@ -190,11 +196,7 @@ function ConversationsLayout() {
           teamSlugOrId,
           conversationId: optimisticConversationId,
         },
-        state: {
-          optimisticText: trimmedPrompt,
-          optimisticClientMessageId: clientMessageId,
-          optimisticCreatedAt,
-        },
+        state: optimisticState,
         replace: true,
       });
       const result = await sendPromise;
@@ -207,6 +209,7 @@ function ConversationsLayout() {
           teamSlugOrId,
           conversationId: result.conversationId,
         },
+        state: optimisticState,
         replace: true,
       });
     } catch (error) {

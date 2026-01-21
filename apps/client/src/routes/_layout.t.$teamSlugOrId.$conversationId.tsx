@@ -37,6 +37,7 @@ const optimisticStateSchema = z.object({
   optimisticText: z.string().nullable().optional(),
   optimisticClientMessageId: z.string().nullable().optional(),
   optimisticCreatedAt: z.number().optional(),
+  optimisticClientConversationId: z.string().nullable().optional(),
 });
 const conversationIdSchema = z.custom<Id<"conversations">>(
   (value) => typeof value === "string"
@@ -174,6 +175,11 @@ function ConversationThread() {
   const optimisticClientMessageId =
     optimisticState?.optimisticClientMessageId ?? null;
   const optimisticCreatedAt = optimisticState?.optimisticCreatedAt ?? Date.now();
+  const optimisticClientConversationId =
+    optimisticState?.optimisticClientConversationId ??
+    (isOptimisticConversation
+      ? conversationIdParam.slice(OPTIMISTIC_CONVERSATION_PREFIX.length)
+      : null);
   const detail = useQuery(
     api.conversations.getDetail,
     isOptimisticConversation
@@ -192,6 +198,8 @@ function ConversationThread() {
           conversationId,
         }
   );
+  const conversation = detail?.conversation ?? null;
+  const sandbox = detail?.sandbox ?? null;
 
   const { results, status, loadMore } = usePaginatedQuery(
     api.conversationMessages.listByConversationPaginated,
@@ -220,13 +228,8 @@ function ConversationThread() {
       : { teamSlugOrId, conversationId, numItems: RAW_EVENTS_PAGE_SIZE }
   );
 
-  // Data is ready when both first-page queries have resolved (skip for optimistic)
-  const isDataReady =
-    isOptimisticConversation ||
-    (firstPageMessages !== undefined && firstPageRawEvents !== undefined);
-
   const optimisticMessage = useMemo(() => {
-    if (!isOptimisticConversation || !optimisticText) return null;
+    if (!optimisticText) return null;
     return {
       _id: ((optimisticClientMessageId ??
         `client-message-${optimisticCreatedAt}`) as Id<"conversationMessages">),
@@ -245,7 +248,6 @@ function ConversationThread() {
     } satisfies Doc<"conversationMessages">;
   }, [
     conversationId,
-    isOptimisticConversation,
     optimisticClientMessageId,
     optimisticCreatedAt,
     optimisticText,
@@ -313,14 +315,18 @@ function ConversationThread() {
   );
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
   const convex = useConvex();
-
-  const conversation = detail?.conversation ?? null;
-  const sandbox = detail?.sandbox ?? null;
   const effectivePermissionMode: PermissionMode =
     (conversation?.permissionMode as PermissionMode | undefined) ??
     "auto_allow_always";
 
-  const conversationKey = conversation?.clientConversationId ?? conversationIdParam;
+  const optimisticConversationKey = optimisticClientConversationId
+    ? `${OPTIMISTIC_CONVERSATION_PREFIX}${optimisticClientConversationId}`
+    : null;
+  const conversationKey =
+    optimisticConversationKey ??
+    conversation?.clientConversationId ??
+    conversationIdParam;
+  const conversationResetKey = optimisticConversationKey ?? conversationIdParam;
 
   const [draftsByConversation, setDraftsByConversation] = useState<
     Map<string, DraftState>
@@ -605,11 +611,14 @@ function ConversationThread() {
     [conversationId, retryMessage]
   );
 
+  const shouldUseOptimisticMessage =
+    Boolean(optimisticMessage && optimisticClientConversationId) &&
+    (isOptimisticConversation ||
+      conversation === null ||
+      conversation?.clientConversationId === optimisticClientConversationId);
+
   const visibleMessages = useMemo(() => {
-    if (!isOptimisticConversation) {
-      return messages;
-    }
-    if (!optimisticMessage) {
+    if (!shouldUseOptimisticMessage || !optimisticMessage) {
       return messages;
     }
     const matchesClientId =
@@ -622,7 +631,7 @@ function ConversationThread() {
       return messages;
     }
     return [optimisticMessage, ...messages];
-  }, [isOptimisticConversation, messages, optimisticMessage]);
+  }, [messages, optimisticMessage, shouldUseOptimisticMessage]);
 
   const toolCalls = useMemo<ToolCallEntry[]>(() => {
     if (rawEvents.length === 0) return [];
@@ -976,12 +985,12 @@ function ConversationThread() {
       {combinedItems.map((item) =>
         item.kind === "stream" ? (
           <StreamingConversationMessage
-            key={`stream-${item.message.lastSeq}`}
+            key={`stream-${item.message.createdAt}`}
             message={item.message}
           />
         ) : item.kind === "server" ? (
           <ConversationMessage
-            key={item.message._id}
+            key={`message-${item.message.clientMessageId ?? item.message._id}`}
             message={item.message}
             isOwn={item.message.role === "user"}
             onRetry={
@@ -1028,6 +1037,12 @@ function ConversationThread() {
       />
     ) : null;
 
+  const hasVisibleMessages = visibleMessages.length > 0;
+  const isDataReady =
+    isOptimisticConversation ||
+    hasVisibleMessages ||
+    (firstPageMessages !== undefined && firstPageRawEvents !== undefined);
+
   // Show loading state while waiting for initial data
   if (!isDataReady) {
     return (
@@ -1045,6 +1060,7 @@ function ConversationThread() {
             scrollContainerRef={scrollContainerRef}
             loadMoreRef={loadMoreRef}
             isLoadingMore={false}
+            resetKey={conversationResetKey}
           />
         </div>
       </div>
@@ -1056,7 +1072,6 @@ function ConversationThread() {
     <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden lg:flex-row">
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
         <ChatLayout
-          key={conversationIdParam}
           header={headerContent}
           messages={messagesContent}
           composer={composerContent}
@@ -1065,6 +1080,7 @@ function ConversationThread() {
           loadMoreRef={loadMoreRef}
           isLoadingMore={status === "LoadingMore"}
           scrollToBottomOnMount
+          resetKey={conversationResetKey}
         />
       </div>
 
@@ -1117,7 +1133,13 @@ function ConversationMessage({
   );
 
   return (
-    <MessageWrapper isOwn={isOwn} footer={footer}>
+    <MessageWrapper
+      isOwn={isOwn}
+      footer={footer}
+      messageId={message._id}
+      messageKey={message.clientMessageId ?? message._id}
+      messageRole={message.role}
+    >
       <MessageContent blocks={message.content} renderMarkdown={!isOwn} />
     </MessageWrapper>
   );

@@ -21,7 +21,14 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type Ref,
+} from "react";
 import SearchableSelect, {
   type SelectOptionObject,
 } from "@/components/ui/searchable-select";
@@ -400,8 +407,23 @@ export function ConversationsSidebar({
 }: ConversationsSidebarProps) {
   const canLoadMore = status === "CanLoadMore";
 
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
   const isLoadingMore = status === "LoadingMore";
+  const [mutationLogEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    const resetToken = params.get("e2e-reset");
+    if (resetToken && window.__cmuxE2EResetToken !== resetToken) {
+      window.__cmuxMessageMutationLog = [];
+      window.__cmuxE2EResetToken = resetToken;
+    }
+    const enabled = params.get("e2e") === "1" || window.__cmuxE2E === true;
+    if (params.get("e2e") === "1") {
+      window.__cmuxE2E = true;
+    }
+    return enabled;
+  });
   const [isWindowFocused, setIsWindowFocused] = useState(() => {
     if (typeof document === "undefined") return true;
     return document.hasFocus();
@@ -488,6 +510,9 @@ export function ConversationsSidebar({
 
   const pinLeftPx = DEFAULT_PIN_LEFT_PX;
   const pinTopPx = DEFAULT_PIN_TOP_PX;
+  const handleListRef = useCallback((node: HTMLDivElement | null) => {
+    setListElement(node);
+  }, []);
 
   return (
     <aside className="flex h-dvh w-full flex-col border-b border-neutral-200/70 bg-white dark:border-neutral-800/70 dark:bg-neutral-950 md:w-[320px] md:border-b-0 md:border-r">
@@ -595,10 +620,190 @@ export function ConversationsSidebar({
             status={status}
             pinLeftPx={pinLeftPx}
             pinTopPx={pinTopPx}
+            listRef={handleListRef}
           />
         )}
       </div>
+      <ConversationListMutationLog
+        enabled={mutationLogEnabled}
+        listElement={listElement}
+      />
     </aside>
+  );
+}
+
+type ConversationMutationRef = {
+  conversationId: string;
+  clientConversationId: string | null;
+};
+
+type ConversationMutationItem = ConversationMutationRef & {
+  title: string;
+  preview: string;
+};
+
+type ConversationMutationSnapshot = {
+  at: number;
+  reason: "init" | "mutation";
+  items: ConversationMutationItem[];
+  added: ConversationMutationRef[];
+  removed: ConversationMutationRef[];
+};
+
+const MAX_CONVERSATION_MUTATION_LOG_ENTRIES = 200;
+
+function normalizeClientConversationId(value: string | undefined): string | null {
+  if (!value) return null;
+  return value;
+}
+
+function collectConversationItems(
+  container: HTMLElement
+): ConversationMutationItem[] {
+  const items: ConversationMutationItem[] = [];
+  const elements = container.querySelectorAll<HTMLElement>(
+    "[data-conversation-id]"
+  );
+  for (const element of elements) {
+    const conversationId = element.dataset.conversationId;
+    if (!conversationId) continue;
+    items.push({
+      conversationId,
+      clientConversationId: normalizeClientConversationId(
+        element.dataset.clientConversationId
+      ),
+      title: element.dataset.conversationTitle ?? "",
+      preview: element.dataset.conversationPreview ?? "",
+    });
+  }
+  return items;
+}
+
+function upsertConversationRef(
+  target: Map<string, ConversationMutationRef>,
+  conversationId: string,
+  clientConversationId: string | null
+) {
+  const key = `${conversationId}::${clientConversationId ?? ""}`;
+  if (!target.has(key)) {
+    target.set(key, { conversationId, clientConversationId });
+  }
+}
+
+function collectConversationRefsFromNode(
+  node: Node,
+  target: Map<string, ConversationMutationRef>
+) {
+  if (!(node instanceof HTMLElement)) return;
+  const nodes: HTMLElement[] = [];
+  if (node.dataset.conversationId) {
+    nodes.push(node);
+  }
+  const childNodes = node.querySelectorAll<HTMLElement>(
+    "[data-conversation-id]"
+  );
+  for (const child of childNodes) {
+    nodes.push(child);
+  }
+  for (const element of nodes) {
+    const conversationId = element.dataset.conversationId;
+    if (!conversationId) continue;
+    upsertConversationRef(
+      target,
+      conversationId,
+      normalizeClientConversationId(element.dataset.clientConversationId)
+    );
+  }
+}
+
+// E2E-only mutation log for catching sidebar row flashes/duplicates.
+function ConversationListMutationLog({
+  enabled,
+  listElement,
+}: {
+  enabled: boolean;
+  listElement: HTMLDivElement | null;
+}) {
+  const logRef = useRef<ConversationMutationSnapshot[]>([]);
+  const logTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingAddedRef = useRef<Map<string, ConversationMutationRef>>(
+    new Map()
+  );
+  const pendingRemovedRef = useRef<Map<string, ConversationMutationRef>>(
+    new Map()
+  );
+  const rafPendingRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const list = listElement;
+    const logTextarea = logTextareaRef.current;
+    if (!list || !logTextarea) return;
+
+    const recordSnapshot = (reason: "init" | "mutation") => {
+      const items = collectConversationItems(list);
+      const added = Array.from(pendingAddedRef.current.values());
+      const removed = Array.from(pendingRemovedRef.current.values());
+      pendingAddedRef.current.clear();
+      pendingRemovedRef.current.clear();
+      const entry: ConversationMutationSnapshot = {
+        at: Date.now(),
+        reason,
+        items,
+        added,
+        removed,
+      };
+      const nextLog = [...logRef.current, entry].slice(
+        -MAX_CONVERSATION_MUTATION_LOG_ENTRIES
+      );
+      logRef.current = nextLog;
+      logTextarea.value = JSON.stringify(nextLog);
+    };
+
+    const scheduleSnapshot = () => {
+      if (rafPendingRef.current) return;
+      rafPendingRef.current = true;
+      window.requestAnimationFrame(() => {
+        rafPendingRef.current = false;
+        recordSnapshot("mutation");
+      });
+    };
+
+    recordSnapshot("init");
+
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          collectConversationRefsFromNode(node, pendingAddedRef.current);
+        }
+        for (const node of record.removedNodes) {
+          collectConversationRefsFromNode(node, pendingRemovedRef.current);
+        }
+      }
+      scheduleSnapshot();
+    });
+
+    observer.observe(list, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+    });
+
+    return () => observer.disconnect();
+  }, [enabled, listElement]);
+
+  if (!enabled) return null;
+
+  return (
+    <textarea
+      ref={logTextareaRef}
+      aria-label="conversation mutation log"
+      data-testid="conversation-mutation-log"
+      readOnly
+      defaultValue="[]"
+      className="sr-only"
+    />
   );
 }
 
@@ -610,6 +815,7 @@ interface ConversationListProps {
   status: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
   pinLeftPx: number;
   pinTopPx: number;
+  listRef: Ref<HTMLDivElement>;
 }
 
 function ConversationList({
@@ -620,11 +826,12 @@ function ConversationList({
   status,
   pinLeftPx,
   pinTopPx,
+  listRef,
 }: ConversationListProps) {
   const isLoadingMore = status === "LoadingMore";
 
   return (
-    <div>
+    <div ref={listRef} data-testid="conversation-list">
       {entries.map((entry) => (
         <ConversationRow
           key={entry.conversationId}
@@ -1169,6 +1376,10 @@ function ConversationRow({
             onClick={handleLinkClick}
             onMouseEnter={handlePrefetch}
             onFocus={handlePrefetch}
+            data-conversation-id={entry.conversationId}
+            data-client-conversation-id={entry.clientConversationId ?? ""}
+            data-conversation-title={displayTitle}
+            data-conversation-preview={subtitle}
             className={clsx(
               "group relative flex h-20 items-center gap-3 border-b border-neutral-200/70 pl-6 pr-4 transition-colors",
               "hover:bg-neutral-100/80 dark:border-neutral-800/70 dark:hover:bg-neutral-900/60",

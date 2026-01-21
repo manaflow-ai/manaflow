@@ -18,12 +18,102 @@ type ChatLayoutProps = {
   isLoadingMore: boolean;
   scrollContainerRef?: MutableRefObject<HTMLElement | null>;
   scrollToBottomOnMount?: boolean;
+  resetKey?: string;
 };
 
 const MAX_WIDTH = "max-w-3xl";
 
 /** Threshold in pixels from bottom to consider "at bottom" */
 const AT_BOTTOM_THRESHOLD = 8;
+
+type MessageMutationRef = {
+  messageId: string;
+  messageKey: string | null;
+};
+
+type MessageMutationItem = MessageMutationRef & {
+  role: string | null;
+  text: string;
+};
+
+type MessageMutationSnapshot = {
+  at: number;
+  reason: "init" | "mutation";
+  items: MessageMutationItem[];
+  added: MessageMutationRef[];
+  removed: MessageMutationRef[];
+};
+
+declare global {
+  interface Window {
+    __cmuxE2E?: boolean;
+    __cmuxE2EResetToken?: string;
+    __cmuxMessageMutationLog?: MessageMutationSnapshot[];
+  }
+}
+
+const MAX_MESSAGE_MUTATION_LOG_ENTRIES = 300;
+
+function normalizeMessageKey(value: string | undefined): string | null {
+  if (!value) return null;
+  return value;
+}
+
+function normalizeMessageRole(value: string | undefined): string | null {
+  if (!value) return null;
+  return value;
+}
+
+function collectMessageItems(container: HTMLElement): MessageMutationItem[] {
+  const items: MessageMutationItem[] = [];
+  const elements = container.querySelectorAll<HTMLElement>("[data-message-id]");
+  for (const element of elements) {
+    const messageId = element.dataset.messageId;
+    if (!messageId) continue;
+    items.push({
+      messageId,
+      messageKey: normalizeMessageKey(element.dataset.messageKey),
+      role: normalizeMessageRole(element.dataset.messageRole),
+      text: element.textContent?.trim() ?? "",
+    });
+  }
+  return items;
+}
+
+function upsertMessageRef(
+  target: Map<string, MessageMutationRef>,
+  messageId: string,
+  messageKey: string | null
+) {
+  const key = `${messageId}::${messageKey ?? ""}`;
+  if (!target.has(key)) {
+    target.set(key, { messageId, messageKey });
+  }
+}
+
+function collectMessageRefsFromNode(
+  node: Node,
+  target: Map<string, MessageMutationRef>
+) {
+  if (!(node instanceof HTMLElement)) return;
+  const nodes: HTMLElement[] = [];
+  if (node.dataset.messageId) {
+    nodes.push(node);
+  }
+  const childNodes = node.querySelectorAll<HTMLElement>("[data-message-id]");
+  for (const child of childNodes) {
+    nodes.push(child);
+  }
+  for (const element of nodes) {
+    const messageId = element.dataset.messageId;
+    if (!messageId) continue;
+    upsertMessageRef(
+      target,
+      messageId,
+      normalizeMessageKey(element.dataset.messageKey)
+    );
+  }
+}
 
 export function ChatLayout({
   header,
@@ -34,13 +124,29 @@ export function ChatLayout({
   isLoadingMore,
   scrollContainerRef,
   scrollToBottomOnMount,
+  resetKey,
 }: ChatLayoutProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomSentinelRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
   const hasScrolledToBottomRef = useRef(false);
+  const lastResetKeyRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef(false);
+  const [mutationLogEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    const resetToken = params.get("e2e-reset");
+    if (resetToken && window.__cmuxE2EResetToken !== resetToken) {
+      window.__cmuxMessageMutationLog = [];
+      window.__cmuxE2EResetToken = resetToken;
+    }
+    const enabled = params.get("e2e") === "1" || window.__cmuxE2E === true;
+    if (params.get("e2e") === "1") {
+      window.__cmuxE2E = true;
+    }
+    return enabled;
+  });
   const userScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -80,6 +186,21 @@ export function ChatLayout({
       });
     }
   }, []);
+
+  useLayoutEffect(() => {
+    if (!resetKey) return;
+    if (lastResetKeyRef.current === resetKey) return;
+    lastResetKeyRef.current = resetKey;
+    hasScrolledToBottomRef.current = false;
+    prevScrollHeightRef.current = 0;
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
+    isUserScrollingRef.current = false;
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current);
+      userScrollTimeoutRef.current = null;
+    }
+  }, [resetKey]);
 
   // Handle scroll events
   const handleScroll = useCallback(() => {
@@ -211,6 +332,104 @@ export function ChatLayout({
           </div>
         </div>
       </div>
+      <MessageMutationLog enabled={mutationLogEnabled} />
     </div>
+  );
+}
+
+// E2E-only mutation log for detecting message flashes/duplicates.
+function MessageMutationLog({
+  enabled,
+}: {
+  enabled: boolean;
+}) {
+  const logRef = useRef<MessageMutationSnapshot[]>([]);
+  const logTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingAddedRef = useRef<Map<string, MessageMutationRef>>(
+    new Map()
+  );
+  const pendingRemovedRef = useRef<Map<string, MessageMutationRef>>(
+    new Map()
+  );
+  const rafPendingRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (typeof window === "undefined") return;
+    const container = document.body;
+    const logTextarea = logTextareaRef.current;
+    if (!container || !logTextarea) return;
+
+    const storedLog = window.__cmuxMessageMutationLog;
+    if (storedLog && storedLog.length > 0) {
+      logRef.current = storedLog;
+      logTextarea.value = JSON.stringify(storedLog);
+    }
+
+    const recordSnapshot = (reason: "init" | "mutation") => {
+      const items = collectMessageItems(container);
+      const added = Array.from(pendingAddedRef.current.values());
+      const removed = Array.from(pendingRemovedRef.current.values());
+      pendingAddedRef.current.clear();
+      pendingRemovedRef.current.clear();
+      const entry: MessageMutationSnapshot = {
+        at: Date.now(),
+        reason,
+        items,
+        added,
+        removed,
+      };
+      const nextLog = [...logRef.current, entry].slice(
+        -MAX_MESSAGE_MUTATION_LOG_ENTRIES
+      );
+      logRef.current = nextLog;
+      window.__cmuxMessageMutationLog = nextLog;
+      logTextarea.value = JSON.stringify(nextLog);
+    };
+
+    const scheduleSnapshot = () => {
+      if (rafPendingRef.current) return;
+      rafPendingRef.current = true;
+      window.requestAnimationFrame(() => {
+        rafPendingRef.current = false;
+        recordSnapshot("mutation");
+      });
+    };
+
+    recordSnapshot("init");
+
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          collectMessageRefsFromNode(node, pendingAddedRef.current);
+        }
+        for (const node of record.removedNodes) {
+          collectMessageRefsFromNode(node, pendingRemovedRef.current);
+        }
+      }
+      scheduleSnapshot();
+    });
+
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+    });
+
+    return () => observer.disconnect();
+  }, [enabled]);
+
+  if (!enabled) return null;
+
+  return (
+    <textarea
+      ref={logTextareaRef}
+      aria-label="message mutation log"
+      data-testid="message-mutation-log"
+      readOnly
+      defaultValue="[]"
+      className="sr-only"
+    />
   );
 }
