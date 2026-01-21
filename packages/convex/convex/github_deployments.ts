@@ -74,11 +74,21 @@ export const upsertDeploymentFromWebhook = internalMutation({
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
       .collect();
 
+    const action = existingRecords.length > 0 ? "update" : "insert";
+    console.log("[occ-debug:deployments]", {
+      deploymentId,
+      repoFullName,
+      teamId,
+      existingCount: existingRecords.length,
+      action,
+      environment: deploymentDoc.environment,
+    });
+
     if (existingRecords.length > 0) {
       await ctx.db.patch(existingRecords[0]._id, deploymentDoc);
 
       if (existingRecords.length > 1) {
-        console.warn("[upsertDeployment] Found duplicates, cleaning up", {
+        console.warn("[occ-debug:deployments] duplicates", {
           deploymentId,
           count: existingRecords.length,
           duplicateIds: existingRecords.slice(1).map(r => r._id),
@@ -128,6 +138,16 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
       .collect();
 
+    const action = existingRecords.length > 0 ? "update" : "insert";
+    console.log("[occ-debug:deployment_status]", {
+      deploymentId,
+      repoFullName,
+      teamId,
+      existingCount: existingRecords.length,
+      action,
+      state: normalizedState,
+    });
+
     if (existingRecords.length > 0) {
       await ctx.db.patch(existingRecords[0]._id, {
         state: normalizedState,
@@ -139,7 +159,7 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
       });
 
       if (existingRecords.length > 1) {
-        console.warn("[updateDeploymentStatus] Found duplicates, cleaning up", {
+        console.warn("[occ-debug:deployment_status] duplicates", {
           deploymentId,
           count: existingRecords.length,
           duplicateIds: existingRecords.slice(1).map(r => r._id),

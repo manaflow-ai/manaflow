@@ -304,6 +304,15 @@ export const updateRepoActivityFromWebhook = internalMutation({
       .withIndex("by_team", (q) => q.eq("teamId", teamId))
       .filter((q) => q.eq(q.field("fullName"), repoFullName))
       .first();
+
+    console.log("[occ-debug:repos]", {
+      repoFullName,
+      teamId,
+      repoFound: !!repo,
+      pushedAt,
+      providerRepoId,
+    });
+
     if (!repo) {
       return { updated: false as const };
     }
@@ -325,9 +334,15 @@ export const updateRepoActivityFromWebhook = internalMutation({
     }
 
     if (Object.keys(patch).length === 0) {
+      console.log("[occ-debug:repos] no-op", { repoFullName, teamId });
       return { updated: false as const };
     }
 
+    console.log("[occ-debug:repos] patching", {
+      repoFullName,
+      teamId,
+      patchKeys: Object.keys(patch),
+    });
     await ctx.db.patch(repo._id, patch);
     return { updated: true as const };
   },

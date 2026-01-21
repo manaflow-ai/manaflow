@@ -116,13 +116,24 @@ export const upsertCheckRunFromWebhook = internalMutation({
       .withIndex("by_checkRunId", (q) => q.eq("checkRunId", checkRunId))
       .collect();
 
+    const action = existingRecords.length > 0 ? "update" : "insert";
+    console.log("[occ-debug:check_runs]", {
+      checkRunId,
+      repoFullName,
+      teamId,
+      existingCount: existingRecords.length,
+      action,
+      status: checkRunDoc.status,
+      conclusion: checkRunDoc.conclusion,
+    });
+
     if (existingRecords.length > 0) {
       // Update the first record
       await ctx.db.patch(existingRecords[0]._id, checkRunDoc);
 
       // Delete any duplicates
       if (existingRecords.length > 1) {
-        console.warn("[upsertCheckRun] Found duplicates, cleaning up", {
+        console.warn("[occ-debug:check_runs] duplicates", {
           checkRunId,
           count: existingRecords.length,
           duplicateIds: existingRecords.slice(1).map(r => r._id),
