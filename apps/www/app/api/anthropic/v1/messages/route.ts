@@ -68,18 +68,22 @@ export async function POST(request: NextRequest) {
 
   if (!TEMPORARY_DISABLE_AUTH && !tokenPayload) {
     console.error("[anthropic proxy] Auth error: Missing or invalid token");
-    void trackAnthropicProxyRequest({
-      teamId: "unknown",
-      userId: "unknown",
-      taskRunId: "unknown",
-      source,
-      model: "unknown",
-      stream: false,
-      isOAuthToken: false,
-      responseStatus: 401,
-      latencyMs: Date.now() - startTime,
-      errorType: "auth_error",
-    });
+    // Only track in www when using Cloudflare directly (not forwarding to Convex)
+    // Convex proxy handles tracking for the Convex path to avoid double counting
+    if (USE_CLOUDFLARE_AI_GATEWAY) {
+      void trackAnthropicProxyRequest({
+        teamId: "unknown",
+        userId: "unknown",
+        taskRunId: "unknown",
+        source,
+        model: "unknown",
+        stream: false,
+        isOAuthToken: false,
+        responseStatus: 401,
+        latencyMs: Date.now() - startTime,
+        errorType: "auth_error",
+      });
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -138,18 +142,21 @@ export async function POST(request: NextRequest) {
 
     // Handle streaming responses
     if (body.stream && response.ok) {
-      // Track streaming request (token counts not available for streaming)
-      void trackAnthropicProxyRequest({
-        teamId: tokenPayload?.teamId ?? "unknown",
-        userId: tokenPayload?.userId ?? "unknown",
-        taskRunId: tokenPayload?.taskRunId ?? "unknown",
-        source,
-        model: body.model ?? "unknown",
-        stream: true,
-        isOAuthToken,
-        responseStatus: response.status,
-        latencyMs: Date.now() - startTime,
-      });
+      // Only track in www when using Cloudflare directly (not forwarding to Convex)
+      // Convex proxy handles tracking for the Convex path to avoid double counting
+      if (USE_CLOUDFLARE_AI_GATEWAY) {
+        void trackAnthropicProxyRequest({
+          teamId: tokenPayload?.teamId ?? "unknown",
+          userId: tokenPayload?.userId ?? "unknown",
+          taskRunId: tokenPayload?.taskRunId ?? "unknown",
+          source,
+          model: body.model ?? "unknown",
+          stream: true,
+          isOAuthToken,
+          responseStatus: response.status,
+          latencyMs: Date.now() - startTime,
+        });
+      }
 
       // Create a TransformStream to pass through the SSE data
       const stream = new ReadableStream({
@@ -190,53 +197,64 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       console.error("[anthropic proxy] Anthropic error:", data);
+      // Only track in www when using Cloudflare directly (not forwarding to Convex)
+      // Convex proxy handles tracking for the Convex path to avoid double counting
+      if (USE_CLOUDFLARE_AI_GATEWAY) {
+        void trackAnthropicProxyRequest({
+          teamId: tokenPayload?.teamId ?? "unknown",
+          userId: tokenPayload?.userId ?? "unknown",
+          taskRunId: tokenPayload?.taskRunId ?? "unknown",
+          source,
+          model: body.model ?? "unknown",
+          stream: false,
+          isOAuthToken,
+          responseStatus: response.status,
+          latencyMs: Date.now() - startTime,
+          errorType: data?.error?.type ?? "anthropic_error",
+        });
+      }
+      return NextResponse.json(data, { status: response.status });
+    }
+
+    // Only track in www when using Cloudflare directly (not forwarding to Convex)
+    // Convex proxy handles tracking for the Convex path to avoid double counting
+    if (USE_CLOUDFLARE_AI_GATEWAY) {
       void trackAnthropicProxyRequest({
         teamId: tokenPayload?.teamId ?? "unknown",
         userId: tokenPayload?.userId ?? "unknown",
         taskRunId: tokenPayload?.taskRunId ?? "unknown",
         source,
-        model: body.model ?? "unknown",
+        model: data.model ?? body.model ?? "unknown",
         stream: false,
         isOAuthToken,
         responseStatus: response.status,
         latencyMs: Date.now() - startTime,
-        errorType: data?.error?.type ?? "anthropic_error",
+        inputTokens: data.usage?.input_tokens,
+        outputTokens: data.usage?.output_tokens,
+        cacheCreationInputTokens: data.usage?.cache_creation_input_tokens,
+        cacheReadInputTokens: data.usage?.cache_read_input_tokens,
       });
-      return NextResponse.json(data, { status: response.status });
     }
-
-    // Track successful non-streaming request with token usage
-    void trackAnthropicProxyRequest({
-      teamId: tokenPayload?.teamId ?? "unknown",
-      userId: tokenPayload?.userId ?? "unknown",
-      taskRunId: tokenPayload?.taskRunId ?? "unknown",
-      source,
-      model: data.model ?? body.model ?? "unknown",
-      stream: false,
-      isOAuthToken,
-      responseStatus: response.status,
-      latencyMs: Date.now() - startTime,
-      inputTokens: data.usage?.input_tokens,
-      outputTokens: data.usage?.output_tokens,
-      cacheCreationInputTokens: data.usage?.cache_creation_input_tokens,
-      cacheReadInputTokens: data.usage?.cache_read_input_tokens,
-    });
 
     return NextResponse.json(data);
   } catch (error) {
     console.error("[anthropic proxy] Error:", error);
-    void trackAnthropicProxyRequest({
-      teamId: tokenPayload?.teamId ?? "unknown",
-      userId: tokenPayload?.userId ?? "unknown",
-      taskRunId: tokenPayload?.taskRunId ?? "unknown",
-      source,
-      model: "unknown",
-      stream: false,
-      isOAuthToken: false,
-      responseStatus: 500,
-      latencyMs: Date.now() - startTime,
-      errorType: "proxy_error",
-    });
+    // Only track in www when using Cloudflare directly (not forwarding to Convex)
+    // Convex proxy handles tracking for the Convex path to avoid double counting
+    if (USE_CLOUDFLARE_AI_GATEWAY) {
+      void trackAnthropicProxyRequest({
+        teamId: tokenPayload?.teamId ?? "unknown",
+        userId: tokenPayload?.userId ?? "unknown",
+        taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        source,
+        model: "unknown",
+        stream: false,
+        isOAuthToken: false,
+        responseStatus: 500,
+        latencyMs: Date.now() - startTime,
+        errorType: "proxy_error",
+      });
+    }
     return NextResponse.json(
       { error: "Failed to proxy request to Anthropic" },
       { status: 500 }
