@@ -15,44 +15,88 @@ export const BEDROCK_AWS_REGION = "us-east-1";
 export const BEDROCK_BASE_URL = `https://bedrock-runtime.${BEDROCK_AWS_REGION}.amazonaws.com`;
 
 /**
+ * Bedrock inference profile prefix.
+ * - "us" = US cross-region inference (routes within US regions)
+ * - "global" = Global cross-region inference (routes across all regions)
+ *
+ * US cross-region is preferred because:
+ * - Lower latency for US-based requests
+ * - Separate quota pool from global
+ * - Generally more available capacity
+ *
+ * Can be changed to "global" if US quotas are exhausted.
+ */
+export const BEDROCK_INFERENCE_PROFILE: "us" | "global" = "us";
+
+/**
+ * Base model definitions without inference profile prefix.
+ * The prefix (us/global) is applied dynamically based on BEDROCK_INFERENCE_PROFILE.
+ */
+const BASE_MODELS = {
+  // Claude 4.5 models
+  "sonnet-4-5": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "opus-4-5": "anthropic.claude-opus-4-5-20251101-v1:0",
+  "haiku-4-5": "anthropic.claude-haiku-4-5-20251001-v1:0",
+  // Claude 4 models
+  "sonnet-4": "anthropic.claude-sonnet-4-20250514-v1:0",
+  "opus-4": "anthropic.claude-opus-4-20250514-v1:0",
+  // Claude 3.7 models
+  "sonnet-3-7": "anthropic.claude-3-7-sonnet-20250219-v1:0",
+  // Claude 3.5 models
+  "sonnet-3-5-v2": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+  "sonnet-3-5-v1": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+  "haiku-3-5": "anthropic.claude-3-5-haiku-20241022-v1:0",
+  // Claude 3 models
+  "haiku-3": "anthropic.claude-3-haiku-20240307-v1:0",
+} as const;
+
+/**
+ * Get the full Bedrock model ID with the configured inference profile prefix.
+ */
+function withPrefix(baseModel: string): string {
+  return `${BEDROCK_INFERENCE_PROFILE}.${baseModel}`;
+}
+
+/**
  * Model name mapping from Anthropic API model IDs to AWS Bedrock model IDs.
+ * Uses the configured BEDROCK_INFERENCE_PROFILE prefix.
  */
 export const MODEL_MAP: Record<string, string> = {
   // Sonnet 4.5 variants
-  "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-  "claude-sonnet-4-5": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-  "claude-4-5-sonnet": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "claude-sonnet-4-5-20250929": withPrefix(BASE_MODELS["sonnet-4-5"]),
+  "claude-sonnet-4-5": withPrefix(BASE_MODELS["sonnet-4-5"]),
+  "claude-4-5-sonnet": withPrefix(BASE_MODELS["sonnet-4-5"]),
   // Opus 4.5 variants
-  "claude-opus-4-5-20251101": "global.anthropic.claude-opus-4-5-20251101-v1:0",
-  "claude-opus-4-5": "global.anthropic.claude-opus-4-5-20251101-v1:0",
-  "claude-4-5-opus": "global.anthropic.claude-opus-4-5-20251101-v1:0",
+  "claude-opus-4-5-20251101": withPrefix(BASE_MODELS["opus-4-5"]),
+  "claude-opus-4-5": withPrefix(BASE_MODELS["opus-4-5"]),
+  "claude-4-5-opus": withPrefix(BASE_MODELS["opus-4-5"]),
   // Haiku 4.5 variants
-  "claude-haiku-4-5-20251001": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "claude-haiku-4-5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "claude-4-5-haiku": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "claude-haiku-4-5-20251001": withPrefix(BASE_MODELS["haiku-4-5"]),
+  "claude-haiku-4-5": withPrefix(BASE_MODELS["haiku-4-5"]),
+  "claude-4-5-haiku": withPrefix(BASE_MODELS["haiku-4-5"]),
   // Sonnet 4 variants
-  "claude-sonnet-4-20250514": "us.anthropic.claude-sonnet-4-20250514-v1:0",
-  "claude-sonnet-4": "us.anthropic.claude-sonnet-4-20250514-v1:0",
-  "claude-4-sonnet": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+  "claude-sonnet-4-20250514": withPrefix(BASE_MODELS["sonnet-4"]),
+  "claude-sonnet-4": withPrefix(BASE_MODELS["sonnet-4"]),
+  "claude-4-sonnet": withPrefix(BASE_MODELS["sonnet-4"]),
   // Opus 4 variants
-  "claude-opus-4-20250514": "us.anthropic.claude-opus-4-20250514-v1:0",
-  "claude-opus-4": "us.anthropic.claude-opus-4-20250514-v1:0",
-  "claude-4-opus": "us.anthropic.claude-opus-4-20250514-v1:0",
+  "claude-opus-4-20250514": withPrefix(BASE_MODELS["opus-4"]),
+  "claude-opus-4": withPrefix(BASE_MODELS["opus-4"]),
+  "claude-4-opus": withPrefix(BASE_MODELS["opus-4"]),
   // Sonnet 3.7 variants
-  "claude-3-7-sonnet-20250219": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
-  "claude-3-7-sonnet": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+  "claude-3-7-sonnet-20250219": withPrefix(BASE_MODELS["sonnet-3-7"]),
+  "claude-3-7-sonnet": withPrefix(BASE_MODELS["sonnet-3-7"]),
   // Sonnet 3.5 variants (v2)
-  "claude-3-5-sonnet-20241022": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-  "claude-3-5-sonnet-v2": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+  "claude-3-5-sonnet-20241022": withPrefix(BASE_MODELS["sonnet-3-5-v2"]),
+  "claude-3-5-sonnet-v2": withPrefix(BASE_MODELS["sonnet-3-5-v2"]),
   // Sonnet 3.5 variants (v1)
-  "claude-3-5-sonnet-20240620": "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
-  "claude-3-5-sonnet": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+  "claude-3-5-sonnet-20240620": withPrefix(BASE_MODELS["sonnet-3-5-v1"]),
+  "claude-3-5-sonnet": withPrefix(BASE_MODELS["sonnet-3-5-v2"]),
   // Haiku 3.5 variants
-  "claude-3-5-haiku-20241022": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-  "claude-3-5-haiku": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+  "claude-3-5-haiku-20241022": withPrefix(BASE_MODELS["haiku-3-5"]),
+  "claude-3-5-haiku": withPrefix(BASE_MODELS["haiku-3-5"]),
   // Haiku 3 variants
-  "claude-3-haiku-20240307": "us.anthropic.claude-3-haiku-20240307-v1:0",
-  "claude-3-haiku": "us.anthropic.claude-3-haiku-20240307-v1:0",
+  "claude-3-haiku-20240307": withPrefix(BASE_MODELS["haiku-3"]),
+  "claude-3-haiku": withPrefix(BASE_MODELS["haiku-3"]),
 };
 
 /**
