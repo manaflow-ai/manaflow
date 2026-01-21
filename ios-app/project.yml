@@ -5,6 +5,16 @@ options:
     iOS: "26.0"
   xcodeVersion: "16.0"
 
+schemes:
+  cmux:
+    build:
+      targets:
+        cmux: all
+    test:
+      targets:
+        - cmuxTests
+        - cmuxUITests
+
 configs:
   Debug: debug
   Beta: release
@@ -69,6 +79,18 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+  cmuxTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - cmuxTests
+    dependencies:
+      - target: cmux
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/cmux DEV.app/cmux DEV"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   cmuxUITests:
     type: bundle.ui-testing
     platform: iOS

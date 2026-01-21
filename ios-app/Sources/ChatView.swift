@@ -61,12 +61,18 @@ struct MessageBubble: View {
             HStack(alignment: .bottom, spacing: 4) {
                 if message.isFromMe { Spacer(minLength: 60) }
 
-                Text(message.content)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(message.isFromMe ? Color.blue : Color(.systemGray5))
-                    .foregroundStyle(message.isFromMe ? .white : .primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Group {
+                    if message.isFromMe {
+                        Text(message.content)
+                            .foregroundStyle(.white)
+                    } else {
+                        AssistantMarkdownView(text: message.content)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(message.isFromMe ? Color.blue : Color(.systemGray5))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
                 if !message.isFromMe { Spacer(minLength: 60) }
             }

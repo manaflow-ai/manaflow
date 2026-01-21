@@ -28,12 +28,14 @@
 		8030869706BE8FD94533D58A /* ChatApproachI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9788FAF68766BFAA9A451A8D /* ChatApproachI.swift */; };
 		83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E20F7A729081D044495605 /* CMuxApp.swift */; };
 		8424B24C0FAE9429670DADCD /* ConvexGeneratedTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59F90F1B493E1462D1AD361 /* ConvexGeneratedTypes.swift */; };
+		846AE6439CD0C2B3C6D6F0B7 /* AssistantMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B41842AC501554C1AED8DF /* AssistantMarkdownView.swift */; };
 		88192500271447E51CF6B653 /* LocalConfig.example.plist in Resources */ = {isa = PBXBuildFile; fileRef = D01F9176DE666BAE97AA807B /* LocalConfig.example.plist */; };
 		8B6A74AEAD4EC07300279462 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 2AB0CD82D816F53E55B1E103 /* Sentry */; };
 		8C11E78F09BA811A5EBC33CC /* ChatFix1MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */; };
 		8DF015A1566E9F288F30C460 /* DebugSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAECD9944A3CB4779597B8A3 /* DebugSettings.swift */; };
 		8FB1CB1D89D93D703FFE61BA /* ChatFix3_AdjustedContentInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */; };
 		9A0A85BFEEC1B1AE2E063847 /* ConversationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B2D4A0933DB97461CCAB77 /* ConversationsViewModel.swift */; };
+		B33E95CE38F4CD0028692606 /* AssistantMarkdownParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 886DCFDB1E85AF3B4A4C7815 /* AssistantMarkdownParserTests.swift */; };
 		C335C06261DCD7CA24B1D003 /* UITestConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */; };
 		C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88ED9D7168B6FC097B490637 /* SignInView.swift */; };
 		CC62BB48ED0957484E001EFB /* ConversationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D3B3CB64500DDB27D7C781 /* ConversationE2ETests.swift */; };
@@ -59,6 +61,13 @@
 			remoteGlobalIDString = D6E5ED0C8EADF9B00BC1627F;
 			remoteInfo = cmux;
 		};
+		F95401833265F5A77B9E656A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0BC297CC62DC5C500BBEB719 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D6E5ED0C8EADF9B00BC1627F;
+			remoteInfo = cmux;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -76,9 +85,11 @@
 		4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConfig.swift; sourceTree = "<group>"; };
 		5D62642C09CEB3EB28FD2733 /* ConversationReadOverrides.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationReadOverrides.swift; sourceTree = "<group>"; };
 		6679E0C9833E77D4A4295D4C /* ConvexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexClient.swift; sourceTree = "<group>"; };
+		72B41842AC501554C1AED8DF /* AssistantMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownView.swift; sourceTree = "<group>"; };
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDebugMenu.swift; sourceTree = "<group>"; };
+		886DCFDB1E85AF3B4A4C7815 /* AssistantMarkdownParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownParserTests.swift; sourceTree = "<group>"; };
 		88ED9D7168B6FC097B490637 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix3_AdjustedContentInset.swift; sourceTree = "<group>"; };
 		8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI_Fix1Default.swift; sourceTree = "<group>"; };
@@ -91,6 +102,7 @@
 		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B79B9D0409D6912DC37DC5B0 /* UITestMockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestMockData.swift; sourceTree = "<group>"; };
 		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
+		BAD03EB210A4715A9AAA35B3 /* cmuxTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = cmuxTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
 		C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSyncUITests.swift; sourceTree = "<group>"; };
@@ -123,9 +135,18 @@
 			isa = PBXGroup;
 			children = (
 				46410B90D2F45E6882E585AD /* cmux.app */,
+				BAD03EB210A4715A9AAA35B3 /* cmuxTests.xctest */,
 				EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		2CD5B23C9608DC476B35534A /* cmuxTests */ = {
+			isa = PBXGroup;
+			children = (
+				886DCFDB1E85AF3B4A4C7815 /* AssistantMarkdownParserTests.swift */,
+			);
+			path = cmuxTests;
 			sourceTree = "<group>";
 		};
 		3EC041CE7CBA01395A239037 /* cmuxUITests */ = {
@@ -163,6 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */,
+				2CD5B23C9608DC476B35534A /* cmuxTests */,
 				3EC041CE7CBA01395A239037 /* cmuxUITests */,
 				F80B6A470B95146C17D0BE5A /* Sources */,
 				0F1AEEAEEF55364C5E4029D3 /* Products */,
@@ -221,6 +243,7 @@
 		F80B6A470B95146C17D0BE5A /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				72B41842AC501554C1AED8DF /* AssistantMarkdownView.swift */,
 				4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */,
 				AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */,
 				0BE5CB8A89417C399DB8D166 /* ChatView.swift */,
@@ -242,6 +265,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0FE496511A0BF7536BD31352 /* cmuxTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DF156F815023F84E8A3322F2 /* Build configuration list for PBXNativeTarget "cmuxTests" */;
+			buildPhases = (
+				DE07B2D30E06494A6AE38629 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DC81B8079CA2290BE3D26F8C /* PBXTargetDependency */,
+			);
+			name = cmuxTests;
+			packageProductDependencies = (
+			);
+			productName = cmuxTests;
+			productReference = BAD03EB210A4715A9AAA35B3 /* cmuxTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		D6E5ED0C8EADF9B00BC1627F /* cmux */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B8D38E764907D8415FC65997 /* Build configuration list for PBXNativeTarget "cmux" */;
@@ -317,6 +358,7 @@
 			projectRoot = "";
 			targets = (
 				D6E5ED0C8EADF9B00BC1627F /* cmux */,
+				0FE496511A0BF7536BD31352 /* cmuxTests */,
 				E59D9C58D7245568106A1197 /* cmuxUITests */,
 			);
 		};
@@ -340,6 +382,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				846AE6439CD0C2B3C6D6F0B7 /* AssistantMarkdownView.swift in Sources */,
 				D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */,
 				83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */,
 				8030869706BE8FD94533D58A /* ChatApproachI.swift in Sources */,
@@ -387,9 +430,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DE07B2D30E06494A6AE38629 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B33E95CE38F4CD0028692606 /* AssistantMarkdownParserTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		DC81B8079CA2290BE3D26F8C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D6E5ED0C8EADF9B00BC1627F /* cmux */;
+			targetProxy = F95401833265F5A77B9E656A /* PBXContainerItemProxy */;
+		};
 		FC82B0E8F8C678BDC002C842 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D6E5ED0C8EADF9B00BC1627F /* cmux */;
@@ -412,6 +468,23 @@
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = cmux;
+			};
+			name = Debug;
+		};
+		0CBBA52AF1889C321EC7598A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cmux.cmuxTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/cmux DEV.app/cmux DEV";
 			};
 			name = Debug;
 		};
@@ -503,6 +576,23 @@
 			};
 			name = Beta;
 		};
+		48B920C9E9FEEF8202E90958 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cmux.cmuxTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/cmux DEV.app/cmux DEV";
+			};
+			name = Release;
+		};
 		6E9CF3EFB0808AD4B2DD0469 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -558,6 +648,23 @@
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
+		};
+		8622CFFC8424FB4F9C853A0E /* Beta */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cmux.cmuxTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/cmux DEV.app/cmux DEV";
+			};
+			name = Beta;
 		};
 		9BA58E73AEA870BAB62DC847 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -725,6 +832,16 @@
 				193F40ACF34DCB0905D44DCF /* Beta */,
 				9BA58E73AEA870BAB62DC847 /* Debug */,
 				A7C26788CC5F8B4C130CC476 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Beta;
+		};
+		DF156F815023F84E8A3322F2 /* Build configuration list for PBXNativeTarget "cmuxTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8622CFFC8424FB4F9C853A0E /* Beta */,
+				0CBBA52AF1889C321EC7598A /* Debug */,
+				48B920C9E9FEEF8202E90958 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Beta;
