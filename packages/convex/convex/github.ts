@@ -299,11 +299,26 @@ export const updateRepoActivityFromWebhook = internalMutation({
     providerRepoId: v.optional(v.number()),
   },
   handler: async (ctx, { teamId, repoFullName, pushedAt, providerRepoId }) => {
-    const repo = await ctx.db
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path (2 records): cleanup only when needed
+    const existingRepos = await ctx.db
       .query("repos")
       .withIndex("by_team", (q) => q.eq("teamId", teamId))
       .filter((q) => q.eq(q.field("fullName"), repoFullName))
-      .first();
+      .take(2);
+
+    // Find the newest record by lastPushedAt/lastSyncedAt (handles duplicates correctly)
+    let repo = existingRepos[0];
+    if (existingRepos.length > 1) {
+      for (const record of existingRepos) {
+        const recordTimestamp = record.lastPushedAt ?? record.lastSyncedAt ?? 0;
+        const existingTimestamp = repo?.lastPushedAt ?? repo?.lastSyncedAt ?? 0;
+        if (recordTimestamp > existingTimestamp) {
+          repo = record;
+        }
+      }
+    }
 
     console.log("[occ-debug:repos]", {
       repoFullName,
@@ -317,34 +332,66 @@ export const updateRepoActivityFromWebhook = internalMutation({
       return { updated: false as const };
     }
 
-    const patch: Partial<Doc<"repos">> = {};
-
-    if (
-      typeof providerRepoId === "number" &&
-      repo.providerRepoId !== providerRepoId
-    ) {
-      patch.providerRepoId = providerRepoId;
-    }
-
-    if (
+    const isStale =
       typeof pushedAt === "number" &&
-      (repo.lastPushedAt === undefined || pushedAt > repo.lastPushedAt)
-    ) {
-      patch.lastPushedAt = pushedAt;
+      typeof repo.lastPushedAt === "number" &&
+      pushedAt <= repo.lastPushedAt &&
+      (typeof providerRepoId !== "number" || repo.providerRepoId === providerRepoId);
+
+    let updated = false;
+
+    if (isStale) {
+      console.log("[occ-debug:repos] skipped-stale", {
+        repoFullName,
+        teamId,
+        existingLastPushedAt: repo.lastPushedAt,
+        incomingPushedAt: pushedAt,
+      });
+    } else {
+      const patch: Partial<Doc<"repos">> = {};
+
+      if (
+        typeof providerRepoId === "number" &&
+        repo.providerRepoId !== providerRepoId
+      ) {
+        patch.providerRepoId = providerRepoId;
+      }
+
+      if (
+        typeof pushedAt === "number" &&
+        (repo.lastPushedAt === undefined || pushedAt > repo.lastPushedAt)
+      ) {
+        patch.lastPushedAt = pushedAt;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        console.log("[occ-debug:repos] no-op", { repoFullName, teamId });
+      } else {
+        console.log("[occ-debug:repos] patching", {
+          repoFullName,
+          teamId,
+          patchKeys: Object.keys(patch),
+        });
+        await ctx.db.patch(repo._id, patch);
+        updated = true;
+      }
     }
 
-    if (Object.keys(patch).length === 0) {
-      console.log("[occ-debug:repos] no-op", { repoFullName, teamId });
-      return { updated: false as const };
+    // Lazy cleanup: delete duplicates only when they exist (keep the newest)
+    if (existingRepos.length > 1) {
+      console.warn("[occ-debug:repos] cleaning-duplicates", {
+        repoFullName,
+        teamId,
+        count: existingRepos.length,
+      });
+      for (const dup of existingRepos) {
+        if (dup._id !== repo._id) {
+          await ctx.db.delete(dup._id);
+        }
+      }
     }
 
-    console.log("[occ-debug:repos] patching", {
-      repoFullName,
-      teamId,
-      patchKeys: Object.keys(patch),
-    });
-    await ctx.db.patch(repo._id, patch);
-    return { updated: true as const };
+    return { updated };
   },
 });
 
