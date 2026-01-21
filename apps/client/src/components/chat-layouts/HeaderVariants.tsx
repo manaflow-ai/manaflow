@@ -119,4 +119,3 @@ function SandboxDot({ status }: { status: ConversationSandboxStatus }) {
 
   return <span className={clsx("h-2 w-2 rounded-full", color)} title={status} />;
 }
-

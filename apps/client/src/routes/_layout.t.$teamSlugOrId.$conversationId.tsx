@@ -46,10 +46,13 @@ const storageIdSchema = z.custom<Id<"_storage">>(
 );
 const uploadResponseSchema = z.object({ storageId: storageIdSchema });
 
+const searchSchema = z.object({});
+
 export const Route = createFileRoute(
   "/_layout/t/$teamSlugOrId/$conversationId"
 )({
   component: ConversationThread,
+  validateSearch: searchSchema,
 });
 
 type PendingImage = {
@@ -217,6 +220,11 @@ function ConversationThread() {
       : { teamSlugOrId, conversationId, numItems: RAW_EVENTS_PAGE_SIZE }
   );
 
+  // Data is ready when both first-page queries have resolved (skip for optimistic)
+  const isDataReady =
+    isOptimisticConversation ||
+    (firstPageMessages !== undefined && firstPageRawEvents !== undefined);
+
   const optimisticMessage = useMemo(() => {
     if (!isOptimisticConversation || !optimisticText) return null;
     return {
@@ -243,23 +251,28 @@ function ConversationThread() {
     optimisticText,
   ]);
   const messages = useMemo(() => {
+    if (firstPageMessages && firstPageMessages.page) {
+      if (!results || results.length === 0) {
+        return firstPageMessages.page;
+      }
+    }
     if (results !== undefined) {
       return results;
-    }
-    if (firstPageMessages && firstPageMessages.page) {
-      return firstPageMessages.page;
     }
     return [];
   }, [firstPageMessages, results]);
   const convexRawEvents = useMemo(() => {
+    if (firstPageRawEvents && firstPageRawEvents.page) {
+      if (!rawEventsResults || rawEventsResults.length === 0) {
+        return firstPageRawEvents.page;
+      }
+    }
     if (rawEventsResults !== undefined) {
       return rawEventsResults;
     }
-    if (firstPageRawEvents && firstPageRawEvents.page) {
-      return firstPageRawEvents.page;
-    }
     return [];
   }, [firstPageRawEvents, rawEventsResults]);
+
   const latestConvexSeq = useMemo(() => {
     if (convexRawEvents.length === 0) return 0;
     return convexRawEvents.reduce(
@@ -1015,10 +1028,35 @@ function ConversationThread() {
       />
     ) : null;
 
+  // Show loading state while waiting for initial data
+  if (!isDataReady) {
+    return (
+      <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden lg:flex-row">
+        <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+          <ChatLayout
+            header={headerContent}
+            messages={
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />
+              </div>
+            }
+            composer={composerContent}
+            permissionPrompt={permissionPromptContent}
+            scrollContainerRef={scrollContainerRef}
+            loadMoreRef={loadMoreRef}
+            isLoadingMore={false}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Data is ready - render the full chat with scroll-to-bottom on mount
   return (
     <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden lg:flex-row">
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
         <ChatLayout
+          key={conversationIdParam}
           header={headerContent}
           messages={messagesContent}
           composer={composerContent}
@@ -1026,8 +1064,7 @@ function ConversationThread() {
           scrollContainerRef={scrollContainerRef}
           loadMoreRef={loadMoreRef}
           isLoadingMore={status === "LoadingMore"}
-          scrollToBottomKey={conversationIdParam}
-          shouldScrollToBottom={messages.length > 0}
+          scrollToBottomOnMount
         />
       </div>
 
@@ -1050,7 +1087,7 @@ function StreamingConversationMessage({
 }) {
   return (
     <StreamingMessageWrapper>
-      <MessageContent blocks={message.content} renderMarkdown />
+      <MessageContent blocks={message.content} renderMarkdown isStreaming />
     </StreamingMessageWrapper>
   );
 }
@@ -1158,9 +1195,11 @@ function MessageDeliveryStatus({
 function MessageContent({
   blocks,
   renderMarkdown,
+  isStreaming,
 }: {
   blocks: ContentBlock[];
   renderMarkdown: boolean;
+  isStreaming?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -1169,6 +1208,7 @@ function MessageContent({
           key={`${block.type}-${index}`}
           block={block}
           renderMarkdown={renderMarkdown}
+          isStreaming={isStreaming}
         />
       ))}
     </div>
@@ -1178,14 +1218,16 @@ function MessageContent({
 function MessageBlock({
   block,
   renderMarkdown,
+  isStreaming,
 }: {
   block: ContentBlock;
   renderMarkdown: boolean;
+  isStreaming?: boolean;
 }) {
   if (block.type === "text") {
     if (renderMarkdown) {
       return (
-        <Streamdown className="streamdown">
+        <Streamdown className="streamdown" mode={isStreaming ? "streaming" : "static"}>
           {block.text ?? ""}
         </Streamdown>
       );
