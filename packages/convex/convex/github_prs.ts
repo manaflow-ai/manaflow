@@ -85,61 +85,63 @@ async function upsertBranchMetadata(
     .first();
   const repoId = repoDoc?._id;
 
-  const rows = await ctx.db
+  // Query only for the system branch using .first() to minimize read set for OCC
+  // User-created branches have their own update paths
+  const systemBranch = await ctx.db
     .query("branches")
     .withIndex("by_repo", (q) => q.eq("repo", repoFullName))
     .filter((q) => q.eq(q.field("teamId"), teamId))
     .filter((q) => q.eq(q.field("name"), branchName))
-    .collect();
+    .filter((q) => q.eq(q.field("userId"), SYSTEM_BRANCH_USER_ID))
+    .first();
 
   const timestamp = activityTimestamp ?? Date.now();
-
-  const patchCount = { patched: 0, skipped: 0 };
-  for (const row of rows) {
-    const patch: Record<string, unknown> = {};
-    if (repoId && row.repoId !== repoId) {
-      patch.repoId = repoId;
-    }
-    if (baseSha && row.lastKnownBaseSha !== baseSha) {
-      patch.lastKnownBaseSha = baseSha;
-    }
-    if (
-      mergeCommitSha &&
-      row.lastKnownMergeCommitSha !== mergeCommitSha
-    ) {
-      patch.lastKnownMergeCommitSha = mergeCommitSha;
-    }
-    if (headSha && row.lastCommitSha !== headSha) {
-      patch.lastCommitSha = headSha;
-    }
-    if (
-      typeof row.lastActivityAt !== "number" ||
-      timestamp > row.lastActivityAt
-    ) {
-      patch.lastActivityAt = timestamp;
-    }
-    if (Object.keys(patch).length > 0) {
-      await ctx.db.patch(row._id, patch);
-      patchCount.patched++;
-    } else {
-      patchCount.skipped++;
-    }
-  }
-
-  const hasSystemRow = rows.some((row) => row.userId === SYSTEM_BRANCH_USER_ID);
-  const action = hasSystemRow ? "update" : "insert";
+  const action = systemBranch ? "update" : "insert";
 
   console.log("[occ-debug:branches]", {
     branchName,
     repoFullName,
     teamId,
-    rowsFound: rows.length,
     action,
-    patchCount,
     repoDocFound: !!repoDoc,
   });
 
-  if (!hasSystemRow) {
+  if (systemBranch) {
+    // Skip stale updates - if existing branch has newer activity, don't overwrite
+    if (
+      typeof systemBranch.lastActivityAt === "number" &&
+      timestamp <= systemBranch.lastActivityAt
+    ) {
+      console.log("[occ-debug:branches] skipped-stale", {
+        branchName,
+        existingLastActivityAt: systemBranch.lastActivityAt,
+        newTimestamp: timestamp,
+      });
+      return;
+    }
+
+    // Build patch with only changed fields (no-op check)
+    const patch: Record<string, unknown> = {};
+    if (repoId && systemBranch.repoId !== repoId) {
+      patch.repoId = repoId;
+    }
+    if (baseSha && systemBranch.lastKnownBaseSha !== baseSha) {
+      patch.lastKnownBaseSha = baseSha;
+    }
+    if (mergeCommitSha && systemBranch.lastKnownMergeCommitSha !== mergeCommitSha) {
+      patch.lastKnownMergeCommitSha = mergeCommitSha;
+    }
+    if (headSha && systemBranch.lastCommitSha !== headSha) {
+      patch.lastCommitSha = headSha;
+    }
+    patch.lastActivityAt = timestamp;
+
+    if (Object.keys(patch).length > 1 || patch.lastActivityAt !== systemBranch.lastActivityAt) {
+      await ctx.db.patch(systemBranch._id, patch);
+    } else {
+      console.log("[occ-debug:branches] skipped-noop", { branchName });
+    }
+  } else {
     await ctx.db.insert("branches", {
       repo: repoFullName,
       repoId,
@@ -215,14 +217,31 @@ async function upsertCore(
   });
 
   if (existing) {
-    await ctx.db.patch(existing._id, {
-      ...record,
-      installationId,
-      repoFullName,
-      number,
-      provider: "github",
-      teamId,
-    });
+    // Skip no-op updates - only patch if something actually changed
+    const needsUpdate =
+      existing.title !== record.title ||
+      existing.state !== record.state ||
+      existing.merged !== record.merged ||
+      existing.draft !== record.draft ||
+      existing.updatedAt !== record.updatedAt ||
+      existing.closedAt !== record.closedAt ||
+      existing.mergedAt !== record.mergedAt ||
+      existing.headSha !== record.headSha ||
+      existing.baseSha !== record.baseSha ||
+      existing.mergeCommitSha !== record.mergeCommitSha;
+
+    if (needsUpdate) {
+      await ctx.db.patch(existing._id, {
+        ...record,
+        installationId,
+        repoFullName,
+        number,
+        provider: "github",
+        teamId,
+      });
+    } else {
+      console.log("[occ-debug:pull_requests] skipped-noop", { prNumber: number });
+    }
     return existing._id;
   }
   const id = await ctx.db.insert("pullRequests", {

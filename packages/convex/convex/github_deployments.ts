@@ -69,33 +69,38 @@ export const upsertDeploymentFromWebhook = internalMutation({
     };
 
 
-    const existingRecords = await ctx.db
+    // Use .unique() to minimize read set for OCC
+    const existing = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .collect();
+      .unique();
 
-    const action = existingRecords.length > 0 ? "update" : "insert";
+    const action = existing ? "update" : "insert";
     console.log("[occ-debug:deployments]", {
       deploymentId,
       repoFullName,
       teamId,
-      existingCount: existingRecords.length,
       action,
       environment: deploymentDoc.environment,
     });
 
-    if (existingRecords.length > 0) {
-      await ctx.db.patch(existingRecords[0]._id, deploymentDoc);
+    if (existing) {
+      // Skip stale updates - if existing record is newer, don't overwrite
+      if (existing.updatedAt && deploymentDoc.updatedAt && existing.updatedAt >= deploymentDoc.updatedAt) {
+        console.log("[occ-debug:deployments] skipped-stale", { deploymentId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: deploymentDoc.updatedAt });
+        return;
+      }
 
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:deployments] duplicates", {
-          deploymentId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
-        }
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.updatedAt !== deploymentDoc.updatedAt ||
+        existing.environment !== deploymentDoc.environment ||
+        existing.ref !== deploymentDoc.ref;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, deploymentDoc);
+      } else {
+        console.log("[occ-debug:deployments] skipped-noop", { deploymentId });
       }
     } else {
       await ctx.db.insert("githubDeployments", deploymentDoc);
@@ -133,40 +138,49 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
 
     const updatedAt = normalizeTimestamp(payload.deployment_status?.updated_at);
 
-    const existingRecords = await ctx.db
+    // Use .unique() to minimize read set for OCC
+    const existing = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .collect();
+      .unique();
 
-    const action = existingRecords.length > 0 ? "update" : "insert";
+    const action = existing ? "update" : "insert";
     console.log("[occ-debug:deployment_status]", {
       deploymentId,
       repoFullName,
       teamId,
-      existingCount: existingRecords.length,
       action,
       state: normalizedState,
     });
 
-    if (existingRecords.length > 0) {
-      await ctx.db.patch(existingRecords[0]._id, {
-        state: normalizedState,
-        statusDescription: payload.deployment_status?.description ?? undefined,
-        logUrl: payload.deployment_status?.log_url ?? undefined,
-        targetUrl: payload.deployment_status?.target_url ?? undefined,
-        environmentUrl: payload.deployment_status?.environment_url ?? undefined,
-        updatedAt,
-      });
+    const statusPatch = {
+      state: normalizedState,
+      statusDescription: payload.deployment_status?.description ?? undefined,
+      logUrl: payload.deployment_status?.log_url ?? undefined,
+      targetUrl: payload.deployment_status?.target_url ?? undefined,
+      environmentUrl: payload.deployment_status?.environment_url ?? undefined,
+      updatedAt,
+    };
 
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:deployment_status] duplicates", {
-          deploymentId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
-        }
+    if (existing) {
+      // Skip stale updates - if existing record is newer, don't overwrite
+      if (existing.updatedAt && updatedAt && existing.updatedAt >= updatedAt) {
+        console.log("[occ-debug:deployment_status] skipped-stale", { deploymentId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: updatedAt });
+        return;
+      }
+
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.state !== statusPatch.state ||
+        existing.updatedAt !== statusPatch.updatedAt ||
+        existing.statusDescription !== statusPatch.statusDescription ||
+        existing.targetUrl !== statusPatch.targetUrl ||
+        existing.environmentUrl !== statusPatch.environmentUrl;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, statusPatch);
+      } else {
+        console.log("[occ-debug:deployment_status] skipped-noop", { deploymentId });
       }
     } else {
       const sha = payload.deployment?.sha;

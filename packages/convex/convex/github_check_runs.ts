@@ -110,37 +110,41 @@ export const upsertCheckRunFromWebhook = internalMutation({
     };
 
 
-    // Upsert the check run - fetch all matching records to handle duplicates
-    const existingRecords = await ctx.db
+    // Upsert the check run - use .first() to minimize read set for OCC
+    const existing = await ctx.db
       .query("githubCheckRuns")
       .withIndex("by_checkRunId", (q) => q.eq("checkRunId", checkRunId))
-      .collect();
+      .first();
 
-    const action = existingRecords.length > 0 ? "update" : "insert";
+    const action = existing ? "update" : "insert";
     console.log("[occ-debug:check_runs]", {
       checkRunId,
       repoFullName,
       teamId,
-      existingCount: existingRecords.length,
       action,
       status: checkRunDoc.status,
       conclusion: checkRunDoc.conclusion,
     });
 
-    if (existingRecords.length > 0) {
-      // Update the first record
-      await ctx.db.patch(existingRecords[0]._id, checkRunDoc);
+    if (existing) {
+      // Skip stale updates - if existing record is newer, don't overwrite
+      if (existing.updatedAt && checkRunDoc.updatedAt && existing.updatedAt >= checkRunDoc.updatedAt) {
+        console.log("[occ-debug:check_runs] skipped-stale", { checkRunId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: checkRunDoc.updatedAt });
+        return;
+      }
 
-      // Delete any duplicates
-      if (existingRecords.length > 1) {
-        console.warn("[occ-debug:check_runs] duplicates", {
-          checkRunId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
-        }
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.status !== checkRunDoc.status ||
+        existing.conclusion !== checkRunDoc.conclusion ||
+        existing.updatedAt !== checkRunDoc.updatedAt ||
+        existing.completedAt !== checkRunDoc.completedAt ||
+        existing.htmlUrl !== checkRunDoc.htmlUrl;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, checkRunDoc);
+      } else {
+        console.log("[occ-debug:check_runs] skipped-noop", { checkRunId });
       }
     } else {
       // Insert new check run
