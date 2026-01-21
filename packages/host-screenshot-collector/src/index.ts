@@ -439,7 +439,7 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         ? {
           ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
           ANTHROPIC_BASE_URL: anthropicBaseUrl,
-          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
+          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt},x-cmux-source:preview-new`,
         }
         : {}),
     };

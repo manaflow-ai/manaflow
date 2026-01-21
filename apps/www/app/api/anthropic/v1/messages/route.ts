@@ -2,7 +2,10 @@ import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
 import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "@cmux/shared/utils/anthropic";
 import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
-import { trackAnthropicProxyRequest } from "@/lib/analytics/track-anthropic-proxy";
+import {
+  trackAnthropicProxyRequest,
+  type AnthropicProxySource,
+} from "@/lib/analytics/track-anthropic-proxy";
 
 const CLOUDFLARE_ANTHROPIC_API_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
@@ -43,8 +46,17 @@ function getIsOAuthToken(token: string) {
   return token.includes("sk-ant-oat");
 }
 
+function getSource(request: NextRequest): AnthropicProxySource {
+  const sourceHeader = request.headers.get("x-cmux-source");
+  if (sourceHeader === "preview-new") {
+    return "preview-new";
+  }
+  return "cmux";
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
+  const source = getSource(request);
   let tokenPayload: TaskRunTokenPayload | null = null;
 
   // Try to extract token payload for tracking (even if auth is disabled)
@@ -60,6 +72,7 @@ export async function POST(request: NextRequest) {
       teamId: "unknown",
       userId: "unknown",
       taskRunId: "unknown",
+      source,
       model: "unknown",
       stream: false,
       isOAuthToken: false,
@@ -130,6 +143,7 @@ export async function POST(request: NextRequest) {
         teamId: tokenPayload?.teamId ?? "unknown",
         userId: tokenPayload?.userId ?? "unknown",
         taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        source,
         model: body.model ?? "unknown",
         stream: true,
         isOAuthToken,
@@ -180,6 +194,7 @@ export async function POST(request: NextRequest) {
         teamId: tokenPayload?.teamId ?? "unknown",
         userId: tokenPayload?.userId ?? "unknown",
         taskRunId: tokenPayload?.taskRunId ?? "unknown",
+        source,
         model: body.model ?? "unknown",
         stream: false,
         isOAuthToken,
@@ -195,6 +210,7 @@ export async function POST(request: NextRequest) {
       teamId: tokenPayload?.teamId ?? "unknown",
       userId: tokenPayload?.userId ?? "unknown",
       taskRunId: tokenPayload?.taskRunId ?? "unknown",
+      source,
       model: data.model ?? body.model ?? "unknown",
       stream: false,
       isOAuthToken,
@@ -213,6 +229,7 @@ export async function POST(request: NextRequest) {
       teamId: tokenPayload?.teamId ?? "unknown",
       userId: tokenPayload?.userId ?? "unknown",
       taskRunId: tokenPayload?.taskRunId ?? "unknown",
+      source,
       model: "unknown",
       stream: false,
       isOAuthToken: false,
