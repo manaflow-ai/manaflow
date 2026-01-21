@@ -69,12 +69,15 @@ export const upsertDeploymentFromWebhook = internalMutation({
     };
 
 
-    // Use .first() to minimize read set for OCC (not .unique() in case duplicates exist)
-    const existing = await ctx.db
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path (2 records): cleanup only when needed
+    const existingRecords = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .first();
+      .take(2);
 
+    const existing = existingRecords[0];
     const action = existing ? "update" : "insert";
     console.log("[occ-debug:deployments]", {
       deploymentId,
@@ -101,6 +104,14 @@ export const upsertDeploymentFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, deploymentDoc);
       } else {
         console.log("[occ-debug:deployments] skipped-noop", { deploymentId });
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:deployments] cleaning-duplicates", { deploymentId, count: existingRecords.length });
+        for (const dup of existingRecords.slice(1)) {
+          await ctx.db.delete(dup._id);
+        }
       }
     } else {
       await ctx.db.insert("githubDeployments", deploymentDoc);
@@ -138,12 +149,13 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
 
     const updatedAt = normalizeTimestamp(payload.deployment_status?.updated_at);
 
-    // Use .first() to minimize read set for OCC (not .unique() in case duplicates exist)
-    const existing = await ctx.db
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    const existingRecords = await ctx.db
       .query("githubDeployments")
       .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
-      .first();
+      .take(2);
 
+    const existing = existingRecords[0];
     const action = existing ? "update" : "insert";
     console.log("[occ-debug:deployment_status]", {
       deploymentId,
@@ -181,6 +193,14 @@ export const updateDeploymentStatusFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, statusPatch);
       } else {
         console.log("[occ-debug:deployment_status] skipped-noop", { deploymentId });
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:deployment_status] cleaning-duplicates", { deploymentId, count: existingRecords.length });
+        for (const dup of existingRecords.slice(1)) {
+          await ctx.db.delete(dup._id);
+        }
       }
     } else {
       const sha = payload.deployment?.sha;

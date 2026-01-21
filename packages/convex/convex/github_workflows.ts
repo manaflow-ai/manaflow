@@ -132,12 +132,15 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
     };
 
 
-    // Upsert the workflow run - use .first() to minimize read set for OCC
-    const existing = await ctx.db
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path (2 records): cleanup only when needed
+    const existingRecords = await ctx.db
       .query("githubWorkflowRuns")
       .withIndex("by_runId", (q) => q.eq("runId", runId))
-      .first();
+      .take(2);
 
+    const existing = existingRecords[0];
     const action = existing ? "update" : "insert";
     console.log("[occ-debug:workflow_runs]", {
       runId,
@@ -168,6 +171,14 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
         await ctx.db.patch(existing._id, workflowRunDoc);
       } else {
         console.log("[occ-debug:workflow_runs] skipped-noop", { runId });
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:workflow_runs] cleaning-duplicates", { runId, count: existingRecords.length });
+        for (const dup of existingRecords.slice(1)) {
+          await ctx.db.delete(dup._id);
+        }
       }
     } else {
       // Insert new run
@@ -226,12 +237,13 @@ export const getWorkflowRunById = authQuery({
     const { teamSlugOrId, runId } = args;
     const teamId = await getTeamId(ctx, teamSlugOrId);
 
+    // Use .first() instead of .unique() to avoid throwing if duplicates exist
     const run = await ctx.db
       .query("githubWorkflowRuns")
       .withIndex("by_runId")
       .filter((q) => q.eq(q.field("runId"), runId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .unique();
+      .first();
 
     return run;
   },
