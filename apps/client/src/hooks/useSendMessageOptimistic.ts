@@ -135,6 +135,42 @@ export function useSendMessageOptimistic() {
         createdAt: now,
       });
 
+      // Update the unified fullConversation query (used by conversation page)
+      for (const query of localStore.getAllQueries(
+        api.conversations.getFullConversation,
+      )) {
+        if (query.value === undefined || query.value === null) continue;
+        const queryArgs = query.args as {
+          teamSlugOrId: string;
+          conversationId: Id<"conversations">;
+        };
+        if (queryArgs.teamSlugOrId !== args.teamSlugOrId) continue;
+        if (queryArgs.conversationId !== conversationId) continue;
+
+        // Filter out any existing message with same id or clientMessageId
+        const filtered = query.value.messages.filter((item) => {
+          if (item._id === optimisticMessage._id) return false;
+          if (
+            optimisticMessage.clientMessageId &&
+            item.clientMessageId === optimisticMessage.clientMessageId
+          ) {
+            return false;
+          }
+          return true;
+        });
+
+        // Messages are ordered desc (newest first), so prepend
+        localStore.setQuery(
+          api.conversations.getFullConversation,
+          query.args,
+          {
+            ...query.value,
+            messages: [optimisticMessage, ...filtered],
+          },
+        );
+      }
+
+      // Update paginated messages query (legacy, kept for compatibility)
       for (const query of localStore.getAllQueries(
         api.conversationMessages.listByConversationPaginated,
       )) {

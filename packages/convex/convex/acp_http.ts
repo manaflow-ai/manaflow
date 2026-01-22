@@ -265,7 +265,7 @@ export const acpCallbackEffect = (
 
     switch (payload.type) {
       case "message_chunk": {
-        yield* runMutation(() =>
+        const messageId = yield* runMutation(() =>
           ctx.runMutation(internal.acp_callbacks.appendMessageChunk, {
             conversationId: payload.conversationId,
             messageId: payload.messageId,
@@ -274,11 +274,12 @@ export const acpCallbackEffect = (
             content: payload.content,
           })
         );
-        break;
+        // Return message ID so sandbox can track it for subsequent chunks
+        return jsonResponse({ success: true, messageId });
       }
 
       case "reasoning_chunk": {
-        yield* runMutation(() =>
+        const messageId = yield* runMutation(() =>
           ctx.runMutation(internal.acp_callbacks.appendReasoningChunk, {
             conversationId: payload.conversationId,
             messageId: payload.messageId,
@@ -287,7 +288,8 @@ export const acpCallbackEffect = (
             text: payload.text,
           })
         );
-        break;
+        // Return message ID so sandbox can track it for subsequent chunks
+        return jsonResponse({ success: true, messageId });
       }
 
       case "message_complete": {

@@ -164,6 +164,9 @@ struct CallbackResponse {
     #[allow(dead_code)]
     code: Option<u16>,
     message: Option<String>,
+    /// Message ID returned when creating/appending to a message
+    #[serde(rename = "messageId")]
+    message_id: Option<String>,
 }
 
 /// Client for posting ACP callbacks to Convex.
@@ -188,8 +191,8 @@ impl CallbackClient {
         }
     }
 
-    /// Post a callback payload to Convex.
-    async fn post_callback(&self, payload: CallbackPayload) -> Result<()> {
+    /// Post a callback payload to Convex and return the response.
+    async fn post_callback(&self, payload: CallbackPayload) -> Result<CallbackResponse> {
         debug!(
             callback_url = %self.callback_url,
             payload_type = ?std::mem::discriminant(&payload),
@@ -207,14 +210,18 @@ impl CallbackClient {
             .context("Failed to send callback request")?;
 
         let status = response.status();
-        if !status.is_success() {
-            let body: CallbackResponse = response.json().await.unwrap_or(CallbackResponse {
-                success: None,
-                code: Some(status.as_u16()),
-                message: Some("Failed to parse error response".to_string()),
-            });
+        let body: CallbackResponse = response.json().await.unwrap_or(CallbackResponse {
+            success: None,
+            code: Some(status.as_u16()),
+            message: Some("Failed to parse response".to_string()),
+            message_id: None,
+        });
 
-            let error_msg = body.message.unwrap_or_else(|| format!("HTTP {}", status));
+        if !status.is_success() {
+            let error_msg = body
+                .message
+                .clone()
+                .unwrap_or_else(|| format!("HTTP {}", status));
             error!(
                 status = %status,
                 error = %error_msg,
@@ -224,13 +231,14 @@ impl CallbackClient {
         }
 
         debug!("Callback posted successfully");
-        Ok(())
+        Ok(body)
     }
 
     /// Send a text chunk for a message.
     ///
     /// If `message_id` is None, a new assistant message will be created.
-    /// Returns without error even on failure to avoid blocking the agent.
+    /// Returns the message ID (useful for tracking when a new message is created).
+    /// Returns None on failure to avoid blocking the agent.
     pub async fn send_text_chunk(
         &self,
         conversation_id: &str,
@@ -238,7 +246,7 @@ impl CallbackClient {
         created_at: Option<u64>,
         event_seq: Option<u64>,
         text: &str,
-    ) {
+    ) -> Option<String> {
         let payload = CallbackPayload::MessageChunk {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.map(|s| s.to_string()),
@@ -249,19 +257,24 @@ impl CallbackClient {
             },
         };
 
-        if let Err(e) = self.post_callback(payload).await {
-            warn!(
-                conversation_id = %conversation_id,
-                error = %e,
-                "Failed to send text chunk callback"
-            );
+        match self.post_callback(payload).await {
+            Ok(response) => response.message_id,
+            Err(e) => {
+                warn!(
+                    conversation_id = %conversation_id,
+                    error = %e,
+                    "Failed to send text chunk callback"
+                );
+                None
+            }
         }
     }
 
     /// Send a reasoning/thought chunk for a message (extended thinking).
     ///
     /// This captures the agent's reasoning/thinking process.
-    /// Returns without error even on failure to avoid blocking the agent.
+    /// Returns the message ID (useful for tracking when a new message is created).
+    /// Returns None on failure to avoid blocking the agent.
     pub async fn send_reasoning_chunk(
         &self,
         conversation_id: &str,
@@ -269,7 +282,7 @@ impl CallbackClient {
         created_at: Option<u64>,
         event_seq: Option<u64>,
         text: &str,
-    ) {
+    ) -> Option<String> {
         let payload = CallbackPayload::ReasoningChunk {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.map(|s| s.to_string()),
@@ -278,16 +291,22 @@ impl CallbackClient {
             text: text.to_string(),
         };
 
-        if let Err(e) = self.post_callback(payload).await {
-            warn!(
-                conversation_id = %conversation_id,
-                error = %e,
-                "Failed to send reasoning chunk callback"
-            );
+        match self.post_callback(payload).await {
+            Ok(response) => response.message_id,
+            Err(e) => {
+                warn!(
+                    conversation_id = %conversation_id,
+                    error = %e,
+                    "Failed to send reasoning chunk callback"
+                );
+                None
+            }
         }
     }
 
     /// Send a content block for a message.
+    /// Returns the message ID (useful for tracking when a new message is created).
+    /// Returns None on failure to avoid blocking the agent.
     pub async fn send_content_chunk(
         &self,
         conversation_id: &str,
@@ -295,7 +314,7 @@ impl CallbackClient {
         created_at: Option<u64>,
         event_seq: Option<u64>,
         content: CallbackContentBlock,
-    ) {
+    ) -> Option<String> {
         let payload = CallbackPayload::MessageChunk {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.map(|s| s.to_string()),
@@ -304,12 +323,16 @@ impl CallbackClient {
             content,
         };
 
-        if let Err(e) = self.post_callback(payload).await {
-            warn!(
-                conversation_id = %conversation_id,
-                error = %e,
-                "Failed to send content chunk callback"
-            );
+        match self.post_callback(payload).await {
+            Ok(response) => response.message_id,
+            Err(e) => {
+                warn!(
+                    conversation_id = %conversation_id,
+                    error = %e,
+                    "Failed to send content chunk callback"
+                );
+                None
+            }
         }
     }
 
@@ -333,6 +356,20 @@ impl CallbackClient {
                 error = %e,
                 "Failed to send message complete callback"
             );
+        }
+    }
+
+    /// Mark a message as complete, ignoring failure.
+    /// Used when we don't have a message ID yet.
+    pub async fn complete_message_if_exists(
+        &self,
+        conversation_id: &str,
+        message_id: Option<&str>,
+        stop_reason: StopReason,
+    ) {
+        if let Some(id) = message_id {
+            self.complete_message(conversation_id, id, stop_reason)
+                .await;
         }
     }
 
@@ -403,7 +440,7 @@ impl CallbackClient {
             sandbox_url: sandbox_url.to_string(),
         };
 
-        self.post_callback(payload).await
+        self.post_callback(payload).await.map(|_| ())
     }
 
     /// Report an error for a sandbox (when conversation ID is not available).

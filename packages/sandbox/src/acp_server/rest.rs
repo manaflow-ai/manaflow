@@ -1359,7 +1359,7 @@ pub async fn init_conversation(
                                     if let Some(ref client) = callback_client {
                                         let mut msg_id = current_message_id.lock().await;
                                         if !reasoning_buffer.is_empty() {
-                                            client
+                                            if let Some(new_id) = client
                                                 .send_reasoning_chunk(
                                                     &conversation_id,
                                                     msg_id.as_deref(),
@@ -1367,10 +1367,15 @@ pub async fn init_conversation(
                                                     last_message_event_seq,
                                                     &reasoning_buffer,
                                                 )
-                                                .await;
+                                                .await
+                                            {
+                                                if msg_id.is_none() {
+                                                    *msg_id = Some(new_id);
+                                                }
+                                            }
                                         }
                                         if !message_buffer.is_empty() {
-                                            client
+                                            if let Some(new_id) = client
                                                 .send_text_chunk(
                                                     &conversation_id,
                                                     msg_id.as_deref(),
@@ -1378,9 +1383,15 @@ pub async fn init_conversation(
                                                     last_message_event_seq,
                                                     &message_buffer,
                                                 )
-                                                .await;
+                                                .await
+                                            {
+                                                if msg_id.is_none() {
+                                                    *msg_id = Some(new_id);
+                                                }
+                                            }
                                         }
-                                        *msg_id = None;
+                                        // Don't clear msg_id here - we want to keep it for tool calls
+                                        // It will be cleared after message_complete
                                     }
 
                                     message_buffer.clear();
@@ -1455,11 +1466,11 @@ pub async fn init_conversation(
                                 );
 
                                 if let Some(ref client) = callback_client {
-                                    let msg_id = current_message_id.lock().await;
+                                    let mut msg_id = current_message_id.lock().await;
 
                                     // Send buffered reasoning if any
                                     if !reasoning_buffer.is_empty() {
-                                        client
+                                        if let Some(new_id) = client
                                             .send_reasoning_chunk(
                                                 &conversation_id,
                                                 msg_id.as_deref(),
@@ -1467,12 +1478,17 @@ pub async fn init_conversation(
                                                 last_message_event_seq,
                                                 &reasoning_buffer,
                                             )
-                                            .await;
+                                            .await
+                                        {
+                                            if msg_id.is_none() {
+                                                *msg_id = Some(new_id);
+                                            }
+                                        }
                                     }
 
                                     // Send buffered message text if any
                                     if !message_buffer.is_empty() {
-                                        client
+                                        if let Some(new_id) = client
                                             .send_text_chunk(
                                                 &conversation_id,
                                                 msg_id.as_deref(),
@@ -1480,7 +1496,12 @@ pub async fn init_conversation(
                                                 last_message_event_seq,
                                                 &message_buffer,
                                             )
-                                            .await;
+                                            .await
+                                        {
+                                            if msg_id.is_none() {
+                                                *msg_id = Some(new_id);
+                                            }
+                                        }
                                     }
 
                                     // Send buffered tool calls
@@ -1507,6 +1528,9 @@ pub async fn init_conversation(
                                     if let Some(ref id) = *msg_id {
                                         client.complete_message(&conversation_id, id, reason).await;
                                     }
+
+                                    // Clear message ID for next turn
+                                    *msg_id = None;
                                 }
 
                                 // Flush raw events after message boundary for timely replay
@@ -1550,9 +1574,9 @@ pub async fn init_conversation(
                 "EOF - flushing remaining buffers"
             );
             if let Some(ref client) = callback_client {
-                let msg_id = current_message_id.lock().await;
+                let mut msg_id = current_message_id.lock().await;
                 if !reasoning_buffer.is_empty() {
-                    client
+                    if let Some(new_id) = client
                         .send_reasoning_chunk(
                             &conversation_id,
                             msg_id.as_deref(),
@@ -1560,10 +1584,15 @@ pub async fn init_conversation(
                             last_message_event_seq,
                             &reasoning_buffer,
                         )
-                        .await;
+                        .await
+                    {
+                        if msg_id.is_none() {
+                            *msg_id = Some(new_id);
+                        }
+                    }
                 }
                 if !message_buffer.is_empty() {
-                    client
+                    if let Some(new_id) = client
                         .send_text_chunk(
                             &conversation_id,
                             msg_id.as_deref(),
@@ -1571,7 +1600,12 @@ pub async fn init_conversation(
                             last_message_event_seq,
                             &message_buffer,
                         )
-                        .await;
+                        .await
+                    {
+                        if msg_id.is_none() {
+                            *msg_id = Some(new_id);
+                        }
+                    }
                 }
                 if let Some(ref id) = *msg_id {
                     client
