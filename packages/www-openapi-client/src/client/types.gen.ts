@@ -443,13 +443,13 @@ export type ListInstancesResponse = Array<InstanceInfo>;
 
 export type CreateEnvironmentResponse = {
     id: string;
-    snapshotId: string;
+    snapshotId?: string;
 };
 
 export type CreateEnvironmentBody = {
     teamSlugOrId: string;
     name: string;
-    morphInstanceId: string;
+    morphInstanceId?: string;
     envVarsContent: string;
     selectedRepos?: Array<string>;
     description?: string;
@@ -461,7 +461,7 @@ export type CreateEnvironmentBody = {
 export type GetEnvironmentResponse = {
     id: string;
     name: string;
-    morphSnapshotId: string;
+    morphSnapshotId?: string;
     dataVaultKey: string;
     selectedRepos?: Array<string>;
     description?: string;
