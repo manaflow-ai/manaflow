@@ -20,6 +20,10 @@ import {
 import { startEmbeddedServer } from "./embedded-server";
 import { registerWebContentsViewHandlers } from "./web-contents-view";
 import { registerGlobalContextMenu } from "./context-menu";
+import { LOCAL_VSCODE_PLACEHOLDER_HOST } from "@cmux/shared";
+import {
+  getVSCodeServeWebBaseUrl,
+} from "@cmux/server/vscode/serveWeb";
 import electronUpdater, {
   type UpdateCheckResult,
   type UpdateInfo,
@@ -971,6 +975,34 @@ app.whenReady().then(async () => {
   const handleCmuxProtocol = async (request: Request): Promise<Response> => {
     const electronReq = request as unknown as Electron.ProtocolRequest;
     const url = new URL(electronReq.url);
+
+    // Handle local VSCode placeholder (cmux-vscode.local) by proxying to serve-web
+    if (url.hostname === LOCAL_VSCODE_PLACEHOLDER_HOST) {
+      const serveWebBaseUrl = getVSCodeServeWebBaseUrl();
+      if (!serveWebBaseUrl) {
+        mainWarn("Local VSCode serve-web not available", { url: url.toString() });
+        return new Response("VS Code serve-web not available", { status: 503 });
+      }
+
+      try {
+        // Construct the target URL for the local serve-web instance
+        const targetUrl = new URL(serveWebBaseUrl);
+        targetUrl.pathname = url.pathname;
+        targetUrl.search = url.search;
+
+        // Proxy the request to the local serve-web
+        const proxyResponse = await net.fetch(targetUrl.toString(), {
+          method: request.method,
+          headers: request.headers,
+          body: request.body,
+        });
+
+        return proxyResponse;
+      } catch (error) {
+        mainError("Failed to proxy to local VSCode serve-web", error);
+        return new Response("Failed to proxy to VS Code serve-web", { status: 502 });
+      }
+    }
 
     if (url.hostname !== APP_HOST) {
       return net.fetch(request);

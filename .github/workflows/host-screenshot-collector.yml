@@ -68,10 +68,13 @@ jobs:
           fi
 
           # Create release with the bundled JS file
+          # Mark as prerelease so it doesn't interfere with the main cmux app's electron-updater
+          # which uses GitHub's /releases/latest endpoint
           echo "Creating release $TAG..."
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Host Screenshot Collector v${VERSION}" \
+            --prerelease \
             --notes "Automated release of host-screenshot-collector
 
           Version: ${VERSION}
