@@ -1,5 +1,10 @@
+import { Effect } from "effect";
+import { z } from "zod";
 import { internal } from "./_generated/api";
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
+import { HttpClientService, LiveServices } from "./effect/services";
+import { httpError, jsonResponse, runHttpEffect } from "./effect/http";
+import { withObservability } from "./effect/observability";
 
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -18,67 +23,116 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
  * 4. Stores the new refresh token (they rotate!)
  * 5. Returns the access token with the same proxy token
  */
-export const codexOAuthRefresh = httpAction(async (ctx, req) => {
-  // Parse form body (application/x-www-form-urlencoded)
-  const contentType = req.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("application/x-www-form-urlencoded")) {
-    return new Response(
-      JSON.stringify({ error: "invalid_request", error_description: "Content-Type must be application/x-www-form-urlencoded" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
+const tokenResponseSchema = z.object({
+  access_token: z.string(),
+  refresh_token: z.string(),
+  id_token: z.string().optional(),
+  expires_in: z.number(),
+  token_type: z.string(),
+});
+
+export const codexOAuthRefreshEffect = (
+  ctx: Pick<ActionCtx, "runMutation">,
+  req: Request
+) =>
+  Effect.gen(function* () {
+    const contentType = req.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/x-www-form-urlencoded")) {
+      return yield* Effect.fail(
+        httpError(400, {
+          error: "invalid_request",
+          error_description: "Content-Type must be application/x-www-form-urlencoded",
+        })
+      );
+    }
+
+    const body = yield* Effect.tryPromise({
+      try: () => req.text(),
+      catch: (error) => {
+        console.error("[codex-oauth] Failed to read request body:", error);
+        return httpError(400, {
+          error: "invalid_request",
+          error_description: "Invalid request body",
+        });
+      },
+    });
+
+    const params = new URLSearchParams(body);
+    const grantType = params.get("grant_type");
+    const proxyToken = params.get("refresh_token");
+    const clientId = params.get("client_id");
+    const scope = params.get("scope");
+
+    yield* Effect.annotateCurrentSpan({
+      grantType: grantType ?? "missing",
+      hasProxyToken: Boolean(proxyToken),
+      clientId: clientId ?? "default",
+    });
+
+    console.log("[codex-oauth] Received refresh request", {
+      grantType,
+      hasProxyToken: !!proxyToken,
+      clientId,
+    });
+
+    if (grantType !== "refresh_token") {
+      return yield* Effect.fail(
+        httpError(400, {
+          error: "unsupported_grant_type",
+          error_description: "Only refresh_token grant is supported",
+        })
+      );
+    }
+
+    if (!proxyToken) {
+      return yield* Effect.fail(
+        httpError(400, {
+          error: "invalid_request",
+          error_description: "refresh_token is required",
+        })
+      );
+    }
+
+    const tokens = yield* Effect.tryPromise({
+      try: () =>
+        ctx.runMutation(internal.codexTokens.getByProxyToken, {
+          proxyToken,
+        }),
+      catch: (error) => {
+        console.error("[codex-oauth] Failed to load tokens:", error);
+        return httpError(500, {
+          error: "server_error",
+          error_description: "Failed to load tokens",
+        });
+      },
+    });
+
+    if (!tokens) {
+      console.error("[codex-oauth] No tokens found for proxy token");
+      return yield* Effect.fail(
+        httpError(401, {
+          error: "invalid_grant",
+          error_description: "Invalid or expired refresh token",
+        })
+      );
+    }
+
+    yield* Effect.succeed(undefined).pipe(
+      Effect.annotateLogs({
+        userId: tokens.userId,
+        teamId: tokens.teamId,
+      })
     );
-  }
 
-  const body = await req.text();
-  const params = new URLSearchParams(body);
+    console.log("[codex-oauth] Found tokens for user", {
+      userId: tokens.userId,
+      teamId: tokens.teamId,
+      hasRefreshToken: !!tokens.refreshToken,
+    });
 
-  const grantType = params.get("grant_type");
-  const proxyToken = params.get("refresh_token");
-  const clientId = params.get("client_id");
-  const scope = params.get("scope");
+    const httpClient = yield* HttpClientService;
 
-  console.log("[codex-oauth] Received refresh request", {
-    grantType,
-    hasProxyToken: !!proxyToken,
-    clientId,
-  });
-
-  // Validate request
-  if (grantType !== "refresh_token") {
-    return new Response(
-      JSON.stringify({ error: "unsupported_grant_type", error_description: "Only refresh_token grant is supported" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
-  if (!proxyToken) {
-    return new Response(
-      JSON.stringify({ error: "invalid_request", error_description: "refresh_token is required" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
-  // Look up real tokens from Convex using proxy token
-  const tokens = await ctx.runMutation(internal.codexTokens.getByProxyToken, {
-    proxyToken,
-  });
-
-  if (!tokens) {
-    console.error("[codex-oauth] No tokens found for proxy token");
-    return new Response(
-      JSON.stringify({ error: "invalid_grant", error_description: "Invalid or expired refresh token" }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
-  console.log("[codex-oauth] Found tokens for user", {
-    userId: tokens.userId,
-    teamId: tokens.teamId,
-    hasRefreshToken: !!tokens.refreshToken,
-  });
-
-  // Call OpenAI to refresh
-  try {
-    const openaiResponse = await fetch(OPENAI_TOKEN_URL, {
+    const openaiResponse = yield* httpClient.fetch(OPENAI_TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -92,55 +146,76 @@ export const codexOAuthRefresh = httpAction(async (ctx, req) => {
     });
 
     if (!openaiResponse.ok) {
-      const errorData = await openaiResponse.json();
+      const errorData = yield* Effect.tryPromise({
+        try: () => openaiResponse.json(),
+        catch: (error) => {
+          console.error("[codex-oauth] Failed to parse error response:", error);
+          return {
+            error: "server_error",
+            error_description: "Failed to parse error response",
+          };
+        },
+      });
       console.error("[codex-oauth] OpenAI refresh failed", errorData);
-      return new Response(
-        JSON.stringify(errorData),
-        { status: openaiResponse.status, headers: { "Content-Type": "application/json" } }
-      );
+      return jsonResponse(errorData, openaiResponse.status);
     }
 
-    const newTokens = await openaiResponse.json() as {
-      access_token: string;
-      refresh_token: string;
-      id_token?: string;
-      expires_in: number;
-      token_type: string;
-    };
-
-    console.log("[codex-oauth] Got new tokens from OpenAI", {
-      hasAccessToken: !!newTokens.access_token,
-      hasNewRefreshToken: !!newTokens.refresh_token,
-      expiresIn: newTokens.expires_in,
+    const parsedTokens = yield* Effect.tryPromise({
+      try: () =>
+        openaiResponse
+          .json()
+          .then((data) => tokenResponseSchema.parse(data)),
+      catch: (error) => {
+        console.error("[codex-oauth] Invalid token response:", error);
+        return httpError(500, {
+          error: "server_error",
+          error_description: "Invalid token response",
+        });
+      },
     });
 
-    // Update tokens in Convex (refresh tokens rotate!)
-    await ctx.runMutation(internal.codexTokens.updateAfterRefresh, {
-      userId: tokens.userId,
-      teamId: tokens.teamId,
-      accessToken: newTokens.access_token,
-      refreshToken: newTokens.refresh_token,
-      expiresIn: newTokens.expires_in,
+    console.log("[codex-oauth] Got new tokens from OpenAI", {
+      hasAccessToken: !!parsedTokens.access_token,
+      hasNewRefreshToken: !!parsedTokens.refresh_token,
+      expiresIn: parsedTokens.expires_in,
+    });
+
+    yield* Effect.tryPromise({
+      try: () =>
+        ctx.runMutation(internal.codexTokens.updateAfterRefresh, {
+          userId: tokens.userId,
+          teamId: tokens.teamId,
+          accessToken: parsedTokens.access_token,
+          refreshToken: parsedTokens.refresh_token,
+          expiresIn: parsedTokens.expires_in,
+        }),
+      catch: (error) => {
+        console.error("[codex-oauth] Failed to update tokens:", error);
+        return httpError(500, {
+          error: "server_error",
+          error_description: "Failed to persist refreshed tokens",
+        });
+      },
     });
 
     console.log("[codex-oauth] Updated tokens in Convex");
 
-    // Return response with proxy token (not the real refresh token)
-    return new Response(
-      JSON.stringify({
-        access_token: newTokens.access_token,
-        refresh_token: proxyToken, // Return the same proxy token
-        id_token: newTokens.id_token,
-        expires_in: newTokens.expires_in,
-        token_type: newTokens.token_type,
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
-  } catch (error) {
-    console.error("[codex-oauth] Error refreshing tokens:", error);
-    return new Response(
-      JSON.stringify({ error: "server_error", error_description: "Failed to refresh tokens" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
-  }
+    return jsonResponse({
+      access_token: parsedTokens.access_token,
+      refresh_token: proxyToken,
+      id_token: parsedTokens.id_token,
+      expires_in: parsedTokens.expires_in,
+      token_type: parsedTokens.token_type,
+    });
+  }).pipe(
+    withObservability("codex.oauth.refresh", {
+      endpoint: "codex.oauth.refresh",
+      method: req.method,
+    })
+  );
+
+export const codexOAuthRefresh = httpAction(async (ctx, req) => {
+  return runHttpEffect(
+    codexOAuthRefreshEffect(ctx, req).pipe(Effect.provide(LiveServices))
+  );
 });

@@ -1,6 +1,9 @@
+import { Effect } from "effect";
 import { httpAction } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
-import { env } from "../_shared/convex-env";
+import { EnvService, HttpClientService, LiveServices } from "./effect/services";
+import { httpError, jsonResponse, runHttpEffect } from "./effect/http";
+import { withObservability } from "./effect/observability";
 import {
   BEDROCK_BASE_URL,
   toBedrockModelId,
@@ -11,14 +14,6 @@ const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
 
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic";
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
 
 type RoleCounts = Record<string, number>;
 type BlockCounts = Record<string, number>;
@@ -233,35 +228,46 @@ function hasUserApiKey(key: string | null): boolean {
 
 const TEMPORARY_DISABLE_AUTH = true;
 
-/**
- * HTTP action to proxy Anthropic API requests.
- * Routes to:
- * 1. Anthropic direct (via Cloudflare) - when user provides their own API key
- * 2. AWS Bedrock (direct) - when using platform credits (placeholder key)
- */
-export const anthropicProxy = httpAction(async (_ctx, req) => {
-  // Try to extract token payload for tracking
-  const workerAuth = await getWorkerAuth(req, {
-    loggerPrefix: "[anthropic-proxy]",
-  });
+export const anthropicProxyEffect = (req: Request) =>
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClientService;
+    const env = yield* EnvService;
+    const workerAuth = yield* Effect.tryPromise({
+      try: () =>
+        getWorkerAuth(req, {
+          loggerPrefix: "[anthropic-proxy]",
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to read worker auth"),
+    });
 
-  if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
-    console.error("[anthropic-proxy] Auth error: Missing or invalid token");
-    return jsonResponse({ error: "Unauthorized" }, 401);
-  }
+    if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
+      console.error("[anthropic-proxy] Auth error: Missing or invalid token");
+      return yield* Effect.fail(httpError(401, { error: "Unauthorized" }));
+    }
 
-  try {
+    const body = yield* Effect.tryPromise({
+      try: () => req.json(),
+      catch: (error) => {
+        console.error("[anthropic-proxy] Invalid JSON body:", error);
+        return httpError(400, { error: "Invalid JSON body" });
+      },
+    });
+
     const xApiKey = req.headers.get("x-api-key");
     const useUserApiKey = hasUserApiKey(xApiKey);
-    const body = await req.json();
-    const requestedModel = body.model;
+    const requestedModel =
+      isRecord(body) && typeof body.model === "string" ? body.model : "unknown";
     const payloadSummary = summarizeAnthropicPayload(body);
 
+    yield* Effect.annotateCurrentSpan({
+      requestedModel,
+      useUserApiKey,
+    });
+
     if (useUserApiKey) {
-      // User provided their own Anthropic API key - proxy directly to Anthropic
       const headers: Record<string, string> = {};
       req.headers.forEach((value, key) => {
-        // Skip hop-by-hop headers and internal headers
         if (
           !["host", "x-cmux-token", "content-length"].includes(key.toLowerCase())
         ) {
@@ -269,7 +275,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         }
       });
 
-      const response = await fetch(
+      const response = yield* httpClient.fetch(
         `${CLOUDFLARE_ANTHROPIC_BASE_URL}/v1/messages`,
         {
           method: "POST",
@@ -278,66 +284,81 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         }
       );
 
-      // Return response directly to user (including any errors)
-      return handleResponse(response, body.stream);
-    }
-
-    // AWS Bedrock path: using platform credits (placeholder key)
-    {
-      const bedrockToken = env.AWS_BEARER_TOKEN_BEDROCK;
-      if (!bedrockToken) {
-        console.error(
-          "[anthropic-proxy] AWS_BEARER_TOKEN_BEDROCK environment variable is not set"
-        );
-        return jsonResponse(
-          { error: "Bedrock proxy not configured" },
-          503
-        );
-      }
-
-      const bedrockModelId = toBedrockModelId(requestedModel);
-      const streamSuffix = body.stream ? "-with-response-stream" : "";
-      const bedrockUrl = `${BEDROCK_BASE_URL}/model/${bedrockModelId}/invoke${streamSuffix}`;
-      console.log("[anthropic-proxy] Bedrock request summary:", {
-        requestedModel,
-        bedrockModelId,
-        stream: payloadSummary.stream ?? false,
-        maxTokens: payloadSummary.maxTokens ?? null,
-        messageCount: payloadSummary.messages.count,
-        contentBlocks: payloadSummary.messages.contentBlocks,
-        textChars: payloadSummary.messages.textChars,
-        toolUseCount: payloadSummary.messages.toolUseCount,
-        toolResultCount: payloadSummary.messages.toolResultCount,
-        toolsCount: payloadSummary.tools.count,
-        toolNamesPreview: payloadSummary.tools.namePreview,
-        toolChoiceType: payloadSummary.toolChoiceType ?? null,
-      });
-
-      // Build the Bedrock request body
-      // Bedrock uses the same format as Anthropic API but with anthropic_version
-      // Remove model (it's in URL) and stream (determined by endpoint suffix)
-      const { model: _model, stream: _stream, ...bodyWithoutModelAndStream } = body;
-      const bedrockBody = {
-        ...bodyWithoutModelAndStream,
-        anthropic_version: "bedrock-2023-05-31",
-      };
-
-      const response = await fetch(bedrockUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${bedrockToken}`,
+      return yield* Effect.tryPromise({
+        try: () => handleResponse(response, Boolean(payloadSummary.stream)),
+        catch: (error) => {
+          console.error("[anthropic-proxy] Error handling response:", error);
+          return httpError(500, { error: "Failed to proxy request" });
         },
-        body: JSON.stringify(bedrockBody),
       });
-
-      // Pass isBedrock=true to convert streaming format
-      return handleResponse(response, body.stream, true);
     }
-  } catch (error) {
-    console.error("[anthropic-proxy] Error:", error);
-    return jsonResponse({ error: "Failed to proxy request" }, 500);
-  }
+
+    const bedrockToken = env.AWS_BEARER_TOKEN_BEDROCK;
+    if (!bedrockToken) {
+      console.error(
+        "[anthropic-proxy] AWS_BEARER_TOKEN_BEDROCK environment variable is not set"
+      );
+      return yield* Effect.fail(
+        httpError(503, { error: "Bedrock proxy not configured" })
+      );
+    }
+
+    const bedrockModelId = toBedrockModelId(requestedModel);
+    const streamSuffix = payloadSummary.stream ? "-with-response-stream" : "";
+    const bedrockUrl = `${BEDROCK_BASE_URL}/model/${bedrockModelId}/invoke${streamSuffix}`;
+
+    yield* Effect.succeed(undefined).pipe(
+      Effect.annotateLogs({
+        bedrockModelId,
+        stream: payloadSummary.stream ? "true" : "false",
+        messageCount: String(payloadSummary.messages.count),
+        toolUseCount: String(payloadSummary.messages.toolUseCount),
+        toolResultCount: String(payloadSummary.messages.toolResultCount),
+        toolsCount: String(payloadSummary.tools.count),
+      })
+    );
+    yield* Effect.logInfo("[anthropic-proxy] Bedrock request summary");
+
+    const bodyRecord = isRecord(body) ? body : {};
+    const { model: _model, stream: _stream, ...bodyWithoutModelAndStream } = bodyRecord;
+    const bedrockBody = {
+      ...bodyWithoutModelAndStream,
+      anthropic_version: "bedrock-2023-05-31",
+    };
+
+    const response = yield* httpClient.fetch(bedrockUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bedrockToken}`,
+      },
+      body: JSON.stringify(bedrockBody),
+    });
+
+    return yield* Effect.tryPromise({
+      try: () => handleResponse(response, Boolean(payloadSummary.stream), true),
+      catch: (error) => {
+        console.error("[anthropic-proxy] Error handling response:", error);
+        return httpError(500, { error: "Failed to proxy request" });
+      },
+    });
+  }).pipe(
+    withObservability("anthropic.proxy", {
+      endpoint: "anthropic.proxy",
+      method: req.method,
+    })
+  );
+
+/**
+ * HTTP action to proxy Anthropic API requests.
+ * Routes to:
+ * 1. Anthropic direct (via Cloudflare) - when user provides their own API key
+ * 2. AWS Bedrock (direct) - when using platform credits (placeholder key)
+ */
+export const anthropicProxy = httpAction(async (_ctx, req) => {
+  return runHttpEffect(
+    anthropicProxyEffect(req).pipe(Effect.provide(LiveServices))
+  );
 });
 
 /**
@@ -392,22 +413,30 @@ async function handleResponse(
  * Note: This endpoint requires ANTHROPIC_API_KEY to be configured.
  * Bedrock doesn't have an equivalent count_tokens endpoint.
  */
-export const anthropicCountTokens = httpAction(async (_ctx, req) => {
-  const anthropicApiKey = env.ANTHROPIC_API_KEY;
-  if (!anthropicApiKey) {
-    // Bedrock doesn't have count_tokens API - return unavailable
-    return jsonResponse(
-      {
-        error: "Token counting is not available in Bedrock-only mode. Configure ANTHROPIC_API_KEY to enable this feature.",
-        type: "service_unavailable",
-      },
-      503
-    );
-  }
+export const anthropicCountTokensEffect = (req: Request) =>
+  Effect.gen(function* () {
+    const env = yield* EnvService;
+    const httpClient = yield* HttpClientService;
+    const anthropicApiKey = env.ANTHROPIC_API_KEY;
+    if (!anthropicApiKey) {
+      return yield* Effect.fail(
+        httpError(503, {
+          error:
+            "Token counting is not available in Bedrock-only mode. Configure ANTHROPIC_API_KEY to enable this feature.",
+          type: "service_unavailable",
+        })
+      );
+    }
 
-  try {
-    const body = await req.json();
-    const response = await fetch(
+    const body = yield* Effect.tryPromise({
+      try: () => req.json(),
+      catch: (error) => {
+        console.error("[anthropic-proxy] count_tokens invalid JSON:", error);
+        return httpError(400, { error: "Invalid JSON body" });
+      },
+    });
+
+    const response = yield* httpClient.fetch(
       `${CLOUDFLARE_ANTHROPIC_BASE_URL}/v1/messages/count_tokens`,
       {
         method: "POST",
@@ -419,20 +448,54 @@ export const anthropicCountTokens = httpAction(async (_ctx, req) => {
         body: JSON.stringify(body),
       }
     );
-    const data = await response.json();
-    return jsonResponse(data, response.status);
-  } catch (error) {
-    console.error("[anthropic-proxy] count_tokens error:", error);
-    return jsonResponse(
-      { error: "Failed to count tokens", type: "internal_error" },
-      500
-    );
-  }
+
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const data = await response.json();
+        return jsonResponse(data, response.status);
+      },
+      catch: (error) => {
+        console.error("[anthropic-proxy] count_tokens error:", error);
+        return httpError(500, {
+          error: "Failed to count tokens",
+          type: "internal_error",
+        });
+      },
+    });
+  }).pipe(
+    withObservability("anthropic.count_tokens", {
+      endpoint: "anthropic.count_tokens",
+      method: req.method,
+    })
+  );
+
+/**
+ * Proxy count_tokens to Anthropic directly.
+ * Note: This endpoint requires ANTHROPIC_API_KEY to be configured.
+ * Bedrock doesn't have an equivalent count_tokens endpoint.
+ */
+export const anthropicCountTokens = httpAction(async (_ctx, req) => {
+  return runHttpEffect(
+    anthropicCountTokensEffect(req).pipe(Effect.provide(LiveServices))
+  );
 });
 
 /**
  * Stub handler for event logging - just accept and ignore.
  */
+export const anthropicEventLoggingEffect = Effect.succeed(
+  jsonResponse({ success: true })
+).pipe(
+  withObservability("anthropic.event_logging", {
+    endpoint: "anthropic.event_logging",
+  })
+);
+
+/**
+ * Stub handler for event logging - just accept and ignore.
+ */
 export const anthropicEventLogging = httpAction(async () => {
-  return jsonResponse({ success: true });
+  return runHttpEffect(
+    anthropicEventLoggingEffect.pipe(Effect.provide(LiveServices))
+  );
 });

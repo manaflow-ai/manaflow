@@ -12,3 +12,15 @@ if (needsPolyfill) {
     configurable: true,
   });
 }
+
+const envDefaults: Record<string, string> = {
+  STACK_WEBHOOK_SECRET: "test_stack_webhook_secret",
+  BASE_APP_URL: "http://localhost",
+  CMUX_TASK_RUN_JWT_SECRET: "test_task_run_jwt_secret",
+};
+
+for (const [key, value] of Object.entries(envDefaults)) {
+  if (!process.env[key]) {
+    process.env[key] = value;
+  }
+}

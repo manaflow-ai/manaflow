@@ -55,7 +55,7 @@ export async function getRunDiffs(
         repo: ensured.task.projectFullName,
       });
       baseBranchMetadata = rows?.find(
-        (branch) => branch.name === ensured.baseBranch
+        (branch: { name: string }) => branch.name === ensured.baseBranch
       );
     } catch (error) {
       serverLogger.warn(

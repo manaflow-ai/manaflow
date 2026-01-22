@@ -5,7 +5,11 @@
       "ssh2",
       "node-ssh",
       "cpu-features",
-      "@octokit/request"
+      "@octokit/request",
+      "@opentelemetry/context-async-hooks",
+      "@opentelemetry/sdk-trace-node",
+      "@sentry/node",
+      "@sentry/opentelemetry"
     ],
     "nodeVersion": "22"
   }

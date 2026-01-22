@@ -1,6 +1,9 @@
+import { Effect } from "effect";
 import { httpAction } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
-import { env } from "../_shared/convex-env";
+import { EnvService, HttpClientService, LiveServices } from "./effect/services";
+import { httpError, jsonResponse, runHttpEffect } from "./effect/http";
+import { withObservability } from "./effect/observability";
 
 /**
  * Cloudflare AI Gateway configuration.
@@ -15,15 +18,6 @@ const hardCodedApiKey = "sk-openai-proxy-placeholder";
  */
 export const CLOUDFLARE_OPENAI_BASE_URL =
   `https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT_ID}/${CLOUDFLARE_GATEWAY_ID}/openai`;
-
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
 
 /**
  * Check if the key is a valid OpenAI API key format.
@@ -42,6 +36,83 @@ function hasUserApiKey(key: string | null): boolean {
 
 const TEMPORARY_DISABLE_AUTH = true;
 
+export const openaiProxyEffect = (req: Request) =>
+  Effect.gen(function* () {
+    const env = yield* EnvService;
+    const httpClient = yield* HttpClientService;
+    const workerAuth = yield* Effect.tryPromise({
+      try: () =>
+        getWorkerAuth(req, {
+          loggerPrefix: "[openai-proxy]",
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to read worker auth"),
+    });
+
+    if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
+      console.error("[openai-proxy] Auth error: Missing or invalid token");
+      return yield* Effect.fail(httpError(401, { error: "Unauthorized" }));
+    }
+
+    const authHeader = req.headers.get("authorization");
+    const providedKey = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : null;
+    const useUserApiKey = hasUserApiKey(providedKey);
+
+    const apiKey = useUserApiKey ? providedKey ?? null : env.OPENAI_API_KEY ?? null;
+
+    if (!apiKey) {
+      console.error("[openai-proxy] No OpenAI API key configured");
+      return yield* Effect.fail(
+        httpError(500, { error: "OpenAI API key not configured" })
+      );
+    }
+
+    const url = new URL(req.url);
+    const path = url.pathname.replace(/^\/api\/openai/, "");
+    const queryString = url.search;
+    const cloudflareUrl = `${CLOUDFLARE_OPENAI_BASE_URL}${path}${queryString}`;
+
+    yield* Effect.annotateCurrentSpan({
+      path,
+      method: req.method,
+      useUserApiKey,
+    });
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    };
+
+    const body = yield* Effect.tryPromise({
+      try: () => req.text(),
+      catch: (error) => {
+        console.error("[openai-proxy] Failed to read request body:", error);
+        return httpError(400, { error: "Invalid request body" });
+      },
+    });
+
+    const response = yield* httpClient.fetch(cloudflareUrl, {
+      method: req.method,
+      headers,
+      body: req.method !== "GET" && req.method !== "HEAD" ? body : undefined,
+    });
+
+    return yield* Effect.tryPromise({
+      try: () => handleResponse(response, body.includes('"stream":true')),
+      catch: (error) => {
+        console.error("[openai-proxy] Error handling response:", error);
+        return httpError(500, { error: "Failed to proxy request" });
+      },
+    });
+  }).pipe(
+    withObservability("openai.proxy", {
+      endpoint: "openai.proxy",
+      method: req.method,
+    })
+  );
+
 /**
  * HTTP action to proxy OpenAI API requests.
  * Routes through Cloudflare AI Gateway for logging/caching.
@@ -49,63 +120,9 @@ const TEMPORARY_DISABLE_AUTH = true;
  * Uses platform OPENAI_API_KEY when user provides placeholder key.
  */
 export const openaiProxy = httpAction(async (_ctx, req) => {
-  // Try to extract token payload for tracking
-  const workerAuth = await getWorkerAuth(req, {
-    loggerPrefix: "[openai-proxy]",
-  });
-
-  if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
-    console.error("[openai-proxy] Auth error: Missing or invalid token");
-    return jsonResponse({ error: "Unauthorized" }, 401);
-  }
-
-  try {
-    const authHeader = req.headers.get("authorization");
-    const providedKey = authHeader?.startsWith("Bearer ")
-      ? authHeader.slice(7)
-      : null;
-    const useUserApiKey = hasUserApiKey(providedKey);
-
-    // Determine which API key to use
-    const apiKey = useUserApiKey
-      ? providedKey!
-      : env.OPENAI_API_KEY;
-
-    if (!apiKey) {
-      console.error("[openai-proxy] No OpenAI API key configured");
-      return jsonResponse({ error: "OpenAI API key not configured" }, 500);
-    }
-
-    // Get the path after /api/openai
-    const url = new URL(req.url);
-    const path = url.pathname.replace(/^\/api\/openai/, "");
-    const queryString = url.search;
-
-    const cloudflareUrl = `${CLOUDFLARE_OPENAI_BASE_URL}${path}${queryString}`;
-
-    console.log(`[openai-proxy] ${req.method} ${path}`);
-
-    // Build headers for upstream request - minimal set only
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    };
-
-    // NOTE: Not forwarding other headers to avoid any interference
-
-    const body = await req.text();
-
-    const response = await fetch(cloudflareUrl, {
-      method: req.method,
-      headers,
-      body: req.method !== "GET" && req.method !== "HEAD" ? body : undefined,
-    });
-
-    return handleResponse(response, body.includes('"stream":true'));
-  } catch (error) {
-    console.error("[openai-proxy] Error:", error);
-    return jsonResponse({ error: "Failed to proxy request" }, 500);
-  }
+  return runHttpEffect(
+    openaiProxyEffect(req).pipe(Effect.provide(LiveServices))
+  );
 });
 
 /**

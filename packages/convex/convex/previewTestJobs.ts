@@ -5,12 +5,30 @@
  * Unlike regular preview jobs, these don't post GitHub comments or use GitHub API for reactions.
  */
 
+import { Effect } from "effect";
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
 import { internal } from "./_generated/api";
 import type { Id, Doc } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
-import { action, internalMutation } from "./_generated/server";
+import { action, internalMutation, type ActionCtx } from "./_generated/server";
+import { withObservability } from "./effect/observability";
+import { runEffect } from "./effect/runtime";
+import { LiveServices } from "./effect/services";
+
+type PreviewRun = Doc<"previewRuns">;
+type MembershipInfo = { isMember: boolean };
+type UserIdentity = { subject: string };
+type DispatchTestJobResult = { dispatched: boolean };
+type RetryTestJobResult = {
+  dispatched: boolean;
+  newPreviewRunId: Id<"previewRuns">;
+};
+type CreateTestRunResult = {
+  previewRunId: Id<"previewRuns">;
+  prNumber: number;
+  repoFullName: string;
+};
 
 /**
  * Parse a GitHub PR URL to extract owner, repo, and PR number
@@ -273,47 +291,86 @@ export const createTestRunInternal = internalMutation({
 /**
  * Dispatch a test preview job (start the actual screenshot capture)
  */
+export const dispatchTestJobEffect = (
+  ctx: Pick<ActionCtx, "auth" | "runQuery" | "runMutation" | "scheduler">,
+  args: {
+    teamSlugOrId: string;
+    previewRunId: Id<"previewRuns">;
+  }
+) : Effect.Effect<DispatchTestJobResult, Error> =>
+  Effect.gen(function* () {
+    const identity = yield* Effect.tryPromise<UserIdentity | null, Error>({
+      try: () => ctx.auth.getUserIdentity(),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to load identity"),
+    });
+
+    if (!identity) {
+      return yield* Effect.fail(new Error("Authentication required"));
+    }
+
+    const previewRun = yield* Effect.tryPromise<PreviewRun | null, Error>({
+      try: () =>
+        ctx.runQuery(internal.previewRuns.getById, {
+          id: args.previewRunId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to load preview run"),
+    });
+
+    if (!previewRun) {
+      return yield* Effect.fail(new Error("Preview run not found"));
+    }
+
+    const membership = yield* Effect.tryPromise<MembershipInfo, Error>({
+      try: () =>
+        ctx.runQuery(internal.teams.checkTeamMembership, {
+          teamId: previewRun.teamId,
+          userId: identity.subject,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to check membership"),
+    });
+
+    if (!membership.isMember) {
+      return yield* Effect.fail(new Error("Forbidden: Not a member of this team"));
+    }
+
+    yield* Effect.tryPromise({
+      try: () =>
+        ctx.runMutation(internal.previewRuns.markDispatched, {
+          previewRunId: args.previewRunId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to mark dispatched"),
+    });
+
+    yield* Effect.tryPromise({
+      try: () =>
+        ctx.scheduler.runAfter(0, internal.preview_jobs.executePreviewJob, {
+          previewRunId: args.previewRunId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to schedule job"),
+    });
+
+    return { dispatched: true };
+  }).pipe(
+    withObservability("preview.test.dispatch", {
+      previewRunId: args.previewRunId,
+      teamSlugOrId: args.teamSlugOrId,
+    })
+  );
+
 export const dispatchTestJob = action({
   args: {
     teamSlugOrId: v.string(),
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, args) => {
-    // Manual auth check for actions (no authAction wrapper available)
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Authentication required");
-    }
-
-    // Get the preview run first
-    const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
-      id: args.previewRunId,
-    });
-
-    if (!previewRun) {
-      throw new Error("Preview run not found");
-    }
-
-    // Verify the user is a member of the team that owns this run
-    const { isMember } = await ctx.runQuery(internal.teams.checkTeamMembership, {
-      teamId: previewRun.teamId,
-      userId: identity.subject,
-    });
-    if (!isMember) {
-      throw new Error("Forbidden: Not a member of this team");
-    }
-
-    // Mark as dispatched
-    await ctx.runMutation(internal.previewRuns.markDispatched, {
-      previewRunId: args.previewRunId,
-    });
-
-    // Schedule the job to run
-    await ctx.scheduler.runAfter(0, internal.preview_jobs.executePreviewJob, {
-      previewRunId: args.previewRunId,
-    });
-
-    return { dispatched: true };
+    return runEffect(
+      dispatchTestJobEffect(ctx, args).pipe(Effect.provide(LiveServices))
+    );
   },
 });
 
@@ -643,6 +700,90 @@ export const checkRepoAccess = authQuery({
 /**
  * Retry a failed test preview job by creating a new run and dispatching it
  */
+export const retryTestJobEffect = (
+  ctx: Pick<ActionCtx, "auth" | "runQuery" | "runMutation" | "scheduler">,
+  args: {
+    teamSlugOrId: string;
+    previewRunId: Id<"previewRuns">;
+  }
+) : Effect.Effect<RetryTestJobResult, Error> =>
+  Effect.gen(function* () {
+    const identity = yield* Effect.tryPromise<UserIdentity | null, Error>({
+      try: () => ctx.auth.getUserIdentity(),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to load identity"),
+    });
+
+    if (!identity) {
+      return yield* Effect.fail(new Error("Authentication required"));
+    }
+
+    const previewRun = yield* Effect.tryPromise<PreviewRun | null, Error>({
+      try: () =>
+        ctx.runQuery(internal.previewRuns.getById, {
+          id: args.previewRunId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to load preview run"),
+    });
+
+    if (!previewRun) {
+      return yield* Effect.fail(new Error("Preview run not found"));
+    }
+
+    const membership = yield* Effect.tryPromise<MembershipInfo, Error>({
+      try: () =>
+        ctx.runQuery(internal.teams.checkTeamMembership, {
+          teamId: previewRun.teamId,
+          userId: identity.subject,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to check membership"),
+    });
+
+    if (!membership.isMember) {
+      return yield* Effect.fail(new Error("Forbidden: Not a member of this team"));
+    }
+
+    const newRun = yield* Effect.tryPromise<CreateTestRunResult, Error>({
+      try: () =>
+        ctx.runMutation(internal.previewTestJobs.createTestRunInternal, {
+          teamId: previewRun.teamId,
+          prUrl: previewRun.prUrl,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to create test run"),
+    });
+
+    yield* Effect.tryPromise({
+      try: () =>
+        ctx.runMutation(internal.previewRuns.markDispatched, {
+          previewRunId: newRun.previewRunId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to mark dispatched"),
+    });
+
+    yield* Effect.tryPromise({
+      try: () =>
+        ctx.scheduler.runAfter(0, internal.preview_jobs.executePreviewJob, {
+          previewRunId: newRun.previewRunId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to schedule job"),
+    });
+
+    return {
+      newPreviewRunId: newRun.previewRunId,
+      dispatched: true,
+    };
+  }).pipe(
+    withObservability("preview.test.retry", {
+      previewRunId: args.previewRunId,
+      teamSlugOrId: args.teamSlugOrId,
+    })
+  );
+
 export const retryTestJob = action({
   args: {
     teamSlugOrId: v.string(),
@@ -652,54 +793,9 @@ export const retryTestJob = action({
     newPreviewRunId: Id<"previewRuns">;
     dispatched: boolean;
   }> => {
-    // Manual auth check for actions
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Authentication required");
-    }
-
-    // Get the preview run to retry
-    const previewRun: Doc<"previewRuns"> | null = await ctx.runQuery(internal.previewRuns.getById, {
-      id: args.previewRunId,
-    });
-
-    if (!previewRun) {
-      throw new Error("Preview run not found");
-    }
-
-    // Verify the user is a member of the team that owns this run
-    const { isMember } = await ctx.runQuery(internal.teams.checkTeamMembership, {
-      teamId: previewRun.teamId,
-      userId: identity.subject,
-    });
-    if (!isMember) {
-      throw new Error("Forbidden: Not a member of this team");
-    }
-
-    // Create a new test run with the same PR URL
-    // Note: task/taskRun will be created later when the VM starts
-    const newRun: {
-      previewRunId: Id<"previewRuns">;
-      prNumber: number;
-      repoFullName: string;
-    } = await ctx.runMutation(internal.previewTestJobs.createTestRunInternal, {
-      teamId: previewRun.teamId,
-      prUrl: previewRun.prUrl,
-    });
-
-    // Immediately dispatch the new run
-    await ctx.runMutation(internal.previewRuns.markDispatched, {
-      previewRunId: newRun.previewRunId,
-    });
-
-    await ctx.scheduler.runAfter(0, internal.preview_jobs.executePreviewJob, {
-      previewRunId: newRun.previewRunId,
-    });
-
-    return {
-      newPreviewRunId: newRun.previewRunId,
-      dispatched: true,
-    };
+    return runEffect(
+      retryTestJobEffect(ctx, args).pipe(Effect.provide(LiveServices))
+    );
   },
 });
 

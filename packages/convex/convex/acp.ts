@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { SignJWT } from "jose";
+import { Effect } from "effect";
 import {
   getDefaultSnapshotId,
   type SandboxProvider as SnapshotSandboxProvider,
@@ -20,6 +21,8 @@ import {
   internalQuery,
   type ActionCtx,
 } from "./_generated/server";
+import { withObservability } from "./effect/observability";
+import { runEffect } from "./effect/runtime";
 import { authMutation, authQuery } from "./users/utils";
 import type {
   SandboxProvider as SandboxProviderInterface,
@@ -27,8 +30,26 @@ import type {
   SandboxStatusInfo,
 } from "../_shared/sandbox-providers";
 
+type SandboxProviderResolver = {
+  getDefault: () => SandboxProviderInterface;
+  getByName: (name: SandboxProviderInterface["name"]) => SandboxProviderInterface;
+};
+
+const liveSandboxProviderResolver: SandboxProviderResolver = {
+  getDefault: () => getDefaultSandboxProvider(),
+  getByName: (name) => getSandboxProvider(name),
+};
+
+let sandboxProviderResolver = liveSandboxProviderResolver;
+
+export function setSandboxProviderResolverForTests(
+  resolver: SandboxProviderResolver,
+): void {
+  sandboxProviderResolver = resolver;
+}
+
 function getCurrentSnapshotId(): string {
-  const provider = getDefaultSandboxProvider();
+  const provider = sandboxProviderResolver.getDefault();
   return (
     getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
     "snap_default"
@@ -75,6 +96,7 @@ const providerIdValidator = v.union(
   v.literal("gemini"),
   v.literal("opencode"),
 );
+type ProviderId = "claude" | "codex" | "gemini" | "opencode";
 
 const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-5-20251101";
 const WARM_POOL_TEAM_ID = "__warm_pool__";
@@ -159,13 +181,13 @@ async function waitForSandboxHealthy(
 }
 
 async function ensureSandboxReady(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   sandbox: Doc<"acpSandboxes">,
 ): Promise<{
   status: NormalizedSandboxStatus;
   sandboxUrl: string | null;
 }> {
-  const provider = getSandboxProvider(sandbox.provider);
+  const provider = sandboxProviderResolver.getByName(sandbox.provider);
   let statusInfo: SandboxStatusInfo | null = null;
 
   try {
@@ -262,7 +284,7 @@ async function sha256Hash(input: string): Promise<string> {
 }
 
 async function recordSandboxError(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   sandboxId: Id<"acpSandboxes">,
   error: unknown,
   fallback: string,
@@ -302,7 +324,7 @@ async function recordSandboxError(
 }
 
 async function replaceSandboxForConversation(
-  ctx: ActionCtx,
+  ctx: AcpSandboxSwapCtx,
   conversation: Doc<"conversations">,
   userId: string | null,
   teamId: string,
@@ -416,7 +438,7 @@ function generateStreamSecret(): string {
 }
 
 async function ensureStreamSecretConfigured(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   sandbox: Doc<"acpSandboxes">,
   sandboxUrl: string,
 ): Promise<void> {
@@ -449,7 +471,7 @@ async function ensureStreamSecretConfigured(
 }
 
 async function reconfigureSandboxForTeam(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   sandbox: Doc<"acpSandboxes">,
   teamId: string,
 ): Promise<void> {
@@ -486,7 +508,7 @@ async function reconfigureSandboxForTeam(
 }
 
 async function maybeReconfigureWarmSandbox(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   sandbox: Doc<"acpSandboxes">,
   teamId: string,
 ): Promise<void> {
@@ -497,7 +519,7 @@ async function maybeReconfigureWarmSandbox(
 }
 
 async function scheduleMessageDelivery(
-  ctx: ActionCtx,
+  ctx: AcpInternalActionCtx,
   conversationId: Id<"conversations">,
   messageId: Id<"conversationMessages">,
   attempt: number,
@@ -561,14 +583,53 @@ async function scheduleMessageDelivery(
   });
 }
 
+function acpEffect<T>(
+  name: string,
+  attributes: Record<string, string | number | boolean | undefined>,
+  task: () => Promise<T>,
+): Effect.Effect<T, Error> {
+  return Effect.tryPromise({
+    try: task,
+    catch: (error) => {
+      console.error(`[acp.${name}] Error:`, error);
+      return error instanceof Error ? error : new Error(`acp.${name} failed`);
+    },
+  }).pipe(withObservability(`acp.${name}`, attributes));
+}
+
+type AcpActionCtx = Pick<
+  ActionCtx,
+  "auth" | "runQuery" | "runMutation" | "runAction" | "scheduler"
+>;
+type AcpActionCtxNoScheduler = Pick<
+  ActionCtx,
+  "auth" | "runQuery" | "runMutation" | "runAction"
+>;
+type AcpActionCtxNoAction = Pick<ActionCtx, "auth" | "runQuery" | "runMutation">;
+type AcpInternalActionCtx = Pick<
+  ActionCtx,
+  "runQuery" | "runMutation" | "runAction" | "scheduler"
+>;
+type AcpMutationCtx = Pick<ActionCtx, "runMutation">;
+type AcpWarmSandboxCtx = Pick<ActionCtx, "runMutation" | "scheduler">;
+type AcpSandboxAdminCtx = Pick<ActionCtx, "runQuery" | "runMutation">;
+type AcpSandboxSwapCtx = Pick<
+  ActionCtx,
+  "runQuery" | "runMutation" | "runAction" | "scheduler"
+>;
+
 /**
  * Prewarm a sandbox for a user intent signal.
  */
-export const prewarmSandbox = action({
-  args: {
-    teamSlugOrId: v.string(),
-  },
-  handler: async (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> => {
+type PrewarmSandboxArgs = {
+  teamSlugOrId: string;
+};
+
+export const prewarmSandboxEffect = (
+  ctx: AcpActionCtx,
+  args: PrewarmSandboxArgs,
+): Effect.Effect<{ sandboxId: Id<"acpSandboxes"> }, Error> =>
+  acpEffect("prewarmSandbox", { teamSlugOrId: args.teamSlugOrId }, async () => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
@@ -606,7 +667,14 @@ export const prewarmSandbox = action({
     });
 
     return { sandboxId: warm.sandboxId };
+  });
+
+export const prewarmSandbox = action({
+  args: {
+    teamSlugOrId: v.string(),
   },
+  handler: (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> =>
+    runEffect(prewarmSandboxEffect(ctx, args)),
 });
 
 /**
@@ -619,6 +687,187 @@ export const prewarmSandbox = action({
  * 3. Initialize conversation on sandbox (POST /api/acp/init)
  * 4. Return conversationId and status
  */
+type StartConversationArgs = {
+  teamSlugOrId: string;
+  providerId: ProviderId;
+  cwd: string;
+  sandboxId?: Id<"acpSandboxes">;
+  clientConversationId?: string;
+};
+
+export const startConversationEffect = (
+  ctx: AcpActionCtxNoScheduler,
+  args: StartConversationArgs,
+): Effect.Effect<
+  {
+    conversationId: Id<"conversations">;
+    sandboxId: Id<"acpSandboxes">;
+    status: "starting" | "ready";
+  },
+  Error
+> =>
+  acpEffect(
+    "startConversation",
+    { teamSlugOrId: args.teamSlugOrId, providerId: args.providerId },
+    async () => {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) {
+        throw new Error("Not authenticated");
+      }
+
+      const teamId = await ctx.runQuery(internal.acp.resolveTeamId, {
+        teamSlugOrId: args.teamSlugOrId,
+        userId: identity.subject,
+      });
+
+      if (args.clientConversationId) {
+        const existing = await ctx.runQuery(
+          internal.acp.getConversationByClientConversationId,
+          {
+            teamId,
+            clientConversationId: args.clientConversationId,
+          },
+        );
+        if (existing) {
+          if (!existing.acpSandboxId) {
+            throw new Error("Conversation missing sandbox");
+          }
+          const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
+            sandboxId: existing.acpSandboxId,
+          });
+          const status = sandbox?.status === "running" ? "ready" : "starting";
+          return {
+            conversationId: existing._id,
+            sandboxId: existing.acpSandboxId,
+            status,
+          };
+        }
+      }
+
+      let sandboxId = args.sandboxId;
+      let status: "starting" | "ready" = "starting";
+      let claimedWarmSandbox: Doc<"acpSandboxes"> | null = null;
+      const snapshotId = getCurrentSnapshotId();
+
+      if (sandboxId) {
+        claimedWarmSandbox = await ctx.runMutation(
+          internal.acpSandboxes.claimWarmSandbox,
+          {
+            userId: identity.subject,
+            teamId,
+            sandboxId,
+            snapshotId,
+          },
+        );
+        sandboxId = claimedWarmSandbox?._id;
+      }
+
+      if (!sandboxId) {
+        claimedWarmSandbox = await ctx.runMutation(
+          internal.acpSandboxes.claimWarmSandbox,
+          {
+            userId: identity.subject,
+            teamId,
+            snapshotId,
+          },
+        );
+        sandboxId = claimedWarmSandbox?._id;
+      }
+
+      if (!sandboxId) {
+        const result = await ctx.runAction(internal.acp.spawnSandbox, {
+          teamId,
+        });
+        sandboxId = result.sandboxId;
+      } else {
+        status = claimedWarmSandbox?.status === "running" ? "ready" : "starting";
+      }
+
+      if (!sandboxId) {
+        throw new Error("Failed to allocate sandbox");
+      }
+
+      const sessionId = `acp-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}`;
+      const conversationId = await ctx.runMutation(
+        internal.acp.createConversationInternal,
+        {
+          teamId,
+          userId: identity.subject,
+          sessionId,
+          providerId: args.providerId,
+          cwd: args.cwd,
+          acpSandboxId: sandboxId,
+          clientConversationId: args.clientConversationId,
+        },
+      );
+
+      await ctx.runMutation(internal.acpSandboxes.incrementConversationCount, {
+        sandboxId,
+      });
+
+      if (claimedWarmSandbox) {
+        try {
+          await reconfigureSandboxForTeam(ctx, claimedWarmSandbox, teamId);
+        } catch (error) {
+          console.error("[acp] Failed to reconfigure warm sandbox:", error);
+        }
+      }
+
+      if (status === "ready") {
+        const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
+          sandboxId,
+        });
+        if (sandbox) {
+            const readiness = await ensureSandboxReady(ctx, sandbox);
+          if (readiness.sandboxUrl && readiness.status === "running") {
+            try {
+              await recordOutboundEvent(ctx, {
+                conversationId,
+                sandboxId,
+                teamId,
+                raw: JSON.stringify({
+                  conversation_id: conversationId,
+                  session_id: sessionId,
+                  provider_id: args.providerId,
+                  cwd: args.cwd,
+                }),
+                eventType: "init",
+              });
+              await initConversationOnSandbox(
+                readiness.sandboxUrl,
+                conversationId,
+                sessionId,
+                args.providerId,
+                args.cwd,
+                "auto_allow_always",
+              );
+              await ensureConversationModel(
+                ctx,
+                readiness.sandboxUrl,
+                conversationId,
+                sandboxId,
+                teamId,
+                resolveDefaultModelId(args.providerId),
+              );
+              await ctx.runMutation(internal.acp.markConversationInitialized, {
+                conversationId,
+              });
+            } catch (error) {
+              console.error(
+                "[acp] Failed to init conversation on sandbox:",
+                error,
+              );
+            }
+          }
+        }
+      }
+
+      return { conversationId, sandboxId, status };
+    },
+  );
+
 export const startConversation = action({
   args: {
     teamSlugOrId: v.string(),
@@ -627,172 +876,11 @@ export const startConversation = action({
     sandboxId: v.optional(v.id("acpSandboxes")), // Reuse existing sandbox
     clientConversationId: v.optional(v.string()),
   },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
+  handler: (ctx, args): Promise<{
     conversationId: Id<"conversations">;
     sandboxId: Id<"acpSandboxes">;
     status: "starting" | "ready";
-  }> => {
-    // Verify auth
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
-
-    // Resolve team ID
-    const teamId = await ctx.runQuery(internal.acp.resolveTeamId, {
-      teamSlugOrId: args.teamSlugOrId,
-      userId: identity.subject,
-    });
-
-    if (args.clientConversationId) {
-      const existing = await ctx.runQuery(
-        internal.acp.getConversationByClientConversationId,
-        {
-          teamId,
-          clientConversationId: args.clientConversationId,
-        },
-      );
-      if (existing) {
-        if (!existing.acpSandboxId) {
-          throw new Error("Conversation missing sandbox");
-        }
-        const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
-          sandboxId: existing.acpSandboxId,
-        });
-        const status = sandbox?.status === "running" ? "ready" : "starting";
-        return {
-          conversationId: existing._id,
-          sandboxId: existing.acpSandboxId,
-          status,
-        };
-      }
-    }
-
-    // Always use a new sandbox per conversation (warm pool eligible)
-    let sandboxId = args.sandboxId;
-    let status: "starting" | "ready" = "starting";
-    let claimedWarmSandbox = null as Doc<"acpSandboxes"> | null;
-    const snapshotId = getCurrentSnapshotId();
-
-    if (sandboxId) {
-      claimedWarmSandbox = await ctx.runMutation(
-        internal.acpSandboxes.claimWarmSandbox,
-        {
-          userId: identity.subject,
-          teamId,
-          sandboxId,
-          snapshotId,
-        },
-      );
-      sandboxId = claimedWarmSandbox?._id;
-    }
-
-    if (!sandboxId) {
-      claimedWarmSandbox = await ctx.runMutation(
-        internal.acpSandboxes.claimWarmSandbox,
-        {
-          userId: identity.subject,
-          teamId,
-          snapshotId,
-        },
-      );
-      sandboxId = claimedWarmSandbox?._id;
-    }
-
-    if (!sandboxId) {
-      const result = await ctx.runAction(internal.acp.spawnSandbox, {
-        teamId,
-      });
-      sandboxId = result.sandboxId;
-    } else {
-      status = claimedWarmSandbox?.status === "running" ? "ready" : "starting";
-    }
-
-    // Create conversation record
-    const sessionId = `acp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const conversationId = await ctx.runMutation(
-      internal.acp.createConversationInternal,
-      {
-        teamId,
-        userId: identity.subject,
-        sessionId,
-        providerId: args.providerId,
-        cwd: args.cwd,
-        acpSandboxId: sandboxId,
-        clientConversationId: args.clientConversationId,
-      },
-    );
-
-    // Increment sandbox conversation count
-    await ctx.runMutation(internal.acpSandboxes.incrementConversationCount, {
-      sandboxId,
-    });
-
-    if (claimedWarmSandbox) {
-      try {
-        await reconfigureSandboxForTeam(ctx, claimedWarmSandbox, teamId);
-      } catch (error) {
-        console.error("[acp] Failed to reconfigure warm sandbox:", error);
-      }
-    }
-
-    // If sandbox is ready, initialize conversation on it
-    if (status === "ready") {
-      const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
-        sandboxId,
-      });
-      if (sandbox) {
-        const readiness = await ensureSandboxReady(ctx, sandbox);
-        if (readiness.sandboxUrl && readiness.status === "running") {
-          try {
-            await recordOutboundEvent(ctx, {
-              conversationId,
-              sandboxId,
-              teamId,
-              raw: JSON.stringify({
-                conversation_id: conversationId,
-                session_id: sessionId,
-                provider_id: args.providerId,
-                cwd: args.cwd,
-              }),
-              eventType: "init",
-            });
-            await initConversationOnSandbox(
-              readiness.sandboxUrl,
-              conversationId,
-              sessionId,
-              args.providerId,
-              args.cwd,
-              "auto_allow_always", // Default permission mode for all ACP conversations
-            );
-            await ensureConversationModel(
-              ctx,
-              readiness.sandboxUrl,
-              conversationId,
-              sandboxId,
-              teamId,
-              resolveDefaultModelId(args.providerId),
-            );
-            // Mark as initialized
-            await ctx.runMutation(internal.acp.markConversationInitialized, {
-              conversationId,
-            });
-          } catch (error) {
-            console.error(
-              "[acp] Failed to init conversation on sandbox:",
-              error,
-            );
-            // Don't fail the whole operation, sandbox might not be ready yet
-          }
-        }
-      }
-    }
-
-    return { conversationId, sandboxId, status };
-  },
+  }> => runEffect(startConversationEffect(ctx, args)),
 });
 
 /**
@@ -962,27 +1050,36 @@ export const sendMessageOptimistic = authMutation({
  * Send a message in a conversation.
  * Persists user message and forwards to sandbox.
  */
-export const sendMessage = action({
-  args: {
-    conversationId: v.id("conversations"),
-    content: v.array(contentBlockValidator),
-    clientMessageId: v.optional(v.string()),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
+type SendMessageArgs = {
+  conversationId: Id<"conversations">;
+  content: Array<{
+    type: "text" | "image" | "resource_link";
+    text?: string;
+    data?: string;
+    mimeType?: string;
+    uri?: string;
+    name?: string;
+  }>;
+  clientMessageId?: string;
+};
+
+export const sendMessageEffect = (
+  ctx: AcpActionCtx,
+  args: SendMessageArgs,
+): Effect.Effect<
+  {
     messageId: Id<"conversationMessages">;
     status: "sent" | "queued" | "error";
     error?: string;
-  }> => {
-    // Verify auth
+  },
+  Error
+> =>
+  acpEffect("sendMessage", { conversationId: args.conversationId }, async () => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
     }
 
-    // Get conversation and verify ownership
     const conversation = await ctx.runQuery(
       internal.acp.getConversationInternal,
       { conversationId: args.conversationId },
@@ -992,7 +1089,6 @@ export const sendMessage = action({
       throw new Error("Conversation not found");
     }
 
-    // Verify user has access to this team
     const teamId = await ctx.runQuery(internal.acp.resolveTeamId, {
       teamSlugOrId: conversation.teamId,
       userId: identity.subject,
@@ -1022,7 +1118,6 @@ export const sendMessage = action({
       }
     }
 
-    // Persist user message
     const messageId = await ctx.runMutation(
       internal.acp.createMessageInternal,
       {
@@ -1033,12 +1128,10 @@ export const sendMessage = action({
       },
     );
 
-    // Update conversation lastMessageAt
     await ctx.runMutation(internal.acp.updateConversationActivity, {
       conversationId: args.conversationId,
     });
 
-    // Schedule title generation if this is the first message (non-blocking)
     const textContent = args.content
       .filter((block) => block.type === "text" && block.text)
       .map((block) => block.text)
@@ -1061,271 +1154,51 @@ export const sendMessage = action({
       return { messageId, status: "queued", error: "Waiting for sandbox" };
     }
 
-    // Get sandbox and forward message
-    if (conversation.acpSandboxId) {
-      const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
-        sandboxId: conversation.acpSandboxId,
-      });
-
-      if (!sandbox) {
-        console.warn("[acp] Sandbox not ready for conversation", {
-          conversationId: args.conversationId,
-          sandboxStatus: "missing",
-        });
-        await replaceSandboxForConversation(
-          ctx,
-          conversation,
-          identity.subject,
-          teamId,
-        );
-        await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
-        return { messageId, status: "queued", error: "Waiting for sandbox" };
-      }
-
-      if (sandbox.status === "error") {
-        await replaceSandboxForConversation(
-          ctx,
-          conversation,
-          identity.subject,
-          teamId,
-        );
-        await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
-        return { messageId, status: "queued", error: "Waiting for sandbox" };
-      }
-
-      const readiness = await ensureSandboxReady(ctx, sandbox);
-      if (readiness.status === "error") {
-        await replaceSandboxForConversation(
-          ctx,
-          conversation,
-          identity.subject,
-          teamId,
-        );
-        await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
-        return { messageId, status: "queued", error: "Waiting for sandbox" };
-      }
-
-      if (!readiness.sandboxUrl || readiness.status !== "running") {
-        await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
-        return { messageId, status: "queued", error: "Waiting for sandbox" };
-      }
-      try {
-        await maybeReconfigureWarmSandbox(ctx, sandbox, conversation.teamId);
-        // Ensure conversation is initialized on sandbox before sending prompt.
-        // This handles the case where sandbox was spawning during startConversation.
-        if (!conversation.initializedOnSandbox) {
-          await recordOutboundEvent(ctx, {
-            conversationId: args.conversationId,
-            sandboxId: conversation.acpSandboxId,
-            teamId: conversation.teamId,
-            raw: JSON.stringify({
-              conversation_id: args.conversationId,
-              session_id: conversation.sessionId,
-              provider_id: conversation.providerId,
-              cwd: conversation.cwd,
-            }),
-            eventType: "init",
-          });
-          await initConversationOnSandbox(
-            readiness.sandboxUrl,
-            args.conversationId,
-            conversation.sessionId,
-            conversation.providerId,
-            conversation.cwd,
-            conversation.permissionMode ?? "auto_allow_always",
-          );
-          await ensureConversationModel(
-            ctx,
-            readiness.sandboxUrl,
-            args.conversationId,
-            conversation.acpSandboxId,
-            conversation.teamId,
-            conversation.modelId ??
-              resolveDefaultModelId(conversation.providerId),
-          );
-          // Mark as initialized
-          await ctx.runMutation(internal.acp.markConversationInitialized, {
-            conversationId: args.conversationId,
-          });
-        } else {
-          await ensureConversationModel(
-            ctx,
-            readiness.sandboxUrl,
-            args.conversationId,
-            conversation.acpSandboxId,
-            conversation.teamId,
-            conversation.modelId ??
-              resolveDefaultModelId(conversation.providerId),
-          );
-        }
-
-        await recordOutboundEvent(ctx, {
-          conversationId: args.conversationId,
-          sandboxId: conversation.acpSandboxId,
-          teamId: conversation.teamId,
-          raw: JSON.stringify({
-            conversation_id: args.conversationId,
-            session_id: conversation.sessionId,
-            content: args.content,
-          }),
-          eventType: "prompt",
-        });
-        await sendPromptToSandbox(
-          readiness.sandboxUrl,
-          args.conversationId,
-          conversation.sessionId,
-          args.content,
-        );
-
-        // Record activity
-        await ctx.runMutation(internal.acpSandboxes.recordActivity, {
-          sandboxId: conversation.acpSandboxId,
-        });
-        await ctx.runMutation(
-          internal.conversationMessages.updateDeliveryStatus,
-          {
-            messageId,
-            status: "sent",
-          },
-        );
-      } catch (error) {
-        console.error("[acp] Failed to send prompt to sandbox:", error);
-        await recordSandboxError(
-          ctx,
-          conversation.acpSandboxId,
-          error,
-          "Failed to reach sandbox",
-          {
-            teamId,
-            conversationId: conversation._id,
-            context: "sendMessage",
-          },
-        );
-        await ctx.runMutation(
-          internal.conversationMessages.updateDeliveryStatus,
-          {
-            messageId,
-            status: "error",
-            error: "Failed to reach sandbox",
-          },
-        );
-        return {
-          messageId,
-          status: "error",
-          error: "Failed to reach sandbox",
-        };
-      }
-    }
-
-    return { messageId, status: "sent" };
-  },
-});
-
-/**
- * Retry delivery of an existing user message to the sandbox without duplicating it.
- */
-export const retryMessage = action({
-  args: {
-    conversationId: v.id("conversations"),
-    messageId: v.id("conversationMessages"),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ status: "sent" | "queued" | "error"; error?: string }> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
-
-    const conversation = await ctx.runQuery(
-      internal.acp.getConversationInternal,
-      { conversationId: args.conversationId },
-    );
-
-    if (!conversation) {
-      throw new Error("Conversation not found");
-    }
-
-    const teamId = await ctx.runQuery(internal.acp.resolveTeamId, {
-      teamSlugOrId: conversation.teamId,
-      userId: identity.subject,
-    });
-
-    const message = await ctx.runQuery(
-      internal.conversationMessages.getByIdInternal,
-      { messageId: args.messageId },
-    );
-
-    if (!message || message.conversationId !== args.conversationId) {
-      throw new Error("Message not found");
-    }
-
-    if (message.role !== "user") {
-      throw new Error("Only user messages can be retried");
-    }
-
-    if (!conversation.acpSandboxId) {
-      await replaceSandboxForConversation(
-        ctx,
-        conversation,
-        identity.subject,
-        teamId,
-      );
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        0,
-      );
-      return { status: "queued", error: "Waiting for sandbox" };
-    }
-
     const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
       sandboxId: conversation.acpSandboxId,
     });
 
     if (!sandbox) {
+      console.warn("[acp] Sandbox not ready for conversation", {
+        conversationId: args.conversationId,
+        sandboxStatus: "missing",
+      });
       await replaceSandboxForConversation(
         ctx,
         conversation,
         identity.subject,
         teamId,
       );
-      await scheduleMessageDelivery(
+      await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
+      return { messageId, status: "queued", error: "Waiting for sandbox" };
+    }
+
+    if (sandbox.status === "error") {
+      await replaceSandboxForConversation(
         ctx,
-        args.conversationId,
-        args.messageId,
-        0,
+        conversation,
+        identity.subject,
+        teamId,
       );
-      return { status: "queued", error: "Waiting for sandbox" };
+      await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
+      return { messageId, status: "queued", error: "Waiting for sandbox" };
     }
 
     const readiness = await ensureSandboxReady(ctx, sandbox);
-    if (readiness.status === "error" || sandbox.status === "error") {
+    if (readiness.status === "error") {
       await replaceSandboxForConversation(
         ctx,
         conversation,
         identity.subject,
         teamId,
       );
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        0,
-      );
-      return { status: "queued", error: "Waiting for sandbox" };
+      await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
+      return { messageId, status: "queued", error: "Waiting for sandbox" };
     }
 
     if (!readiness.sandboxUrl || readiness.status !== "running") {
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        0,
-      );
-      return { status: "queued", error: "Waiting for sandbox" };
+      await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
+      return { messageId, status: "queued", error: "Waiting for sandbox" };
     }
 
     try {
@@ -1357,8 +1230,7 @@ export const retryMessage = action({
           args.conversationId,
           conversation.acpSandboxId,
           conversation.teamId,
-          conversation.modelId ??
-            resolveDefaultModelId(conversation.providerId),
+          conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
         );
         await ctx.runMutation(internal.acp.markConversationInitialized, {
           conversationId: args.conversationId,
@@ -1370,8 +1242,7 @@ export const retryMessage = action({
           args.conversationId,
           conversation.acpSandboxId,
           conversation.teamId,
-          conversation.modelId ??
-            resolveDefaultModelId(conversation.providerId),
+          conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
         );
       }
 
@@ -1382,7 +1253,7 @@ export const retryMessage = action({
         raw: JSON.stringify({
           conversation_id: args.conversationId,
           session_id: conversation.sessionId,
-          content: message.content,
+          content: args.content,
         }),
         eventType: "prompt",
       });
@@ -1390,68 +1261,295 @@ export const retryMessage = action({
         readiness.sandboxUrl,
         args.conversationId,
         conversation.sessionId,
-        message.content,
+        args.content,
       );
 
       await ctx.runMutation(internal.acpSandboxes.recordActivity, {
         sandboxId: conversation.acpSandboxId,
       });
-      await ctx.runMutation(
-        internal.conversationMessages.updateDeliveryStatus,
-        {
-          messageId: args.messageId,
-          status: "sent",
-        },
-      );
-
-      return { status: "sent" };
+      await ctx.runMutation(internal.conversationMessages.updateDeliveryStatus, {
+        messageId,
+        status: "sent",
+      });
     } catch (error) {
-      console.error("[acp] Failed to retry message:", error);
+      console.error("[acp] Failed to send prompt to sandbox:", error);
       await recordSandboxError(
         ctx,
         conversation.acpSandboxId,
         error,
-        "Retry failed",
+        "Failed to reach sandbox",
         {
           teamId,
           conversationId: conversation._id,
-          context: "retryMessage",
+          context: "sendMessage",
         },
       );
-      await ctx.runMutation(
-        internal.conversationMessages.updateDeliveryStatus,
-        {
+      await ctx.runMutation(internal.conversationMessages.updateDeliveryStatus, {
+        messageId,
+        status: "error",
+        error: "Failed to reach sandbox",
+      });
+      return {
+        messageId,
+        status: "error",
+        error: "Failed to reach sandbox",
+      };
+    }
+
+    return { messageId, status: "sent" };
+  });
+
+export const sendMessage = action({
+  args: {
+    conversationId: v.id("conversations"),
+    content: v.array(contentBlockValidator),
+    clientMessageId: v.optional(v.string()),
+  },
+  handler: (ctx, args): Promise<{
+    messageId: Id<"conversationMessages">;
+    status: "sent" | "queued" | "error";
+    error?: string;
+  }> => runEffect(sendMessageEffect(ctx, args)),
+});
+
+/**
+ * Retry delivery of an existing user message to the sandbox without duplicating it.
+ */
+type RetryMessageArgs = {
+  conversationId: Id<"conversations">;
+  messageId: Id<"conversationMessages">;
+};
+
+export const retryMessageEffect = (
+  ctx: AcpActionCtx,
+  args: RetryMessageArgs,
+): Effect.Effect<{ status: "sent" | "queued" | "error"; error?: string }, Error> =>
+  acpEffect(
+    "retryMessage",
+    { conversationId: args.conversationId, messageId: args.messageId },
+    async () => {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) {
+        throw new Error("Not authenticated");
+      }
+
+      const conversation = await ctx.runQuery(
+        internal.acp.getConversationInternal,
+        { conversationId: args.conversationId },
+      );
+
+      if (!conversation) {
+        throw new Error("Conversation not found");
+      }
+
+      const teamId = await ctx.runQuery(internal.acp.resolveTeamId, {
+        teamSlugOrId: conversation.teamId,
+        userId: identity.subject,
+      });
+
+      const message = await ctx.runQuery(
+        internal.conversationMessages.getByIdInternal,
+        { messageId: args.messageId },
+      );
+
+      if (!message || message.conversationId !== args.conversationId) {
+        throw new Error("Message not found");
+      }
+
+      if (message.role !== "user") {
+        throw new Error("Only user messages can be retried");
+      }
+
+      if (!conversation.acpSandboxId) {
+        await replaceSandboxForConversation(
+          ctx,
+          conversation,
+          identity.subject,
+          teamId,
+        );
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          0,
+        );
+        return { status: "queued", error: "Waiting for sandbox" };
+      }
+
+      const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
+        sandboxId: conversation.acpSandboxId,
+      });
+
+      if (!sandbox) {
+        await replaceSandboxForConversation(
+          ctx,
+          conversation,
+          identity.subject,
+          teamId,
+        );
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          0,
+        );
+        return { status: "queued", error: "Waiting for sandbox" };
+      }
+
+      const readiness = await ensureSandboxReady(ctx, sandbox);
+      if (readiness.status === "error" || sandbox.status === "error") {
+        await replaceSandboxForConversation(
+          ctx,
+          conversation,
+          identity.subject,
+          teamId,
+        );
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          0,
+        );
+        return { status: "queued", error: "Waiting for sandbox" };
+      }
+
+      if (!readiness.sandboxUrl || readiness.status !== "running") {
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          0,
+        );
+        return { status: "queued", error: "Waiting for sandbox" };
+      }
+
+      try {
+        await maybeReconfigureWarmSandbox(ctx, sandbox, conversation.teamId);
+        if (!conversation.initializedOnSandbox) {
+          await recordOutboundEvent(ctx, {
+            conversationId: args.conversationId,
+            sandboxId: conversation.acpSandboxId,
+            teamId: conversation.teamId,
+            raw: JSON.stringify({
+              conversation_id: args.conversationId,
+              session_id: conversation.sessionId,
+              provider_id: conversation.providerId,
+              cwd: conversation.cwd,
+            }),
+            eventType: "init",
+          });
+          await initConversationOnSandbox(
+            readiness.sandboxUrl,
+            args.conversationId,
+            conversation.sessionId,
+            conversation.providerId,
+            conversation.cwd,
+            conversation.permissionMode ?? "auto_allow_always",
+          );
+          await ensureConversationModel(
+            ctx,
+            readiness.sandboxUrl,
+            args.conversationId,
+            conversation.acpSandboxId,
+            conversation.teamId,
+            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+          );
+          await ctx.runMutation(internal.acp.markConversationInitialized, {
+            conversationId: args.conversationId,
+          });
+        } else {
+          await ensureConversationModel(
+            ctx,
+            readiness.sandboxUrl,
+            args.conversationId,
+            conversation.acpSandboxId,
+            conversation.teamId,
+            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+          );
+        }
+
+        await recordOutboundEvent(ctx, {
+          conversationId: args.conversationId,
+          sandboxId: conversation.acpSandboxId,
+          teamId: conversation.teamId,
+          raw: JSON.stringify({
+            conversation_id: args.conversationId,
+            session_id: conversation.sessionId,
+            content: message.content,
+          }),
+          eventType: "prompt",
+        });
+        await sendPromptToSandbox(
+          readiness.sandboxUrl,
+          args.conversationId,
+          conversation.sessionId,
+          message.content,
+        );
+
+        await ctx.runMutation(internal.acpSandboxes.recordActivity, {
+          sandboxId: conversation.acpSandboxId,
+        });
+        await ctx.runMutation(internal.conversationMessages.updateDeliveryStatus, {
+          messageId: args.messageId,
+          status: "sent",
+        });
+
+        return { status: "sent" };
+      } catch (error) {
+        console.error("[acp] Failed to retry message:", error);
+        await recordSandboxError(
+          ctx,
+          conversation.acpSandboxId,
+          error,
+          "Retry failed",
+          {
+            teamId,
+            conversationId: conversation._id,
+            context: "retryMessage",
+          },
+        );
+        await ctx.runMutation(internal.conversationMessages.updateDeliveryStatus, {
           messageId: args.messageId,
           status: "error",
           error: "Retry failed",
-        },
-      );
-      return { status: "error", error: "Retry failed" };
-    }
+        });
+        return { status: "error", error: "Retry failed" };
+      }
+    },
+  );
+
+export const retryMessage = action({
+  args: {
+    conversationId: v.id("conversations"),
+    messageId: v.id("conversationMessages"),
   },
+  handler: (ctx, args): Promise<{
+    status: "sent" | "queued" | "error";
+    error?: string;
+  }> => runEffect(retryMessageEffect(ctx, args)),
 });
 
 /**
  * Send a raw JSON-RPC response to the sandbox.
  */
-export const sendRpc = action({
-  args: {
-    conversationId: v.id("conversations"),
-    payload: v.string(),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ status: "sent" | "error"; error?: string }> => {
+type SendRpcArgs = {
+  conversationId: Id<"conversations">;
+  payload: string;
+};
+
+export const sendRpcEffect = (
+  ctx: AcpActionCtxNoAction,
+  args: SendRpcArgs,
+): Effect.Effect<{ status: "sent" | "error"; error?: string }, Error> =>
+  acpEffect("sendRpc", { conversationId: args.conversationId }, async () => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
     }
 
-    const conversation = await ctx.runQuery(
-      internal.acp.getConversationInternal,
-      { conversationId: args.conversationId },
-    );
+    const conversation = await ctx.runQuery(internal.acp.getConversationInternal, {
+      conversationId: args.conversationId,
+    });
 
     if (!conversation) {
       throw new Error("Conversation not found");
@@ -1562,7 +1660,15 @@ export const sendRpc = action({
       );
       return { status: "error", error: "Failed to send RPC" };
     }
+  });
+
+export const sendRpc = action({
+  args: {
+    conversationId: v.id("conversations"),
+    payload: v.string(),
   },
+  handler: (ctx, args): Promise<{ status: "sent" | "error"; error?: string }> =>
+    runEffect(sendRpcEffect(ctx, args)),
 });
 
 /**
@@ -1821,21 +1927,21 @@ export const updateConversationActivity = internalMutation({
 /**
  * Spawn a new sandbox for ACP using the configured provider.
  */
-export const spawnSandbox = internalAction({
-  args: {
-    teamId: v.string(),
-  },
-  handler: async (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> => {
-    // Get the sandbox provider (currently supports morph, freestyle, daytona)
-    const provider = getDefaultSandboxProvider();
+type SpawnSandboxArgs = {
+  teamId: string;
+};
 
-    // Get snapshot ID from sandbox-snapshots.json based on provider
+export const spawnSandboxEffect = (
+  ctx: AcpMutationCtx,
+  args: SpawnSandboxArgs,
+): Effect.Effect<{ sandboxId: Id<"acpSandboxes"> }, Error> =>
+  acpEffect("spawnSandbox", { teamId: args.teamId }, async () => {
+    const provider = sandboxProviderResolver.getDefault();
     const snapshotId =
       getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
       "snap_default";
     const streamSecret = generateStreamSecret();
 
-    // Create sandbox record first to get ID for JWT
     const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {
       teamId: args.teamId,
       provider: provider.name,
@@ -1845,88 +1951,10 @@ export const spawnSandbox = internalAction({
       streamSecret,
     });
 
-    // Parallelize: JWT generation + Morph spawn (both only need sandboxId)
     const [jwtResult, instance] = await Promise.all([
       generateSandboxJwt(sandboxId, args.teamId),
       provider.spawn({
         teamId: args.teamId,
-        snapshotId,
-        ttlSeconds: 3600, // 1 hour
-        ttlAction: "pause",
-        metadata: {
-          sandboxId,
-        },
-      }),
-    ]);
-
-    const { jwt: callbackJwt, hash: callbackJwtHash } = jwtResult;
-
-    // Update sandbox with JWT hash and instance ID (parallel mutations)
-    await Promise.all([
-      ctx.runMutation(internal.acp.updateSandboxJwtHash, {
-        sandboxId,
-        callbackJwtHash,
-      }),
-      ctx.runMutation(internal.acp.updateSandboxInstanceId, {
-        sandboxId,
-        instanceId: instance.instanceId,
-        sandboxUrl: instance.sandboxUrl,
-      }),
-    ]);
-
-    // Configure the sandbox with callback settings
-    // This is necessary because Morph uses memory snapshots - processes running
-    // in the snapshot don't receive env vars passed at spawn time.
-    if (instance.sandboxUrl) {
-      await configureSandbox(instance.sandboxUrl, {
-        callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
-        sandboxJwt: callbackJwt,
-        sandboxId,
-        // API proxy URL routes CLI requests through Convex HTTP proxy which
-        // validates the JWT and injects the real API key (with Vertex fallback)
-        apiProxyUrl: env.CONVEX_SITE_URL,
-        streamSecret,
-      });
-    }
-
-    return { sandboxId };
-  },
-});
-
-/**
- * Spawn a warm sandbox reserved for a user intent signal.
- */
-export const spawnWarmSandbox = internalAction({
-  args: {
-    reservedUserId: v.string(),
-    reservedTeamId: v.string(),
-  },
-  handler: async (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> => {
-    const provider = getDefaultSandboxProvider();
-    const snapshotId =
-      getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
-      "snap_default";
-    const streamSecret = generateStreamSecret();
-
-    const now = Date.now();
-    const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {
-      teamId: WARM_POOL_TEAM_ID,
-      provider: provider.name,
-      instanceId: "pending",
-      snapshotId,
-      callbackJwtHash: "pending",
-      streamSecret,
-      poolState: "reserved",
-      warmExpiresAt: now + WARM_SANDBOX_TTL_MS,
-      warmReservedUserId: args.reservedUserId,
-      warmReservedTeamId: args.reservedTeamId,
-      warmReservedAt: now,
-    });
-
-    const [jwtResult, instance] = await Promise.all([
-      generateSandboxJwt(sandboxId, WARM_POOL_TEAM_ID),
-      provider.spawn({
-        teamId: WARM_POOL_TEAM_ID,
         snapshotId,
         ttlSeconds: 3600,
         ttlAction: "pause",
@@ -1960,121 +1988,268 @@ export const spawnWarmSandbox = internalAction({
       });
     }
 
-    await ctx.scheduler.runAfter(
-      WARM_SANDBOX_TTL_MS,
-      internal.acp.expireWarmSandbox,
-      { sandboxId },
-    );
-
     return { sandboxId };
+  });
+
+export const spawnSandbox = internalAction({
+  args: {
+    teamId: v.string(),
   },
+  handler: (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> =>
+    runEffect(spawnSandboxEffect(ctx, args)),
+});
+
+/**
+ * Spawn a warm sandbox reserved for a user intent signal.
+ */
+type SpawnWarmSandboxArgs = {
+  reservedUserId: string;
+  reservedTeamId: string;
+};
+
+export const spawnWarmSandboxEffect = (
+  ctx: AcpWarmSandboxCtx,
+  args: SpawnWarmSandboxArgs,
+): Effect.Effect<{ sandboxId: Id<"acpSandboxes"> }, Error> =>
+  acpEffect(
+    "spawnWarmSandbox",
+    { reservedUserId: args.reservedUserId, reservedTeamId: args.reservedTeamId },
+    async () => {
+      const provider = sandboxProviderResolver.getDefault();
+      const snapshotId =
+        getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
+        "snap_default";
+      const streamSecret = generateStreamSecret();
+
+      const now = Date.now();
+      const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {
+        teamId: WARM_POOL_TEAM_ID,
+        provider: provider.name,
+        instanceId: "pending",
+        snapshotId,
+        callbackJwtHash: "pending",
+        streamSecret,
+        poolState: "reserved",
+        warmExpiresAt: now + WARM_SANDBOX_TTL_MS,
+        warmReservedUserId: args.reservedUserId,
+        warmReservedTeamId: args.reservedTeamId,
+        warmReservedAt: now,
+      });
+
+      const [jwtResult, instance] = await Promise.all([
+        generateSandboxJwt(sandboxId, WARM_POOL_TEAM_ID),
+        provider.spawn({
+          teamId: WARM_POOL_TEAM_ID,
+          snapshotId,
+          ttlSeconds: 3600,
+          ttlAction: "pause",
+          metadata: {
+            sandboxId,
+          },
+        }),
+      ]);
+
+      const { jwt: callbackJwt, hash: callbackJwtHash } = jwtResult;
+
+      await Promise.all([
+        ctx.runMutation(internal.acp.updateSandboxJwtHash, {
+          sandboxId,
+          callbackJwtHash,
+        }),
+        ctx.runMutation(internal.acp.updateSandboxInstanceId, {
+          sandboxId,
+          instanceId: instance.instanceId,
+          sandboxUrl: instance.sandboxUrl,
+        }),
+      ]);
+
+      if (instance.sandboxUrl) {
+        await configureSandbox(instance.sandboxUrl, {
+          callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
+          sandboxJwt: callbackJwt,
+          sandboxId,
+          apiProxyUrl: env.CONVEX_SITE_URL,
+          streamSecret,
+        });
+      }
+
+      await ctx.scheduler.runAfter(
+        WARM_SANDBOX_TTL_MS,
+        internal.acp.expireWarmSandbox,
+        { sandboxId },
+      );
+
+      return { sandboxId };
+    },
+  );
+
+export const spawnWarmSandbox = internalAction({
+  args: {
+    reservedUserId: v.string(),
+    reservedTeamId: v.string(),
+  },
+  handler: (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> =>
+    runEffect(spawnWarmSandboxEffect(ctx, args)),
 });
 
 /**
  * Deliver a queued message once the sandbox is ready.
  */
-export const deliverMessageInternal = internalAction({
-  args: {
-    conversationId: v.id("conversations"),
-    messageId: v.id("conversationMessages"),
-    attempt: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const conversation = await ctx.runQuery(
-      internal.acp.getConversationInternal,
-      {
-        conversationId: args.conversationId,
-      },
-    );
+type DeliverMessageArgs = {
+  conversationId: Id<"conversations">;
+  messageId: Id<"conversationMessages">;
+  attempt: number;
+};
 
-    if (!conversation) {
-      return;
-    }
-
-    const message = await ctx.runQuery(
-      internal.conversationMessages.getByIdInternal,
-      { messageId: args.messageId },
-    );
-
-    if (!message || message.conversationId !== args.conversationId) {
-      return;
-    }
-
-    if (message.role !== "user") {
-      return;
-    }
-
-    let sandboxId = conversation.acpSandboxId ?? null;
-    if (!sandboxId) {
-      const replacement = await replaceSandboxForConversation(
-        ctx,
-        conversation,
-        conversation.userId ?? null,
-        conversation.teamId,
+export const deliverMessageInternalEffect = (
+  ctx: AcpInternalActionCtx,
+  args: DeliverMessageArgs,
+): Effect.Effect<void, Error> =>
+  acpEffect(
+    "deliverMessageInternal",
+    {
+      conversationId: args.conversationId,
+      messageId: args.messageId,
+      attempt: args.attempt,
+    },
+    async () => {
+      const conversation = await ctx.runQuery(
+        internal.acp.getConversationInternal,
+        {
+          conversationId: args.conversationId,
+        },
       );
-      sandboxId = replacement ?? null;
-    }
 
-    if (!sandboxId) {
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        args.attempt,
-      );
-      return;
-    }
+      if (!conversation) {
+        return;
+      }
 
-    const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
-      sandboxId,
-    });
+      const message = await ctx.runQuery(
+        internal.conversationMessages.getByIdInternal,
+        { messageId: args.messageId },
+      );
 
-    if (!sandbox) {
-      await replaceSandboxForConversation(
-        ctx,
-        conversation,
-        conversation.userId ?? null,
-        conversation.teamId,
-      );
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        args.attempt,
-      );
-      return;
-    }
+      if (!message || message.conversationId !== args.conversationId) {
+        return;
+      }
 
-    const readiness = await ensureSandboxReady(ctx, sandbox);
-    if (readiness.status === "error" || sandbox.status === "error") {
-      await replaceSandboxForConversation(
-        ctx,
-        conversation,
-        conversation.userId ?? null,
-        conversation.teamId,
-      );
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        args.attempt,
-      );
-      return;
-    }
+      if (message.role !== "user") {
+        return;
+      }
 
-    if (!readiness.sandboxUrl || readiness.status !== "running") {
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        args.attempt,
-      );
-      return;
-    }
+      let sandboxId = conversation.acpSandboxId ?? null;
+      if (!sandboxId) {
+        const replacement = await replaceSandboxForConversation(
+          ctx,
+          conversation,
+          conversation.userId ?? null,
+          conversation.teamId,
+        );
+        sandboxId = replacement ?? null;
+      }
 
-    try {
-      await maybeReconfigureWarmSandbox(ctx, sandbox, conversation.teamId);
-      if (!conversation.initializedOnSandbox) {
+      if (!sandboxId) {
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          args.attempt,
+        );
+        return;
+      }
+
+      const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
+        sandboxId,
+      });
+
+      if (!sandbox) {
+        await replaceSandboxForConversation(
+          ctx,
+          conversation,
+          conversation.userId ?? null,
+          conversation.teamId,
+        );
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          args.attempt,
+        );
+        return;
+      }
+
+      const readiness = await ensureSandboxReady(ctx, sandbox);
+      if (readiness.status === "error" || sandbox.status === "error") {
+        await replaceSandboxForConversation(
+          ctx,
+          conversation,
+          conversation.userId ?? null,
+          conversation.teamId,
+        );
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          args.attempt,
+        );
+        return;
+      }
+
+      if (!readiness.sandboxUrl || readiness.status !== "running") {
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          args.attempt,
+        );
+        return;
+      }
+
+      try {
+        await maybeReconfigureWarmSandbox(ctx, sandbox, conversation.teamId);
+        if (!conversation.initializedOnSandbox) {
+          await recordOutboundEvent(ctx, {
+            conversationId: args.conversationId,
+            sandboxId,
+            teamId: conversation.teamId,
+            raw: JSON.stringify({
+              conversation_id: args.conversationId,
+              session_id: conversation.sessionId,
+              provider_id: conversation.providerId,
+              cwd: conversation.cwd,
+            }),
+            eventType: "init",
+          });
+          await initConversationOnSandbox(
+            readiness.sandboxUrl,
+            args.conversationId,
+            conversation.sessionId,
+            conversation.providerId,
+            conversation.cwd,
+            conversation.permissionMode ?? "auto_allow_always",
+          );
+          await ensureConversationModel(
+            ctx,
+            readiness.sandboxUrl,
+            args.conversationId,
+            sandboxId,
+            conversation.teamId,
+            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+          );
+          await ctx.runMutation(internal.acp.markConversationInitialized, {
+            conversationId: args.conversationId,
+          });
+        } else {
+          await ensureConversationModel(
+            ctx,
+            readiness.sandboxUrl,
+            args.conversationId,
+            sandboxId,
+            conversation.teamId,
+            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+          );
+        }
+
         await recordOutboundEvent(ctx, {
           conversationId: args.conversationId,
           sandboxId,
@@ -2082,103 +2257,72 @@ export const deliverMessageInternal = internalAction({
           raw: JSON.stringify({
             conversation_id: args.conversationId,
             session_id: conversation.sessionId,
-            provider_id: conversation.providerId,
-            cwd: conversation.cwd,
+            content: message.content,
           }),
-          eventType: "init",
+          eventType: "prompt",
         });
-        await initConversationOnSandbox(
+        await sendPromptToSandbox(
           readiness.sandboxUrl,
           args.conversationId,
           conversation.sessionId,
-          conversation.providerId,
-          conversation.cwd,
-          conversation.permissionMode ?? "auto_allow_always",
+          message.content,
         );
-        await ensureConversationModel(
-          ctx,
-          readiness.sandboxUrl,
-          args.conversationId,
+
+        await ctx.runMutation(internal.acpSandboxes.recordActivity, {
           sandboxId,
-          conversation.teamId,
-          conversation.modelId ??
-            resolveDefaultModelId(conversation.providerId),
-        );
-        await ctx.runMutation(internal.acp.markConversationInitialized, {
-          conversationId: args.conversationId,
         });
-      } else {
-        await ensureConversationModel(
+
+        await ctx.runMutation(
+          internal.conversationMessages.updateDeliveryStatus,
+          {
+            messageId: args.messageId,
+            status: "sent",
+          },
+        );
+      } catch (error) {
+        console.error("[acp] Failed to deliver queued message:", error);
+        await recordSandboxError(
           ctx,
-          readiness.sandboxUrl,
-          args.conversationId,
           sandboxId,
-          conversation.teamId,
-          conversation.modelId ??
-            resolveDefaultModelId(conversation.providerId),
+          error,
+          "Failed to deliver queued message",
+          {
+            teamId: conversation.teamId,
+            conversationId: conversation._id,
+            context: "deliverQueuedMessage",
+          },
+        );
+        await scheduleMessageDelivery(
+          ctx,
+          args.conversationId,
+          args.messageId,
+          args.attempt,
         );
       }
+    },
+  );
 
-      await recordOutboundEvent(ctx, {
-        conversationId: args.conversationId,
-        sandboxId,
-        teamId: conversation.teamId,
-        raw: JSON.stringify({
-          conversation_id: args.conversationId,
-          session_id: conversation.sessionId,
-          content: message.content,
-        }),
-        eventType: "prompt",
-      });
-      await sendPromptToSandbox(
-        readiness.sandboxUrl,
-        args.conversationId,
-        conversation.sessionId,
-        message.content,
-      );
-
-      await ctx.runMutation(internal.acpSandboxes.recordActivity, {
-        sandboxId,
-      });
-
-      await ctx.runMutation(
-        internal.conversationMessages.updateDeliveryStatus,
-        {
-          messageId: args.messageId,
-          status: "sent",
-        },
-      );
-    } catch (error) {
-      console.error("[acp] Failed to deliver queued message:", error);
-      await recordSandboxError(
-        ctx,
-        sandboxId,
-        error,
-        "Failed to deliver queued message",
-        {
-          teamId: conversation.teamId,
-          conversationId: conversation._id,
-          context: "deliverQueuedMessage",
-        },
-      );
-      await scheduleMessageDelivery(
-        ctx,
-        args.conversationId,
-        args.messageId,
-        args.attempt,
-      );
-    }
+export const deliverMessageInternal = internalAction({
+  args: {
+    conversationId: v.id("conversations"),
+    messageId: v.id("conversationMessages"),
+    attempt: v.number(),
   },
+  handler: (ctx, args) => runEffect(deliverMessageInternalEffect(ctx, args)),
 });
 
 /**
  * Stop a warm sandbox if it expires without being claimed.
  */
-export const expireWarmSandbox = internalAction({
-  args: {
-    sandboxId: v.id("acpSandboxes"),
-  },
-  handler: async (ctx, args) => {
+type ExpireWarmSandboxArgs = {
+  sandboxId: Id<"acpSandboxes">;
+};
+
+export const expireWarmSandboxEffect = (
+  ctx: AcpSandboxAdminCtx,
+  args: ExpireWarmSandboxArgs,
+): Effect.Effect<void, Error> =>
+  acpEffect("expireWarmSandbox", { sandboxId: args.sandboxId }, async () => {
     const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
       sandboxId: args.sandboxId,
     });
@@ -2195,7 +2339,7 @@ export const expireWarmSandbox = internalAction({
       return;
     }
 
-    const provider = getSandboxProvider(sandbox.provider);
+    const provider = sandboxProviderResolver.getByName(sandbox.provider);
     try {
       await provider.stop(sandbox.instanceId);
     } catch (error) {
@@ -2206,17 +2350,27 @@ export const expireWarmSandbox = internalAction({
     await ctx.runMutation(internal.acpSandboxes.markStopped, {
       sandboxId: sandbox._id,
     });
+  });
+
+export const expireWarmSandbox = internalAction({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
   },
+  handler: (ctx, args) => runEffect(expireWarmSandboxEffect(ctx, args)),
 });
 
 /**
  * Stop a sandbox instance (best-effort).
  */
-export const stopSandboxInternal = internalAction({
-  args: {
-    sandboxId: v.id("acpSandboxes"),
-  },
-  handler: async (ctx, args) => {
+type StopSandboxArgs = {
+  sandboxId: Id<"acpSandboxes">;
+};
+
+export const stopSandboxInternalEffect = (
+  ctx: AcpSandboxAdminCtx,
+  args: StopSandboxArgs,
+): Effect.Effect<void, Error> =>
+  acpEffect("stopSandboxInternal", { sandboxId: args.sandboxId }, async () => {
     const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
       sandboxId: args.sandboxId,
     });
@@ -2224,7 +2378,7 @@ export const stopSandboxInternal = internalAction({
       return;
     }
 
-    const provider = getSandboxProvider(sandbox.provider);
+    const provider = sandboxProviderResolver.getByName(sandbox.provider);
     try {
       await provider.stop(sandbox.instanceId);
       await ctx.runMutation(internal.acpSandboxes.updateStatus, {
@@ -2234,7 +2388,13 @@ export const stopSandboxInternal = internalAction({
     } catch (error) {
       console.error("[acp] Failed to stop sandbox:", error);
     }
+  });
+
+export const stopSandboxInternal = internalAction({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
   },
+  handler: (ctx, args) => runEffect(stopSandboxInternalEffect(ctx, args)),
 });
 
 /**
@@ -2384,7 +2544,7 @@ async function sendPromptToSandbox(
  * Persist an outbound ACP payload for debugging.
  */
 async function recordOutboundEvent(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   args: {
     conversationId: Id<"conversations">;
     sandboxId: Id<"acpSandboxes">;
@@ -2410,7 +2570,7 @@ async function recordOutboundEvent(
  * Ensure a conversation is using the desired model.
  */
 async function ensureConversationModel(
-  ctx: ActionCtx,
+  ctx: AcpMutationCtx,
   sandboxUrl: string,
   conversationId: Id<"conversations">,
   sandboxId: Id<"acpSandboxes">,

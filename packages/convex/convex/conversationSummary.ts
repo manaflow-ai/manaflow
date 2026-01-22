@@ -2,10 +2,14 @@
 
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
+import { Effect } from "effect";
 import { v } from "convex/values";
-import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalAction, type ActionCtx } from "./_generated/server";
+import { EnvService, LiveServices } from "./effect/services";
+import { withObservability } from "./effect/observability";
+import { runEffect } from "./effect/runtime";
 
 type TitleStyle = "sentence" | "lowercase" | "title";
 
@@ -79,14 +83,48 @@ function buildExamples(style: TitleStyle): string {
  * Generate a brief title (3-8 words) from the first user message.
  * Uses GPT-4.1 Nano for fast, cheap inference.
  */
-export const generateTitle = internalAction({
-  args: {
-    conversationId: v.id("conversations"),
-    firstMessageText: v.string(),
-    teamId: v.string(),
-    userId: v.string(),
-  },
-  handler: async (ctx, args) => {
+type GenerateTextInput = {
+  system: string;
+  prompt: string;
+  maxRetries: number;
+};
+
+type TextGenerator = (input: GenerateTextInput) => Effect.Effect<string, Error>;
+type TextGeneratorFactory = (apiKey: string) => TextGenerator;
+
+type GenerateTitleArgs = {
+  conversationId: Id<"conversations">;
+  firstMessageText: string;
+  teamId: string;
+  userId: string;
+};
+type WorkspaceSettings = Doc<"workspaceSettings"> | null;
+
+export function makeOpenAITextGenerator(apiKey: string): TextGenerator {
+  const openai = createOpenAI({ apiKey });
+  return (input) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { text } = await generateText({
+          model: openai("gpt-4.1-nano"),
+          system: input.system,
+          prompt: input.prompt,
+          maxRetries: input.maxRetries,
+        });
+        return text;
+      },
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to generate title"),
+    });
+}
+
+export const generateTitleEffect = (
+  ctx: Pick<ActionCtx, "runQuery" | "runMutation">,
+  args: GenerateTitleArgs,
+  makeGenerator: TextGeneratorFactory
+): Effect.Effect<void, Error, EnvService> =>
+  Effect.gen(function* () {
+    const env = yield* EnvService;
     const apiKey = env.OPENAI_API_KEY;
     if (!apiKey) {
       console.warn(
@@ -95,23 +133,26 @@ export const generateTitle = internalAction({
       return;
     }
 
-    // Fetch workspace settings to get title style preference
-    const settings = await ctx.runQuery(
-      internal.workspaceSettings.getByTeamAndUserInternal,
-      { teamId: args.teamId, userId: args.userId }
-    );
+    const settings = yield* Effect.tryPromise<WorkspaceSettings, Error>({
+      try: () =>
+        ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+          teamId: args.teamId,
+          userId: args.userId,
+        }),
+      catch: (error) =>
+        error instanceof Error ? error : new Error("Failed to load settings"),
+    });
 
-    const titleStyle: TitleStyle = settings?.conversationTitleStyle ?? "sentence";
+    const titleStyle: TitleStyle =
+      settings?.conversationTitleStyle ?? "sentence";
     const customPrompt = settings?.conversationTitleCustomPrompt;
 
-    // Truncate message if too long
     const maxChars = 2000;
     const truncatedMessage =
       args.firstMessageText.length > maxChars
         ? args.firstMessageText.slice(0, maxChars)
         : args.firstMessageText;
 
-    // Use custom prompt if provided, otherwise use style-based prompt
     const system = customPrompt
       ? `${customPrompt}\n${FIRST_PERSON_INSTRUCTION}`
       : buildSystemPrompt(titleStyle);
@@ -124,30 +165,61 @@ export const generateTitle = internalAction({
       `User: ${truncatedMessage}\nTitle:`,
     ].join("");
 
-    try {
-      const openai = createOpenAI({ apiKey });
-      const { text } = await generateText({
-        model: openai("gpt-4.1-nano"),
-        system,
-        prompt,
-        maxRetries: 2,
-      });
+    const generateTextFn = makeGenerator(apiKey);
 
-      const title = text.trim().slice(0, 100); // Cap at 100 chars just in case
-      if (!title) {
-        return;
-      }
+    const text = yield* generateTextFn({
+      system,
+      prompt,
+      maxRetries: 2,
+    }).pipe(
+      Effect.catchAll((error) => {
+        console.error("[conversationTitle] Failed to generate title:", error);
+        return Effect.succeed("");
+      })
+    );
 
-      await ctx.runMutation(internal.conversationTitle.setTitle, {
-        conversationId: args.conversationId,
-        title,
-      });
-      console.log(
-        `[conversationTitle] Generated title for ${args.conversationId}: ${title}`
-      );
-    } catch (error) {
-      console.error("[conversationTitle] Failed to generate title:", error);
-      // Non-critical - don't throw, just log
+    const title = text.trim().slice(0, 100);
+    if (!title) {
+      return;
     }
+
+    yield* Effect.tryPromise({
+      try: () =>
+        ctx.runMutation(internal.conversationTitle.setTitle, {
+          conversationId: args.conversationId,
+          title,
+        }),
+      catch: (error) => {
+        console.error("[conversationTitle] Failed to set title:", error);
+        return error instanceof Error
+          ? error
+          : new Error("Failed to set title");
+      },
+    });
+
+    console.log(
+      `[conversationTitle] Generated title for ${args.conversationId}: ${title}`
+    );
+  }).pipe(
+    withObservability("conversation.generate_title", {
+      conversationId: args.conversationId,
+      teamId: args.teamId,
+      userId: args.userId,
+    })
+  );
+
+export const generateTitle = internalAction({
+  args: {
+    conversationId: v.id("conversations"),
+    firstMessageText: v.string(),
+    teamId: v.string(),
+    userId: v.string(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    return runEffect(
+      generateTitleEffect(ctx, args, makeOpenAITextGenerator).pipe(
+        Effect.provide(LiveServices)
+      )
+    );
   },
 });
