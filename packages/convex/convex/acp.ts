@@ -23,6 +23,7 @@ import {
 } from "./_generated/server";
 import { withObservability } from "./effect/observability";
 import { runEffect } from "./effect/runtime";
+import { TracingLive } from "./effect/tracing";
 import { authMutation, authQuery } from "./users/utils";
 import type {
   SandboxProvider as SandboxProviderInterface,
@@ -180,6 +181,45 @@ async function waitForSandboxHealthy(
   return false;
 }
 
+type SpanAttributes = Record<string, string | number | boolean | undefined>;
+
+const sanitizeSpanAttributes = (
+  attributes: SpanAttributes,
+): Record<string, string | number | boolean> => {
+  const sanitized: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+};
+
+const traceAcpStep = async <T>(
+  name: string,
+  attributes: SpanAttributes,
+  task: () => Promise<T>,
+): Promise<T> => {
+  return Effect.runPromise(
+    Effect.tryPromise({
+      try: task,
+      catch: (error) => {
+        console.error(`[acp.${name}] Error:`, error);
+        return error instanceof Error ? error : new Error(`acp.${name} failed`);
+      },
+    }).pipe(
+      Effect.withSpan(`acp.${name}`, {
+        attributes: sanitizeSpanAttributes(attributes),
+      }),
+      Effect.provide(TracingLive),
+    ),
+  );
+};
+
 async function ensureSandboxReady(
   ctx: AcpMutationCtx,
   sandbox: Doc<"acpSandboxes">,
@@ -191,7 +231,11 @@ async function ensureSandboxReady(
   let statusInfo: SandboxStatusInfo | null = null;
 
   try {
-    statusInfo = await provider.getStatus(sandbox.instanceId);
+    statusInfo = await traceAcpStep(
+      "sandbox.get_status",
+      { sandboxId: sandbox._id, instanceId: sandbox.instanceId },
+      () => provider.getStatus(sandbox.instanceId),
+    );
   } catch (error) {
     console.error("[acp] Failed to fetch sandbox status:", error);
     return {
@@ -205,7 +249,11 @@ async function ensureSandboxReady(
 
   if (normalizedStatus === "paused" && provider.resume) {
     try {
-      await provider.resume(sandbox.instanceId);
+      await traceAcpStep(
+        "sandbox.resume",
+        { sandboxId: sandbox._id, instanceId: sandbox.instanceId },
+        () => provider.resume?.(sandbox.instanceId) ?? Promise.resolve(),
+      );
       normalizedStatus = "starting";
     } catch (error) {
       console.error("[acp] Failed to resume sandbox:", error);
@@ -213,18 +261,21 @@ async function ensureSandboxReady(
   }
 
   if (normalizedStatus === "starting") {
-    const status = await waitForSandboxRunning(
-      provider,
-      sandbox.instanceId,
-      3,
-      1000,
+    const status = await traceAcpStep(
+      "sandbox.wait_running",
+      { sandboxId: sandbox._id, instanceId: sandbox.instanceId },
+      () => waitForSandboxRunning(provider, sandbox.instanceId, 3, 1000),
     );
     normalizedStatus = normalizeSandboxStatus(status);
   }
 
   let returnStatus: NormalizedSandboxStatus = normalizedStatus;
   if (normalizedStatus === "running" && sandboxUrl) {
-    const healthy = await waitForSandboxHealthy(sandboxUrl, 2, 750);
+    const healthy = await traceAcpStep(
+      "sandbox.wait_healthy",
+      { sandboxId: sandbox._id, instanceId: sandbox.instanceId },
+      () => waitForSandboxHealthy(sandboxUrl, 2, 750),
+    );
     if (!healthy) {
       returnStatus = "starting";
     }
@@ -260,7 +311,11 @@ async function ensureSandboxReady(
 
   if (returnStatus === "running" && sandboxUrl && !sandbox.streamSecret) {
     try {
-      await ensureStreamSecretConfigured(ctx, sandbox, sandboxUrl);
+      await traceAcpStep(
+        "sandbox.configure_stream",
+        { sandboxId: sandbox._id, instanceId: sandbox.instanceId },
+        () => ensureStreamSecretConfigured(ctx, sandbox, sandboxUrl),
+      );
     } catch (error) {
       console.error("[acp] Failed to configure stream secret:", error);
     }
@@ -2451,28 +2506,34 @@ async function configureSandbox(
     streamSecret: string;
   },
 ): Promise<void> {
-  console.log(`[acp] Configuring sandbox at ${sandboxUrl}`);
+  return traceAcpStep(
+    "sandbox.configure",
+    { sandboxId: config.sandboxId, sandboxUrl },
+    async () => {
+      console.log(`[acp] Configuring sandbox at ${sandboxUrl}`);
 
-  const response = await fetch(`${sandboxUrl}/api/acp/configure`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+      const response = await fetch(`${sandboxUrl}/api/acp/configure`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          callback_url: config.callbackUrl,
+          sandbox_jwt: config.sandboxJwt,
+          sandbox_id: config.sandboxId,
+          api_proxy_url: config.apiProxyUrl,
+          stream_secret: config.streamSecret,
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sandbox configure failed: ${response.status} - ${text}`);
+      }
+
+      console.log(`[acp] Sandbox configured successfully`);
     },
-    body: JSON.stringify({
-      callback_url: config.callbackUrl,
-      sandbox_jwt: config.sandboxJwt,
-      sandbox_id: config.sandboxId,
-      api_proxy_url: config.apiProxyUrl,
-      stream_secret: config.streamSecret,
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sandbox configure failed: ${response.status} - ${text}`);
-  }
-
-  console.log(`[acp] Sandbox configured successfully`);
+  );
 }
 
 /**
@@ -2486,24 +2547,30 @@ async function initConversationOnSandbox(
   cwd: string,
   permissionMode?: string,
 ): Promise<void> {
-  const response = await fetch(`${sandboxUrl}/api/acp/init`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      session_id: sessionId,
-      provider_id: providerId,
-      cwd,
-      permission_mode: permissionMode,
-    }),
-  });
+  return traceAcpStep(
+    "sandbox.init_conversation",
+    { conversationId, providerId, sandboxUrl },
+    async () => {
+      const response = await fetch(`${sandboxUrl}/api/acp/init`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          session_id: sessionId,
+          provider_id: providerId,
+          cwd,
+          permission_mode: permissionMode,
+        }),
+      });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sandbox init failed: ${response.status} - ${text}`);
-  }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sandbox init failed: ${response.status} - ${text}`);
+      }
+    },
+  );
 }
 
 /**
@@ -2522,22 +2589,28 @@ async function sendPromptToSandbox(
     name?: string;
   }>,
 ): Promise<void> {
-  const response = await fetch(`${sandboxUrl}/api/acp/prompt`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      session_id: sessionId,
-      content,
-    }),
-  });
+  return traceAcpStep(
+    "sandbox.prompt",
+    { conversationId, sandboxUrl },
+    async () => {
+      const response = await fetch(`${sandboxUrl}/api/acp/prompt`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          session_id: sessionId,
+          content,
+        }),
+      });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sandbox prompt failed: ${response.status} - ${text}`);
-  }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sandbox prompt failed: ${response.status} - ${text}`);
+      }
+    },
+  );
 }
 
 /**
@@ -2613,21 +2686,27 @@ async function sendRpcToSandbox(
   conversationId: Id<"conversations">,
   payload: unknown,
 ): Promise<void> {
-  const response = await fetch(`${sandboxUrl}/api/acp/rpc`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      payload,
-    }),
-  });
+  return traceAcpStep(
+    "sandbox.rpc",
+    { conversationId, sandboxUrl },
+    async () => {
+      const response = await fetch(`${sandboxUrl}/api/acp/rpc`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          payload,
+        }),
+      });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sandbox RPC failed: ${response.status} - ${text}`);
-  }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sandbox RPC failed: ${response.status} - ${text}`);
+      }
+    },
+  );
 }
 
 // ============================================================================
