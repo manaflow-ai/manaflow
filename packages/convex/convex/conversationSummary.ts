@@ -9,7 +9,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { EnvService, LiveServices } from "./effect/services";
 import { withObservability } from "./effect/observability";
-import { runEffect } from "./effect/runtime";
+import { runTracedEffect } from "./effect/runtime";
 
 type TitleStyle = "sentence" | "lowercase" | "title";
 
@@ -216,10 +216,9 @@ export const generateTitle = internalAction({
     userId: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
-    return runEffect(
-      generateTitleEffect(ctx, args, makeOpenAITextGenerator).pipe(
-        Effect.provide(LiveServices)
-      )
+    return runTracedEffect(
+      generateTitleEffect(ctx, args, makeOpenAITextGenerator),
+      LiveServices
     );
   },
 });

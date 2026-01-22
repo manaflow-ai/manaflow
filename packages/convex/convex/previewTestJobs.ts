@@ -13,7 +13,7 @@ import type { Id, Doc } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
 import { action, internalMutation, type ActionCtx } from "./_generated/server";
 import { withObservability } from "./effect/observability";
-import { runEffect } from "./effect/runtime";
+import { runTracedEffect } from "./effect/runtime";
 import { LiveServices } from "./effect/services";
 
 type PreviewRun = Doc<"previewRuns">;
@@ -368,8 +368,9 @@ export const dispatchTestJob = action({
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, args) => {
-    return runEffect(
-      dispatchTestJobEffect(ctx, args).pipe(Effect.provide(LiveServices))
+    return runTracedEffect(
+      dispatchTestJobEffect(ctx, args),
+      LiveServices
     );
   },
 });
@@ -793,8 +794,9 @@ export const retryTestJob = action({
     newPreviewRunId: Id<"previewRuns">;
     dispatched: boolean;
   }> => {
-    return runEffect(
-      retryTestJobEffect(ctx, args).pipe(Effect.provide(LiveServices))
+    return runTracedEffect(
+      retryTestJobEffect(ctx, args),
+      LiveServices
     );
   },
 });
