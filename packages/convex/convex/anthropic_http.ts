@@ -322,8 +322,15 @@ const TEMPORARY_DISABLE_AUTH = true;
 
 export const anthropicProxyEffect = (req: Request) =>
   Effect.gen(function* () {
+    const startTime = Date.now();
     const httpClient = yield* HttpClientService;
     const env = yield* EnvService;
+
+    // Capture tracking context early
+    const xApiKey = req.headers.get("x-api-key");
+    const source = getSource(req);
+    const isOAuthToken = getIsOAuthToken(xApiKey);
+
     const workerAuth = yield* Effect.tryPromise({
       try: () =>
         getWorkerAuth(req, {
@@ -333,8 +340,44 @@ export const anthropicProxyEffect = (req: Request) =>
         error instanceof Error ? error : new Error("Failed to read worker auth"),
     });
 
+    // Helper to track events and drain
+    const trackEvent = (
+      model: string,
+      stream: boolean,
+      responseStatus: number,
+      options?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheCreationInputTokens?: number;
+        cacheReadInputTokens?: number;
+        errorType?: string;
+      }
+    ) =>
+      Effect.tryPromise({
+        try: async () => {
+          trackAnthropicProxyRequest({
+            teamId: workerAuth?.payload.teamId ?? "unknown",
+            userId: workerAuth?.payload.userId ?? "unknown",
+            taskRunId: workerAuth?.payload.taskRunId ?? "unknown",
+            source,
+            model,
+            stream,
+            isOAuthToken,
+            responseStatus,
+            latencyMs: Date.now() - startTime,
+            ...options,
+          });
+          await drainPosthogEvents();
+        },
+        catch: (error) => {
+          console.error("[anthropic-proxy] PostHog tracking error:", error);
+          return error instanceof Error ? error : new Error("Tracking failed");
+        },
+      });
+
     if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
       console.error("[anthropic-proxy] Auth error: Missing or invalid token");
+      yield* trackEvent("unknown", false, 401, { errorType: "unauthorized" });
       return yield* Effect.fail(httpError(401, { error: "Unauthorized" }));
     }
 
@@ -346,11 +389,11 @@ export const anthropicProxyEffect = (req: Request) =>
       },
     });
 
-    const xApiKey = req.headers.get("x-api-key");
     const useUserApiKey = hasUserApiKey(xApiKey);
     const requestedModel =
       isRecord(body) && typeof body.model === "string" ? body.model : "unknown";
     const payloadSummary = summarizeAnthropicPayload(body);
+    const isStreaming = Boolean(payloadSummary.stream);
 
     yield* Effect.annotateCurrentSpan({
       requestedModel,
@@ -376,8 +419,28 @@ export const anthropicProxyEffect = (req: Request) =>
         }
       );
 
+      // Track with token usage for non-streaming responses
+      if (!isStreaming) {
+        const responseData = yield* Effect.tryPromise({
+          try: () => response.clone().json().catch(() => null),
+          catch: () => null,
+        });
+        const data = responseData as Record<string, unknown> | null;
+        const usage = data?.usage as Record<string, number> | undefined;
+        const errorData = data?.error as Record<string, string> | undefined;
+        yield* trackEvent(requestedModel, false, response.status, {
+          inputTokens: usage?.input_tokens,
+          outputTokens: usage?.output_tokens,
+          cacheCreationInputTokens: usage?.cache_creation_input_tokens,
+          cacheReadInputTokens: usage?.cache_read_input_tokens,
+          errorType: response.ok ? undefined : errorData?.type,
+        });
+      } else {
+        yield* trackEvent(requestedModel, true, response.status);
+      }
+
       return yield* Effect.tryPromise({
-        try: () => handleResponse(response, Boolean(payloadSummary.stream)),
+        try: () => handleResponse(response, isStreaming),
         catch: (error) => {
           console.error("[anthropic-proxy] Error handling response:", error);
           return httpError(500, { error: "Failed to proxy request" });
@@ -390,19 +453,22 @@ export const anthropicProxyEffect = (req: Request) =>
       console.error(
         "[anthropic-proxy] AWS_BEARER_TOKEN_BEDROCK environment variable is not set"
       );
+      yield* trackEvent(requestedModel, isStreaming, 503, {
+        errorType: "bedrock_not_configured",
+      });
       return yield* Effect.fail(
         httpError(503, { error: "Bedrock proxy not configured" })
       );
     }
 
     const bedrockModelId = toBedrockModelId(requestedModel);
-    const streamSuffix = payloadSummary.stream ? "-with-response-stream" : "";
+    const streamSuffix = isStreaming ? "-with-response-stream" : "";
     const bedrockUrl = `${BEDROCK_BASE_URL}/model/${bedrockModelId}/invoke${streamSuffix}`;
 
     yield* Effect.succeed(undefined).pipe(
       Effect.annotateLogs({
         bedrockModelId,
-        stream: payloadSummary.stream ? "true" : "false",
+        stream: isStreaming ? "true" : "false",
         messageCount: String(payloadSummary.messages.count),
         toolUseCount: String(payloadSummary.messages.toolUseCount),
         toolResultCount: String(payloadSummary.messages.toolResultCount),
@@ -427,8 +493,28 @@ export const anthropicProxyEffect = (req: Request) =>
       body: JSON.stringify(bedrockBody),
     });
 
+    // Track with token usage for non-streaming responses
+    if (!isStreaming) {
+      const responseData = yield* Effect.tryPromise({
+        try: () => response.clone().json().catch(() => null),
+        catch: () => null,
+      });
+      const data = responseData as Record<string, unknown> | null;
+      const usage = data?.usage as Record<string, number> | undefined;
+      const errorData = data?.error as Record<string, string> | undefined;
+      yield* trackEvent(requestedModel, false, response.status, {
+        inputTokens: usage?.input_tokens,
+        outputTokens: usage?.output_tokens,
+        cacheCreationInputTokens: usage?.cache_creation_input_tokens,
+        cacheReadInputTokens: usage?.cache_read_input_tokens,
+        errorType: response.ok ? undefined : errorData?.type,
+      });
+    } else {
+      yield* trackEvent(requestedModel, true, response.status);
+    }
+
     return yield* Effect.tryPromise({
-      try: () => handleResponse(response, Boolean(payloadSummary.stream), true),
+      try: () => handleResponse(response, isStreaming, true),
       catch: (error) => {
         console.error("[anthropic-proxy] Error handling response:", error);
         return httpError(500, { error: "Failed to proxy request" });
@@ -438,7 +524,11 @@ export const anthropicProxyEffect = (req: Request) =>
     withObservability("anthropic.proxy", {
       endpoint: "anthropic.proxy",
       method: req.method,
-    })
+    }),
+    // Safety net: ensure PostHog events are drained even on unexpected errors
+    Effect.ensuring(
+      Effect.promise(() => drainPosthogEvents().catch(() => {}))
+    )
   );
 
 /**
