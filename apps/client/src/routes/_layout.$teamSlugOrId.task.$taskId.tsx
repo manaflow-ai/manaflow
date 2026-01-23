@@ -9,7 +9,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import clsx from "clsx";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
@@ -67,14 +67,26 @@ function TaskDetailPage() {
     taskId,
   });
 
-  // Mark as read when viewing AND focused, triggers when unread state changes
+  // Track which task we've already marked as read to prevent re-notification loops.
+  // When hasUnread changes (e.g., new notification while viewing), we don't want to
+  // immediately mark as read again - that causes unnecessary mutations.
+  const markedAsReadRef = useRef<string | null>(null);
+
+  // Mark as read ONCE when first viewing a task with unread notifications.
+  // Only re-trigger if we navigate to a different task.
   useEffect(() => {
     if (!taskId || !hasUnread) return;
 
+    // Skip if we've already marked this task as read in this session
+    if (markedAsReadRef.current === taskId) return;
+
     const markReadIfFocused = () => {
-      if (document.hasFocus()) {
+      if (document.hasFocus() && markedAsReadRef.current !== taskId) {
+        markedAsReadRef.current = taskId;
         setTaskReadState(taskId, true).catch((err) => {
           console.error("Failed to mark task notifications as read:", err);
+          // Reset on error so we can retry
+          markedAsReadRef.current = null;
         });
       }
     };
@@ -82,10 +94,26 @@ function TaskDetailPage() {
     // Mark as read immediately if focused
     markReadIfFocused();
 
-    // Handle user returning to the page
-    window.addEventListener("focus", markReadIfFocused);
-    return () => window.removeEventListener("focus", markReadIfFocused);
+    // Handle user returning to the page (only if we haven't marked yet)
+    const handleFocus = () => {
+      if (markedAsReadRef.current !== taskId) {
+        markReadIfFocused();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
   }, [hasUnread, taskId, setTaskReadState]);
+
+  // Reset the ref when navigating to a different task
+  useEffect(() => {
+    // When taskId changes, reset so the new task can be marked as read
+    return () => {
+      if (markedAsReadRef.current !== taskId) {
+        markedAsReadRef.current = null;
+      }
+    };
+  }, [taskId]);
 
   // Get the deepest matched child to extract runId if present
   const childMatches = useChildMatches();
