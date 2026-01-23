@@ -579,7 +579,9 @@ function TaskDetailPage() {
 
   const editorLoadingFallback = useMemo(
     () =>
-      isLocalWorkspace ? null : (
+      isLocalWorkspace ? (
+        <span className="sr-only">Loading workspace</span>
+      ) : (
         <WorkspaceLoadingIndicator variant="vscode" status="loading" />
       ),
     [isLocalWorkspace]

@@ -166,7 +166,9 @@ function VSCodeComponent() {
 
   const loadingFallback = useMemo(
     () =>
-      isLocalWorkspace ? null : (
+      isLocalWorkspace ? (
+        <span className="sr-only">Loading workspace</span>
+      ) : (
         <WorkspaceLoadingIndicator
           variant="vscode"
           status="loading"

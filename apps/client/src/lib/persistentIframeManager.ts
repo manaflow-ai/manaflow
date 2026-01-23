@@ -179,6 +179,7 @@ class PersistentIframeManager {
       opacity: 0;
       transition: opacity 50ms ease-out;
       contain: strict;
+      background: var(--workspace-iframe-bg, #fafafa);
     `;
     wrapper.setAttribute("data-iframe-key", key);
     wrapper.setAttribute("data-drag-disable-pointer", "");
@@ -189,7 +190,7 @@ class PersistentIframeManager {
       width: 100%;
       height: 100%;
       border: 0;
-      background: white;
+      background: var(--workspace-iframe-bg, #fafafa);
       display: block;
     `;
 
