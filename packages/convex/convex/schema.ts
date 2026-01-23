@@ -244,7 +244,7 @@ const convexSchema = defineSchema({
     screenshotFileName: v.optional(v.string()),
     screenshotCommitSha: v.optional(v.string()),
     latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
-    // VSCode instance information
+    // VSCode instance information (cloud workspace)
     vscode: v.optional(
       v.object({
         provider: v.union(
@@ -276,6 +276,19 @@ const convexSchema = defineSchema({
         lastAccessedAt: v.optional(v.number()), // Track when user last accessed the container
         keepAlive: v.optional(v.boolean()), // User requested to keep container running
         scheduledStopAt: v.optional(v.number()), // When container is scheduled to stop
+      })
+    ),
+    // Local VSCode workspace (created from folder icon in git diff viewer)
+    localVscode: v.optional(
+      v.object({
+        status: v.union(
+          v.literal("starting"),
+          v.literal("running"),
+          v.literal("stopped")
+        ),
+        workspacePath: v.string(), // Absolute path to local worktree
+        workspaceUrl: v.optional(v.string()), // VS Code serve-web URL
+        startedAt: v.optional(v.number()),
       })
     ),
     networking: v.optional(

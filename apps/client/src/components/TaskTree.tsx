@@ -2102,6 +2102,8 @@ function TaskRunDetails({
 
   // Determine loading/error state for the detail links
   const isVSCodeReady = run.vscode?.status === "running";
+  const isLocalVSCodeReady = run.localVscode?.status === "running";
+  const hasLocalVscode = Boolean(run.localVscode);
   const isRunFailed = run.status === "failed";
 
   // Show error icon with tooltip if run failed, otherwise show loading spinner
@@ -2126,8 +2128,48 @@ function TaskRunDetails({
   // For VSCode, combine environment error with status indicator
   const vscodeTrailing = environmentErrorIndicator || statusIndicator;
 
+  // Local VS Code status indicator
+  const localVscodeStatusIndicator = !isLocalVSCodeReady ? (
+    <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+  ) : null;
+
   return (
     <Fragment>
+      {/* Local VS Code - shown first when available (from folder icon in git diff) */}
+      {hasLocalVscode ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+          params={{
+            teamSlugOrId,
+            taskId,
+            runId: run._id,
+          }}
+          // Navigate with ?local=true to indicate local VS Code
+          onClick={(event) => {
+            event.preventDefault();
+            void navigate({
+              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+              params: {
+                teamSlugOrId,
+                taskId,
+                runId: run._id,
+              },
+              search: { local: true },
+            });
+          }}
+          icon={
+            <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
+          }
+          label="VS Code"
+          indentLevel={indentLevel}
+          trailing={
+            localVscodeStatusIndicator ?? (
+              <Monitor className="w-3 h-3 text-neutral-500" />
+            )
+          }
+        />
+      ) : null}
+      {/* Cloud VS Code - shown with cloud icon when local VS Code exists, otherwise standard */}
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
         params={{
@@ -2140,7 +2182,13 @@ function TaskRunDetails({
         }
         label="VS Code"
         indentLevel={indentLevel}
-        trailing={vscodeTrailing}
+        trailing={
+          hasLocalVscode ? (
+            vscodeTrailing ?? <Cloud className="w-3 h-3 text-neutral-500" />
+          ) : (
+            vscodeTrailing
+          )
+        }
         onReload={handleReloadVSCode}
       />
 

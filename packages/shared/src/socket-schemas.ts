@@ -62,6 +62,8 @@ export const CreateLocalWorkspaceSchema = z.object({
   workspaceName: z.string().optional(),
   descriptor: z.string().optional(),
   sequence: z.number().optional(),
+  // When true, attach local workspace to existing task run instead of creating new one
+  attachToExistingRun: z.boolean().optional(),
 });
 
 export const CreateLocalWorkspaceResponseSchema = z.object({

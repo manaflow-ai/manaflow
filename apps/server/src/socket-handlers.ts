@@ -849,8 +849,134 @@ export function setupSocketHandlers(
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
+          attachToExistingRun,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+
+        // In attachToExistingRun mode, we attach a local workspace to an existing cloud task run
+        // instead of creating a new task/taskRun
+        if (attachToExistingRun) {
+          if (!providedTaskId || !providedTaskRunId) {
+            callback({
+              success: false,
+              error: "taskId and taskRunId are required when attaching to existing run",
+            });
+            return;
+          }
+
+          if (!requestedBranch) {
+            callback({
+              success: false,
+              error: "branch is required when attaching to existing run",
+            });
+            return;
+          }
+
+          const repoUrl =
+            explicitRepoUrl ??
+            (projectFullName
+              ? `https://github.com/${projectFullName}.git`
+              : undefined);
+
+          if (!repoUrl) {
+            callback({
+              success: false,
+              error: "repoUrl or projectFullName is required",
+            });
+            return;
+          }
+
+          const convex = getConvex();
+          const branch = requestedBranch.trim();
+
+          // Generate a unique workspace name for this local workspace
+          const sanitizedBranch = branch.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
+          const localWorkspaceName = `local-${sanitizedBranch}-${Date.now()}`;
+
+          const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
+            ? path.resolve(process.env.CMUX_WORKSPACE_DIR)
+            : path.join(os.homedir(), "cmux", "local-workspaces");
+          const resolvedWorkspacePath = path.join(workspaceRoot, localWorkspaceName);
+
+          try {
+            await fs.mkdir(workspaceRoot, { recursive: true });
+
+            // Clone the repository
+            const cloneArgs = ["clone", "--branch", branch, "--single-branch", repoUrl, resolvedWorkspacePath];
+            await execFileAsync("git", cloneArgs, { cwd: workspaceRoot });
+
+            // Verify the clone
+            await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+              cwd: resolvedWorkspacePath,
+            });
+
+            const baseServeWebUrl =
+              (await waitForVSCodeServeWebBaseUrl()) ??
+              getVSCodeServeWebBaseUrl();
+            if (!baseServeWebUrl) {
+              throw new Error("VS Code serve-web proxy is not ready");
+            }
+
+            const folderForUrl = resolvedWorkspacePath.replace(/\\/g, "/");
+            const placeholderWorkspaceUrl = buildPlaceholderWorkspaceUrl(folderForUrl);
+            const now = Date.now();
+
+            // Update localVscode field on existing task run (not vscode)
+            await convex.mutation(api.taskRuns.updateLocalVSCodeInstance, {
+              teamSlugOrId,
+              id: providedTaskRunId,
+              localVscode: {
+                status: "running",
+                workspacePath: resolvedWorkspacePath,
+                workspaceUrl: placeholderWorkspaceUrl,
+                startedAt: now,
+              },
+            });
+
+            // Set up file watching
+            try {
+              void gitDiffManager.watchWorkspace(
+                resolvedWorkspacePath,
+                (changedPath: string) => {
+                  rt.emit("git-file-changed", {
+                    workspacePath: resolvedWorkspacePath,
+                    filePath: changedPath,
+                  });
+                }
+              );
+            } catch (error) {
+              serverLogger.warn(
+                "Could not set up file watching for attached local workspace:",
+                error
+              );
+            }
+
+            callback({
+              success: true,
+              taskId: providedTaskId,
+              taskRunId: providedTaskRunId,
+              workspaceName: localWorkspaceName,
+              workspacePath: resolvedWorkspacePath,
+              workspaceUrl: placeholderWorkspaceUrl,
+            });
+            return;
+          } catch (error) {
+            serverLogger.error("Error creating attached local workspace:", error);
+
+            // Clean up on failure
+            try {
+              await fs.rm(resolvedWorkspacePath, { recursive: true, force: true });
+            } catch {
+              // Ignore cleanup errors
+            }
+
+            callback({
+              success: false,
+              error: error instanceof Error ? error.message : "Failed to create local workspace",
+            });
+            return;
+          }
+        }
 
         if (projectFullName && projectFullName.startsWith("env:")) {
           callback({

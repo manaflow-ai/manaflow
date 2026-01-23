@@ -1060,6 +1060,36 @@ export const updateVSCodeInstance = authMutation({
   },
 });
 
+// Update local VSCode workspace information (for local workspaces attached to cloud runs)
+export const updateLocalVSCodeInstance = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    localVscode: v.object({
+      status: v.union(
+        v.literal("starting"),
+        v.literal("running"),
+        v.literal("stopped"),
+      ),
+      workspacePath: v.string(),
+      workspaceUrl: v.optional(v.string()),
+      startedAt: v.optional(v.number()),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      localVscode: args.localVscode,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 // Update VSCode instance status
 export const updateVSCodeStatus = authMutation({
   args: {

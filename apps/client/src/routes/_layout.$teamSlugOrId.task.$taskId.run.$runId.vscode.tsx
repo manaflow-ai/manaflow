@@ -30,6 +30,10 @@ const paramsSchema = z.object({
   runId: typedZid("taskRuns"),
 });
 
+const searchSchema = z.object({
+  local: z.boolean().optional(),
+});
+
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/vscode"
 )({
@@ -43,6 +47,7 @@ export const Route = createFileRoute(
       };
     },
   },
+  validateSearch: searchSchema,
   loader: async (opts) => {
     convexQueryClient.convexClient.prewarmQuery({
       query: api.taskRuns.get,
@@ -80,6 +85,7 @@ export const Route = createFileRoute(
 
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
+  const { local: isLocalMode } = Route.useSearch();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const taskRun = useQuery(api.taskRuns.get, {
     teamSlugOrId,
@@ -87,8 +93,11 @@ function VSCodeComponent() {
   });
 
   // Extract stable values from taskRun to avoid re-renders when unrelated fields change
-  const rawWorkspaceUrl = taskRun?.vscode?.workspaceUrl;
-  const vsCodeProvider = taskRun?.vscode?.provider;
+  // When local=true, use localVscode workspace URL; otherwise use the cloud vscode URL
+  const rawWorkspaceUrl = isLocalMode
+    ? taskRun?.localVscode?.workspaceUrl
+    : taskRun?.vscode?.workspaceUrl;
+  const vsCodeProvider = isLocalMode ? "other" : taskRun?.vscode?.provider;
   const vsCodeStatusMessage = taskRun?.vscode?.statusMessage;
   const taskRunStatus = taskRun?.status;
   const taskRunErrorMessage = taskRun?.errorMessage;
@@ -108,7 +117,10 @@ function VSCodeComponent() {
     [rawWorkspaceUrl]
   );
 
-  const persistKey = getTaskRunPersistKey(taskRunId);
+  // Use different persist keys for local vs cloud VS Code to avoid iframe conflicts
+  const persistKey = isLocalMode
+    ? `${getTaskRunPersistKey(taskRunId)}-local`
+    : getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
   const isLocalWorkspace = vsCodeProvider === "other";
   const webviewActions = useWebviewActions({ persistKey });
