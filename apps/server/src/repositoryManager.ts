@@ -56,11 +56,16 @@ interface QueuedOperation {
   reject: (error: unknown) => void;
 }
 
+// Maximum operations to track to prevent unbounded growth
+const MAX_OPERATIONS = 100;
+const MAX_WORKTREE_LOCKS = 50;
+
 export class RepositoryManager {
   private static instance: RepositoryManager;
   private operations = new Map<string, RepositoryOperation>();
   private worktreeLocks = new Map<string, Promise<void>>();
   private resolvedGitPath: string | null = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   // Global operation queue to prevent any git command conflicts
   private operationQueue: QueuedOperation[] = [];
@@ -75,6 +80,17 @@ export class RepositoryManager {
   private constructor(config?: Partial<GitConfig>) {
     if (config) {
       this.config = { ...this.config, ...config };
+    }
+
+    // Start periodic cleanup to prevent memory leaks
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupStaleOperations();
+      this.cleanupStaleLocks();
+    }, 30_000); // Run every 30 seconds
+
+    // Ensure the timer doesn't prevent process exit
+    if (this.cleanupTimer.unref) {
+      this.cleanupTimer.unref();
     }
   }
 
@@ -98,6 +114,43 @@ export class RepositoryManager {
       if (now - op.timestamp > this.config.operationCacheTime) {
         this.operations.delete(key);
       }
+    }
+
+    // Enforce size limit by removing oldest operations
+    if (this.operations.size > MAX_OPERATIONS) {
+      const entries = Array.from(this.operations.entries());
+      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+      const toRemove = entries.slice(0, entries.length - MAX_OPERATIONS);
+      for (const [key] of toRemove) {
+        this.operations.delete(key);
+      }
+    }
+  }
+
+  private cleanupStaleLocks(): void {
+    // Worktree locks that have been resolved shouldn't stay in the map forever
+    // Check each lock to see if it has completed
+    const locksToCheck = Array.from(this.worktreeLocks.entries());
+    for (const [key, lockPromise] of locksToCheck) {
+      // Use Promise.race with a resolved promise to check if the lock is done
+      Promise.race([
+        lockPromise.then(() => true),
+        Promise.resolve(false),
+      ]).then((isDone) => {
+        if (isDone) {
+          this.worktreeLocks.delete(key);
+        }
+      }).catch(() => {
+        // If the promise rejected, it's also "done"
+        this.worktreeLocks.delete(key);
+      });
+    }
+
+    // Enforce size limit on locks
+    if (this.worktreeLocks.size > MAX_WORKTREE_LOCKS) {
+      serverLogger.warn(
+        `Worktree locks map has ${this.worktreeLocks.size} entries, which exceeds the limit of ${MAX_WORKTREE_LOCKS}`
+      );
     }
   }
 

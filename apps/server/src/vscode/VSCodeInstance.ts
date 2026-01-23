@@ -33,6 +33,9 @@ export interface VSCodeInstanceInfo {
   vscodePersisted?: boolean;
 }
 
+// Limit on how many instances we keep in memory (prevents unbounded growth)
+const MAX_INSTANCES = 100;
+
 export abstract class VSCodeInstance extends EventEmitter {
   // Static registry of all VSCode instances
   protected static instances = new Map<Id<"taskRuns">, VSCodeInstance>();
@@ -48,12 +51,30 @@ export abstract class VSCodeInstance extends EventEmitter {
 
   constructor(config: VSCodeInstanceConfig) {
     super();
+    // Set max listeners to prevent memory leak warnings and limit listener accumulation
+    this.setMaxListeners(20);
     this.config = config;
     this.taskRunId = config.taskRunId;
     this.taskId = config.taskId;
     this.teamSlugOrId = config.teamSlugOrId;
     // Use taskRunId as instanceId for backward compatibility
     this.instanceId = config.taskRunId;
+
+    // Evict oldest instances if we exceed the limit
+    if (VSCodeInstance.instances.size >= MAX_INSTANCES) {
+      const oldest = VSCodeInstance.instances.keys().next().value;
+      if (oldest) {
+        const oldInstance = VSCodeInstance.instances.get(oldest);
+        VSCodeInstance.instances.delete(oldest);
+        dockerLogger.warn(
+          `[VSCodeInstance] Evicting oldest instance ${oldest} to make room for ${this.instanceId}`
+        );
+        // Best-effort cleanup of evicted instance
+        if (oldInstance) {
+          oldInstance.removeAllListeners();
+        }
+      }
+    }
 
     // Register this instance
     VSCodeInstance.instances.set(this.instanceId, this);
@@ -254,5 +275,7 @@ export abstract class VSCodeInstance extends EventEmitter {
     this.stopFileWatch();
     await this.disconnectFromWorker();
     VSCodeInstance.instances.delete(this.instanceId);
+    // Remove all event listeners to prevent memory leaks
+    this.removeAllListeners();
   }
 }

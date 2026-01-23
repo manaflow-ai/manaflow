@@ -1,8 +1,11 @@
 import type { ITerminalOptions } from "@xterm/xterm";
 
 // Keep scrollback bounded to avoid runaway memory growth in long-running sessions.
-export const ACTIVE_TERMINAL_SCROLLBACK = 20_000;
+// Active terminals need more scrollback for user interaction.
+// Headless/server terminals need less since they're primarily for completion detection.
+export const ACTIVE_TERMINAL_SCROLLBACK = 10_000;
 export const INACTIVE_TERMINAL_SCROLLBACK = 2_000;
+export const HEADLESS_TERMINAL_SCROLLBACK = 5_000;
 
 /**
  * Default terminal configuration based on the TerminalContextProvider settings.
@@ -42,12 +45,13 @@ export const DEFAULT_TERMINAL_CONFIG: ITerminalOptions = {
 /**
  * Terminal configuration for server-side (headless) terminals.
  * Note: Server terminals use a different Terminal class from @xterm/headless
- * which has slightly different options.
+ * which has slightly different options. Uses reduced scrollback since headless
+ * terminals are primarily for completion detection, not user interaction.
  */
 export const SERVER_TERMINAL_CONFIG = {
   cols: 80,
   rows: 24,
-  scrollback: ACTIVE_TERMINAL_SCROLLBACK,
+  scrollback: HEADLESS_TERMINAL_SCROLLBACK,
   allowProposedApi: true,
 };
 

@@ -389,6 +389,7 @@ const hasTaskRunId = (
   typeof value === "object" && value !== null && "taskRunId" in value;
 
 const pendingEvents: PendingEvent[] = [];
+const MAX_PENDING_EVENTS = 500; // Limit queue size to prevent memory exhaustion
 
 /**
  * Emit an event to the main server, queuing it if not connected
@@ -403,6 +404,16 @@ function emitToMainServer<K extends WorkerToServerEventNames>(
     log("DEBUG", `Emitting ${event} to main server`, { event, data: payload });
     mainServerSocket.emit(event, ...args);
   } else {
+    // Enforce queue size limit to prevent memory exhaustion
+    if (pendingEvents.length >= MAX_PENDING_EVENTS) {
+      // Drop oldest events to make room
+      const dropped = pendingEvents.splice(0, Math.floor(MAX_PENDING_EVENTS / 10));
+      log("WARNING", `Pending events queue full, dropped ${dropped.length} oldest events`, {
+        droppedCount: dropped.length,
+        queueSize: pendingEvents.length,
+      });
+    }
+
     log("WARNING", `Main server not connected, queuing ${event} event`, {
       event,
       data: payload,

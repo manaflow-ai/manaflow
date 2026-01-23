@@ -9,8 +9,11 @@ import { serverLogger } from "./utils/fileLogger";
 
 const execAsync = promisify(exec);
 
+const MAX_WATCHERS = 50; // Maximum number of concurrent watchers
+
 export class GitDiffManager {
   private watchers: Map<string, FSWatcher> = new Map();
+  private watcherLastAccess: Map<string, number> = new Map();
 
   async getFullDiff(workspacePath: string): Promise<string> {
     try {
@@ -62,13 +65,33 @@ export class GitDiffManager {
     }
   }
 
+  private evictOldWatchers(): void {
+    if (this.watchers.size < MAX_WATCHERS) return;
+
+    // Sort by last access time and remove oldest watchers
+    const entries = Array.from(this.watcherLastAccess.entries());
+    entries.sort((a, b) => a[1] - b[1]);
+
+    const toRemove = entries.slice(0, Math.floor(MAX_WATCHERS / 4));
+    for (const [path] of toRemove) {
+      serverLogger.info(`Evicting old watcher for ${path}`);
+      this.unwatchWorkspace(path);
+    }
+  }
+
   async watchWorkspace(
     workspacePath: string,
     onChange: (changedPath: string) => void
   ): Promise<void> {
+    // Update last access time
+    this.watcherLastAccess.set(workspacePath, Date.now());
+
     if (this.watchers.has(workspacePath)) {
       return;
     }
+
+    // Evict old watchers if we're at capacity
+    this.evictOldWatchers();
 
     try {
       // Build ignore matcher from .gitignore + defaults
@@ -155,6 +178,7 @@ export class GitDiffManager {
     if (watcher) {
       watcher.close();
       this.watchers.delete(workspacePath);
+      this.watcherLastAccess.delete(workspacePath);
     }
   }
 
@@ -163,5 +187,10 @@ export class GitDiffManager {
       watcher.close();
     }
     this.watchers.clear();
+    this.watcherLastAccess.clear();
+  }
+
+  getWatcherCount(): number {
+    return this.watchers.size;
   }
 }

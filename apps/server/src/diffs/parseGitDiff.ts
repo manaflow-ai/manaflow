@@ -541,11 +541,38 @@ export async function computeEntriesBetweenRefs(opts: {
 
 const defaultBranchCache = new Map<string, { value: string; ts: number }>();
 const DEFAULT_BRANCH_TTL_MS = 30_000;
+const DEFAULT_BRANCH_CACHE_MAX_SIZE = 100;
+let lastCacheCleanup = 0;
+const CACHE_CLEANUP_INTERVAL_MS = 60_000;
+
+function cleanupDefaultBranchCache(): void {
+  const now = Date.now();
+  if (now - lastCacheCleanup < CACHE_CLEANUP_INTERVAL_MS) return;
+  lastCacheCleanup = now;
+
+  // Remove expired entries
+  for (const [key, entry] of defaultBranchCache.entries()) {
+    if (now - entry.ts > DEFAULT_BRANCH_TTL_MS) {
+      defaultBranchCache.delete(key);
+    }
+  }
+
+  // If still too large, remove oldest entries
+  if (defaultBranchCache.size > DEFAULT_BRANCH_CACHE_MAX_SIZE) {
+    const entries = Array.from(defaultBranchCache.entries());
+    entries.sort((a, b) => a[1].ts - b[1].ts);
+    const toRemove = entries.slice(0, entries.length - DEFAULT_BRANCH_CACHE_MAX_SIZE);
+    for (const [key] of toRemove) {
+      defaultBranchCache.delete(key);
+    }
+  }
+}
 
 async function resolvePrimaryBaseRef(cwd: string): Promise<string> {
   // Prefer the repository default branch (e.g., origin/main)
   try {
     const now = Date.now();
+    cleanupDefaultBranchCache();
     const cached = defaultBranchCache.get(cwd);
     let defaultBranch: string | null = null;
     if (cached && now - cached.ts < DEFAULT_BRANCH_TTL_MS) {
