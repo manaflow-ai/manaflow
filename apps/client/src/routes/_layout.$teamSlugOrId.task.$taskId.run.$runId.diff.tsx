@@ -1026,6 +1026,18 @@ function RunDiffPage() {
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
+  const handleOpenCloudWorkspace = useCallback(() => {
+    // Navigate to the existing cloud vscode view for this task run
+    navigate({
+      to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+      params: {
+        teamSlugOrId,
+        taskId,
+        runId: taskRunId,
+      },
+    });
+  }, [navigate, teamSlugOrId, taskId, taskRunId]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -1057,9 +1069,11 @@ function RunDiffPage() {
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
             onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
+            onOpenCloudWorkspace={isWorkspace ? undefined : handleOpenCloudWorkspace}
             teamSlugOrId={teamSlugOrId}
             isAiReviewActive={isAiReviewActive}
             onToggleAiReview={handleToggleAiReview}
+            isGitDiffViewer
           />
           {task?.text && (
             <div className="mb-2 px-3.5">

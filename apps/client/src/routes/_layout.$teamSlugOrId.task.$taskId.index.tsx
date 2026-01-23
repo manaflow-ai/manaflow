@@ -41,10 +41,13 @@ import {
   type TerminalTabId,
 } from "@/queries/terminals";
 import { api } from "@cmux/convex/api";
+import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "convex/react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
+import { useSocket } from "@/contexts/socket/use-socket";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
@@ -304,6 +307,8 @@ function EmptyPanelSlot({
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
   const search = Route.useSearch();
+  const navigate = useNavigate();
+  const { socket } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
@@ -472,6 +477,71 @@ function TaskDetailPage() {
     }
     return taskRuns[0];
   }, [search.runId, taskRunIndex, taskRuns]);
+
+  // Get primary repo from task or environment
+  const primaryRepo = useMemo(() => {
+    if (task?.projectFullName?.trim()) {
+      return task.projectFullName.trim();
+    }
+    const envRepos: (string | undefined)[] = selectedRun?.environment?.selectedRepos ?? [];
+    const trimmed = envRepos
+      .map((repo: string | undefined) => (typeof repo === "string" ? repo.trim() : null))
+      .filter((repo): repo is string => Boolean(repo));
+    return trimmed[0] ?? null;
+  }, [task?.projectFullName, selectedRun?.environment?.selectedRepos]);
+
+  const handleOpenLocalWorkspace = useCallback(() => {
+    if (!socket) {
+      toast.error("Socket not connected");
+      return;
+    }
+
+    if (!primaryRepo) {
+      toast.error("No repository information available");
+      return;
+    }
+
+    if (!selectedRun?.newBranch) {
+      toast.error("No branch information available");
+      return;
+    }
+
+    const loadingToast = toast.loading("Creating local workspace...");
+
+    socket.emit(
+      "create-local-workspace",
+      {
+        teamSlugOrId,
+        projectFullName: primaryRepo,
+        repoUrl: `https://github.com/${primaryRepo}.git`,
+        branch: selectedRun.newBranch,
+      },
+      (response: CreateLocalWorkspaceResponse) => {
+        if (response.success && response.workspacePath) {
+          toast.success("Workspace created successfully!", {
+            id: loadingToast,
+            description: `Opening workspace at ${response.workspacePath}`,
+          });
+
+          // Navigate to the vscode view for the new task run
+          if (response.taskRunId) {
+            navigate({
+              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+              params: {
+                teamSlugOrId,
+                taskId,
+                runId: response.taskRunId,
+              },
+            });
+          }
+        } else {
+          toast.error(response.error || "Failed to create workspace", {
+            id: loadingToast,
+          });
+        }
+      }
+    );
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
   const selectedRunId = selectedRun?._id ?? null;
   useEffect(() => {
@@ -784,6 +854,11 @@ function TaskDetailPage() {
           taskRunId={headerTaskRunId}
           teamSlugOrId={teamSlugOrId}
           onPanelSettings={handleOpenPanelSettings}
+          onOpenLocalWorkspace={
+            task?.isLocalWorkspace || task?.isCloudWorkspace
+              ? undefined
+              : handleOpenLocalWorkspace
+          }
         />
         <PanelConfigModal
           open={isPanelSettingsOpen}

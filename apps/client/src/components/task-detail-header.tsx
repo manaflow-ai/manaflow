@@ -31,6 +31,7 @@ import clsx from "clsx";
 import {
   Check,
   ChevronDown,
+  Cloud,
   Copy,
   Crown,
   ExternalLink,
@@ -38,6 +39,7 @@ import {
   FolderOpen,
   GitBranch,
   GitMerge,
+  Monitor,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -73,9 +75,12 @@ interface TaskDetailHeaderProps {
   onCollapseAllChecks?: () => void;
   onPanelSettings?: () => void;
   onOpenLocalWorkspace?: () => void;
+  onOpenCloudWorkspace?: () => void;
   teamSlugOrId: string;
   isAiReviewActive?: boolean;
   onToggleAiReview?: () => void;
+  /** When true, enables inline VSCode options (cloud + local) that appear under the agent name */
+  isGitDiffViewer?: boolean;
 }
 
 const ENABLE_MERGE_BUTTON = false;
@@ -211,9 +216,11 @@ export function TaskDetailHeader({
   onCollapseAllChecks,
   onPanelSettings,
   onOpenLocalWorkspace,
+  onOpenCloudWorkspace,
   teamSlugOrId,
   isAiReviewActive,
   onToggleAiReview,
+  isGitDiffViewer,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -221,6 +228,7 @@ export function TaskDetailHeader({
   const prIsOpen = selectedRun?.pullRequestState === "open";
   const prIsMerged = selectedRun?.pullRequestState === "merged";
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [showVSCodeOptions, setShowVSCodeOptions] = useState(false);
   const handleAgentOpenChange = useCallback((open: boolean) => {
     setAgentMenuOpen(open);
   }, []);
@@ -384,10 +392,21 @@ export function TaskDetailHeader({
 
           {onOpenLocalWorkspace && (
             <button
-              onClick={onOpenLocalWorkspace}
-              className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none"
+              onClick={() => {
+                if (isGitDiffViewer) {
+                  setShowVSCodeOptions((prev) => !prev);
+                } else {
+                  onOpenLocalWorkspace();
+                }
+              }}
+              className={clsx(
+                "p-1 select-none transition-colors",
+                showVSCodeOptions && isGitDiffViewer
+                  ? "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                  : "text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
+              )}
               aria-label="Open local workspace"
-              title="Open local workspace from this branch"
+              title={isGitDiffViewer ? "Show VSCode options" : "Open local workspace from this branch"}
             >
               <FolderOpen className="w-3.5 h-3.5" />
             </button>
@@ -589,6 +608,34 @@ export function TaskDetailHeader({
                   </Dropdown.Positioner>
                 </Dropdown.Portal>
               </Dropdown.Root>
+
+              {/* Inline VSCode options - only shown in git diff viewer mode */}
+              {isGitDiffViewer && showVSCodeOptions && (
+                <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-neutral-300 dark:border-neutral-700">
+                  <button
+                    onClick={() => {
+                      onOpenCloudWorkspace?.();
+                      setShowVSCodeOptions(false);
+                    }}
+                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded transition-colors"
+                    title="Open cloud VSCode"
+                  >
+                    <span className="select-none">VSCode</span>
+                    <Cloud className="w-3 h-3 text-blue-500 dark:text-blue-400" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      onOpenLocalWorkspace?.();
+                      setShowVSCodeOptions(false);
+                    }}
+                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded transition-colors"
+                    title="Open local VSCode"
+                  >
+                    <span className="select-none">VSCode</span>
+                    <Monitor className="w-3 h-3 text-green-500 dark:text-green-400" />
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
