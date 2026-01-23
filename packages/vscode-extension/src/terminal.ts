@@ -88,6 +88,12 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   private _dimensions: { cols: number; rows: number } = { cols: 80, rows: 24 };
   private _previousDimensions: { cols: number; rows: number } | null = null;
   private _skipInitialResize: boolean;
+  private _hasConnectedOnce = false;
+  private _reconnectAttempts = 0;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _reconnectBaseDelayMs = 500;
+  private _reconnectMaxDelayMs = 30000;
+  private _showedDisconnectMessage = false;
 
   public readonly onDidWrite: vscode.Event<string> = this._onDidWrite.event;
   public readonly onDidClose: vscode.Event<number | void> = this._onDidClose.event;
@@ -104,17 +110,35 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 
   private _connectWebSocket(): void {
     if (this._isDisposed) return;
+    if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
 
     const wsUrl = this.serverUrl.replace(/^http/, 'ws');
     const fullUrl = `${wsUrl}/sessions/${this.ptyId}/ws`;
     console.log(`[cmux] CmuxPseudoterminal connecting to: ${fullUrl}`);
-    this._ws = new WebSocket(fullUrl);
+    const ws = new WebSocket(fullUrl);
+    this._ws = ws;
 
-    this._ws.onopen = () => {
+    ws.onopen = () => {
+      if (this._ws !== ws) return;
       console.log(`[cmux] WebSocket connected for PTY ${this.ptyId}`);
-      // Skip initial resize for restored sessions to avoid shell prompt redraw
+
+      if (this._reconnectTimer) {
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+      }
+      if (this._showedDisconnectMessage) {
+        this._writeStatusMessage('\r\n[cmux] Terminal connection restored.\r\n');
+        this._showedDisconnectMessage = false;
+      }
+      const isFirstConnect = !this._hasConnectedOnce;
+      this._hasConnectedOnce = true;
+      this._reconnectAttempts = 0;
+
+      // Skip initial resize only on the first connect for restored sessions
       // The proper resize will be sent when open() is called with actual dimensions
-      if (!this._skipInitialResize) {
+      if (!(isFirstConnect && this._skipInitialResize)) {
         this._ws?.send(JSON.stringify({
           type: 'resize',
           cols: this._dimensions.cols,
@@ -123,7 +147,8 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       }
     };
 
-    this._ws.onmessage = async (event) => {
+    ws.onmessage = async (event) => {
+      if (this._ws !== ws) return;
       if (this._isDisposed) return;
 
       try {
@@ -177,7 +202,8 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       }
     };
 
-    this._ws.onerror = (error) => {
+    ws.onerror = (error) => {
+      if (this._ws !== ws) return;
       console.error('WebSocket error:', error);
       if (!this._initialDataSent) {
         this._outputBuffer += '\r\nWebSocket connection error\r\n';
@@ -186,11 +212,40 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       }
     };
 
-    this._ws.onclose = () => {
-      if (!this._isDisposed) {
-        this._onDidClose.fire();
-      }
+    ws.onclose = () => {
+      if (this._ws !== ws) return;
+      if (this._isDisposed) return;
+      this._scheduleReconnect();
     };
+  }
+
+  private _writeStatusMessage(message: string): void {
+    if (this._isDisposed) return;
+    if (!this._initialDataSent) {
+      this._outputBuffer += message;
+      return;
+    }
+    this._onDidWrite.fire(message);
+  }
+
+  private _scheduleReconnect(): void {
+    if (this._isDisposed) return;
+    if (this._reconnectTimer) return;
+
+    if (!this._showedDisconnectMessage) {
+      this._writeStatusMessage('\r\n[cmux] Terminal connection lost. Reconnecting...\r\n');
+      this._showedDisconnectMessage = true;
+    }
+
+    const delay = Math.min(
+      this._reconnectBaseDelayMs * Math.pow(2, this._reconnectAttempts),
+      this._reconnectMaxDelayMs
+    );
+    this._reconnectAttempts += 1;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this._connectWebSocket();
+    }, delay);
   }
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
@@ -260,6 +315,11 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   dispose(): void {
     if (this._isDisposed) return;
     this._isDisposed = true;
+
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
 
     if (this._ws) {
       this._ws.close();
@@ -706,7 +766,8 @@ class CmuxTerminalManager {
 
     // Use metadata.location to determine where to open the terminal
     // "editor" -> Editor pane, anything else (including undefined) -> Panel
-    const shouldOpenInEditor = info.metadata?.location === 'editor';
+    const shouldOpenInEditor =
+      info.metadata?.location === 'editor' && vscode.env.uiKind === vscode.UIKind.Desktop;
 
     console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}, metadata: ${JSON.stringify(info.metadata)}`);
 
@@ -1072,7 +1133,8 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
         terminalManager.trackPendingTerminal(lastPty, pty);
 
         // Use metadata.location to determine where to open the terminal
-        const shouldOpenInEditor = lastPty.metadata?.location === 'editor';
+        const shouldOpenInEditor =
+          lastPty.metadata?.location === 'editor' && vscode.env.uiKind === vscode.UIKind.Desktop;
         return new vscode.TerminalProfile({
           name: lastPty.name,
           pty,
