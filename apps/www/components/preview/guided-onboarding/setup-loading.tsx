@@ -1,7 +1,8 @@
 "use client";
 
-import { Loader2, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { Loader2 } from "lucide-react";
+import { SETUP_STEPS } from "./setup-steps";
+import { OnboardingShell } from "../onboarding-shell";
 
 interface SetupLoadingProps {
   repo: string;
@@ -9,95 +10,117 @@ interface SetupLoadingProps {
 }
 
 export function SetupLoading({ repo, status }: SetupLoadingProps) {
-  const [showWhy, setShowWhy] = useState(true);
-  const [showTechnical, setShowTechnical] = useState(false);
+  const repoName = repo.split("/").pop() || repo;
 
   return (
-    <div className="min-h-dvh bg-[#0d1117] text-neutral-100 flex">
-      {/* Left sidebar - steps preview */}
-      <div className="w-64 border-r border-neutral-800 p-4">
-        <div className="mb-6">
-          <h2 className="text-sm font-medium text-neutral-100">Repository setup</h2>
-          <p className="text-xs text-neutral-500 mt-1">Configure {repo.split("/").pop()}</p>
-          <p className="text-xs text-neutral-600 mt-2">0/5 steps</p>
+    <OnboardingShell
+      sidebarHeader={
+        <div>
+          <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Repository setup</h2>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">Configure {repoName}</p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-2">
+            0/{SETUP_STEPS.length} steps
+          </p>
         </div>
-
-        <div className="flex flex-col items-center justify-center py-16">
-          <p className="text-sm text-neutral-400 mb-3">Waiting for machine to start...</p>
-          <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
-        </div>
-      </div>
-
-      {/* Main content - loading state */}
-      <div className="flex-1 flex flex-col">
-        {/* Tab bar */}
-        <div className="h-10 border-b border-neutral-800 flex items-center px-4 gap-4">
-          <button className="text-sm text-neutral-100 border-b-2 border-neutral-100 pb-2 -mb-[1px]">
-            Machine
-          </button>
-          <button className="text-sm text-neutral-500 pb-2 -mb-[1px]">
-            Browser
-          </button>
-        </div>
-
-        {/* Loading content */}
-        <div className="flex-1 flex items-center justify-center">
-          <div className="max-w-md w-full px-6">
-            <div className="text-center mb-8">
-              <p className="text-neutral-400 text-sm mb-1">Setting up</p>
-              <h1 className="text-xl font-medium text-neutral-100">{repo}</h1>
+      }
+      sidebarBody={
+        <div className="p-4 space-y-3">
+          {SETUP_STEPS.map((step, index) => (
+            <div
+              key={step.id}
+              className="flex items-center gap-3 rounded-xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white/80 dark:bg-neutral-900/40 px-3 py-2"
+            >
+              <div className="h-7 w-7 rounded-full border border-neutral-200 dark:border-neutral-700 text-[11px] text-neutral-500 dark:text-neutral-400 flex items-center justify-center">
+                {index + 1}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm text-neutral-700 dark:text-neutral-200">{step.title}</p>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {index === 0 ? "Queued" : "Waiting"}
+                </p>
+              </div>
+              <span className="h-2 w-2 rounded-full bg-neutral-300 dark:bg-neutral-700 animate-pulse" />
             </div>
+          ))}
+        </div>
+      }
+      sidebarFooter={
+        <div className="rounded-xl border border-neutral-200/70 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/40 p-3 text-xs text-neutral-500 dark:text-neutral-400">
+          <p className="text-neutral-700 dark:text-neutral-200 font-medium mb-1">Provisioning your workspace</p>
+          <p>We&apos;ll drop you into a live terminal as soon as the machine is ready.</p>
+        </div>
+      }
+      mainHeader={
+        <>
+          <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+            <span className="inline-flex h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+            Provisioning environment
+          </div>
+          <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {status}
+          </div>
+        </>
+      }
+      mainBody={
+        <div className="flex-1 p-4 lg:p-6">
+          <div className="h-full grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,320px)]">
+            <div className="relative rounded-2xl border border-neutral-200/70 dark:border-neutral-800 bg-neutral-100/70 dark:bg-neutral-900/40 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-200/70 dark:border-neutral-800 text-xs text-neutral-500 dark:text-neutral-400 bg-white/70 dark:bg-neutral-950/40">
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-neutral-400" />
+                  <span>Setup Agent</span>
+                </div>
+                <span className="text-neutral-300 dark:text-neutral-600">•</span>
+                <span className="text-neutral-400 dark:text-neutral-500">README.md</span>
+              </div>
 
-            {/* Progress indicator */}
-            <div className="flex items-center justify-center gap-3 mb-8">
-              <span className="text-sm text-neutral-400">{status}</span>
-              <div className="w-24 h-1 bg-neutral-800 rounded-full overflow-hidden">
-                <div className="h-full bg-neutral-500 rounded-full animate-pulse w-1/2" />
+              <div className="flex h-full items-center justify-center p-6">
+                <div className="w-full max-w-lg rounded-2xl border border-neutral-200/80 dark:border-neutral-800 bg-white/90 dark:bg-neutral-950/70 shadow-sm">
+                  <div className="p-5">
+                    <p className="text-xs uppercase tracking-[0.2em] text-neutral-400 dark:text-neutral-500 mb-2">
+                      Setup agent
+                    </p>
+                    <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                      Let&apos;s set up your machine together.
+                    </h1>
+                    <p className="text-sm text-neutral-600 dark:text-neutral-300 mt-2">
+                      I&apos;ll guide you through each step and keep the terminal ready for commands.
+                    </p>
+                    <div className="mt-4 flex items-center gap-2">
+                      <div className="flex-1 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 px-3 py-2 text-xs text-neutral-400 dark:text-neutral-500">
+                        I&apos;m ready. Let&apos;s proceed with the setup steps.
+                      </div>
+                      <button
+                        disabled
+                        className="px-3 py-2 text-xs font-medium rounded-lg bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-500"
+                      >
+                        Submit
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Info sections */}
-            <div className="space-y-3">
-              <div className="border border-neutral-800 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setShowWhy(!showWhy)}
-                  className="w-full flex items-center justify-between p-3 text-left hover:bg-neutral-800/50 transition"
-                >
-                  <span className="text-sm text-neutral-300">Why repository setup matters</span>
-                  <ChevronDown className={`h-4 w-4 text-neutral-500 transition-transform ${showWhy ? "rotate-180" : ""}`} />
-                </button>
-                {showWhy && (
-                  <div className="px-3 pb-3 text-xs text-neutral-500 leading-relaxed">
-                    Completing repository setup helps your AI agent run reliably and efficiently.
-                    Skipping steps can degrade performance and cause intermittent failures.
-                  </div>
-                )}
+            <div className="rounded-2xl border border-neutral-200/70 dark:border-neutral-800 bg-neutral-950/95 text-neutral-100 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-800 text-xs text-neutral-400">
+                <span className="h-2 w-2 rounded-full bg-neutral-500 animate-pulse" />
+                Terminal
               </div>
-
-              <div className="border border-neutral-800 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setShowTechnical(!showTechnical)}
-                  className="w-full flex items-center justify-between p-3 text-left hover:bg-neutral-800/50 transition"
-                >
-                  <span className="text-sm text-neutral-300">Technical details</span>
-                  <ChevronDown className={`h-4 w-4 text-neutral-500 transition-transform ${showTechnical ? "rotate-180" : ""}`} />
-                </button>
-                {showTechnical && (
-                  <div className="px-3 pb-3 text-xs text-neutral-500 leading-relaxed space-y-2">
-                    <p>We&apos;re spinning up an isolated cloud environment with:</p>
-                    <ul className="list-disc list-inside space-y-1 ml-2">
-                      <li>Full Linux environment with Docker</li>
-                      <li>Your repository cloned and ready</li>
-                      <li>Terminal access for setup</li>
-                      <li>Encrypted secret storage</li>
-                    </ul>
-                  </div>
-                )}
+              <div className="p-4 font-mono text-xs text-neutral-400 space-y-2">
+                <p>$ starting environment…</p>
+                <p className="text-neutral-500">waiting for machine readiness</p>
+                <div className="flex items-center gap-2 text-neutral-500">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  preparing pty session
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      }
+      sidebarClassName="lg:w-80"
+    />
   );
 }

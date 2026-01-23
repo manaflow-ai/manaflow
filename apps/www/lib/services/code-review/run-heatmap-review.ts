@@ -245,9 +245,13 @@ export async function runHeatmapReview(
         ? bedrock(effectiveModelConfig.model)
         : openai(effectiveModelConfig.model);
 
-    // Wrap model with PostHog tracing if client is available
-    const modelInstance = posthogClient
-      ? withTracing(baseModelInstance, posthogClient, {
+    // Wrap model with PostHog tracing if client is available.
+    // Bun can resolve posthog-node through different paths, so we normalize the type for withTracing.
+    const tracingClient = posthogClient
+      ? (posthogClient as unknown as Parameters<typeof withTracing>[1])
+      : null;
+    const modelInstance = tracingClient
+      ? withTracing(baseModelInstance, tracingClient, {
           posthogDistinctId: config.userId ?? "anonymous",
           posthogTraceId: config.jobId,
           posthogProperties: {

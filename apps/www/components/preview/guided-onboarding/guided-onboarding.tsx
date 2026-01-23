@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import posthog from "posthog-js";
-import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
-
 import { SetupLoading } from "./setup-loading";
 import { SetupWorkspace } from "./setup-workspace";
 
@@ -93,17 +91,15 @@ export function GuidedOnboarding({
       const dateTime = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
       const envName = `${repoName}-${dateTime}`;
 
-      // Parse secrets from config
-      const secretsValue = config.secrets || "";
-      const envVars = secretsValue
-        .split("\n")
-        .filter((line) => line.includes("="))
-        .map((line) => {
-          const idx = line.indexOf("=");
-          return { name: line.slice(0, idx).trim(), value: line.slice(idx + 1).trim() };
-        });
-
-      const envVarsContent = formatEnvVarsContent(envVars);
+      const envVarsContent = initialEnvVarsContent || "";
+      const browserNotes = config["browser-setup"]?.trim();
+      const additionalNotes = config["additional-notes"]?.trim();
+      const description = [
+        browserNotes ? `Browser setup:\\n${browserNotes}` : null,
+        additionalNotes ? `Additional notes:\\n${additionalNotes}` : null,
+      ]
+        .filter((note): note is string => Boolean(note))
+        .join("\\n\\n");
 
       try {
         // Create environment
@@ -118,7 +114,7 @@ export function GuidedOnboarding({
             selectedRepos: [repo],
             maintenanceScript: config["install-deps"],
             devScript: config["dev-server"],
-            description: config["additional-notes"],
+            description: description || "",
           }),
         });
 

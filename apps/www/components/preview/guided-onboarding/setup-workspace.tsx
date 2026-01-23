@@ -2,47 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, Sparkles, X } from "lucide-react";
-import { SetupStep, type SetupStepConfig, type StepStatus } from "./setup-step";
-
-const SETUP_STEPS: SetupStepConfig[] = [
-  {
-    id: "git-pull",
-    title: "Git pull",
-    description: "What command should we use to pull the latest code? This will be run during session startup.",
-    defaultValue: "cd ~/repos/{repo} && git pull && git submodule update --init --recursive",
-    placeholder: "git pull && git submodule update --init --recursive",
-    docsUrl: "https://docs.cmux.dev/setup/git-pull",
-  },
-  {
-    id: "secrets",
-    title: "Configure secrets",
-    description: "Add environment variables and API keys needed to run your project.",
-    optional: true,
-    placeholder: "OPENAI_API_KEY=sk-...\nDATABASE_URL=...",
-  },
-  {
-    id: "install-deps",
-    title: "Install dependencies",
-    description: "Command to install your project dependencies (npm install, pip install, etc.)",
-    defaultValue: "npm install",
-    placeholder: "npm install",
-  },
-  {
-    id: "dev-server",
-    title: "Start dev server",
-    description: "Command to start your development server for previews.",
-    optional: true,
-    defaultValue: "npm run dev",
-    placeholder: "npm run dev",
-  },
-  {
-    id: "additional-notes",
-    title: "Additional notes",
-    description: "Any special instructions for the AI agent (browser testing notes, preview screenshot tips, etc.)",
-    optional: true,
-    placeholder: "The main page is at /dashboard. Login uses test@example.com / password123...",
-  },
-];
+import { SetupStep, type StepStatus } from "./setup-step";
+import { SETUP_STEPS } from "./setup-steps";
+import { OnboardingShell } from "../onboarding-shell";
 
 interface SetupWorkspaceProps {
   repo: string;
@@ -85,10 +47,11 @@ export function SetupWorkspace({
     {
       id: "1",
       role: "assistant",
-      content: "Let's set up your machine together. I'll help you install dependencies, get authenticated, and configure everything needed to work in this repository.\n\nI'll guide you through the setup process and execute commands as needed.",
+      content:
+        "Let's set up your environment together. Use the terminal on the right to run each step, and I'll help adjust commands as needed.\n\nTell me where you'd like to start.",
     },
   ]);
-  const [chatInput, setChatInput] = useState("I'm ready. Let's proceed with the setup steps.");
+  const [chatInput, setChatInput] = useState("I'm ready. Let's start with step 1.");
   const [isStreaming, setIsStreaming] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -177,8 +140,8 @@ export function SetupWorkspace({
                   prev.map((m) => (m.id === assistantId ? { ...m, content: fullContent } : m))
                 );
               }
-            } catch {
-              // skip
+            } catch (error) {
+              console.error("[guided-onboarding] Failed to parse chat stream chunk", error);
             }
           }
         }
@@ -205,143 +168,166 @@ export function SetupWorkspace({
   const completedCount = completedSteps.size;
 
   return (
-    <div className="min-h-dvh bg-[#0d1117] text-neutral-100 flex">
-      {/* Left sidebar - steps */}
-      <div className="w-72 border-r border-neutral-800 flex flex-col">
-        <div className="p-4 border-b border-neutral-800">
-          <h2 className="text-sm font-medium text-neutral-100">Repository setup</h2>
-          <p className="text-xs text-neutral-500 mt-1">Configure {repoName}</p>
-          <p className="text-xs text-neutral-600 mt-2">{completedCount}/{SETUP_STEPS.length} steps</p>
+    <OnboardingShell
+      sidebarHeader={
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Repository setup</h2>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">Configure {repoName}</p>
+          </div>
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+            {completedCount}/{SETUP_STEPS.length} steps
+          </span>
         </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {SETUP_STEPS.map((step, index) => (
-            <SetupStep
-              key={step.id}
-              step={step}
-              status={getStepStatus(step.id, index)}
-              value={stepValues[step.id] || ""}
-              onChange={(v) => handleStepChange(step.id, v)}
-              onVerify={() => handleVerifyStep(step.id)}
-            />
-          ))}
+      }
+      sidebarBody={
+        <div className="flex flex-col h-full">
+          <div className="px-4 pt-4">
+            <div className="rounded-lg border border-neutral-200/70 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/40 px-3 py-2 text-xs text-neutral-600 dark:text-neutral-400">
+              Run each step in the terminal and mark it done when ready.
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto mt-2">
+            {SETUP_STEPS.map((step, index) => (
+              <SetupStep
+                key={step.id}
+                step={step}
+                status={getStepStatus(step.id, index)}
+                index={index}
+                value={stepValues[step.id] || ""}
+                onChange={(v) => handleStepChange(step.id, v)}
+                onVerify={() => handleVerifyStep(step.id)}
+              />
+            ))}
+          </div>
         </div>
-
-        <div className="p-4 border-t border-neutral-800 flex gap-2">
+      }
+      sidebarFooter={
+        <div className="flex gap-2">
           <button
             onClick={handleFinishSetup}
-            className="flex-1 px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded transition"
+            className="flex-1 px-4 py-2 text-sm font-medium bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-neutral-100 rounded transition"
           >
             Finish setup
           </button>
           <button
             onClick={onFinishLater}
-            className="flex-1 px-4 py-2 text-sm font-medium bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded transition"
+            className="flex-1 px-4 py-2 text-sm font-medium bg-neutral-100 hover:bg-neutral-200 text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 rounded transition"
           >
             Finish later
           </button>
         </div>
-      </div>
+      }
+      mainHeader={
+        <>
+          <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            Environment ready
+            <span className="text-neutral-300 dark:text-neutral-700">•</span>
+            <span className="text-neutral-500 dark:text-neutral-400">{repoName}</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+            <span className="hidden sm:inline">PTY terminal connected</span>
+            <span className="rounded-full border border-neutral-200/70 dark:border-neutral-800 px-2 py-0.5">
+              Machine
+            </span>
+          </div>
+        </>
+      }
+      mainBody={
+        <div className="flex-1 flex flex-col lg:flex-row">
+          <div className="flex-1 relative bg-neutral-100 dark:bg-neutral-900/40">
+            <iframe
+              src={vscodeUrl}
+              className="absolute inset-0 w-full h-full border-0"
+              allow="clipboard-read; clipboard-write"
+            />
 
-      {/* Main content - VSCode iframe */}
-      <div className="flex-1 flex flex-col relative">
-        {/* Tab bar */}
-        <div className="h-10 border-b border-neutral-800 flex items-center px-4 gap-4">
-          <button className="text-sm text-neutral-100 border-b-2 border-neutral-100 pb-2 -mb-[1px]">
-            Machine
-          </button>
-          <button className="text-sm text-neutral-500 pb-2 -mb-[1px]">
-            Browser
-          </button>
-        </div>
-
-        {/* VSCode iframe */}
-        <div className="flex-1 relative">
-          <iframe
-            src={vscodeUrl}
-            className="absolute inset-0 w-full h-full border-0"
-            allow="clipboard-read; clipboard-write"
-          />
-        </div>
-
-        {/* Chat overlay */}
-        {chatOpen && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[600px] max-w-[90%] bg-[#1c2128] border border-neutral-700 rounded-xl shadow-2xl overflow-hidden">
-            {/* Chat header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                <span className="text-sm font-medium text-neutral-200">Setup Assistant</span>
-              </div>
-              <button
-                onClick={() => setChatOpen(false)}
-                className="text-neutral-500 hover:text-neutral-300 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Chat messages */}
-            <div className="max-h-48 overflow-y-auto p-4 space-y-3">
-              {chatMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            {!chatOpen && (
+              <>
+                <button
+                  onClick={() => setChatOpen(true)}
+                  className="absolute bottom-4 right-4 flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white dark:bg-neutral-200 dark:text-neutral-900 rounded-full text-sm shadow-lg hover:bg-neutral-800 dark:hover:bg-neutral-100 transition"
                 >
-                  <div
-                    className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                      msg.role === "user"
-                        ? "bg-blue-600 text-white"
-                        : "bg-neutral-800 text-neutral-200"
-                    }`}
-                  >
-                    {msg.content || <span className="text-neutral-500">...</span>}
+                  <Sparkles className="w-4 h-4 text-amber-300 dark:text-amber-500" />
+                  <span>Setup assistant</span>
+                </button>
+                <div className="absolute bottom-4 right-44 text-xs text-neutral-500 dark:text-neutral-400 hidden sm:block">
+                  ⌘K to generate a command
+                </div>
+              </>
+            )}
+          </div>
+
+          {chatOpen && (
+            <div className="w-full lg:w-[360px] border-t border-neutral-200/70 dark:border-neutral-800 lg:border-t-0 lg:border-l bg-neutral-50 dark:bg-neutral-950/70 flex flex-col">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200/70 dark:border-neutral-800">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <div>
+                    <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Setup assistant
+                    </p>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      Ask for commands or troubleshooting
+                    </p>
                   </div>
                 </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Chat input */}
-            <div className="border-t border-neutral-700 p-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage()}
-                  placeholder="Ask for help with setup..."
-                  disabled={isStreaming}
-                  className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-neutral-600 disabled:opacity-50"
-                />
                 <button
-                  onClick={handleSendMessage}
-                  disabled={isStreaming || !chatInput.trim()}
-                  className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => setChatOpen(false)}
+                  className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition"
                 >
-                  <Send className="w-4 h-4" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {chatMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-line ${
+                        msg.role === "user"
+                          ? "bg-neutral-900 text-white dark:bg-neutral-200 dark:text-neutral-900"
+                          : "bg-white text-neutral-800 dark:bg-neutral-900/80 dark:text-neutral-200 border border-neutral-200/70 dark:border-neutral-800"
+                      }`}
+                    >
+                      {msg.content || <span className="text-neutral-400">...</span>}
+                    </div>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+
+              <div className="border-t border-neutral-200/70 dark:border-neutral-800 p-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage()}
+                    placeholder="Ask for help with setup..."
+                    disabled={isStreaming}
+                    className="flex-1 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600 disabled:opacity-50"
+                  />
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={isStreaming || !chatInput.trim()}
+                    className="px-3 py-2 rounded-lg bg-neutral-900 text-white dark:bg-neutral-200 dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Tip: Use the terminal in VS Code to run each step.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Collapsed chat button */}
-        {!chatOpen && (
-          <button
-            onClick={() => setChatOpen(true)}
-            className="absolute bottom-4 right-4 flex items-center gap-2 px-4 py-2 bg-[#1c2128] border border-neutral-700 rounded-full text-sm text-neutral-300 hover:text-white hover:border-neutral-600 transition shadow-lg"
-          >
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>Setup Assistant</span>
-          </button>
-        )}
-
-        {/* Command hint */}
-        <div className="absolute bottom-4 right-4 text-xs text-neutral-600">
-          {chatOpen ? "" : "⌘K to generate a command"}
+          )}
         </div>
-      </div>
-    </div>
+      }
+    />
   );
 }

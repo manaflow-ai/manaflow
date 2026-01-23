@@ -1,7 +1,7 @@
 "use client";
 
-import { Check, Circle, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export type StepStatus = "pending" | "current" | "completed";
 
@@ -18,6 +18,7 @@ export interface SetupStepConfig {
 interface SetupStepProps {
   step: SetupStepConfig;
   status: StepStatus;
+  index: number;
   value: string;
   onChange: (value: string) => void;
   onVerify?: () => void;
@@ -27,6 +28,7 @@ interface SetupStepProps {
 export function SetupStep({
   step,
   status,
+  index,
   value,
   onChange,
   onVerify,
@@ -34,57 +36,65 @@ export function SetupStep({
 }: SetupStepProps) {
   const [isExpanded, setIsExpanded] = useState(status === "current");
 
-  const StatusIcon = () => {
-    if (status === "completed") {
-      return (
-        <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
-          <Check className="w-3 h-3 text-emerald-400" />
-        </div>
-      );
-    }
+  useEffect(() => {
     if (status === "current") {
-      return (
-        <div className="w-5 h-5 rounded-full border-2 border-blue-400 flex items-center justify-center">
-          <div className="w-2 h-2 rounded-full bg-blue-400" />
-        </div>
-      );
+      setIsExpanded(true);
     }
-    return (
-      <Circle className="w-5 h-5 text-neutral-600" />
-    );
-  };
+  }, [status]);
+
+  const isCompleted = status === "completed";
+  const isCurrent = status === "current";
 
   return (
-    <div className="border-b border-neutral-800 last:border-b-0">
+    <div className="border-b border-neutral-200/70 dark:border-neutral-800 last:border-b-0">
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-3 p-3 text-left hover:bg-neutral-800/30 transition"
+        onClick={() => setIsExpanded((prev) => !prev)}
+        className="w-full flex items-start gap-3 p-4 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900/40 transition"
       >
-        <StatusIcon />
-        <span className={`flex-1 text-sm ${status === "current" ? "text-neutral-100" : "text-neutral-400"}`}>
-          {step.title}
-        </span>
-        {step.optional && (
-          <span className="text-xs text-neutral-600 px-1.5 py-0.5 rounded bg-neutral-800">
-            Optional
-          </span>
-        )}
+        <div
+          className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-medium ${
+            isCompleted
+              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+              : isCurrent
+                ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/40"
+                : "bg-white dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-700"
+          }`}
+        >
+          {isCompleted ? <Check className="h-3.5 w-3.5" /> : index + 1}
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-sm font-medium ${
+                isCurrent ? "text-neutral-900 dark:text-neutral-100" : "text-neutral-700 dark:text-neutral-300"
+              }`}
+            >
+              {step.title}
+            </span>
+            {step.optional && (
+              <span className="text-[10px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                Optional
+              </span>
+            )}
+          </div>
+          {step.description && (
+            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{step.description}</p>
+          )}
+        </div>
         <ChevronDown
-          className={`w-4 h-4 text-neutral-500 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+          className={`w-4 h-4 text-neutral-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
         />
       </button>
 
       {isExpanded && (
-        <div className="px-3 pb-4 pl-11">
-          <p className="text-xs text-neutral-500 mb-3">{step.description}</p>
-
-          <div className="bg-neutral-900 rounded-lg p-3 font-mono text-xs">
+        <div className="px-4 pb-4 pl-[52px]">
+          <div className="rounded-lg border border-neutral-200/70 dark:border-neutral-800 bg-white dark:bg-neutral-900/60">
             <textarea
               value={value}
               onChange={(e) => onChange(e.target.value)}
               placeholder={step.placeholder}
               rows={3}
-              className="w-full bg-transparent text-neutral-300 placeholder:text-neutral-600 resize-none focus:outline-none"
+              className="w-full bg-transparent text-neutral-700 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500 resize-none focus:outline-none px-3 py-2 text-xs font-mono"
             />
           </div>
 
@@ -93,9 +103,9 @@ export function SetupStep({
               <button
                 onClick={onVerify}
                 disabled={isVerifying}
-                className="px-3 py-1.5 text-xs font-medium bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded transition disabled:opacity-50"
+                className="px-3 py-1.5 text-xs font-medium bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-neutral-100 rounded transition disabled:opacity-50"
               >
-                {isVerifying ? "Verifying..." : "Verify command"}
+                {isVerifying ? "Saving..." : isCompleted ? "Completed" : "Mark done"}
               </button>
             )}
             {step.docsUrl && (
@@ -103,7 +113,7 @@ export function SetupStep({
                 href={step.docsUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-neutral-500 hover:text-neutral-300 transition flex items-center gap-1"
+                className="text-xs text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition flex items-center gap-1"
               >
                 Docs
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
