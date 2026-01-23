@@ -224,9 +224,12 @@ class PersistentIframeManager {
       isStabilized: false,
     };
 
+    // Run cleanup BEFORE adding the new entry to the map.
+    // This prevents the newly created iframe from being immediately removed
+    // if all existing iframes are visible (and thus protected from cleanup).
+    this.cleanupOldIframes();
     this.iframes.set(key, entry);
     this.moveIframeOffscreen(entry);
-    this.cleanupOldIframes();
 
     return iframe;
   }
