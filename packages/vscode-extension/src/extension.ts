@@ -47,6 +47,42 @@ function log(message: string, ...args: unknown[]) {
   }
 }
 
+async function pinTerminalEditor(
+  terminal: vscode.Terminal,
+  shouldPin: boolean,
+  preserveFocus: boolean
+): Promise<void> {
+  if (!shouldPin) return;
+
+  const previousTerminal = vscode.window.activeTerminal;
+  const previousEditor = vscode.window.activeTextEditor;
+
+  try {
+    terminal.show(false);
+    await vscode.commands.executeCommand("workbench.action.keepEditor");
+  } catch (error) {
+    console.error("[cmux] Failed to pin terminal editor:", error);
+  }
+
+  if (!preserveFocus) return;
+
+  try {
+    if (previousTerminal && previousTerminal !== terminal) {
+      previousTerminal.show(false);
+      return;
+    }
+    if (previousEditor) {
+      await vscode.window.showTextDocument(previousEditor.document, {
+        viewColumn: previousEditor.viewColumn,
+        preserveFocus: true,
+        preview: false,
+      });
+    }
+  } catch (error) {
+    console.error("[cmux] Failed to restore focus after pinning:", error);
+  }
+}
+
 async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   try {
     const out = execSync(
@@ -412,6 +448,7 @@ async function setupDefaultTerminal() {
         env: process.env,
       });
       terminal.show(preserveFocus);
+      void pinTerminalEditor(terminal, true, preserveFocus);
       activeTerminals.set("default", terminal);
       terminal.sendText("tmux attach-session -t cmux");
     }
