@@ -523,7 +523,34 @@ impl AppState {
             .filter(|s| s.is_alive())
             .map(|s| s.to_info())
             .collect();
-        infos.sort_by_key(|s| s.index);
+        // Sort by: agent terminals first, then by index
+        // Agent terminals have metadata.type == "agent"
+        infos.sort_by(|a, b| {
+            let a_is_agent = a
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("type"))
+                .and_then(|t| t.as_str())
+                .map(|t| t == "agent")
+                .unwrap_or(false);
+            let b_is_agent = b
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("type"))
+                .and_then(|t| t.as_str())
+                .map(|t| t == "agent")
+                .unwrap_or(false);
+            // Agents first (true > false when reversed)
+            match (a_is_agent, b_is_agent) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.index.cmp(&b.index),
+            }
+        });
+        // Update indices to match the sorted order for consistent client display
+        for (i, info) in infos.iter_mut().enumerate() {
+            info.index = i;
+        }
         infos
     }
 
@@ -538,11 +565,28 @@ impl AppState {
         let mut infos: Vec<_> = sessions
             .values()
             .filter(|s| s.is_alive())
-            .map(|s| (s.id.clone(), s.get_index()))
+            .map(|s| {
+                let is_agent = s
+                    .metadata
+                    .read()
+                    .as_ref()
+                    .and_then(|m| m.get("type"))
+                    .and_then(|t| t.as_str())
+                    .map(|t| t == "agent")
+                    .unwrap_or(false);
+                (s.id.clone(), s.get_index(), is_agent)
+            })
             .collect();
-        infos.sort_by_key(|(_, idx)| *idx);
+        // Sort by: agent terminals first, then by current index
+        infos.sort_by(|a, b| {
+            match (a.2, b.2) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.1.cmp(&b.1),
+            }
+        });
 
-        for (i, (id, _)) in infos.iter().enumerate() {
+        for (i, (id, _, _)) in infos.iter().enumerate() {
             if let Some(session) = sessions.get(id) {
                 session.set_index(i);
             }
