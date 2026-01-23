@@ -907,8 +907,19 @@ export class RepositoryManager {
         `git worktree list --porcelain`,
         { cwd: originPath }
       );
-      // Check if the worktree path exists in the list
-      return stdout.includes(worktreePath);
+      // Parse worktree list properly to avoid false positives from partial path matching
+      // e.g., "/path/to/foo" should not match "/path/to/foobar"
+      const normalizedTargetPath = path.resolve(worktreePath);
+      const lines = stdout.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          const registeredPath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
+          if (registeredPath === normalizedTargetPath) {
+            return true;
+          }
+        }
+      }
+      return false;
     } catch {
       return false;
     }
@@ -945,7 +956,8 @@ export class RepositoryManager {
 
       for (const line of lines) {
         if (line.startsWith("worktree ")) {
-          currentWorktreePath = line.substring(9); // Remove 'worktree ' prefix
+          // Normalize the path to resolve symlinks and ensure consistent comparison
+          currentWorktreePath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
         } else if (
           line.startsWith("branch refs/heads/") &&
           currentWorktreePath

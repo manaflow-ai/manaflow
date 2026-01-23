@@ -212,21 +212,45 @@ export async function setupProjectWorkspace(args: {
     );
 
     if (worktreeRegistered) {
-      // Check if the directory actually exists
+      // Check if the directory actually exists AND is a valid git worktree
+      let isValidWorktree = false;
       try {
         await fs.access(worktreeInfo.worktreePath);
+        // Also verify it's actually a git worktree by checking for .git file/directory
+        const gitPath = path.join(worktreeInfo.worktreePath, ".git");
+        const gitStat = await fs.stat(gitPath);
+        // Worktrees have a .git file (not directory) pointing to the main repo
+        isValidWorktree = gitStat.isFile() || gitStat.isDirectory();
+      } catch {
+        isValidWorktree = false;
+      }
+
+      if (isValidWorktree) {
         serverLogger.info(
           `Worktree already exists at ${worktreeInfo.worktreePath}, using existing`
         );
-      } catch {
-        // Worktree is registered but directory doesn't exist, remove and recreate
+      } else {
+        // Worktree is registered but directory doesn't exist or is invalid, remove and recreate
         serverLogger.info(
-          `Worktree registered but directory missing, recreating...`
+          `Worktree registered but directory missing or invalid, recreating...`
         );
-        await repoManager.removeWorktree(
-          worktreeInfo.originPath,
-          worktreeInfo.worktreePath
-        );
+        try {
+          await repoManager.removeWorktree(
+            worktreeInfo.originPath,
+            worktreeInfo.worktreePath
+          );
+        } catch (removeErr) {
+          // Log but continue - the worktree may already be in a broken state
+          serverLogger.warn(
+            `Failed to remove stale worktree registration: ${removeErr}`
+          );
+        }
+        // Also clean up the directory if it exists but is invalid
+        try {
+          await fs.rm(worktreeInfo.worktreePath, { recursive: true, force: true });
+        } catch {
+          // Ignore - directory may not exist
+        }
         const actualPath = await repoManager.createWorktree(
           worktreeInfo.originPath,
           worktreeInfo.worktreePath,
@@ -241,6 +265,20 @@ export async function setupProjectWorkspace(args: {
         }
       }
     } else {
+      // Worktree not registered - but directory might exist from a previous broken state
+      // Clean it up first to avoid conflicts
+      try {
+        const dirExists = await fs.access(worktreeInfo.worktreePath).then(() => true).catch(() => false);
+        if (dirExists) {
+          serverLogger.info(
+            `Directory exists at ${worktreeInfo.worktreePath} but not registered as worktree, cleaning up...`
+          );
+          await fs.rm(worktreeInfo.worktreePath, { recursive: true, force: true });
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+
       // Create the worktree
       const actualPath = await repoManager.createWorktree(
         worktreeInfo.originPath,
