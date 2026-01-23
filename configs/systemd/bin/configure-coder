@@ -34,7 +34,7 @@ SETTINGS=$(jq -n \
     "terminal.integrated.macOptionClickForcesSelection": true,
     "terminal.integrated.shell.linux": "/usr/bin/zsh",
     "terminal.integrated.shellArgs.linux": ["-l"],
-    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.defaultProfile.linux": "cmux",
     "terminal.integrated.profiles.linux": {
       "zsh": {
         "path": "/usr/bin/zsh",

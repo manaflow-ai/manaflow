@@ -520,6 +520,10 @@ class CmuxTerminalManager {
   // Pending DELETE operations - cancelled on dispose() to prevent deletion during page refresh
   private _pendingDeletes = new Map<string, ReturnType<typeof setTimeout>>();
   private _isDeactivating = false;
+  private _stateSyncInterval: ReturnType<typeof setInterval> | null = null;
+  private _restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  private _stateSyncIntervalMs = 15000;
+  private _restoreDelayMs = 1000;
 
   // Track initial sync state
   private _initialSyncDone = false;
@@ -548,6 +552,7 @@ class CmuxTerminalManager {
       await this._ptyClient.connect();
       console.log('[cmux] Connected to PTY server');
       this._initialized = true;
+      this._startStateSyncLoop();
     } catch (err) {
       console.error('[cmux] Failed to connect to PTY server:', err);
       // Await the retry so initialization doesn't complete until we're connected
@@ -615,6 +620,7 @@ class CmuxTerminalManager {
         await this._ptyClient.connect();
         // Handlers already registered in initialize(), just mark as initialized
         this._initialized = true;
+        this._startStateSyncLoop();
         console.log(`[cmux] Successfully connected to PTY server on retry ${i + 1}`);
         return;
       } catch (err) {
@@ -626,6 +632,40 @@ class CmuxTerminalManager {
     const errMsg = `Failed to connect to PTY server after ${maxRetries} retries`;
     console.error(`[cmux] ${errMsg}`);
     throw new Error(errMsg);
+  }
+
+  private _startStateSyncLoop(): void {
+    if (this._stateSyncInterval) {
+      return;
+    }
+    this._stateSyncInterval = setInterval(() => {
+      if (!this._initialized || this._isDeactivating) {
+        return;
+      }
+      this._ptyClient.requestState();
+    }, this._stateSyncIntervalMs);
+  }
+
+  private _scheduleStateSync(reason: string): void {
+    if (this._restoreTimer) {
+      return;
+    }
+    console.log(`[cmux] Scheduling state sync: ${reason}`);
+    this._restoreTimer = setTimeout(() => {
+      this._restoreTimer = null;
+      if (this._initialized && !this._isDeactivating) {
+        this._ptyClient.requestState();
+      }
+    }, this._restoreDelayMs);
+  }
+
+  private _shouldPersistTerminal(info: TerminalInfo): boolean {
+    const metadata = info.metadata;
+    if (metadata?.managed) {
+      return true;
+    }
+    const type = metadata?.type;
+    return type === 'agent' || type === 'dev' || type === 'maintenance';
   }
 
   private _handleStateSync(terminals: TerminalInfo[]): void {
@@ -793,6 +833,12 @@ class CmuxTerminalManager {
         this._terminals.delete(info.id);
         closeListener.dispose();
         pty.dispose();
+
+        if (this._shouldPersistTerminal(managed.info)) {
+          console.log(`[cmux] Managed PTY ${info.id} closed; keeping session and scheduling restore`);
+          this._scheduleStateSync(`managed terminal ${info.id} closed`);
+          return;
+        }
 
         // Skip delete if server already deleted this PTY
         if (managed.disposingFromServer) {
@@ -1044,6 +1090,12 @@ class CmuxTerminalManager {
         closeListener.dispose();
         pending.pty.dispose();
 
+        if (this._shouldPersistTerminal(managed.info)) {
+          console.log(`[cmux] Managed PTY ${pending.id} closed; keeping session and scheduling restore`);
+          this._scheduleStateSync(`managed terminal ${pending.id} closed`);
+          return;
+        }
+
         // Skip delete if server already deleted this PTY
         if (managed.disposingFromServer) {
           console.log(`[cmux] PTY ${pending.id} was deleted by server, skipping DELETE`);
@@ -1080,6 +1132,15 @@ class CmuxTerminalManager {
       clearTimeout(timeout);
     }
     this._pendingDeletes.clear();
+
+    if (this._stateSyncInterval) {
+      clearInterval(this._stateSyncInterval);
+      this._stateSyncInterval = null;
+    }
+    if (this._restoreTimer) {
+      clearTimeout(this._restoreTimer);
+      this._restoreTimer = null;
+    }
 
     for (const d of this._disposables) {
       d.dispose();
