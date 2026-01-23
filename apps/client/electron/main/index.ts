@@ -11,6 +11,7 @@ import {
   Menu,
   MenuItem,
   nativeImage,
+  nativeTheme,
   net,
   session,
   shell,
@@ -639,6 +640,16 @@ async function handleOrQueueProtocolUrl(url: string) {
   }
 }
 
+// Theme colors for window background (prevents flash during load)
+const THEME_COLORS = {
+  light: "#ffffff",
+  dark: "#262626",
+} as const;
+
+function getInitialWindowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? THEME_COLORS.dark : THEME_COLORS.light;
+}
+
 function createWindow(): void {
   const windowOptions: BrowserWindowConstructorOptions = {
     width: 1200,
@@ -647,6 +658,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 12, y: 10 },
+    backgroundColor: getInitialWindowBackground(),
     webPreferences: {
       preload: join(app.getAppPath(), "out/preload/index.cjs"),
       sandbox: false,

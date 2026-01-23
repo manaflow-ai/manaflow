@@ -4,7 +4,24 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>cmux</title>
+    <script>
+      // Synchronously apply theme before CSS loads to prevent flash
+      (function() {
+        var theme = localStorage.getItem('vite-ui-theme');
+        var isDark = theme === 'dark' ||
+          (theme === 'system' || !theme) && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <style>
+      /* Prevent flash: set initial background based on theme class */
+      html { background-color: #fff; }
+      html.dark { background-color: #262626; }
+    </style>
   </head>
   <body class="antialiased">
     <div id="root" class="h-dvh flex flex-col"></div>

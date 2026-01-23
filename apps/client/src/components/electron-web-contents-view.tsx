@@ -1,7 +1,9 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -14,6 +16,13 @@ import {
 } from "@/lib/webview-actions";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
+import { ThemeProviderContext } from "@/components/theme/theme-context";
+
+// Theme background colors - must match CSS variables and Electron main process
+const THEME_BACKGROUND_COLORS = {
+  light: "#ffffff",
+  dark: "#262626",
+} as const;
 
 interface ElectronWebContentsViewProps {
   src: string;
@@ -174,11 +183,20 @@ export function ElectronWebContentsView({
   const latestRequestUrlRef = useRef(requestUrl);
   const retainOnUnmountRef = useRef(retainOnUnmount ?? true);
   const lastLoadedSrcRef = useRef<string | null>(null);
+
+  // Get resolved theme to determine background color when not explicitly set
+  const themeContext = useContext(ThemeProviderContext);
+  const resolvedBackgroundColor = useMemo(() => {
+    if (backgroundColor) return backgroundColor;
+    const resolvedTheme = themeContext?.resolvedTheme ?? "light";
+    return THEME_BACKGROUND_COLORS[resolvedTheme];
+  }, [backgroundColor, themeContext?.resolvedTheme]);
+
   const latestStyleRef = useRef<{
     backgroundColor?: string;
     borderRadius?: number;
   }>({
-    backgroundColor,
+    backgroundColor: resolvedBackgroundColor,
     borderRadius,
   });
   const hasStableAttachmentRef = useRef(false);
@@ -201,8 +219,8 @@ export function ElectronWebContentsView({
   }, [retainOnUnmount]);
 
   useEffect(() => {
-    latestStyleRef.current = { backgroundColor, borderRadius };
-  }, [backgroundColor, borderRadius]);
+    latestStyleRef.current = { backgroundColor: resolvedBackgroundColor, borderRadius };
+  }, [resolvedBackgroundColor, borderRadius]);
 
   const cancelScheduledSync = useCallback(() => {
     if (rafRef.current !== null) {
@@ -641,13 +659,13 @@ export function ElectronWebContentsView({
     const bridge = getWebContentsBridge();
     const id = viewIdRef.current;
     if (!bridge || id === null) return;
-    if (backgroundColor === undefined && borderRadius === undefined) return;
+    if (resolvedBackgroundColor === undefined && borderRadius === undefined) return;
     void bridge
-      .updateStyle({ id, backgroundColor, borderRadius })
+      .updateStyle({ id, backgroundColor: resolvedBackgroundColor, borderRadius })
       .catch((err) =>
         console.warn("Failed to update WebContentsView style", err),
       );
-  }, [backgroundColor, borderRadius]);
+  }, [resolvedBackgroundColor, borderRadius]);
 
   useEffect(() => {
     if (!isElectron) return undefined;
