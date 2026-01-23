@@ -189,7 +189,7 @@ class PersistentIframeManager {
       width: 100%;
       height: 100%;
       border: 0;
-      background: white;
+      background: var(--background);
       display: block;
     `;
 

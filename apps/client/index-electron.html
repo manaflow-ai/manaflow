@@ -5,6 +5,23 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>cmux</title>
+    <!-- Blocking script to prevent white flash - sets dark mode before CSS loads -->
+    <script>
+      (function() {
+        var theme = localStorage.getItem('vite-ui-theme');
+        var isDark = theme === 'dark' ||
+          (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = 'dark';
+          document.documentElement.style.backgroundColor = 'oklch(0.145 0 0)';
+        } else {
+          document.documentElement.classList.add('light');
+          document.documentElement.style.colorScheme = 'light';
+          document.documentElement.style.backgroundColor = 'oklch(1 0 0)';
+        }
+      })();
+    </script>
   </head>
   <body class="antialiased">
     <div id="root" class="h-dvh flex flex-col"></div>
