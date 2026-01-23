@@ -102,10 +102,37 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     }
   }
 
+  /**
+   * Check if an image reference uses a mutable tag (:latest or no tag).
+   * Handles registry URLs with ports correctly (e.g., localhost:5000/image).
+   * Treats digest-pinned images as immutable.
+   */
+  private static isMutableTag(imageName: string): boolean {
+    const digestSeparatorIndex = imageName.indexOf("@");
+    if (digestSeparatorIndex !== -1) {
+      return false;
+    }
+
+    const lastSlashIndex = imageName.lastIndexOf("/");
+    const lastColonIndex = imageName.lastIndexOf(":");
+
+    // No colon means no explicit tag, which is implicitly :latest.
+    if (lastColonIndex === -1) {
+      return true;
+    }
+
+    // If the last colon appears before the last slash, it belongs to the registry port.
+    if (lastColonIndex < lastSlashIndex) {
+      return true;
+    }
+
+    const tag = imageName.slice(lastColonIndex + 1);
+    return tag === "latest";
+  }
+
   private async ensureImageExists(docker: Docker): Promise<void> {
     // Determine if image uses a mutable tag (:latest or no tag specified)
-    const isLatestTag =
-      this.imageName.endsWith(":latest") || !this.imageName.includes(":");
+    const isLatestTag = DockerVSCodeInstance.isMutableTag(this.imageName);
 
     // Check if we should pull based on TTL for mutable tags
     const lastPullTime = DockerVSCodeInstance.imagePullTimes.get(this.imageName);
@@ -230,15 +257,26 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     } catch (pullError) {
       clearInterval(progressInterval);
 
-      // Update status to show the error
       const errorMessage =
         pullError instanceof Error ? pullError.message : String(pullError);
-      await this.updateStatusMessage(`Docker pull failed: ${errorMessage}`);
 
       dockerLogger.error(
         `Failed to pull image ${this.imageName}:`,
         pullError
       );
+
+      // If image exists locally, fall back to using it instead of failing
+      if (imageExistsLocally) {
+        dockerLogger.warn(
+          `Pull failed but using cached image ${this.imageName}: ${errorMessage}`
+        );
+        await this.updateStatusMessage(undefined);
+        // Don't update pull time - we didn't successfully pull
+        return;
+      }
+
+      // Image doesn't exist locally and pull failed - this is a hard failure
+      await this.updateStatusMessage(`Docker pull failed: ${errorMessage}`);
 
       // Provide helpful error messages
       let userFriendlyError: string;
