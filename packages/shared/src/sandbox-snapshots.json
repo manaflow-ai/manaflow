@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-01-21T11:16:38.707Z",
+  "updatedAt": "2026-01-23T09:42:30.547Z",
   "providers": {
     "morph": {
       "presets": {
         "standard": {
           "label": "standard",
-          "snapshotId": "snapshot_se5ckzot",
-          "capturedAt": "2026-01-21T11:16:38.707Z"
+          "snapshotId": "snapshot_uur0medf",
+          "capturedAt": "2026-01-23T09:42:30.547Z"
         },
         "performance": {
           "label": "Performance",

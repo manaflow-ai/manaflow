@@ -496,6 +496,7 @@ async function ensureStreamSecretConfigured(
     sandboxId: sandbox._id,
     apiProxyUrl: env.CONVEX_SITE_URL,
     streamSecret,
+    otelEnabled: isOtelEnabled(),
   }).pipe(Effect.provide(TracingLive)));
 
   await ctx.runMutation(internal.acp.updateSandboxJwtHash, {
@@ -529,6 +530,7 @@ async function reconfigureSandboxForTeam(
     sandboxId: sandbox._id,
     apiProxyUrl: env.CONVEX_SITE_URL,
     streamSecret,
+    otelEnabled: isOtelEnabled(),
   }).pipe(Effect.provide(TracingLive)));
 
   await ctx.runMutation(internal.acp.updateSandboxJwtHash, {
@@ -2077,6 +2079,7 @@ export const spawnSandboxEffect = (
         sandboxId,
         apiProxyUrl: env.CONVEX_SITE_URL,
         streamSecret,
+        otelEnabled: isOtelEnabled(),
       }).pipe(Effect.provide(TracingLive)));
     }
 
@@ -2162,6 +2165,7 @@ export const spawnWarmSandboxEffect = (
           sandboxId,
           apiProxyUrl: env.CONVEX_SITE_URL,
           streamSecret,
+          otelEnabled: isOtelEnabled(),
         }));
       }
 
@@ -2539,6 +2543,16 @@ export const updateSandboxInstanceId = internalMutation({
  * Called immediately after spawn because Morph uses memory snapshots,
  * so env vars passed at spawn time aren't available to running processes.
  */
+
+/**
+ * Check if OTel is enabled (Axiom backend is configured).
+ * When enabled, the sandbox will send telemetry to the Convex OTel proxy,
+ * which validates the sandbox JWT and forwards to Axiom.
+ */
+function isOtelEnabled(): boolean {
+  return !!(env.AXIOM_DOMAIN && env.AXIOM_TOKEN && env.AXIOM_TRACES_DATASET);
+}
+
 function configureSandboxEffect(
   sandboxUrl: string,
   config: {
@@ -2547,6 +2561,7 @@ function configureSandboxEffect(
     sandboxId: string;
     apiProxyUrl?: string;
     streamSecret: string;
+    otelEnabled?: boolean;
   },
 ): Effect.Effect<void, Error> {
   return traced(
@@ -2554,6 +2569,11 @@ function configureSandboxEffect(
     { sandboxId: config.sandboxId, sandboxUrl },
     async () => {
       console.log(`[acp] Configuring sandbox at ${sandboxUrl}`);
+
+      // OTel endpoint base URL - the SDK appends /v1/traces, /v1/metrics, /v1/logs
+      const otelEndpoint = config.otelEnabled
+        ? `${env.CONVEX_SITE_URL}/api/otel`
+        : undefined;
 
       const response = await fetch(`${sandboxUrl}/api/acp/configure`, {
         method: "POST",
@@ -2566,6 +2586,7 @@ function configureSandboxEffect(
           sandbox_id: config.sandboxId,
           api_proxy_url: config.apiProxyUrl,
           stream_secret: config.streamSecret,
+          otel_endpoint: otelEndpoint,
         }),
       });
 
@@ -2581,6 +2602,7 @@ function configureSandboxEffect(
 
 /**
  * Initialize a conversation on a sandbox.
+ * Automatically captures and forwards trace context to link Convex → Claude Code traces.
  */
 function initConversationOnSandboxEffect(
   sandboxUrl: string,
@@ -2590,34 +2612,42 @@ function initConversationOnSandboxEffect(
   cwd: string,
   permissionMode?: string,
 ): Effect.Effect<void, Error> {
-  return traced(
-    "acp.sandbox.init_conversation",
-    { conversationId, providerId, sandboxUrl },
-    async () => {
-      const response = await fetch(`${sandboxUrl}/api/acp/init`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          session_id: sessionId,
-          provider_id: providerId,
-          cwd,
-          permission_mode: permissionMode,
-        }),
-      });
+  return Effect.gen(function* () {
+    // Capture trace context to pass to sandbox for trace linking
+    const traceCtx = yield* getTraceContext;
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Sandbox init failed: ${response.status} - ${text}`);
-      }
-    },
-  );
+    yield* traced(
+      "acp.sandbox.init_conversation",
+      { conversationId, providerId, sandboxUrl },
+      async () => {
+        const response = await fetch(`${sandboxUrl}/api/acp/init`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            session_id: sessionId,
+            provider_id: providerId,
+            cwd,
+            permission_mode: permissionMode,
+            // Pass trace context for linking Convex traces to Claude Code traces
+            trace_context: traceCtx ?? undefined,
+          }),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Sandbox init failed: ${response.status} - ${text}`);
+        }
+      },
+    );
+  });
 }
 
 /**
  * Send a prompt to a sandbox.
+ * Automatically captures and forwards trace context to link Convex → Claude Code traces.
  */
 function sendPromptToSandboxEffect(
   sandboxUrl: string,
@@ -2632,28 +2662,35 @@ function sendPromptToSandboxEffect(
     name?: string;
   }>,
 ): Effect.Effect<void, Error> {
-  return traced(
-    "acp.sandbox.prompt",
-    { conversationId, sandboxUrl },
-    async () => {
-      const response = await fetch(`${sandboxUrl}/api/acp/prompt`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          session_id: sessionId,
-          content,
-        }),
-      });
+  return Effect.gen(function* () {
+    // Capture trace context to pass to sandbox for trace linking
+    const traceCtx = yield* getTraceContext;
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Sandbox prompt failed: ${response.status} - ${text}`);
-      }
-    },
-  );
+    yield* traced(
+      "acp.sandbox.prompt",
+      { conversationId, sandboxUrl },
+      async () => {
+        const response = await fetch(`${sandboxUrl}/api/acp/prompt`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            session_id: sessionId,
+            content,
+            // Pass trace context for linking Convex traces to Claude Code traces
+            trace_context: traceCtx ?? undefined,
+          }),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Sandbox prompt failed: ${response.status} - ${text}`);
+        }
+      },
+    );
+  });
 }
 
 /**

@@ -34,6 +34,7 @@ import {
 } from "./anthropic_http";
 import { openaiProxy } from "./openai_http";
 import { codexOAuthRefresh } from "./codex_oauth_http";
+import { otelTracesProxy, otelMetricsStub, otelLogsStub } from "./otel_http";
 
 const http = httpRouter();
 
@@ -206,6 +207,25 @@ http.route({
   path: "/api/oauth/codex/token",
   method: "POST",
   handler: codexOAuthRefresh,
+});
+
+// OTel OTLP endpoints - the SDK appends /v1/traces, /v1/metrics, /v1/logs to the base URL
+http.route({
+  path: "/api/otel/v1/traces",
+  method: "POST",
+  handler: otelTracesProxy,
+});
+
+http.route({
+  path: "/api/otel/v1/metrics",
+  method: "POST",
+  handler: otelMetricsStub,
+});
+
+http.route({
+  path: "/api/otel/v1/logs",
+  method: "POST",
+  handler: otelLogsStub,
 });
 
 export default http;

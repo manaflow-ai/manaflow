@@ -44,6 +44,15 @@ struct StreamSecretEntry {
     set_at: Instant,
 }
 
+/// OTel (OpenTelemetry) configuration for Claude Code telemetry export.
+/// The endpoint points to the Convex OTel proxy which validates sandbox JWT
+/// and forwards traces to the backend (Axiom).
+#[derive(Clone)]
+pub(crate) struct OtelConfig {
+    /// OTLP endpoint URL (Convex proxy, e.g., "https://cmux.convex.site/api/otel/v1/traces")
+    pub(crate) endpoint: String,
+}
+
 /// State for a single conversation.
 struct ConversationState {
     /// CLI stdin handle for sending prompts
@@ -76,6 +85,8 @@ pub struct RestApiState {
     stream_store: Arc<StreamStore>,
     /// Shared secrets for validating browser stream tokens
     stream_secrets: Arc<RwLock<Vec<StreamSecretEntry>>>,
+    /// OTel configuration for Claude Code telemetry export
+    otel_config: Arc<RwLock<Option<OtelConfig>>>,
 }
 
 impl RestApiState {
@@ -89,6 +100,7 @@ impl RestApiState {
             api_proxies: Arc::new(RwLock::new(None)),
             stream_store: Arc::new(StreamStore::new(20_000)),
             stream_secrets: Arc::new(RwLock::new(Vec::new())),
+            otel_config: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -122,6 +134,7 @@ impl RestApiState {
         sandbox_id: String,
         api_proxy_url: Option<String>,
         stream_secret: Option<String>,
+        otel_endpoint: Option<String>,
     ) -> Result<(), String> {
         // Set callback client
         let client = CallbackClient::new(callback_url.clone(), sandbox_jwt.clone());
@@ -182,13 +195,26 @@ impl RestApiState {
             guard.sort_by(|a, b| b.set_at.cmp(&a.set_at));
             guard.truncate(STREAM_SECRET_MAX);
         }
+        // Store OTel config if endpoint is provided
+        // The sandbox JWT will be used for authentication to the Convex OTel proxy
+        if let Some(endpoint) = otel_endpoint {
+            info!(otel_endpoint = %endpoint, "OTel configuration set");
+            let mut guard = self.otel_config.write().await;
+            *guard = Some(OtelConfig { endpoint });
+        }
         Ok(())
     }
 
     /// Get environment variables to set for spawned CLIs.
     /// Always includes HOME for config file discovery.
     /// Returns proxy URLs if proxies are configured.
-    pub async fn get_cli_env_vars(&self) -> Vec<(String, String)> {
+    /// If OTel config is set and conversation_id is provided, includes OTel env vars.
+    /// If trace_context is provided, includes TRACEPARENT for trace linking.
+    pub async fn get_cli_env_vars(
+        &self,
+        conversation_id: Option<&str>,
+        trace_context: Option<&TraceContext>,
+    ) -> Vec<(String, String)> {
         // Always include HOME so CLIs can find their config files
         // (e.g., ~/.codex/config.toml)
         // Include IS_SANDBOX=1 to signal to CLIs that they're running in a sandbox
@@ -196,6 +222,62 @@ impl RestApiState {
             ("HOME".to_string(), "/root".to_string()),
             ("IS_SANDBOX".to_string(), "1".to_string()),
         ];
+
+        // Add trace parent for linking Convex traces to Claude Code traces
+        // Format: 00-{trace_id}-{span_id}-{flags}
+        if let Some(ctx) = trace_context {
+            env_vars.push(("TRACEPARENT".to_string(), ctx.to_traceparent()));
+        }
+
+        // Add OTel config for Claude Code telemetry
+        // Uses sandbox JWT for authentication to the Convex OTel proxy
+        let otel_guard = self.otel_config.read().await;
+        let callback_guard = self.callback_client.read().await;
+        if let (Some(ref config), Some(ref callback_client)) = (&*otel_guard, &*callback_guard) {
+            env_vars.extend([
+                ("CLAUDE_CODE_ENABLE_TELEMETRY".to_string(), "1".to_string()),
+                // Enable enhanced telemetry beta feature flag for trace export
+                (
+                    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA".to_string(),
+                    "true".to_string(),
+                ),
+                // Enable OTLP export for traces, metrics, and logs
+                ("OTEL_TRACES_EXPORTER".to_string(), "otlp".to_string()),
+                ("OTEL_METRICS_EXPORTER".to_string(), "otlp".to_string()),
+                ("OTEL_LOGS_EXPORTER".to_string(), "otlp".to_string()),
+                // Use JSON protocol so Convex proxy can parse and rewrite trace_id
+                (
+                    "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
+                    "http/json".to_string(),
+                ),
+                (
+                    "OTEL_EXPORTER_OTLP_ENDPOINT".to_string(),
+                    config.endpoint.clone(),
+                ),
+            ]);
+
+            // Set OTLP headers with sandbox JWT for auth to Convex proxy
+            let headers = format!("Authorization=Bearer {}", callback_client.jwt());
+            env_vars.push(("OTEL_EXPORTER_OTLP_HEADERS".to_string(), headers));
+
+            // Build resource attributes with sandbox.id, conversation.id, and trace context
+            // Since Claude Code exports logs/events (not traces), we add trace context as
+            // resource attributes so logs can be correlated with Convex traces by trace_id
+            let sandbox_id = self.sandbox_id.read().await.clone().unwrap_or_default();
+            let mut attrs = format!("sandbox.id={}", sandbox_id);
+            if let Some(conv_id) = conversation_id {
+                attrs.push_str(&format!(",conversation.id={}", conv_id));
+            }
+            // Add trace context as resource attributes for correlation with Convex traces
+            // Use underscores (not dots) so Axiom indexes these as flat searchable fields
+            if let Some(ctx) = trace_context {
+                attrs.push_str(&format!(",parent_trace_id={}", ctx.trace_id));
+                attrs.push_str(&format!(",parent_span_id={}", ctx.span_id));
+            }
+            env_vars.push(("OTEL_RESOURCE_ATTRIBUTES".to_string(), attrs));
+        }
+        drop(otel_guard);
+        drop(callback_guard);
 
         let guard = self.api_proxies.read().await;
         if let Some(ref proxies) = *guard {
@@ -391,6 +473,29 @@ async fn perform_acp_handshake(
 // ACP Prompt/Init Endpoints (for Convex -> Sandbox communication)
 // ============================================================================
 
+/// Trace context for linking Convex traces to Claude Code traces.
+/// W3C Trace Context format: https://www.w3.org/TR/trace-context/
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct TraceContext {
+    /// 32 hex character trace ID
+    #[serde(rename = "traceId")]
+    pub trace_id: String,
+    /// 16 hex character span ID
+    #[serde(rename = "spanId")]
+    pub span_id: String,
+    /// Trace flags (usually 01 for sampled)
+    #[serde(rename = "traceFlags", default)]
+    pub trace_flags: Option<u8>,
+}
+
+impl TraceContext {
+    /// Format as W3C traceparent header: 00-{trace_id}-{span_id}-{flags}
+    pub fn to_traceparent(&self) -> String {
+        let flags = self.trace_flags.unwrap_or(1);
+        format!("00-{}-{}-{:02x}", self.trace_id, self.span_id, flags)
+    }
+}
+
 /// Request to initialize a conversation on this sandbox.
 /// Called by Convex when assigning a conversation to this sandbox.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -411,6 +516,10 @@ pub struct InitConversationRequest {
     /// to auto-approve all tool uses without prompting.
     #[serde(rename = "permission_mode", default)]
     pub permission_mode: Option<String>,
+    /// Trace context from Convex for linking traces.
+    /// When provided, will be passed to Claude Code as TRACEPARENT env var.
+    #[serde(rename = "trace_context", default)]
+    pub trace_context: Option<TraceContext>,
 }
 
 /// Response from init conversation.
@@ -435,6 +544,10 @@ pub struct PromptRequest {
     pub session_id: String,
     /// Content blocks for the prompt
     pub content: Vec<ContentBlock>,
+    /// Trace context from Convex for linking traces.
+    /// When provided, will be passed to Claude Code as TRACEPARENT env var.
+    #[serde(rename = "trace_context", default)]
+    pub trace_context: Option<TraceContext>,
 }
 
 /// Response from receiving a prompt.
@@ -487,6 +600,10 @@ pub struct ConfigureRequest {
     /// Shared secret for sandbox streaming auth (optional).
     #[serde(rename = "stream_secret")]
     pub stream_secret: Option<String>,
+    /// OTLP endpoint URL for telemetry export (Convex OTel proxy).
+    /// The sandbox JWT will be used for authentication.
+    #[serde(rename = "otel_endpoint")]
+    pub otel_endpoint: Option<String>,
 }
 
 /// Query parameters for ACP stream endpoint.
@@ -538,6 +655,7 @@ pub async fn configure(
         sandbox_id = %request.sandbox_id,
         callback_url = %request.callback_url,
         api_proxy_url = ?request.api_proxy_url,
+        otel_endpoint = ?request.otel_endpoint,
         "Configuring sandbox"
     );
 
@@ -548,6 +666,7 @@ pub async fn configure(
             request.sandbox_id.clone(),
             request.api_proxy_url.clone(),
             request.stream_secret.clone(),
+            request.otel_endpoint.clone(),
         )
         .await
     {
@@ -1028,8 +1147,13 @@ pub async fn init_conversation(
         PathBuf::from(&request.cwd)
     };
 
-    // Get env vars for CLI (proxy URLs if configured)
-    let env_vars = state.get_cli_env_vars().await;
+    // Get env vars for CLI (proxy URLs if configured, OTel config if set, trace context for linking)
+    let env_vars = state
+        .get_cli_env_vars(
+            Some(&request.conversation_id),
+            request.trace_context.as_ref(),
+        )
+        .await;
     info!(env_vars = ?env_vars, env_count = env_vars.len(), "CLI environment variables for API proxy");
 
     // Spawn CLI process with env vars
@@ -2358,5 +2482,187 @@ mod tests {
 
         let result = handle_permission_request(request);
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_otel_config_storage() {
+        let state = RestApiState::new();
+
+        // Initially no OTel config
+        let env_vars = state.get_cli_env_vars(None, None).await;
+        assert!(!env_vars
+            .iter()
+            .any(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT"));
+
+        // Configure OTel endpoint
+        let _ = state
+            .configure(
+                "https://example.com/api/acp/callback".to_string(),
+                "test-jwt".to_string(),
+                "sandbox-123".to_string(),
+                None, // api_proxy_url
+                None, // stream_secret
+                Some("https://example.com/api/otel/v1/traces".to_string()),
+            )
+            .await;
+
+        // Now OTel env vars should be present (requires callback_client for JWT)
+        let env_vars = state.get_cli_env_vars(Some("conv-123"), None).await;
+
+        // Check OTEL env vars are set
+        let endpoint = env_vars
+            .iter()
+            .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT");
+        assert!(endpoint.is_some());
+        assert_eq!(
+            endpoint.unwrap().1,
+            "https://example.com/api/otel/v1/traces"
+        );
+
+        let headers = env_vars
+            .iter()
+            .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_HEADERS");
+        assert!(headers.is_some());
+        assert!(headers.unwrap().1.starts_with("Authorization=Bearer "));
+
+        let attrs = env_vars
+            .iter()
+            .find(|(k, _)| k == "OTEL_RESOURCE_ATTRIBUTES");
+        assert!(attrs.is_some());
+        assert!(attrs.unwrap().1.contains("sandbox.id=sandbox-123"));
+        assert!(attrs.unwrap().1.contains("conversation.id=conv-123"));
+
+        let telemetry = env_vars
+            .iter()
+            .find(|(k, _)| k == "CLAUDE_CODE_ENABLE_TELEMETRY");
+        assert!(telemetry.is_some());
+        assert_eq!(telemetry.unwrap().1, "1");
+
+        // Check OTEL_TRACES_EXPORTER is set (critical for trace export)
+        let traces_exporter = env_vars.iter().find(|(k, _)| k == "OTEL_TRACES_EXPORTER");
+        assert!(traces_exporter.is_some());
+        assert_eq!(traces_exporter.unwrap().1, "otlp");
+
+        // Check CLAUDE_CODE_ENHANCED_TELEMETRY_BETA is set (required for trace export)
+        let enhanced_telemetry = env_vars
+            .iter()
+            .find(|(k, _)| k == "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA");
+        assert!(enhanced_telemetry.is_some());
+        assert_eq!(enhanced_telemetry.unwrap().1, "true");
+    }
+
+    #[tokio::test]
+    async fn test_otel_env_vars_without_otel_config() {
+        let state = RestApiState::new();
+
+        // Configure WITHOUT OTel endpoint
+        let _ = state
+            .configure(
+                "https://example.com/api/acp/callback".to_string(),
+                "test-jwt".to_string(),
+                "sandbox-456".to_string(),
+                None, // api_proxy_url
+                None, // stream_secret
+                None, // otel_endpoint - NOT set
+            )
+            .await;
+
+        // OTel env vars should NOT be present without otel_endpoint
+        let env_vars = state.get_cli_env_vars(Some("conv-456"), None).await;
+
+        let endpoint = env_vars
+            .iter()
+            .find(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT");
+        assert!(endpoint.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_otel_conversation_id_in_resource_attributes() {
+        let state = RestApiState::new();
+
+        let _ = state
+            .configure(
+                "https://example.com/api/acp/callback".to_string(),
+                "test-jwt".to_string(),
+                "sandbox-789".to_string(),
+                None,
+                None,
+                Some("https://example.com/api/otel/v1/traces".to_string()),
+            )
+            .await;
+
+        // With conversation_id
+        let env_vars = state.get_cli_env_vars(Some("my-conv-id"), None).await;
+        let attrs = env_vars
+            .iter()
+            .find(|(k, _)| k == "OTEL_RESOURCE_ATTRIBUTES")
+            .unwrap();
+        assert!(attrs.1.contains("conversation.id=my-conv-id"));
+
+        // Without conversation_id
+        let env_vars_no_conv = state.get_cli_env_vars(None, None).await;
+        let attrs_no_conv = env_vars_no_conv
+            .iter()
+            .find(|(k, _)| k == "OTEL_RESOURCE_ATTRIBUTES")
+            .unwrap();
+        assert!(!attrs_no_conv.1.contains("conversation.id="));
+        assert!(attrs_no_conv.1.contains("sandbox.id=sandbox-789"));
+    }
+
+    #[tokio::test]
+    async fn test_trace_context_propagation() {
+        let state = RestApiState::new();
+
+        // Configure OTel so resource attributes are populated
+        let _ = state
+            .configure(
+                "https://example.com/api/acp/callback".to_string(),
+                "test-jwt".to_string(),
+                "sandbox-trace-test".to_string(),
+                None, // api_proxy_url
+                None, // stream_secret
+                Some("https://example.com/api/otel/v1/traces".to_string()),
+            )
+            .await;
+
+        let trace_ctx = TraceContext {
+            trace_id: "0af7651916cd43dd8448eb211c80319c".to_string(),
+            span_id: "b7ad6b7169203331".to_string(),
+            trace_flags: Some(1),
+        };
+
+        // With trace context - verify TRACEPARENT env var
+        let env_vars = state
+            .get_cli_env_vars(Some("conv-123"), Some(&trace_ctx))
+            .await;
+        let traceparent = env_vars.iter().find(|(k, _)| k == "TRACEPARENT");
+        assert!(traceparent.is_some());
+        assert_eq!(
+            traceparent.unwrap().1,
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        );
+
+        // Verify trace context is added to OTEL_RESOURCE_ATTRIBUTES for correlation
+        let attrs = env_vars
+            .iter()
+            .find(|(k, _)| k == "OTEL_RESOURCE_ATTRIBUTES")
+            .unwrap();
+        // Uses underscores so Axiom indexes these as flat searchable fields
+        assert!(attrs
+            .1
+            .contains("parent_trace_id=0af7651916cd43dd8448eb211c80319c"));
+        assert!(attrs.1.contains("parent_span_id=b7ad6b7169203331"));
+
+        // Without trace context - no TRACEPARENT and no parent_* attributes
+        let env_vars_no_trace = state.get_cli_env_vars(Some("conv-456"), None).await;
+        let traceparent_none = env_vars_no_trace.iter().find(|(k, _)| k == "TRACEPARENT");
+        assert!(traceparent_none.is_none());
+
+        let attrs_no_trace = env_vars_no_trace
+            .iter()
+            .find(|(k, _)| k == "OTEL_RESOURCE_ATTRIBUTES")
+            .unwrap();
+        assert!(!attrs_no_trace.1.contains("parent_trace_id="));
+        assert!(!attrs_no_trace.1.contains("parent_span_id="));
     }
 }
