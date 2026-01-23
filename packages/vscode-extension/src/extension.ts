@@ -22,6 +22,9 @@ let isSetupComplete = false;
 let fileWatcher: vscode.FileSystemWatcher | null = null;
 let refreshDebounceTimer: NodeJS.Timeout | null = null;
 
+// Track if VSCode is fully ready
+let vscodeReadyPromise: Promise<void> | null = null;
+
 function log(message: string, ...args: unknown[]) {
   const safeStringify = (value: unknown): string => {
     if (value instanceof Error) {
@@ -45,6 +48,104 @@ function log(message: string, ...args: unknown[]) {
   } else {
     outputChannel.appendLine(formattedMessage);
   }
+}
+
+/**
+ * Wait for VSCode to be fully ready before creating terminals.
+ * This includes waiting for:
+ * - Terminal system to be initialized
+ * - Settings to be synced
+ * - Git extension to be ready
+ *
+ * This is especially important for local Docker tasks where VSCode
+ * starts fresh and needs time to initialize everything.
+ */
+async function waitForVSCodeReady(): Promise<void> {
+  // Return cached promise if already waiting/resolved
+  if (vscodeReadyPromise) {
+    return vscodeReadyPromise;
+  }
+
+  vscodeReadyPromise = (async () => {
+    log("Waiting for VSCode to be fully ready...");
+    const startTime = Date.now();
+
+    // 1. Wait for Git extension to activate (indicates core extensions are loaded)
+    const gitExtension = vscode.extensions.getExtension("vscode.git");
+    if (gitExtension && !gitExtension.isActive) {
+      log("Waiting for git extension to activate...");
+      try {
+        await Promise.race([
+          gitExtension.activate(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Git extension activation timeout")), 10000)
+          ),
+        ]);
+        log("Git extension activated");
+      } catch (_error) {
+        log("Git extension activation timed out or failed, continuing anyway");
+      }
+    }
+
+    // 2. Wait for settings sync to complete
+    // VSCode doesn't have a direct API for this, but we can use a heuristic:
+    // Wait for configuration to be readable and stable
+    log("Waiting for settings to stabilize...");
+    let configStable = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+    let lastConfigHash = "";
+
+    while (!configStable && attempts < maxAttempts) {
+      try {
+        // Read a configuration value to trigger any pending sync
+        const terminalConfig = vscode.workspace.getConfiguration("terminal");
+        const currentHash = JSON.stringify({
+          fontSize: terminalConfig.get("integrated.fontSize"),
+          fontFamily: terminalConfig.get("integrated.fontFamily"),
+          shell: terminalConfig.get("integrated.shell.linux"),
+        });
+
+        if (currentHash === lastConfigHash) {
+          // Config hasn't changed, consider it stable
+          configStable = true;
+        } else {
+          lastConfigHash = currentHash;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      attempts++;
+    }
+    log(`Settings stabilized after ${attempts} checks`);
+
+    // 3. Wait for terminal system to be ready
+    // We can verify this by checking if terminal APIs are responsive
+    log("Verifying terminal system is ready...");
+    try {
+      // Try to access terminal state to verify the system is initialized
+      const existingTerminals = vscode.window.terminals;
+      log(`Found ${existingTerminals.length} existing terminals`);
+    } catch (_error) {
+      log("Terminal system check failed, waiting a bit longer...");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    // 4. Additional delay for any remaining async initialization
+    // This helps with settings sync and extension host stabilization
+    const minWaitTime = 1000; // Minimum 1 second wait
+    const elapsed = Date.now() - startTime;
+    if (elapsed < minWaitTime) {
+      const remaining = minWaitTime - elapsed;
+      log(`Waiting additional ${remaining}ms for VSCode to fully initialize...`);
+      await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+
+    log(`VSCode ready after ${Date.now() - startTime}ms`);
+  })();
+
+  return vscodeReadyPromise;
 }
 
 async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
@@ -277,6 +378,14 @@ async function setupDefaultTerminal() {
   if (isSetupComplete) {
     log("Setup already complete, skipping");
     return;
+  }
+
+  // Wait for VSCode to be fully ready before creating terminals
+  // This is critical for local Docker tasks where VSCode needs time to initialize
+  try {
+    await waitForVSCodeReady();
+  } catch (error) {
+    log("VSCode readiness check failed, attempting setup anyway", error);
   }
 
   // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup

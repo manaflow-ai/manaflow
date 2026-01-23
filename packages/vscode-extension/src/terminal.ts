@@ -292,12 +292,14 @@ class PtyClient {
       console.log('[cmux] PtyClient connecting to:', fullUrl);
       this._ws = new WebSocket(fullUrl);
 
+      // Use longer timeout for initial connection since local Docker tasks may be slow
+      // to start the cmux-pty server
       const timeout = setTimeout(() => {
         if (!this._connected) {
-          console.error('[cmux] PtyClient connection timeout after 10s');
+          console.error('[cmux] PtyClient connection timeout after 15s');
           reject(new Error('Connection timeout'));
         }
-      }, 10000); // Increased from 5s to 10s to allow for slower startup
+      }, 15000); // Increased from 10s to 15s for slower local Docker startup
 
       this._ws.onopen = () => {
         clearTimeout(timeout);
@@ -697,17 +699,44 @@ class CmuxTerminalManager {
     // Skip initial resize for restored sessions to avoid shell prompt redraw
     const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore);
 
-    const terminal = vscode.window.createTerminal({
-      name: info.name,
-      pty,
-      location: shouldOpenInEditor ? vscode.TerminalLocation.Editor : vscode.TerminalLocation.Panel,
-    });
+    let terminal: vscode.Terminal;
+    try {
+      terminal = vscode.window.createTerminal({
+        name: info.name,
+        pty,
+        location: shouldOpenInEditor ? vscode.TerminalLocation.Editor : vscode.TerminalLocation.Panel,
+      });
+    } catch (err) {
+      console.error(`[cmux] Failed to create terminal for PTY ${info.id}:`, err);
+      pty.dispose();
+      // Remove from pending since creation failed
+      this._pendingCreations.delete(info.id);
+      return;
+    }
 
     const managed: ManagedTerminal = { terminal, pty, info };
     this._terminals.set(info.id, managed);
 
     // Show terminal with appropriate focus
-    terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
+    // Wrap in try-catch to handle cases where terminal was disposed immediately
+    try {
+      terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
+    } catch (err) {
+      console.error(`[cmux] Failed to show terminal for PTY ${info.id}:`, err);
+    }
+
+    // Verify terminal was created successfully after a short delay
+    // This helps catch cases where the terminal disappears due to VSCode not being ready
+    setTimeout(() => {
+      const stillExists = vscode.window.terminals.some(t => t === terminal);
+      if (!stillExists && this._terminals.has(info.id)) {
+        console.warn(`[cmux] Terminal for PTY ${info.id} disappeared shortly after creation, this may indicate VSCode wasn't fully ready`);
+        this._terminals.delete(info.id);
+        this._pendingCreations.delete(info.id);
+        // Don't dispose pty - the server-side PTY is still valid
+        // Client can reconnect later
+      }
+    }, 500);
 
     // Listen for terminal close
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
@@ -1284,10 +1313,16 @@ export function hasAnyCmuxPtyTerminals(): boolean {
  * maintenance/dev terminals may be created before the agent's "cmux" terminal.
  */
 export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Promise<boolean> {
-  if (!terminalManager) return false;
+  if (!terminalManager) {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: terminalManager not initialized');
+    return false;
+  }
 
-  // Wait for initial sync to complete (with longer timeout)
-  const syncTimeout = 10000; // 10 seconds - increased from 5s
+  // Wait for initial sync to complete (with longer timeout for local Docker tasks)
+  // Local Docker containers may take longer to start the cmux-pty server
+  const syncTimeout = 15000; // 15 seconds - increased from 10s for slower startup
+  console.log(`[cmux] waitForAnyCmuxPtyTerminals: waiting for initial sync (timeout: ${syncTimeout}ms)...`);
+
   try {
     await Promise.race([
       terminalManager.waitForInitialSync(),
@@ -1295,9 +1330,10 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
         setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
       )
     ]);
-  } catch {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync completed');
+  } catch (err) {
     // Timeout or connection failure - fall back to tmux
-    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out');
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out:', err instanceof Error ? err.message : String(err));
     return false;
   }
 
@@ -1308,7 +1344,8 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
   }
 
   // Wait longer for terminals to be created (orchestrator may still be running)
-  console.log('[cmux] waitForAnyCmuxPtyTerminals: waiting for terminals...');
+  // For local Docker tasks, the agent spawner might still be creating terminals
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: no terminals yet, waiting for creation...');
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -1318,7 +1355,7 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
     }
   }
 
-  console.log('[cmux] waitForAnyCmuxPtyTerminals: no terminals found after waiting');
+  console.log(`[cmux] waitForAnyCmuxPtyTerminals: no terminals found after waiting ${maxWaitMs}ms`);
   return false;
 }
 
@@ -1339,14 +1376,52 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
     return;
   }
 
-  const terminals = terminalManager.getTerminals();
+  // Wait a moment for terminals to be fully created
+  // This helps with flaky terminal creation in local Docker tasks
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  let terminals = terminalManager.getTerminals();
   console.log(`[cmux] Have ${terminals.length} terminals after drain`);
+
+  // If no terminals were created, wait a bit and check again
+  // This handles race conditions where VSCode wasn't quite ready
+  if (terminals.length === 0) {
+    console.log('[cmux] No terminals created yet, waiting for VSCode to catch up...');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    terminals = terminalManager.getTerminals();
+    console.log(`[cmux] After wait, have ${terminals.length} terminals`);
+  }
+
+  // If still no terminals, try to find them in VSCode directly
+  // They might have been created but not tracked properly
+  if (terminals.length === 0) {
+    const vscodeTerminals = vscode.window.terminals;
+    console.log(`[cmux] No tracked terminals, but VSCode has ${vscodeTerminals.length} terminals`);
+    if (vscodeTerminals.length > 0) {
+      // Focus the first available VSCode terminal
+      const cmuxVsTerminal = vscodeTerminals.find(t => t.name === 'cmux');
+      if (cmuxVsTerminal) {
+        console.log('[cmux] Focusing untracked cmux terminal');
+        cmuxVsTerminal.show(false);
+        return;
+      }
+      console.log('[cmux] Focusing first untracked terminal:', vscodeTerminals[0].name);
+      vscodeTerminals[0].show(false);
+      return;
+    }
+    console.log('[cmux] No terminals found to focus');
+    return;
+  }
 
   // First try to focus the "cmux" terminal (main agent)
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {
     console.log('[cmux] Focusing cmux terminal');
-    cmuxTerminal.terminal.show(false); // false = take focus
+    try {
+      cmuxTerminal.terminal.show(false); // false = take focus
+    } catch (err) {
+      console.error('[cmux] Failed to focus cmux terminal:', err);
+    }
     return;
   }
 
@@ -1354,7 +1429,11 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
   if (devTerminal) {
     console.log('[cmux] Focusing dev terminal');
-    devTerminal.terminal.show(false);
+    try {
+      devTerminal.terminal.show(false);
+    } catch (err) {
+      console.error('[cmux] Failed to focus dev terminal:', err);
+    }
     return;
   }
 
@@ -1362,13 +1441,21 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
   if (panelTerminal) {
     console.log('[cmux] Focusing first panel terminal:', panelTerminal.info.name);
-    panelTerminal.terminal.show(false);
+    try {
+      panelTerminal.terminal.show(false);
+    } catch (err) {
+      console.error('[cmux] Failed to focus panel terminal:', err);
+    }
     return;
   }
 
   // Last resort: focus any terminal
   if (terminals.length > 0) {
     console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
-    terminals[0].terminal.show(false);
+    try {
+      terminals[0].terminal.show(false);
+    } catch (err) {
+      console.error('[cmux] Failed to focus first terminal:', err);
+    }
   }
 }
