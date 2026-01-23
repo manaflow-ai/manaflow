@@ -2,7 +2,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
-import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, waitForAnyCmuxPtyTerminals, createQueuedTerminals } from "./terminal";
+import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, waitForAnyCmuxPtyTerminals, createQueuedTerminals, forceSyncTerminals } from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -371,10 +371,16 @@ async function setupDefaultTerminal() {
 
   // Check if cmux-pty is managing ANY terminals (not just "cmux")
   // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
-  // We use a longer timeout (30s) to allow the orchestrator to finish
-  // This is especially important for Docker containers where startup may be slower
-  log("Waiting for cmux-pty terminals (up to 30s)...");
-  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
+  // We use a longer timeout (45s) to allow the orchestrator to finish
+  // This is especially important for Docker containers and cloud mode where startup may be slower
+  log("Waiting for cmux-pty terminals (up to 45s)...");
+  let hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(45000);
+
+  // If no terminals found, try one more time with REST API fallback
+  if (!hasCmuxPtyTerminals) {
+    log("No terminals found via WebSocket, trying REST API fallback...");
+    hasCmuxPtyTerminals = await forceSyncTerminals();
+  }
 
   if (hasCmuxPtyTerminals) {
     // cmux-pty has terminals - create all of them from the restore queue
@@ -382,6 +388,9 @@ async function setupDefaultTerminal() {
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
     await createQueuedTerminals({ focus: !preserveFocus });
+
+    // Wait a bit for VS Code to process terminal creation
+    await new Promise(resolve => setTimeout(resolve, 200));
 
     // Also check for the specific "cmux" terminal (main agent)
     // If not present yet, it might still be created by the agent spawner
@@ -570,9 +579,22 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Command to manually sync terminals from server (recovery mechanism)
+  const syncTerminals = vscode.commands.registerCommand('cmux.syncTerminals', async () => {
+    log('Manually syncing terminals from server...');
+    const foundTerminals = await forceSyncTerminals();
+    if (foundTerminals) {
+      await createQueuedTerminals({ focus: false });
+      vscode.window.showInformationMessage('Terminals synced from server');
+    } else {
+      vscode.window.showInformationMessage('No terminals found on server');
+    }
+  });
+
   context.subscriptions.push(disposable);
   context.subscriptions.push(run);
   context.subscriptions.push(openAllChangesVsBase);
+  context.subscriptions.push(syncTerminals);
 }
 
 export function deactivate() {

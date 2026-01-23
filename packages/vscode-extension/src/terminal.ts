@@ -526,6 +526,9 @@ class CmuxTerminalManager {
   private _initialSyncPromise: Promise<void>;
   private _resolveInitialSync!: () => void;
 
+  // Periodic sync timer to catch missing terminals
+  private _periodicSyncTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor() {
     const config = getConfig();
     this._ptyClient = new PtyClient(config.serverUrl);
@@ -555,6 +558,76 @@ class CmuxTerminalManager {
       console.log('[cmux] Starting connection retry sequence...');
       await this._retryConnect();
       // Note: _initialized is set by _retryConnect on success
+    }
+
+    // Start periodic sync to catch missing terminals (every 30 seconds)
+    // This is especially important for cloud/Docker modes where connections may be unstable
+    this._startPeriodicSync();
+  }
+
+  /**
+   * Start periodic synchronization to catch missing terminals.
+   * This helps recover from connection issues where WebSocket events are missed.
+   */
+  private _startPeriodicSync(): void {
+    if (this._periodicSyncTimer) {
+      return; // Already running
+    }
+
+    console.log('[cmux] Starting periodic terminal sync (every 30s)');
+    this._periodicSyncTimer = setInterval(async () => {
+      if (!this._initialized || this._isDeactivating) {
+        return;
+      }
+
+      try {
+        await this._syncMissingTerminals();
+      } catch (err) {
+        console.error('[cmux] Periodic sync error:', err);
+      }
+    }, 30000); // Every 30 seconds
+  }
+
+  /**
+   * Check for terminals that exist on the server but not in VS Code, and create them.
+   */
+  private async _syncMissingTerminals(): Promise<void> {
+    const config = getConfig();
+
+    try {
+      const response = await fetch(`${config.serverUrl}/sessions`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json() as { sessions: TerminalInfo[] };
+      const serverTerminals = data.sessions || [];
+
+      // Find terminals on server that we don't have
+      const missingTerminals: TerminalInfo[] = [];
+      for (const info of serverTerminals) {
+        if (!this._terminals.has(info.id) && !this._pendingCreations.has(info.id)) {
+          missingTerminals.push(info);
+        }
+      }
+
+      if (missingTerminals.length > 0) {
+        console.log(`[cmux] Periodic sync found ${missingTerminals.length} missing terminals, creating...`);
+        // Sort by index
+        missingTerminals.sort((a, b) => a.index - b.index);
+
+        for (const info of missingTerminals) {
+          console.log(`[cmux] Creating missing terminal: ${info.id} (${info.name})`);
+          this._createTerminalForPty(info, false, true);
+        }
+      }
+    } catch {
+      // Silent fail - this is just a background sync
     }
   }
 
@@ -766,8 +839,8 @@ class CmuxTerminalManager {
 
     // Use metadata.location to determine where to open the terminal
     // "editor" -> Editor pane, anything else (including undefined) -> Panel
-    const shouldOpenInEditor =
-      info.metadata?.location === 'editor' && vscode.env.uiKind === vscode.UIKind.Desktop;
+    // Note: Editor location works in both Desktop and Web modes (removed UIKind check)
+    const shouldOpenInEditor = info.metadata?.location === 'editor';
 
     console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}, metadata: ${JSON.stringify(info.metadata)}`);
 
@@ -968,6 +1041,7 @@ class CmuxTerminalManager {
    * Handles edge cases:
    * - Terminal panel was closed (VSCode doesn't call provideTerminalProfile)
    * - Multiple PTYs but VSCode only calls provideTerminalProfile once
+   * - Cloud/Docker mode where terminals need to be explicitly created
    */
   drainRestoreQueue(): void {
     if (this._restoreQueue.length === 0) {
@@ -977,6 +1051,8 @@ class CmuxTerminalManager {
     }
 
     console.log(`[cmux] Draining restore queue: ${this._restoreQueue.length} terminals`);
+    const createdTerminals: ManagedTerminal[] = [];
+
     while (this._restoreQueue.length > 0) {
       const info = this._restoreQueue.shift()!;
       // Check if terminal was already created (by provideTerminalProfile or pty_created event)
@@ -984,9 +1060,34 @@ class CmuxTerminalManager {
         console.log(`[cmux] Terminal ${info.id} already exists, skipping`);
         continue;
       }
-      this._createTerminalForPty(info, false, true); // Don't focus, is restore
+      this._createTerminalForPty(info, false, true); // Don't focus yet, is restore
+
+      // Track created terminal for later focus
+      const managed = this._terminals.get(info.id);
+      if (managed) {
+        createdTerminals.push(managed);
+      }
     }
     this._restoreInProgress = false; // Restore complete, allow new terminal creation
+
+    // After all terminals are created, show/reveal them to ensure they're visible
+    // This is important for cloud/Docker modes where terminals might not auto-show
+    if (createdTerminals.length > 0) {
+      console.log(`[cmux] Created ${createdTerminals.length} terminals, ensuring visibility`);
+      // Show the first terminal with panel location to make terminal panel visible
+      const panelTerminal = createdTerminals.find(t => t.info.metadata?.location !== 'editor');
+      if (panelTerminal) {
+        console.log(`[cmux] Showing panel terminal: ${panelTerminal.info.name}`);
+        panelTerminal.terminal.show(true); // preserveFocus = true
+      }
+
+      // Show editor terminals (they're in the editor area)
+      const editorTerminals = createdTerminals.filter(t => t.info.metadata?.location === 'editor');
+      for (const t of editorTerminals) {
+        console.log(`[cmux] Showing editor terminal: ${t.info.name}`);
+        t.terminal.show(true); // preserveFocus = true
+      }
+    }
   }
 
   /**
@@ -994,6 +1095,66 @@ class CmuxTerminalManager {
    */
   isRestoreInProgress(): boolean {
     return this._restoreInProgress;
+  }
+
+  /**
+   * Fetch terminals via REST API as fallback when WebSocket fails.
+   * This directly creates terminals without going through the restore queue.
+   * Returns true if any terminals were found and created.
+   */
+  async fetchTerminalsViaRest(): Promise<boolean> {
+    const config = getConfig();
+    console.log('[cmux] fetchTerminalsViaRest: fetching from', config.serverUrl);
+
+    try {
+      const response = await fetch(`${config.serverUrl}/sessions`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        console.log('[cmux] fetchTerminalsViaRest: failed with status', response.status);
+        return false;
+      }
+
+      const data = await response.json() as { sessions: TerminalInfo[] };
+      const terminals = data.sessions || [];
+      console.log('[cmux] fetchTerminalsViaRest: found', terminals.length, 'terminals');
+
+      if (terminals.length === 0) {
+        return false;
+      }
+
+      // Sort by index
+      const sorted = [...terminals].sort((a, b) => a.index - b.index);
+
+      // Queue all terminals for restore (similar to _handleStateSync)
+      for (const info of sorted) {
+        if (this._terminals.has(info.id) || this._pendingCreations.has(info.id)) {
+          console.log(`[cmux] fetchTerminalsViaRest: terminal ${info.id} already exists, skipping`);
+          continue;
+        }
+        console.log(`[cmux] fetchTerminalsViaRest: queueing terminal ${info.id} (${info.name})`);
+        this._restoreQueue.push(info);
+        this._pendingCreations.add(info.id);
+      }
+
+      if (this._restoreQueue.length > 0) {
+        this._restoreInProgress = true;
+        // Mark initial sync as done since we got the data via REST
+        if (!this._initialSyncDone) {
+          this._initialSyncDone = true;
+          this._resolveInitialSync();
+        }
+        return true;
+      }
+
+      return false;
+    } catch (err) {
+      console.error('[cmux] fetchTerminalsViaRest: error:', err);
+      return false;
+    }
   }
 
   /**
@@ -1074,6 +1235,12 @@ class CmuxTerminalManager {
     // Mark as deactivating first - this prevents pending deletes from executing
     this._isDeactivating = true;
 
+    // Stop periodic sync
+    if (this._periodicSyncTimer) {
+      clearInterval(this._periodicSyncTimer);
+      this._periodicSyncTimer = null;
+    }
+
     // Cancel all pending DELETE operations to preserve PTYs during page refresh
     for (const [ptyId, timeout] of this._pendingDeletes) {
       console.log(`[cmux] Cancelling pending DELETE for PTY ${ptyId}`);
@@ -1133,8 +1300,8 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
         terminalManager.trackPendingTerminal(lastPty, pty);
 
         // Use metadata.location to determine where to open the terminal
-        const shouldOpenInEditor =
-          lastPty.metadata?.location === 'editor' && vscode.env.uiKind === vscode.UIKind.Desktop;
+        // Note: Editor location works in both Desktop and Web modes (removed UIKind check)
+        const shouldOpenInEditor = lastPty.metadata?.location === 'editor';
         return new vscode.TerminalProfile({
           name: lastPty.name,
           pty,
@@ -1367,10 +1534,10 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
     return false;
   }
 
-  // Wait for initial sync to complete (with longer timeout)
-  // Increased to 15 seconds for Docker containers where PTY server may take longer to start
-  const syncTimeout = 15000;
+  // Use the passed maxWaitMs for sync timeout (or at least half of it for the initial sync)
+  const syncTimeout = Math.max(maxWaitMs * 0.7, 15000); // Use 70% of maxWaitMs or 15s minimum
   console.log(`[cmux] waitForAnyCmuxPtyTerminals: waiting for initial sync (timeout: ${syncTimeout}ms)...`);
+
   try {
     await Promise.race([
       terminalManager.waitForInitialSync(),
@@ -1380,8 +1547,20 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
     ]);
     console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync complete');
   } catch (err) {
-    // Timeout or connection failure - fall back to tmux
+    // Timeout or connection failure - try REST API fallback
     console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out:', err instanceof Error ? err.message : err);
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: trying REST API fallback...');
+
+    // Try REST API fallback to get terminals directly
+    try {
+      const hasTerminals = await terminalManager.fetchTerminalsViaRest();
+      if (hasTerminals) {
+        console.log('[cmux] waitForAnyCmuxPtyTerminals: found terminals via REST API fallback');
+        return true;
+      }
+    } catch (restErr) {
+      console.log('[cmux] waitForAnyCmuxPtyTerminals: REST API fallback failed:', restErr instanceof Error ? restErr.message : restErr);
+    }
     return false;
   }
 
@@ -1394,7 +1573,8 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
   // Wait longer for terminals to be created (orchestrator may still be running)
   console.log('[cmux] waitForAnyCmuxPtyTerminals: waiting for terminals...');
   const startTime = Date.now();
-  while (Date.now() - startTime < maxWaitMs) {
+  const remainingTime = Math.max(maxWaitMs * 0.3, 5000); // Use remaining 30% or 5s minimum
+  while (Date.now() - startTime < remainingTime) {
     await new Promise(resolve => setTimeout(resolve, 500));
     if (hasAnyCmuxPtyTerminals()) {
       console.log(`[cmux] waitForAnyCmuxPtyTerminals: found terminals after ${Date.now() - startTime}ms`);
@@ -1416,6 +1596,10 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
+
+  // Small delay to allow VS Code to process the terminal creation
+  // This is especially important for web VS Code where terminal rendering may be async
+  await new Promise(resolve => setTimeout(resolve, 100));
 
   // Focus the "cmux" terminal (main agent terminal) after creation
   const shouldFocus = options?.focus ?? true;
@@ -1455,4 +1639,18 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
     console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
     terminals[0].terminal.show(false);
   }
+}
+
+/**
+ * Force re-sync terminals from the server.
+ * This can be called when terminals seem to be missing from the VS Code UI.
+ * It will fetch terminals via REST API and create any that are missing.
+ */
+export async function forceSyncTerminals(): Promise<boolean> {
+  if (!terminalManager) {
+    console.log('[cmux] forceSyncTerminals: terminal manager not initialized');
+    return false;
+  }
+  console.log('[cmux] forceSyncTerminals: forcing terminal sync...');
+  return terminalManager.fetchTerminalsViaRest();
 }
