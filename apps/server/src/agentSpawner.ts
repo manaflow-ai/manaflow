@@ -40,8 +40,69 @@ import { workerExec } from "./utils/workerExec";
 import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
+const IMAGE_PROMPT_ROOT = "/root/prompt/";
 
 const { getApiEnvironmentsByIdVars } = await getWwwOpenApiModule();
+
+type ReplaceImageReferenceOptions = {
+  text: string;
+  needle: string;
+  replacement: string;
+  skipIfPrefixedByRoot: boolean;
+  skipIfFollowedByExtension: boolean;
+};
+
+type ReplaceImageReferenceResult = {
+  text: string;
+  didReplace: boolean;
+};
+
+const replaceImageReference = ({
+  text,
+  needle,
+  replacement,
+  skipIfPrefixedByRoot,
+  skipIfFollowedByExtension,
+}: ReplaceImageReferenceOptions): ReplaceImageReferenceResult => {
+  if (!needle) {
+    return { text, didReplace: false };
+  }
+
+  let cursor = 0;
+  let didReplace = false;
+  let result = "";
+
+  while (cursor < text.length) {
+    const index = text.indexOf(needle, cursor);
+    if (index === -1) {
+      result += text.slice(cursor);
+      break;
+    }
+
+    const prefixStart = index - IMAGE_PROMPT_ROOT.length;
+    const hasRootPrefix =
+      skipIfPrefixedByRoot &&
+      prefixStart >= 0 &&
+      text.slice(prefixStart, index) === IMAGE_PROMPT_ROOT;
+
+    const after = text.slice(index + needle.length);
+    const hasExtension =
+      skipIfFollowedByExtension &&
+      after.startsWith(".") &&
+      /[0-9A-Za-z]/.test(after.slice(1, 2));
+
+    if (hasRootPrefix || hasExtension) {
+      result += text.slice(cursor, index + needle.length);
+    } else {
+      result += text.slice(cursor, index) + replacement;
+      didReplace = true;
+    }
+
+    cursor = index + needle.length;
+  }
+
+  return { text: result, didReplace };
+};
 
 export interface AgentSpawnResult {
   agentName: string;
@@ -192,7 +253,7 @@ export async function spawnAgent(
         fileName = fileName.replace(/[^\x20-\x7E]/g, "_").replace(/\s+/g, "_");
         serverLogger.info(`[AgentSpawner] Sanitized filename: ${fileName}`);
 
-        const imagePath = `/root/prompt/${fileName}`;
+        const imagePath = `${IMAGE_PROMPT_ROOT}${fileName}`;
         imageFiles.push({
           path: imagePath,
           base64: image.src.split(",")[1] || image.src, // Remove data URL prefix if present
@@ -201,17 +262,15 @@ export async function spawnAgent(
         // Replace image reference in prompt with file path
         // First try to replace the original filename (exact match, no word boundaries)
         if (image.fileName) {
-          const beforeReplace = processedTaskDescription;
-          // Escape special regex characters in the filename
-          const escapedFileName = image.fileName.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
-          processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedFileName, "g"),
-            imagePath
-          );
-          if (beforeReplace !== processedTaskDescription) {
+          const { text, didReplace } = replaceImageReference({
+            text: processedTaskDescription,
+            needle: image.fileName,
+            replacement: imagePath,
+            skipIfPrefixedByRoot: true,
+            skipIfFollowedByExtension: false,
+          });
+          processedTaskDescription = text;
+          if (didReplace) {
             serverLogger.info(
               `[AgentSpawner] Replaced "${image.fileName}" with "${imagePath}"`
             );
@@ -224,20 +283,16 @@ export async function spawnAgent(
 
         // Also replace just the filename without extension in case it appears that way
         const nameWithoutExt = image.fileName?.replace(/\.[^/.]+$/, "");
-        if (
-          nameWithoutExt &&
-          processedTaskDescription.includes(nameWithoutExt)
-        ) {
-          const beforeReplace = processedTaskDescription;
-          const escapedName = nameWithoutExt.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
-          processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedName, "g"),
-            imagePath
-          );
-          if (beforeReplace !== processedTaskDescription) {
+        if (nameWithoutExt) {
+          const { text, didReplace } = replaceImageReference({
+            text: processedTaskDescription,
+            needle: nameWithoutExt,
+            replacement: imagePath,
+            skipIfPrefixedByRoot: true,
+            skipIfFollowedByExtension: true,
+          });
+          processedTaskDescription = text;
+          if (didReplace) {
             serverLogger.info(
               `[AgentSpawner] Replaced "${nameWithoutExt}" with "${imagePath}"`
             );
