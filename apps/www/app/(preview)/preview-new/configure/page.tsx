@@ -1,13 +1,11 @@
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-import { PreviewNewConfigureClient } from "@/components/preview/preview-new-configure-client";
+import { GuidedOnboarding } from "@/components/preview/guided-onboarding";
 import { getConvex } from "@/lib/utils/get-convex";
 import { stackServerApp } from "@/lib/utils/stack";
 import { api } from "@cmux/convex/api";
 import {
   getTeamDisplayName,
-  getTeamId,
-  getTeamSlug,
   getTeamSlugOrId,
   type StackTeam,
 } from "@/lib/team-utils";
@@ -161,14 +159,6 @@ export default async function PreviewNewConfigurePage({ searchParams }: PageProp
     return redirect(url.toString());
   }
 
-  const clientTeams = teams.map((team) => ({
-    id: getTeamId(team),
-    slug: getTeamSlug(team),
-    slugOrId: getTeamSlugOrId(team),
-    displayName: getTeamDisplayName(team),
-    name: team.name ?? getTeamDisplayName(team),
-  }));
-
   let initialEnvVarsContent: string | null = null;
 
   if (environmentId) {
@@ -199,9 +189,8 @@ export default async function PreviewNewConfigurePage({ searchParams }: PageProp
   }
 
   return (
-    <PreviewNewConfigureClient
-      initialTeamSlugOrId={selectedTeamSlugOrId}
-      teams={clientTeams}
+    <GuidedOnboarding
+      teamSlugOrId={selectedTeamSlugOrId}
       repo={repo}
       installationId={installationId}
       initialEnvVarsContent={initialEnvVarsContent}
