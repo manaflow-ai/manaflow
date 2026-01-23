@@ -89,6 +89,16 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   private _previousDimensions: { cols: number; rows: number } | null = null;
   private _skipInitialResize: boolean;
 
+  // Reconnection state - critical for local Docker where WebSocket drops are common
+  private _reconnectAttempts = 0;
+  private _maxReconnectAttempts = 10;
+  private _reconnectDelay = 1000; // Start with 1 second
+  private _isReconnecting = false;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Track if close was due to process exit (should delete session) vs unexpected disconnect (should reconnect)
+  private _processExited = false;
+
   public readonly onDidWrite: vscode.Event<string> = this._onDidWrite.event;
   public readonly onDidClose: vscode.Event<number | void> = this._onDidClose.event;
 
@@ -112,6 +122,16 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 
     this._ws.onopen = () => {
       console.log(`[cmux] WebSocket connected for PTY ${this.ptyId}`);
+
+      // Reset reconnection state on successful connection
+      if (this._isReconnecting) {
+        console.log(`[cmux] PTY ${this.ptyId} reconnected successfully after ${this._reconnectAttempts} attempts`);
+        this._onDidWrite.fire('\r\n[Reconnected]\r\n');
+      }
+      this._reconnectAttempts = 0;
+      this._reconnectDelay = 1000;
+      this._isReconnecting = false;
+
       // Skip initial resize for restored sessions to avoid shell prompt redraw
       // The proper resize will be sent when open() is called with actual dimensions
       if (!this._skipInitialResize) {
@@ -148,6 +168,9 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
             if (msg.type === 'exit') {
               const exitCode = msg.exit_code ?? msg.exitCode ?? 0;
               console.log(`[cmux] PTY ${this.ptyId} received exit event, code: ${exitCode}`);
+              // Mark that the process exited - this prevents reconnection attempts
+              // and allows the session to be properly deleted
+              this._processExited = true;
               this._onDidClose.fire(exitCode);
               this.dispose();
               return;
@@ -187,10 +210,62 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
     };
 
     this._ws.onclose = () => {
-      if (!this._isDisposed) {
-        this._onDidClose.fire();
+      // Don't try to reconnect if:
+      // - Already disposed (terminal closed by user)
+      // - Process exited (received exit event from server)
+      // - Already at max reconnection attempts
+      if (this._isDisposed || this._processExited) {
+        if (!this._isDisposed) {
+          this._onDidClose.fire();
+        }
+        return;
       }
+
+      // Try to reconnect - this is critical for local Docker where
+      // WebSocket connections can drop due to Docker networking issues
+      this._tryReconnect();
     };
+  }
+
+  /**
+   * Attempt to reconnect the WebSocket connection.
+   * This is critical for local Docker containers where network blips
+   * can cause temporary WebSocket disconnections. Without reconnection,
+   * terminals would "disappear" even though the PTY session is still alive.
+   */
+  private _tryReconnect(): void {
+    if (this._isDisposed || this._processExited) {
+      return;
+    }
+
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      console.error(`[cmux] PTY ${this.ptyId} failed to reconnect after ${this._maxReconnectAttempts} attempts`);
+      this._onDidWrite.fire('\r\n[Connection lost - could not reconnect]\r\n');
+      this._onDidClose.fire();
+      return;
+    }
+
+    this._reconnectAttempts++;
+    this._isReconnecting = true;
+
+    // Exponential backoff with jitter
+    const delay = Math.min(this._reconnectDelay * Math.pow(1.5, this._reconnectAttempts - 1), 10000);
+    const jitter = Math.random() * 500;
+    const totalDelay = delay + jitter;
+
+    console.log(`[cmux] PTY ${this.ptyId} attempting reconnect ${this._reconnectAttempts}/${this._maxReconnectAttempts} in ${Math.round(totalDelay)}ms`);
+
+    if (this._reconnectAttempts === 1) {
+      // Only show message on first reconnect attempt to avoid spam
+      this._onDidWrite.fire('\r\n[Connection lost - reconnecting...]\r\n');
+    }
+
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      if (!this._isDisposed && !this._processExited) {
+        this._connectWebSocket();
+      }
+    }, totalDelay);
   }
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
@@ -261,6 +336,12 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
     if (this._isDisposed) return;
     this._isDisposed = true;
 
+    // Cancel any pending reconnection attempts
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -268,6 +349,14 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 
     this._onDidWrite.dispose();
     this._onDidClose.dispose();
+  }
+
+  /**
+   * Check if the terminal was closed due to process exit (vs unexpected disconnect).
+   * Used by the terminal manager to decide whether to delete the PTY session.
+   */
+  get processExited(): boolean {
+    return this._processExited;
   }
 }
 
@@ -739,6 +828,15 @@ class CmuxTerminalManager {
           return;
         }
 
+        // Only delete PTY sessions when the process actually exited.
+        // If the terminal closed due to unexpected WebSocket disconnect (e.g., Docker
+        // networking blip), the PTY session is likely still alive on the server.
+        // This is critical for local Docker containers where network issues are common.
+        if (!pty.processExited) {
+          console.log(`[cmux] PTY ${info.id} closed but process did not exit - preserving session on server`);
+          return;
+        }
+
         // Schedule DELETE with short delay - cancelled on dispose() during page refresh
         // This allows user-initiated closes to delete, while preserving PTYs on refresh
         const deleteTimeout = setTimeout(async () => {
@@ -748,7 +846,7 @@ class CmuxTerminalManager {
             return;
           }
           try {
-            console.log(`[cmux] Deleting PTY ${info.id} on server`);
+            console.log(`[cmux] Deleting PTY ${info.id} on server (process exited)`);
             await fetch(`${config.serverUrl}/sessions/${info.id}`, { method: 'DELETE' });
           } catch (err) {
             console.error(`[cmux] Failed to delete PTY ${info.id}:`, err);
@@ -989,6 +1087,15 @@ class CmuxTerminalManager {
           return;
         }
 
+        // Only delete PTY sessions when the process actually exited.
+        // If the terminal closed due to unexpected WebSocket disconnect (e.g., Docker
+        // networking blip), the PTY session is likely still alive on the server.
+        // This is critical for local Docker containers where network issues are common.
+        if (!pending.pty.processExited) {
+          console.log(`[cmux] PTY ${pending.id} closed but process did not exit - preserving session on server`);
+          return;
+        }
+
         // Schedule DELETE with short delay - cancelled on dispose() during page refresh
         const deleteTimeout = setTimeout(async () => {
           this._pendingDeletes.delete(pending.id);
@@ -997,7 +1104,7 @@ class CmuxTerminalManager {
             return;
           }
           try {
-            console.log(`[cmux] Deleting PTY ${pending.id} on server`);
+            console.log(`[cmux] Deleting PTY ${pending.id} on server (process exited)`);
             await fetch(`${config.serverUrl}/sessions/${pending.id}`, { method: 'DELETE' });
           } catch (err) {
             console.error(`[cmux] Failed to delete PTY ${pending.id}:`, err);
