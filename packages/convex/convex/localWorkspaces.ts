@@ -8,6 +8,30 @@ import { resolveTeamIdLoose } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
 
 const DEFAULT_AGENT_NAME = "local-workspace";
+const MAX_WORKSPACE_BRANCH_LENGTH = 20;
+
+function deriveWorkspaceBaseName({
+  branch,
+  repoName,
+}: {
+  branch?: string | null;
+  repoName?: string | null;
+}): string | undefined {
+  if (branch) {
+    const trimmed = branch.trim();
+    if (trimmed) {
+      const withoutPrefix = trimmed.startsWith("cmux/")
+        ? trimmed.slice("cmux/".length)
+        : trimmed;
+      const normalized = withoutPrefix.trim();
+      if (normalized) {
+        return normalized.slice(0, MAX_WORKSPACE_BRANCH_LENGTH);
+      }
+    }
+  }
+
+  return repoName ?? undefined;
+}
 
 const DEFAULT_WORKSPACE_DESCRIPTOR = ({
   workspaceName,
@@ -71,7 +95,11 @@ export const reserve = authMutation({
     const now = Date.now();
     const sequence = existingSetting?.nextLocalWorkspaceSequence ?? 0;
     const repoName = deriveRepoBaseName({ projectFullName, repoUrl });
-    const workspaceName = generateWorkspaceName({ repoName, sequence });
+    const workspaceBaseName = deriveWorkspaceBaseName({ branch, repoName });
+    const workspaceName = generateWorkspaceName({
+      repoName: workspaceBaseName,
+      sequence,
+    });
     const descriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
       workspaceName,
       branch,
