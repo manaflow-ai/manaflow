@@ -86,12 +86,14 @@ release_lock() {
 
 if ! acquire_lock; then
     lock_failed=true
+    existing_pid=""
+    if [ -f "$PIDFILE" ]; then
+        existing_pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    fi
+
     if [ "$LOCK_METHOD" = "mkdir" ]; then
-        stale_pid=""
-        if [ -f "$PIDFILE" ]; then
-            stale_pid=$(cat "$PIDFILE" 2>/dev/null || true)
-        fi
-        if [ -z "$stale_pid" ] || ! is_dev_script_pid "$stale_pid"; then
+        # Check for stale lock (process no longer running or not a dev.sh)
+        if [ -z "$existing_pid" ] || ! is_dev_script_pid "$existing_pid"; then
             echo "Stale dev.sh lock detected. Cleaning up..."
             rm -rf "$LOCKDIR" 2>/dev/null || true
             rm -f "$PIDFILE" "$PATHFILE" 2>/dev/null || true
@@ -101,12 +103,44 @@ if ! acquire_lock; then
         fi
     fi
 
+    # If lock still held by a running dev.sh, kill it and take over
+    if [ "$lock_failed" = "true" ] && [ -n "$existing_pid" ] && is_dev_script_pid "$existing_pid"; then
+        echo -e "\033[0;33mAnother dev.sh instance is running (PID: $existing_pid). Stopping it...\033[0m"
+
+        # Kill process group and descendants
+        kill -TERM -- "-$existing_pid" 2>/dev/null || true
+        sleep 1
+        kill -9 -- "-$existing_pid" 2>/dev/null || true
+
+        # Clean up docker compose if path is known
+        if [ -f "$PATHFILE" ]; then
+            project_path=$(cat "$PATHFILE" 2>/dev/null || true)
+            if [ -d "$project_path/.devcontainer" ]; then
+                echo "Stopping docker compose..."
+                for compose_file in "$project_path/.devcontainer"/docker-compose*.yml; do
+                    [ -f "$compose_file" ] && docker compose -f "$compose_file" down 2>/dev/null || true
+                done
+            fi
+        fi
+
+        # Clean up lock files
+        rm -rf "$LOCKDIR" 2>/dev/null || true
+        rm -f "$LOCKFILE" "$PIDFILE" "$PATHFILE" 2>/dev/null || true
+
+        # Retry acquiring lock
+        sleep 1
+        if acquire_lock; then
+            lock_failed=false
+            echo -e "\033[0;32mPrevious instance stopped. Starting new dev server...\033[0m"
+        fi
+    fi
+
     if [ "$lock_failed" = "true" ]; then
-        echo -e "\033[0;31mAnother dev.sh instance is already running for this project!\033[0m"
+        echo -e "\033[0;31mFailed to acquire lock for dev.sh\033[0m"
         if [ -f "$PIDFILE" ]; then
             echo "PID: $(cat "$PIDFILE")"
         fi
-        echo "Run 'scripts/cleanup-dev.sh' to kill it, or wait for it to finish."
+        echo "Try running 'scripts/cleanup-dev.sh' manually."
         exit 1
     fi
 fi

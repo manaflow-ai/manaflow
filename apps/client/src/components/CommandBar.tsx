@@ -2,6 +2,7 @@ import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useOnboardingOptional } from "@/contexts/onboarding/onboarding-context";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
@@ -30,6 +31,7 @@ import {
   ClipboardCopy,
   Cloud,
   GitPullRequest,
+  GraduationCap,
   Home,
   LogOut,
   Monitor,
@@ -320,6 +322,7 @@ export function CommandBar({
   const { setTheme, theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
+  const onboarding = useOnboardingOptional();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
@@ -1419,6 +1422,26 @@ export function CommandBar({
         setTheme("dark");
       } else if (value === "theme-system") {
         setTheme("system");
+      } else if (value === "onboarding:start") {
+        if (onboarding) {
+          onboarding.resetOnboarding();
+          try {
+            await navigate({
+              to: "/$teamSlugOrId/dashboard",
+              params: { teamSlugOrId },
+            });
+          } catch (error) {
+            console.error(
+              "Failed to navigate to dashboard for onboarding:",
+              error
+            );
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 100);
+          });
+          onboarding.startOnboarding();
+        }
       } else if (value === "sidebar-toggle") {
         const currentHidden = localStorage.getItem("sidebarHidden") === "true";
         localStorage.setItem("sidebarHidden", String(!currentHidden));
@@ -1542,6 +1565,7 @@ export function CommandBar({
       stackUser,
       stackTeams,
       closeCommand,
+      onboarding,
     ]
   );
 
@@ -1600,7 +1624,7 @@ export function CommandBar({
         execute: () => handleSelect("cloud-workspaces"),
         renderContent: () => (
           <>
-            <Cloud className="h-[18px] w-[18px] text-neutral-500" />
+            <Cloud className="h-4.5 w-4.5 text-neutral-500" />
             <span className="text-sm">New Cloud Workspace</span>
           </>
         ),
@@ -1778,6 +1802,24 @@ export function CommandBar({
           <>
             <Monitor className="h-4 w-4 text-neutral-500" />
             <span className="text-sm">System Theme</span>
+          </>
+        ),
+      },
+      {
+        value: "onboarding:start",
+        label: "Start Onboarding Tour",
+        keywords: ["onboarding", "tour", "tutorial", "guide", "help", "intro"],
+        searchText: buildSearchText(
+          "Start Onboarding Tour",
+          ["onboarding", "tour", "tutorial", "guide"],
+          ["onboarding:start"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("onboarding:start"),
+        renderContent: () => (
+          <>
+            <GraduationCap className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Start Onboarding Tour</span>
           </>
         ),
       },
@@ -2091,7 +2133,10 @@ export function CommandBar({
   const hasSearchQuery = search.trim().length > 0;
 
   const rootSuggestedEntries = useMemo(
-    () => selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5),
+    () =>
+      selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5).filter(
+        (entry) => entry.value !== "onboarding:start"
+      ),
     [filteredRootEntries, rootSuggestionHistory]
   );
   const rootSuggestedValueSet = useMemo(
@@ -2502,7 +2547,7 @@ export function CommandBar({
     <>
       <div
         className={clsx(
-          "fixed inset-0 z-[var(--z-commandbar)]",
+          "fixed inset-0 z-(--z-commandbar)",
           open
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none"
@@ -2512,13 +2557,13 @@ export function CommandBar({
       />
       <div
         className={clsx(
-          "fixed inset-x-0 top-[230px] z-[var(--z-commandbar)] flex items-start justify-center pointer-events-none",
+          "fixed inset-x-0 top-57.5 z-(--z-commandbar) flex items-start justify-center pointer-events-none",
           open ? "opacity-100" : "opacity-0"
         )}
         aria-hidden={!open}
       >
         <div
-          className={`w-full max-w-2xl h-auto max-h-[475px] bg-white dark:bg-neutral-900 rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 overflow-hidden flex flex-col ${
+          className={`w-full max-w-2xl h-auto max-h-118.75 bg-white dark:bg-neutral-900 rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 overflow-hidden flex flex-col ${
             open
               ? "opacity-100 pointer-events-auto"
               : "opacity-0 pointer-events-none"

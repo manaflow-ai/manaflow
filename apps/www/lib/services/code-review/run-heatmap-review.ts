@@ -246,8 +246,9 @@ export async function runHeatmapReview(
         : openai(effectiveModelConfig.model);
 
     // Wrap model with PostHog tracing if client is available
+    // Cast needed due to posthog-node version mismatch between @posthog/ai peer dep and direct dep
     const modelInstance = posthogClient
-      ? withTracing(baseModelInstance, posthogClient, {
+      ? withTracing(baseModelInstance, posthogClient as unknown as Parameters<typeof withTracing>[1], {
           posthogDistinctId: config.userId ?? "anonymous",
           posthogTraceId: config.jobId,
           posthogProperties: {

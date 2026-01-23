@@ -84,6 +84,8 @@ const convexSchema = defineSchema({
     ),
     // Anonymous flag
     isAnonymous: v.optional(v.boolean()),
+    // Onboarding
+    onboardingCompletedAt: v.optional(v.number()), // Timestamp when user completed/skipped onboarding
     // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -342,6 +344,15 @@ const convexSchema = defineSchema({
         commitSha: v.optional(v.string()),
         description: v.optional(v.string()),
       }),
+    ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+        }),
+      ),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),

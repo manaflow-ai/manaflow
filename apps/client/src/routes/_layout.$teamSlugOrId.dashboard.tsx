@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useOnboardingOptional } from "@/contexts/onboarding";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
@@ -114,6 +115,58 @@ function DashboardComponent() {
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const onboarding = useOnboardingOptional();
+
+  // Query tasks to check if user is new (has no tasks)
+  const tasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId })
+  );
+  const archivedTasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId, archived: true })
+  );
+
+  const tasksReady = tasksQuery.isSuccess && archivedTasksQuery.isSuccess;
+  const { hasRealTasks, hasCompletedRealTasks } = useMemo(() => {
+    const activeTasks = tasksQuery.data ?? [];
+    const archivedTasks = archivedTasksQuery.data ?? [];
+    const allTasks = [...activeTasks, ...archivedTasks];
+    const realTasks = allTasks.filter(
+      (task) => !task.isCloudWorkspace && !task.isLocalWorkspace
+    );
+    return {
+      hasRealTasks: realTasks.length > 0,
+      hasCompletedRealTasks: realTasks.some((task) => task.isCompleted),
+    };
+  }, [tasksQuery.data, archivedTasksQuery.data]);
+
+  // Auto-start onboarding for new users on the dashboard
+  useEffect(() => {
+    // Only start if onboarding context is available
+    if (!onboarding) return;
+
+    // Don't start if user has already completed or skipped onboarding
+    if (onboarding.hasCompletedOnboarding) return;
+
+    // Don't start if onboarding is already active
+    if (onboarding.isOnboardingActive) return;
+
+    // Wait for tasks queries to load
+    if (!tasksReady) return;
+
+    // Only start for new users - check for real tasks (not standalone workspaces),
+    // including archived tasks.
+    // Standalone workspaces (isCloudWorkspace/isLocalWorkspace) don't count as "tasks"
+    if (hasRealTasks) return;
+    if (hasCompletedRealTasks) return;
+
+    // Start onboarding for new users
+    onboarding.startOnboarding();
+  }, [
+    onboarding,
+    tasksReady,
+    hasRealTasks,
+    hasCompletedRealTasks,
+  ]);
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
@@ -285,7 +338,7 @@ function DashboardComponent() {
     const names: string[] = [];
     const seen = new Set<string>();
     for (const page of branchPages) {
-      for (const branch of page.branches) {
+      for (const branch of page.branches ?? []) {
         if (seen.has(branch.name)) continue;
         seen.add(branch.name);
         names.push(branch.name);
@@ -1293,7 +1346,10 @@ function DashboardMainCard({
   isStartingTask,
 }: DashboardMainCardProps) {
   return (
-    <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
+    <div
+      className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all"
+      data-onboarding="dashboard-input"
+    >
       <DashboardInput
         ref={editorApiRef}
         onTaskDescriptionChange={onTaskDescriptionChange}

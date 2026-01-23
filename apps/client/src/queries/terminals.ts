@@ -40,8 +40,43 @@ function buildTerminalUrl(baseUrl: string, pathname: string) {
   return new URL(pathname, baseUrl);
 }
 
+interface SessionInfo {
+  id: string;
+  name: string;
+  index: number;
+  metadata?: { type?: string; location?: string };
+}
+
 interface SessionsListResponse {
-  sessions: Array<{ id: string; name: string; index: number }>;
+  sessions: SessionInfo[];
+}
+
+/**
+ * Sort sessions so that the "cmux" (agent) terminal is always first.
+ * This ensures Terminal 1 in the UI is always the main agent terminal.
+ * Order: cmux > agent type > dev > others (by index)
+ */
+function sortSessionsWithCmuxFirst(sessions: SessionInfo[]): SessionInfo[] {
+  return [...sessions].sort((a, b) => {
+    // cmux terminal always comes first
+    if (a.name === "cmux") return -1;
+    if (b.name === "cmux") return 1;
+
+    // Agent type terminals come next
+    const aIsAgent = a.metadata?.type === "agent";
+    const bIsAgent = b.metadata?.type === "agent";
+    if (aIsAgent && !bIsAgent) return -1;
+    if (bIsAgent && !aIsAgent) return 1;
+
+    // Dev terminals come after agent
+    const aIsDev = a.name === "dev" || a.metadata?.type === "dev";
+    const bIsDev = b.name === "dev" || b.metadata?.type === "dev";
+    if (aIsDev && !bIsDev) return -1;
+    if (bIsDev && !aIsDev) return 1;
+
+    // Otherwise sort by index
+    return a.index - b.index;
+  });
 }
 
 function isSessionsListResponse(value: unknown): value is SessionsListResponse {
@@ -84,8 +119,10 @@ export function terminalTabsQueryOptions({
       }
       const payload: unknown = await response.json();
       // Handle new API format: { sessions: [...] }
+      // Sort so that the cmux (agent) terminal is always first (Terminal 1)
       if (isSessionsListResponse(payload)) {
-        return payload.sessions.map((s) => s.id);
+        const sorted = sortSessionsWithCmuxFirst(payload.sessions);
+        return sorted.map((s) => s.id);
       }
       // Fallback for old API format: [...]
       if (!isTerminalTabIdList(payload)) {

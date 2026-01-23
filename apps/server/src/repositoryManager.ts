@@ -36,11 +36,18 @@ interface GitConfig {
   operationCacheTime: number;
 }
 
+// Default timeout for git commands (2 minutes)
+const DEFAULT_GIT_TIMEOUT_MS = 120_000;
+// Longer timeout for clone/fetch operations (5 minutes)
+const CLONE_FETCH_TIMEOUT_MS = 300_000;
+
 interface GitCommandOptions {
   cwd: string;
   encoding?: "utf8" | "ascii" | "base64" | "hex" | "binary" | "latin1";
   // When true, suppress logging for expected failures (e.g., existence checks)
   suppressErrorLogging?: boolean;
+  // Timeout in milliseconds (defaults to DEFAULT_GIT_TIMEOUT_MS)
+  timeout?: number;
 }
 
 interface QueuedOperation {
@@ -113,17 +120,30 @@ export class RepositoryManager {
 
     this.isProcessingQueue = true;
 
-    while (this.operationQueue.length > 0) {
-      const operation = this.operationQueue.shift()!;
-      try {
-        const result = await operation.execute();
-        operation.resolve(result);
-      } catch (error) {
-        operation.reject(error);
+    try {
+      while (this.operationQueue.length > 0) {
+        const operation = this.operationQueue.shift()!;
+        try {
+          const result = await operation.execute();
+          // Wrap resolve in try-catch to prevent breaking the queue
+          try {
+            operation.resolve(result);
+          } catch (resolveErr) {
+            serverLogger.error(`Error in operation resolve callback:`, resolveErr);
+          }
+        } catch (error) {
+          // Wrap reject in try-catch to prevent breaking the queue
+          try {
+            operation.reject(error);
+          } catch (rejectErr) {
+            serverLogger.error(`Error in operation reject callback:`, rejectErr);
+          }
+        }
       }
+    } finally {
+      // Always reset the flag to prevent permanent queue stall
+      this.isProcessingQueue = false;
     }
-
-    this.isProcessingQueue = false;
   }
 
   // Note: Keep all git invocations using executeGitCommand with a shell, as some CI envs lack direct execFile PATH resolution.
@@ -158,11 +178,20 @@ export class RepositoryManager {
       command.includes("git worktree add") ||
       command.includes("git clone");
 
+    // Use longer timeout for clone/fetch operations
+    const isLongOperation =
+      command.includes("git clone") ||
+      command.includes("git fetch") ||
+      command.includes("git pull");
+    const timeout = options?.timeout ?? (isLongOperation ? CLONE_FETCH_TIMEOUT_MS : DEFAULT_GIT_TIMEOUT_MS);
+
     if (needsQueue) {
       return this.queueOperation(async () => {
         try {
           const result = await execAsync(command, {
             shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+            timeout,
+            maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
             ...options,
           });
           return {
@@ -194,6 +223,8 @@ export class RepositoryManager {
           // Ensure string output for easier logging; fall back to utf8
           encoding: options?.encoding ?? "utf8",
           windowsHide: true,
+          timeout,
+          maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
         };
         const result = await execFileAsync(gitPath, args, execOptions);
         return {
@@ -219,6 +250,8 @@ export class RepositoryManager {
     try {
       const result = await execAsync(command, {
         shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+        timeout,
+        maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
         ...options,
       });
       return {
@@ -609,23 +642,35 @@ export class RepositoryManager {
       Date.now() - existingClone.timestamp < this.config.operationCacheTime
     ) {
       serverLogger.info(`Reusing existing clone operation for ${sanitizeForLogging(repoUrl)}`);
-      await existingClone.promise.catch(() => {
-        /* swallow to allow retry below */
-      });
-      // After the in-flight operation completes, remove it so the next call can proceed freshly
-      this.operations.delete(cloneKey);
-    } else {
-      const clonePromise = this.cloneRepository(repoUrl, originPath, remoteUrl);
-      this.operations.set(cloneKey, {
-        promise: clonePromise,
-        timestamp: Date.now(),
-      });
       try {
-        await clonePromise;
+        await existingClone.promise;
+        // Existing operation succeeded, verify the repo actually exists
+        const repoExists = await this.checkIfRepoExists(originPath);
+        if (repoExists) {
+          return; // Clone succeeded, we're done
+        }
+        // Clone "succeeded" but repo doesn't exist - fall through to retry
+        serverLogger.warn(`Clone operation completed but repo not found at ${originPath}, retrying...`);
+      } catch (err) {
+        // Existing operation failed, fall through to retry
+        serverLogger.warn(`Existing clone operation failed, retrying: ${err}`);
       } finally {
-        // Remove entry so subsequent operations aren't skipped
+        // Remove the failed/stale entry
         this.operations.delete(cloneKey);
       }
+    }
+
+    // Either no existing operation, or existing operation failed - do the clone
+    const clonePromise = this.cloneRepository(repoUrl, originPath, remoteUrl);
+    this.operations.set(cloneKey, {
+      promise: clonePromise,
+      timestamp: Date.now(),
+    });
+    try {
+      await clonePromise;
+    } finally {
+      // Remove entry so subsequent operations aren't skipped
+      this.operations.delete(cloneKey);
     }
   }
 
@@ -646,24 +691,40 @@ export class RepositoryManager {
       serverLogger.info(
         `Reusing existing fetch operation for branch ${branch}`
       );
-      await existingFetch.promise.catch(() => {
-        /* swallow to allow retry below */
-      });
-      // Remove completed entry to allow a fresh fetch
-      this.operations.delete(fetchKey);
-    } else {
-      // Pass the authenticated URL for fetching (repoUrl may contain auth token)
-      const fetchPromise = this.fetchAndCheckoutBranch(originPath, branch, repoUrl);
-      this.operations.set(fetchKey, {
-        promise: fetchPromise,
-        timestamp: Date.now(),
-      });
       try {
-        await fetchPromise;
+        await existingFetch.promise;
+        // Existing operation succeeded, verify we're on the right branch
+        try {
+          const currentBranch = await this.getCurrentBranch(originPath);
+          if (currentBranch === branch) {
+            return; // Fetch succeeded and we're on the right branch
+          }
+          // On wrong branch - fall through to retry
+          serverLogger.warn(`Fetch completed but on branch ${currentBranch} instead of ${branch}, retrying...`);
+        } catch {
+          // Can't verify branch - fall through to retry
+          serverLogger.warn(`Fetch completed but couldn't verify branch, retrying...`);
+        }
+      } catch (err) {
+        // Existing operation failed, fall through to retry
+        serverLogger.warn(`Existing fetch operation failed, retrying: ${err}`);
       } finally {
-        // Ensure the operation does not block subsequent real fetches
+        // Remove the failed/stale entry
         this.operations.delete(fetchKey);
       }
+    }
+
+    // Either no existing operation, or existing operation failed - do the fetch
+    const fetchPromise = this.fetchAndCheckoutBranch(originPath, branch, repoUrl);
+    this.operations.set(fetchKey, {
+      promise: fetchPromise,
+      timestamp: Date.now(),
+    });
+    try {
+      await fetchPromise;
+    } finally {
+      // Ensure the operation does not block subsequent real fetches
+      this.operations.delete(fetchKey);
     }
   }
 
@@ -907,8 +968,19 @@ export class RepositoryManager {
         `git worktree list --porcelain`,
         { cwd: originPath }
       );
-      // Check if the worktree path exists in the list
-      return stdout.includes(worktreePath);
+      // Parse worktree list properly to avoid false positives from partial path matching
+      // e.g., "/path/to/foo" should not match "/path/to/foobar"
+      const normalizedTargetPath = path.resolve(worktreePath);
+      const lines = stdout.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          const registeredPath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
+          if (registeredPath === normalizedTargetPath) {
+            return true;
+          }
+        }
+      }
+      return false;
     } catch {
       return false;
     }
@@ -945,7 +1017,8 @@ export class RepositoryManager {
 
       for (const line of lines) {
         if (line.startsWith("worktree ")) {
-          currentWorktreePath = line.substring(9); // Remove 'worktree ' prefix
+          // Normalize the path to resolve symlinks and ensure consistent comparison
+          currentWorktreePath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
         } else if (
           line.startsWith("branch refs/heads/") &&
           currentWorktreePath
@@ -977,7 +1050,18 @@ export class RepositoryManager {
       serverLogger.info(
         `Waiting for existing worktree operation on ${originPath} (${branchName})...`
       );
-      await existingLock;
+      // Wait for existing lock with timeout to prevent indefinite waits
+      const lockTimeout = CLONE_FETCH_TIMEOUT_MS; // 5 minutes max wait
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error(`Worktree lock timeout after ${lockTimeout}ms for ${branchName}`)), lockTimeout);
+      });
+      try {
+        await Promise.race([existingLock, timeoutPromise]);
+      } catch (err) {
+        serverLogger.warn(`Worktree lock wait failed or timed out, proceeding anyway: ${err}`);
+        // Remove the stale lock to prevent future waits
+        this.worktreeLocks.delete(inProcessLockKey);
+      }
     }
 
     let releaseInProcessLock: () => void;
