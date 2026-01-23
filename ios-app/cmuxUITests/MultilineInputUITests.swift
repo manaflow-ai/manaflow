@@ -8,6 +8,8 @@ final class MultilineInputUITests: XCTestCase {
     private let minReturnGrowth: CGFloat = 12
     private let bottomEdgeTolerance: CGFloat = 0.5
     private let frameTolerance: CGFloat = 3.5
+    private let caretCenterTolerance: CGFloat = 3.5
+    private let caretShiftTolerance: CGFloat = 2
     private let keyboardTolerance: CGFloat = 1.5
 
     override func setUp() {
@@ -50,6 +52,63 @@ final class MultilineInputUITests: XCTestCase {
             "Expected send button to appear after typing"
         )
         assertInputCenterAligned(app: app, pill: pill, input: input, context: "single-line text")
+    }
+
+    func testCaretStaysCenteredAfterFirstCharacter() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        ensureConversationVisible(app: app, name: conversationName)
+        openConversation(app: app, name: conversationName)
+
+        let pill = waitForInputPill(app: app)
+        let input = waitForInputField(app: app)
+        focusInput(app: app, pill: pill, input: input)
+        clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
+
+        let caret = waitForInputCaret(app: app)
+        let baselinePillFrame = waitForStableElementFrame(element: pill, timeout: 2)
+        let baselineCaretFrame = waitForCaretFrameNearPill(
+            caret: caret,
+            pillFrame: baselinePillFrame,
+            timeout: 2
+        )
+        let baselineDelta = abs(baselineCaretFrame.midY - baselinePillFrame.midY)
+        XCTAssertLessThanOrEqual(
+            baselineDelta,
+            caretCenterTolerance,
+            "Expected caret centered when empty, delta=\(baselineDelta) caret=\(baselineCaretFrame) pill=\(baselinePillFrame)"
+        )
+
+        typeText(app: app, input: input, text: "H")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        let typedPillFrame = waitForStableElementFrame(element: pill, timeout: 2)
+        let typedCaretFrame = waitForCaretFrameNearPill(
+            caret: caret,
+            pillFrame: typedPillFrame,
+            timeout: 2
+        )
+        let typedDelta = abs(typedCaretFrame.midY - typedPillFrame.midY)
+        XCTAssertLessThanOrEqual(
+            typedDelta,
+            caretCenterTolerance,
+            "Expected caret centered after first character, delta=\(typedDelta) caret=\(typedCaretFrame) pill=\(typedPillFrame)"
+        )
+
+        let shiftDelta = abs(typedCaretFrame.midY - baselineCaretFrame.midY)
+        XCTAssertLessThanOrEqual(
+            shiftDelta,
+            caretShiftTolerance,
+            "Expected caret to stay vertically centered after first character, delta=\(shiftDelta) baseline=\(baselineCaretFrame) typed=\(typedCaretFrame)"
+        )
     }
 
     func testInputExpandsForMultilineText() {
@@ -598,6 +657,43 @@ final class MultilineInputUITests: XCTestCase {
         return fallback
     }
 
+    private func waitForInputCaret(app: XCUIApplication) -> XCUIElement {
+        let caret = app.otherElements["chat.inputCaretFrame"]
+        XCTAssertTrue(caret.waitForExistence(timeout: 6))
+        return caret
+    }
+
+    private func waitForCaretFrameNearPill(
+        caret: XCUIElement,
+        pillFrame: CGRect,
+        timeout: TimeInterval
+    ) -> CGRect {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastFrame = CGRect.zero
+        var stableCount = 0
+        let maxDelta = max(40, pillFrame.height * 2)
+        while Date() < deadline {
+            let frame = caret.frame
+            if frame.height > 1, frame.width > 1 {
+                let delta = abs(frame.midY - pillFrame.midY)
+                if delta <= maxDelta {
+                    if abs(frame.midY - lastFrame.midY) <= 0.5,
+                       abs(frame.height - lastFrame.height) <= 0.5 {
+                        stableCount += 1
+                        if stableCount >= 2 {
+                            return frame
+                        }
+                    } else {
+                        stableCount = 0
+                        lastFrame = frame
+                    }
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return caret.frame
+    }
+
     private func waitForInputPill(app: XCUIApplication) -> XCUIElement {
         let framePill = app.otherElements["chat.inputPillFrame"]
         if framePill.waitForExistence(timeout: 15) {
@@ -685,9 +781,15 @@ final class MultilineInputUITests: XCTestCase {
     private func typeText(app: XCUIApplication, input: XCUIElement, text: String) {
         if (input.elementType == .textView || input.elementType == .textField) && input.isHittable {
             input.typeText(text)
-        } else {
-            app.typeText(text)
+            return
         }
+        let textView = app.textViews["chat.inputField"]
+        if textView.exists {
+            _ = tapElement(textView)
+            textView.typeText(text)
+            return
+        }
+        app.typeText(text)
     }
 
     private func setMultilineText(

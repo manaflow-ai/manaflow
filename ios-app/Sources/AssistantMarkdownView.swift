@@ -1119,6 +1119,12 @@ private struct SelectableTextView: UIViewRepresentable {
             .foregroundColor: UIColor.systemBlue
         ]
         textView.adjustsFontForContentSizeCategory = true
+
+        // Add tap gesture to immediately dismiss keyboard (fixes lag vs code blocks)
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
+        tapGesture.cancelsTouchesInView = false
+        textView.addGestureRecognizer(tapGesture)
+
         return textView
     }
 
@@ -1145,6 +1151,10 @@ private struct SelectableTextView: UIViewRepresentable {
 
         init(onOpenURL: @escaping (URL) -> Void) {
             self.onOpenURL = onOpenURL
+        }
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            gesture.view?.window?.endEditing(true)
         }
 
         func textView(
