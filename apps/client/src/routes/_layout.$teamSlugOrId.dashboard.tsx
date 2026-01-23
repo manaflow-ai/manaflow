@@ -577,12 +577,36 @@ function DashboardComponent() {
               toast.error(
                 `Docker image "${imageName}" is currently being pulled. Please wait for it to complete.`
               );
-            } else {
-              toast.error(
-                `Docker image "${imageName}" is not available. Please pull it first: docker pull ${imageName}`
-              );
+              return;
             }
-            return;
+
+            // Automatically start pulling the image
+            toast.loading(`Pulling Docker image "${imageName}"...`, {
+              id: "docker-pull",
+            });
+
+            const pullResult = await new Promise<{
+              success: boolean;
+              error?: string;
+            }>((resolve) => {
+              socket.emit("docker-pull-image", (response) => {
+                resolve(response);
+              });
+            });
+
+            if (!pullResult.success) {
+              toast.error(
+                pullResult.error ||
+                  `Failed to pull Docker image "${imageName}". Please try running: docker pull ${imageName}`,
+                { id: "docker-pull" }
+              );
+              return;
+            }
+
+            toast.success(`Docker image "${imageName}" pulled successfully`, {
+              id: "docker-pull",
+            });
+            // Continue with task start - image is now available
           }
         } else {
           // If socket is not connected, we can't verify Docker status

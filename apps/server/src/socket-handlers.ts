@@ -604,13 +604,57 @@ export function setupSocketHandlers(
                   taskId,
                   error: `Docker image "${imageName}" is currently being pulled. Please wait for the pull to complete and try again.`,
                 });
-              } else {
+                return;
+              }
+
+              // Automatically pull the image instead of erroring
+              serverLogger.info(
+                `Docker image "${imageName}" not found locally, starting automatic pull...`
+              );
+
+              try {
+                const dockerClient = DockerVSCodeInstance.getDocker();
+                const stream = await dockerClient.pull(imageName);
+
+                // Wait for the pull to complete
+                await new Promise<void>((resolve, reject) => {
+                  dockerClient.modem.followProgress(
+                    stream,
+                    (err: Error | null) => {
+                      if (err) {
+                        reject(err);
+                      } else {
+                        resolve();
+                      }
+                    },
+                    (event: {
+                      status: string;
+                      progress?: string;
+                      id?: string;
+                    }) => {
+                      if (event.status) {
+                        serverLogger.info(
+                          `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+                        );
+                      }
+                    }
+                  );
+                });
+
+                serverLogger.info(
+                  `Successfully pulled Docker image: ${imageName}`
+                );
+              } catch (pullError) {
+                serverLogger.error(
+                  `Failed to pull Docker image "${imageName}":`,
+                  pullError
+                );
                 callback({
                   taskId,
-                  error: `Docker image "${imageName}" is not available. Please pull the image first using: docker pull ${imageName}`,
+                  error: `Failed to pull Docker image "${imageName}". Please try running: docker pull ${imageName}`,
                 });
+                return;
               }
-              return;
             }
           } catch (e) {
             serverLogger.warn(
