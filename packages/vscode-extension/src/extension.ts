@@ -379,6 +379,18 @@ async function setupDefaultTerminal() {
   if (hasCmuxPtyTerminals) {
     // cmux-pty has terminals - create all of them from the restore queue
     log("cmux-pty is managing terminals, creating queued terminals");
+
+    // First, ensure the terminal panel is visible by executing focus command
+    // This is critical for cloud tasks where VS Code might not have the terminal panel rendered
+    try {
+      log("Ensuring terminal panel is visible before creating terminals...");
+      await vscode.commands.executeCommand('workbench.action.terminal.focus');
+      // Give VS Code time to render the terminal panel
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } catch (e) {
+      log("Could not focus terminal panel (may not exist yet):", e);
+    }
+
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
     await createQueuedTerminals({ focus: !preserveFocus });
@@ -392,6 +404,17 @@ async function setupDefaultTerminal() {
     } else {
       log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
     }
+
+    // Schedule an additional re-show after a longer delay to handle edge cases
+    // where the terminal panel might not be fully initialized
+    setTimeout(async () => {
+      try {
+        log("Performing delayed terminal refresh to ensure visibility...");
+        await vscode.commands.executeCommand('cmux.refreshTerminals');
+      } catch (e) {
+        log("Delayed terminal refresh failed:", e);
+      }
+    }, 2000);
   } else {
     // Fall back to tmux-based terminal
     log("cmux-pty not available or no terminals, falling back to tmux");

@@ -725,6 +725,23 @@ class CmuxTerminalManager {
     // Show terminal with appropriate focus
     terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
 
+    // For restored terminals, schedule a delayed re-show to ensure the terminal
+    // is properly rendered. This handles cases where VS Code's terminal panel
+    // might not be fully initialized when the terminal is first created.
+    if (isRestore) {
+      setTimeout(() => {
+        try {
+          // Only re-show if this terminal still exists
+          if (this._terminals.has(info.id)) {
+            console.log(`[cmux] Re-showing restored terminal ${info.id} (${info.name})`);
+            terminal.show(!shouldFocus);
+          }
+        } catch (e) {
+          console.log(`[cmux] Could not re-show terminal ${info.id}:`, e);
+        }
+      }, 300);
+    }
+
     // Listen for terminal close
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
       if (closedTerminal === terminal) {
@@ -1217,9 +1234,93 @@ export function activateTerminal(context: vscode.ExtensionContext) {
     })
   );
 
+  // Command to force refresh/re-render all terminals
+  // Useful if terminals appear in the tab list but aren't rendered properly
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cmux.refreshTerminals', async () => {
+      console.log('[cmux] Refreshing all terminals...');
+      const terminals = terminalManager.getTerminals();
+      if (terminals.length === 0) {
+        vscode.window.showInformationMessage('No active PTY sessions to refresh');
+        return;
+      }
+
+      // First, ensure the terminal panel is visible
+      try {
+        await vscode.commands.executeCommand('workbench.action.terminal.focus');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (e) {
+        console.log('[cmux] Could not focus terminal panel:', e);
+      }
+
+      // Re-show each terminal with a small delay between them
+      for (const t of terminals) {
+        try {
+          t.terminal.show(true);
+          console.log(`[cmux] Re-showed terminal: ${t.info.name}`);
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (e) {
+          console.log(`[cmux] Could not refresh terminal ${t.info.name}:`, e);
+        }
+      }
+
+      // Finally, focus the cmux terminal if it exists, otherwise the first terminal
+      const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
+      const targetTerminal = cmuxTerminal || terminals[0];
+      if (targetTerminal) {
+        targetTerminal.terminal.show(false);
+        console.log(`[cmux] Focused terminal: ${targetTerminal.info.name}`);
+      }
+
+      vscode.window.showInformationMessage(`Refreshed ${terminals.length} terminal(s)`);
+    })
+  );
+
   context.subscriptions.push({
     dispose: () => terminalManager.dispose()
   });
+
+  // Add a listener to re-show the active terminal when the window regains focus
+  // This helps ensure terminals are properly rendered after the window becomes visible
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) {
+        console.log('[cmux] Window regained focus, checking terminal visibility');
+        const activeTerminal = vscode.window.activeTerminal;
+        if (activeTerminal) {
+          // Re-show the active terminal to ensure it's properly rendered
+          // Use setTimeout to allow VS Code to fully process the focus change
+          setTimeout(() => {
+            try {
+              activeTerminal.show(true); // preserveFocus = true to avoid disrupting user
+              console.log('[cmux] Re-showed active terminal after window focus');
+            } catch (e) {
+              console.log('[cmux] Could not re-show terminal after focus:', e);
+            }
+          }, 100);
+        }
+      }
+    })
+  );
+
+  // Add a listener to ensure terminals are shown when they become active
+  // This helps with cases where a terminal exists in the tab but isn't rendered
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTerminal((terminal) => {
+      if (terminal) {
+        console.log('[cmux] Active terminal changed:', terminal.name);
+        // Schedule a re-show to ensure proper rendering
+        setTimeout(() => {
+          try {
+            terminal.show(true);
+            console.log('[cmux] Re-showed terminal after becoming active:', terminal.name);
+          } catch (e) {
+            console.log('[cmux] Could not re-show active terminal:', e);
+          }
+        }, 50);
+      }
+    })
+  );
 
   console.log('[cmux-terminal] Terminal module activated');
 }
@@ -1353,6 +1454,18 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
 export async function createQueuedTerminals(options?: { focus?: boolean }): Promise<void> {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
+
+  // First, ensure the terminal panel is visible by executing the focus command
+  // This is critical for cloud tasks where the panel might not be rendered initially
+  try {
+    console.log('[cmux] Ensuring terminal panel is visible...');
+    await vscode.commands.executeCommand('workbench.action.terminal.focus');
+    // Small delay to allow the panel to render
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } catch (err) {
+    console.log('[cmux] Could not focus terminal panel (may not exist yet):', err);
+  }
+
   terminalManager.drainRestoreQueue();
 
   // Focus the "cmux" terminal (main agent terminal) after creation
@@ -1361,22 +1474,41 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
     return;
   }
 
+  // Wait a bit for terminals to be fully created and rendered
+  // This helps ensure VS Code has time to properly initialize the terminal views
+  await new Promise(resolve => setTimeout(resolve, 150));
+
   const terminals = terminalManager.getTerminals();
   console.log(`[cmux] Have ${terminals.length} terminals after drain`);
+
+  // Helper function to show terminal with retry
+  const showTerminalWithRetry = async (terminal: vscode.Terminal, name: string): Promise<void> => {
+    console.log(`[cmux] Showing terminal: ${name}`);
+    terminal.show(false); // false = take focus
+
+    // Schedule a re-show after a short delay to handle cases where
+    // the initial show doesn't properly render the terminal
+    setTimeout(() => {
+      try {
+        terminal.show(false);
+        console.log(`[cmux] Re-showed terminal: ${name}`);
+      } catch (e) {
+        console.log(`[cmux] Could not re-show terminal ${name}:`, e);
+      }
+    }, 500);
+  };
 
   // First try to focus the "cmux" terminal (main agent)
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {
-    console.log('[cmux] Focusing cmux terminal');
-    cmuxTerminal.terminal.show(false); // false = take focus
+    await showTerminalWithRetry(cmuxTerminal.terminal, 'cmux');
     return;
   }
 
   // If no "cmux" terminal, try to focus the "dev" terminal (for cloud workspaces)
   const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
   if (devTerminal) {
-    console.log('[cmux] Focusing dev terminal');
-    devTerminal.terminal.show(false);
+    await showTerminalWithRetry(devTerminal.terminal, 'dev');
     return;
   }
 
@@ -1384,13 +1516,13 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
   if (panelTerminal) {
     console.log('[cmux] Focusing first panel terminal:', panelTerminal.info.name);
-    panelTerminal.terminal.show(false);
+    await showTerminalWithRetry(panelTerminal.terminal, panelTerminal.info.name);
     return;
   }
 
   // Last resort: focus any terminal
   if (terminals.length > 0) {
     console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
-    terminals[0].terminal.show(false);
+    await showTerminalWithRetry(terminals[0].terminal, terminals[0].info.name);
   }
 }
