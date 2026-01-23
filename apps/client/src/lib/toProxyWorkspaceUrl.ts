@@ -176,3 +176,58 @@ export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
 
   return proxiedUrl.toString();
 }
+
+/**
+ * Get the terminal backend URL for Docker mode using the PTY port.
+ * Returns http://localhost:{ptyPort} for local Docker containers.
+ */
+export function toDockerXtermBaseUrl(ptyPort: string | undefined): string | null {
+  if (!ptyPort) {
+    return null;
+  }
+  return `http://localhost:${ptyPort}`;
+}
+
+/**
+ * VSCode info type for terminal backend URL resolution
+ */
+export interface VSCodeInfo {
+  provider?: "docker" | "morph" | "daytona" | "other";
+  url?: string | null;
+  workspaceUrl?: string | null;
+  ports?: {
+    vscode: string;
+    worker: string;
+    extension?: string;
+    proxy?: string;
+    vnc?: string;
+    pty?: string;
+  } | null;
+}
+
+/**
+ * Get the terminal backend URL for any provider.
+ * - For Morph: Uses the Morph URL transformation (port 39383)
+ * - For Docker: Uses localhost with the PTY port from vscode.ports.pty
+ * - For other providers: Returns null (not supported)
+ */
+export function getTerminalBackendUrl(vscodeInfo: VSCodeInfo | null | undefined): string | null {
+  if (!vscodeInfo) {
+    return null;
+  }
+
+  if (vscodeInfo.provider === "morph") {
+    const rawUrl = vscodeInfo.url ?? vscodeInfo.workspaceUrl ?? null;
+    if (!rawUrl) {
+      return null;
+    }
+    return toMorphXtermBaseUrl(rawUrl);
+  }
+
+  if (vscodeInfo.provider === "docker") {
+    return toDockerXtermBaseUrl(vscodeInfo.ports?.pty);
+  }
+
+  // Other providers not supported for terminal backend
+  return null;
+}

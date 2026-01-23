@@ -882,6 +882,22 @@ class CmuxTerminalManager {
     this._ptyClient.renamePty(ptyId, name);
   }
 
+  /**
+   * Request a fresh state sync from the PTY server.
+   * This is useful for manually refreshing terminals if they're out of sync.
+   */
+  requestStateSync(): void {
+    console.log('[cmux] Requesting state sync from PTY server');
+    this._ptyClient.requestState();
+  }
+
+  /**
+   * Check if the PTY server connection is active.
+   */
+  isConnected(): boolean {
+    return this._initialized;
+  }
+
   getTerminals(): ManagedTerminal[] {
     return Array.from(this._terminals.values())
       .sort((a, b) => a.info.index - b.info.index);
@@ -1279,6 +1295,26 @@ export function activateTerminal(context: vscode.ExtensionContext) {
     })
   );
 
+  // Refresh terminals command - useful when terminals are out of sync
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cmux.refreshTerminals', async () => {
+      console.log('[cmux] Manual terminal refresh requested');
+      if (!terminalManager.isConnected()) {
+        vscode.window.showWarningMessage('Terminal manager not connected to PTY server');
+        return;
+      }
+      terminalManager.requestStateSync();
+      // Wait a moment for the sync to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const terminals = terminalManager.getTerminals();
+      vscode.window.showInformationMessage(`Found ${terminals.length} terminal session(s)`);
+      // Show the first terminal if any exist
+      if (terminals.length > 0) {
+        terminals[0].terminal.show();
+      }
+    })
+  );
+
   context.subscriptions.push({
     dispose: () => terminalManager.dispose()
   });
@@ -1290,6 +1326,27 @@ export function deactivateTerminal() {
   console.log('[cmux-terminal] Terminal module deactivating...');
   // PTYs persist on the server (like tmux) - no cleanup needed
   console.log('[cmux-terminal] Terminal module deactivated');
+}
+
+/**
+ * Manually refresh terminals from the PTY server.
+ * This can be called when terminals appear to be out of sync.
+ */
+export async function refreshTerminals(): Promise<void> {
+  if (!terminalManager) {
+    console.log('[cmux] refreshTerminals: terminal manager not initialized');
+    return;
+  }
+  if (!terminalManager.isConnected()) {
+    console.log('[cmux] refreshTerminals: terminal manager not connected');
+    return;
+  }
+  console.log('[cmux] refreshTerminals: requesting state sync');
+  terminalManager.requestStateSync();
+  // Wait for the sync response to be processed
+  await new Promise(resolve => setTimeout(resolve, 300));
+  // Show terminals after sync
+  await createQueuedTerminals({ focus: true });
 }
 
 /**
@@ -1410,49 +1467,53 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
  * Create all queued terminals from cmux-pty state_sync.
  * This should be called after waitForCmuxPtyTerminal() confirms terminals exist.
  * Directly creates the vscode terminals without going through provideTerminalProfile.
- * Focuses the "cmux" terminal if found, or the first available terminal.
+ *
+ * @param options.focus - If true (default), focuses the main terminal and takes focus.
+ *                        If false, still shows the terminal panel but preserves current focus.
  */
 export async function createQueuedTerminals(options?: { focus?: boolean }): Promise<void> {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
 
-  // Focus the "cmux" terminal (main agent terminal) after creation
-  const shouldFocus = options?.focus ?? true;
-  if (!shouldFocus) {
-    return;
-  }
-
   const terminals = terminalManager.getTerminals();
   console.log(`[cmux] Have ${terminals.length} terminals after drain`);
 
-  // First try to focus the "cmux" terminal (main agent)
+  if (terminals.length === 0) {
+    console.log('[cmux] No terminals to show');
+    return;
+  }
+
+  // Determine which terminal to show and whether to take focus
+  const shouldTakeFocus = options?.focus ?? true;
+  // true = preserve current focus (don't steal focus), false = take focus
+  const preserveFocus = !shouldTakeFocus;
+
+  // First try the "cmux" terminal (main agent)
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {
-    console.log('[cmux] Focusing cmux terminal');
-    cmuxTerminal.terminal.show(false); // false = take focus
+    console.log(`[cmux] Showing cmux terminal (preserveFocus: ${preserveFocus})`);
+    cmuxTerminal.terminal.show(preserveFocus);
     return;
   }
 
-  // If no "cmux" terminal, try to focus the "dev" terminal (for cloud workspaces)
+  // If no "cmux" terminal, try the "dev" terminal (for cloud workspaces)
   const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
   if (devTerminal) {
-    console.log('[cmux] Focusing dev terminal');
-    devTerminal.terminal.show(false);
+    console.log(`[cmux] Showing dev terminal (preserveFocus: ${preserveFocus})`);
+    devTerminal.terminal.show(preserveFocus);
     return;
   }
 
-  // Otherwise focus the first terminal in panel location
+  // Otherwise show the first terminal in panel location
   const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
   if (panelTerminal) {
-    console.log('[cmux] Focusing first panel terminal:', panelTerminal.info.name);
-    panelTerminal.terminal.show(false);
+    console.log(`[cmux] Showing first panel terminal: ${panelTerminal.info.name} (preserveFocus: ${preserveFocus})`);
+    panelTerminal.terminal.show(preserveFocus);
     return;
   }
 
-  // Last resort: focus any terminal
-  if (terminals.length > 0) {
-    console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
-    terminals[0].terminal.show(false);
-  }
+  // Last resort: show any terminal
+  console.log(`[cmux] Showing first available terminal: ${terminals[0].info.name} (preserveFocus: ${preserveFocus})`);
+  terminals[0].terminal.show(preserveFocus);
 }

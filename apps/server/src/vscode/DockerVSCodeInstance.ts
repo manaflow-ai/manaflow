@@ -269,6 +269,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       if (ports["39381/tcp"]?.[0]?.HostPort) {
         portMapping["39381"] = ports["39381/tcp"][0].HostPort;
       }
+      if (ports["39383/tcp"]?.[0]?.HostPort) {
+        portMapping["39383"] = ports["39383/tcp"][0].HostPort;
+      }
 
       // Update cache
       this.portCache = {
@@ -368,6 +371,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         "39379/tcp": [{ HostPort: "0" }], // cmux-proxy port
         "39380/tcp": [{ HostPort: "0" }], // VNC websocket proxy port
         "39381/tcp": [{ HostPort: "0" }], // Chrome DevTools port
+        "39383/tcp": [{ HostPort: "0" }], // PTY server (cmux-pty) for terminal backend
       },
       Tmpfs: {
         "/run": "rw,mode=755",
@@ -388,6 +392,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         "39379/tcp": {},
         "39380/tcp": {},
         "39381/tcp": {},
+        "39383/tcp": {}, // PTY server (cmux-pty) for terminal backend
       },
     };
     dockerLogger.info(
@@ -561,6 +566,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
     const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
     const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
+    const ptyPort = ports["39383/tcp"]?.[0]?.HostPort;
 
     if (!vscodePort) {
       dockerLogger.error(`Available ports:`, ports);
@@ -580,6 +586,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     if (!vncPort) {
       dockerLogger.error(`Available ports:`, ports);
       throw new Error("Failed to get VNC port mapping for port 39380");
+    }
+
+    if (!ptyPort) {
+      dockerLogger.error(`Available ports:`, ports);
+      throw new Error("Failed to get PTY port mapping for port 39383");
     }
 
     // Update the container mapping with actual ports
@@ -604,6 +615,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           worker: workerPort,
           proxy: proxyPort,
           vnc: vncPort,
+          pty: ptyPort, // PTY server (cmux-pty) for terminal backend
         },
       });
     } catch (error) {

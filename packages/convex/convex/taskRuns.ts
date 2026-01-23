@@ -1038,6 +1038,7 @@ export const updateVSCodeInstance = authMutation({
           extension: v.optional(v.string()),
           proxy: v.optional(v.string()),
           vnc: v.optional(v.string()),
+          pty: v.optional(v.string()), // PTY server (cmux-pty) for terminal backend
         }),
       ),
       url: v.optional(v.string()),
@@ -1110,6 +1111,7 @@ export const updateVSCodePorts = authMutation({
       extension: v.optional(v.string()),
       proxy: v.optional(v.string()),
       vnc: v.optional(v.string()),
+      pty: v.optional(v.string()), // PTY server (cmux-pty) for terminal backend
     }),
   },
   handler: async (ctx, args) => {
@@ -1519,6 +1521,7 @@ export const updateVSCodeMetadataInternal = internalMutation({
             extension: v.optional(v.string()),
             proxy: v.optional(v.string()),
             vnc: v.optional(v.string()),
+            pty: v.optional(v.string()), // PTY server (cmux-pty) for terminal backend
           }),
         ),
         url: v.optional(v.string()),

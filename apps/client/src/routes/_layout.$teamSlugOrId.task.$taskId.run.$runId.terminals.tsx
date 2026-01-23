@@ -12,7 +12,7 @@ import {
   TaskRunTerminalSession,
   type TerminalConnectionState,
 } from "@/components/task-run-terminal-session";
-import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
+import { getTerminalBackendUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
   deleteTerminalTab,
@@ -58,14 +58,12 @@ export const Route = createFileRoute(
         })
       );
       const vscodeInfo = taskRun?.vscode;
-      const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-      const isMorphProvider = vscodeInfo?.provider === "morph";
+      const baseUrl = getTerminalBackendUrl(vscodeInfo);
 
-      if (!isMorphProvider || !rawMorphUrl) {
+      if (!baseUrl) {
         return;
       }
 
-      const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
       const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
 
       const tabs = await queryClient.ensureQueryData(
@@ -162,17 +160,14 @@ function TaskRunTerminals() {
   });
 
   const vscodeInfo = taskRun?.vscode;
-  const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-  const isMorphProvider = vscodeInfo?.provider === "morph";
+  const provider = vscodeInfo?.provider;
+  const isSupportedProvider = provider === "morph" || provider === "docker";
 
   const xtermBaseUrl = useMemo(() => {
-    if (!rawMorphUrl) {
-      return null;
-    }
-    return toMorphXtermBaseUrl(rawMorphUrl);
-  }, [rawMorphUrl]);
+    return getTerminalBackendUrl(vscodeInfo);
+  }, [vscodeInfo]);
 
-  const hasTerminalBackend = Boolean(isMorphProvider && xtermBaseUrl);
+  const hasTerminalBackend = Boolean(isSupportedProvider && xtermBaseUrl);
 
   const tabsQuery = useQuery(
     terminalTabsQueryOptions({
@@ -387,16 +382,17 @@ function TaskRunTerminals() {
   }, []);
 
   const renderTerminalArea = () => {
-    if (!isMorphProvider) {
+    if (!isSupportedProvider) {
       return renderMessage(
-        "Terminals are only available for Cloud-based runs."
+        "Terminals are only available for Cloud and Docker-based runs."
       );
     }
 
     if (!xtermBaseUrl) {
-      return renderMessage(
-        "Waiting for Cloud workspace to expose the terminal backend..."
-      );
+      const waitingMessage = provider === "docker"
+        ? "Waiting for Docker container to expose the terminal backend..."
+        : "Waiting for Cloud workspace to expose the terminal backend...";
+      return renderMessage(waitingMessage);
     }
 
     return (
