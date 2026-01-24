@@ -5,6 +5,7 @@ struct ChatView: View {
     let conversation: ConvexConversation
     #if DEBUG
     @State private var didCopyLogs = false
+    @State private var didCopyMetadata = false
     #endif
 
     init(conversation: ConvexConversation) {
@@ -18,16 +19,32 @@ struct ChatView: View {
             #if DEBUG
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        UIPasteboard.general.string = DebugLog.read()
-                        didCopyLogs = true
+                    Menu {
+                        Button("Copy Logs") {
+                            UIPasteboard.general.string = DebugLog.read()
+                            didCopyLogs = true
+                        }
+                        .accessibilityIdentifier("chat.copyLogs")
+
+                        Button("Copy Metadata") {
+                            UIPasteboard.general.string = buildMetadataString(
+                                conversationId: conversation._id.rawValue,
+                                providerId: conversation.providerId,
+                                providerName: conversation.providerDisplayName
+                            )
+                            didCopyMetadata = true
+                        }
+                        .accessibilityIdentifier("chat.copyMetadata")
                     } label: {
-                        Image(systemName: "doc.on.doc")
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .accessibilityIdentifier("chat.copyLogs")
+                    .accessibilityIdentifier("chat.menu")
                 }
             }
             .alert("Logs copied", isPresented: $didCopyLogs) {
+                Button("OK", role: .cancel) {}
+            }
+            .alert("Metadata copied", isPresented: $didCopyMetadata) {
                 Button("OK", role: .cancel) {}
             }
             #endif
@@ -40,6 +57,7 @@ struct ChatViewById: View {
     var providerId: String = "claude"
     #if DEBUG
     @State private var didCopyLogs = false
+    @State private var didCopyMetadata = false
     #endif
 
     var body: some View {
@@ -49,21 +67,49 @@ struct ChatViewById: View {
             #if DEBUG
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        UIPasteboard.general.string = DebugLog.read()
-                        didCopyLogs = true
+                    Menu {
+                        Button("Copy Logs") {
+                            UIPasteboard.general.string = DebugLog.read()
+                            didCopyLogs = true
+                        }
+                        .accessibilityIdentifier("chat.copyLogs")
+
+                        Button("Copy Metadata") {
+                            UIPasteboard.general.string = buildMetadataString(
+                                conversationId: conversationId,
+                                providerId: providerId,
+                                providerName: ""
+                            )
+                            didCopyMetadata = true
+                        }
+                        .accessibilityIdentifier("chat.copyMetadata")
                     } label: {
-                        Image(systemName: "doc.on.doc")
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .accessibilityIdentifier("chat.copyLogs")
+                    .accessibilityIdentifier("chat.menu")
                 }
             }
             .alert("Logs copied", isPresented: $didCopyLogs) {
                 Button("OK", role: .cancel) {}
             }
+            .alert("Metadata copied", isPresented: $didCopyMetadata) {
+                Button("OK", role: .cancel) {}
+            }
             #endif
     }
 }
+
+#if DEBUG
+private func buildMetadataString(conversationId: String, providerId: String, providerName: String) -> String {
+    var lines = [String]()
+    lines.append("Conversation ID: \(conversationId)")
+    lines.append("Provider ID: \(providerId)")
+    if !providerName.isEmpty {
+        lines.append("Provider Name: \(providerName)")
+    }
+    return lines.joined(separator: "\n")
+}
+#endif
 
 // MARK: - Message Bubble
 
