@@ -7,6 +7,7 @@ import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
+import { ClaimsBoardPanel } from "@/components/ClaimsBoardPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
 import { PanelConfigModal } from "@/components/PanelConfigModal";
 import {
@@ -53,6 +54,7 @@ import {
   TerminalSquare,
   GitCompare,
   MessageCircle,
+  Sparkles,
 } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
@@ -251,6 +253,8 @@ function EmptyPanelSlot({
         return <Globe2 className="size-4" />;
       case "gitDiff":
         return <GitCompare className="size-4" />;
+      case "claims":
+        return <Sparkles className="size-4" />;
     }
   };
 
@@ -321,6 +325,34 @@ function TaskDetailPage() {
     teamSlugOrId,
     taskId,
   });
+
+  // Get all run IDs for fetching screenshot URLs
+  const allRunIds = useMemo(() => {
+    if (!taskRuns) return [];
+    const ids: (typeof taskRuns)[number]["_id"][] = [];
+    const stack = [...taskRuns];
+    while (stack.length > 0) {
+      const run = stack.pop();
+      if (run) {
+        ids.push(run._id);
+        if (run.children) {
+          stack.push(...run.children);
+        }
+      }
+    }
+    return ids;
+  }, [taskRuns]);
+
+  // Fetch screenshot URLs for activity bar
+  const screenshotUrls = useQuery(
+    api.taskRuns.getLatestScreenshotUrls,
+    allRunIds.length > 0
+      ? {
+          teamSlugOrId,
+          runIds: allRunIds,
+        }
+      : "skip",
+  );
 
   const [panelConfig, setPanelConfig] = useState<PanelConfig>(() =>
     loadPanelConfig()
@@ -790,6 +822,7 @@ function TaskDetailPage() {
       task: task ?? null,
       taskRuns: taskRuns ?? null,
       crownEvaluation,
+      screenshotUrls: screenshotUrls ?? undefined,
       workspaceUrl,
       workspacePersistKey,
       selectedRun: selectedRun ?? null,
@@ -814,6 +847,7 @@ function TaskDetailPage() {
       WorkspaceLoadingIndicator,
       TaskRunTerminalPane,
       TaskRunGitDiffPanel,
+      ClaimsBoardPanel,
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
       onClose: handlePanelClose,
@@ -824,6 +858,7 @@ function TaskDetailPage() {
       task,
       taskRuns,
       crownEvaluation,
+      screenshotUrls,
       workspaceUrl,
       workspacePersistKey,
       selectedRun,
