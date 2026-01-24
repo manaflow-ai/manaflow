@@ -29,6 +29,8 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullImageResponse,
+  DockerPullProgress,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -82,6 +84,48 @@ const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter(
 );
 
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
+
+const stripDockerRegistry = (imageName: string) =>
+  imageName.replace(/^docker\.io\//, "");
+
+const cleanDockerProgress = (progress?: string): string | undefined => {
+  if (!progress) return undefined;
+  return progress.replace(/\[[=><\s-]+\]\s*/, "").trim();
+};
+
+const formatDockerPullDescription = (
+  imageName: string,
+  progress?: DockerPullProgress
+): string => {
+  const baseName = stripDockerRegistry(imageName);
+
+  if (!progress) {
+    return `${baseName} | Preparing download...`;
+  }
+
+  const status = progress.status ?? "Downloading";
+  const cleanedProgress = cleanDockerProgress(progress.progress);
+  const layerInfo =
+    progress.layersTotal !== undefined
+      ? `${progress.layersDownloaded ?? 0}/${progress.layersTotal} layers`
+      : undefined;
+  const percent =
+    typeof progress.percent === "number"
+      ? `${Math.round(progress.percent * 100)}%`
+      : undefined;
+
+  const details = [layerInfo, percent, cleanedProgress]
+    .filter((value): value is string => Boolean(value))
+    .join(" | ");
+
+  const statusLine = [status, details]
+    .filter((value): value is string => Boolean(value))
+    .join(" | ");
+
+  return [baseName, statusLine]
+    .filter((value): value is string => Boolean(value))
+    .join(" | ");
+};
 
 // Filter to known agents and exclude disabled ones
 const filterKnownAgents = (agents: string[]): string[] =>
@@ -626,43 +670,112 @@ function DashboardComponent() {
           // Check if Docker worker image is available, auto-pull if not
           if (dockerCheck.workerImage && !dockerCheck.workerImage.isAvailable) {
             const imageName = dockerCheck.workerImage.name;
-            if (dockerCheck.workerImage.isPulling) {
-              toast.error(
-                `Docker image "${imageName}" is currently being pulled. Please wait for it to complete.`
-              );
-              return;
-            }
 
-            // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
-            );
+            // Auto-pull the image with progress updates
+            const pullToastId = toast.loading("Downloading Docker image", {
+              description: formatDockerPullDescription(imageName),
+            });
 
-            try {
-              const pullResult = await new Promise<{
-                success: boolean;
-                imageName?: string;
-                error?: string;
-              }>((resolve) => {
-                socket.emit("docker-pull-image", (response) => {
-                  resolve(response);
+            const attachDockerPullListeners = () => {
+              let lastUpdate = 0;
+              let resolve!: () => void;
+              let reject!: (err: Error) => void;
+
+              const updateToast = (progress?: DockerPullProgress) => {
+                toast.loading("Downloading Docker image", {
+                  id: pullToastId,
+                  description: formatDockerPullDescription(imageName, progress),
                 });
+              };
+
+              const onProgress = (event: DockerPullProgress) => {
+                if (event.imageName !== imageName) return;
+                const now = Date.now();
+                if (now - lastUpdate < 150) return;
+                lastUpdate = now;
+                updateToast(event);
+              };
+
+              const onComplete = (event: { imageName: string }) => {
+                if (event.imageName !== imageName) return;
+                cleanup();
+                resolve();
+              };
+
+              const onError = (event: { imageName: string; error: string }) => {
+                if (event.imageName !== imageName) return;
+                cleanup();
+                reject(new Error(event.error));
+              };
+
+              const cleanup = () => {
+                socket.off("docker-pull-progress", onProgress);
+                socket.off("docker-pull-complete", onComplete);
+                socket.off("docker-pull-error", onError);
+              };
+
+              const promise = new Promise<void>((res, rej) => {
+                resolve = res;
+                reject = rej;
               });
 
+              socket.on("docker-pull-progress", onProgress);
+              socket.on("docker-pull-complete", onComplete);
+              socket.on("docker-pull-error", onError);
+
+              // Initial message
+              updateToast();
+
+              return { promise, cleanup };
+            };
+
+            const pullListeners = attachDockerPullListeners();
+
+            try {
+              const pullResult = await new Promise<DockerPullImageResponse>(
+                (resolve) => {
+                  socket.emit("docker-pull-image", (response) => {
+                    resolve(response);
+                  });
+                }
+              );
+
               if (!pullResult.success) {
-                toast.dismiss(pullToastId);
+                pullListeners.cleanup();
                 toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
+                  pullResult.error || `Failed to pull Docker image "${imageName}"`,
+                  { id: pullToastId }
                 );
                 return;
               }
 
-              toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
+              if (pullResult.state === "already-available") {
+                pullListeners.cleanup();
+                toast.success("Docker image ready", {
+                  id: pullToastId,
+                  description: stripDockerRegistry(imageName),
+                });
+                return;
+              }
+
+              if (pullResult.state === "already-pulling") {
+                toast.loading("Downloading Docker image", {
+                  id: pullToastId,
+                  description: `${stripDockerRegistry(imageName)} | Waiting for existing download...`,
+                });
+              }
+
+              await pullListeners.promise;
+              toast.success("Docker image ready", {
+                id: pullToastId,
+                description: stripDockerRegistry(imageName),
+              });
             } catch (pullError) {
-              toast.dismiss(pullToastId);
+              pullListeners.cleanup();
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              toast.error(`Failed to pull Docker image "${imageName}"`, {
+                id: pullToastId,
+              });
               return;
             }
           }

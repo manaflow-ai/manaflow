@@ -19,6 +19,7 @@ import {
   type CreateCloudWorkspaceResponse,
   type AvailableEditors,
   type FileInfo,
+  type DockerPullProgress,
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
@@ -42,7 +43,7 @@ import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
 import { getRustTime } from "./native/core";
-import type { RealtimeServer } from "./realtime";
+import type { RealtimeServer, RealtimeSocket } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
@@ -86,6 +87,15 @@ interface ExecError extends Error {
 }
 
 const isWindows = process.platform === "win32";
+
+type DockerPullState = {
+  sockets: Set<RealtimeSocket>;
+  layersSeen: Set<string>;
+  layersComplete: Set<string>;
+  lastProgress?: DockerPullProgress;
+};
+
+const activeDockerPulls = new Map<string, DockerPullState>();
 
 function collectWorktreePaths(nodes: unknown): string[] {
   const paths = new Set<string>();
@@ -211,6 +221,139 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+function formatDockerPullError(errorMessage: string): string {
+  const normalized = errorMessage.toLowerCase();
+  if (normalized.includes("timeout") || normalized.includes("stalled")) {
+    return "Docker image pull timed out. This may be due to slow network or Docker registry issues.";
+  }
+  if (
+    normalized.includes("not found") ||
+    normalized.includes("manifest unknown")
+  ) {
+    return "Docker image not found. Please check if the image name is correct.";
+  }
+  if (normalized.includes("unauthorized") || normalized.includes("authentication")) {
+    return "Docker authentication failed. Please ensure you have access to the Docker registry.";
+  }
+  if (normalized.includes("econnrefused") || normalized.includes("connection refused")) {
+    return "Cannot connect to Docker daemon. Please ensure Docker is running.";
+  }
+  return `Failed to pull Docker image: ${errorMessage}`;
+}
+
+type DockerPullEvent = {
+  status?: string;
+  progress?: string;
+  id?: string;
+  progressDetail?: {
+    current?: number;
+    total?: number;
+  };
+};
+
+function emitDockerPullProgress(
+  state: DockerPullState,
+  payload: DockerPullProgress
+) {
+  state.lastProgress = payload;
+  for (const socket of state.sockets) {
+    socket.emit("docker-pull-progress", payload);
+  }
+}
+
+function emitDockerPullComplete(state: DockerPullState, imageName: string) {
+  for (const socket of state.sockets) {
+    socket.emit("docker-pull-complete", { imageName });
+  }
+}
+
+function emitDockerPullError(
+  state: DockerPullState,
+  imageName: string,
+  error: string
+) {
+  for (const socket of state.sockets) {
+    socket.emit("docker-pull-error", { imageName, error });
+  }
+}
+
+async function runDockerPullWithProgress(
+  imageName: string,
+  state: DockerPullState
+) {
+  let stream: NodeJS.ReadableStream;
+  let dockerClient: ReturnType<typeof DockerVSCodeInstance.getDocker>;
+  try {
+    dockerClient = DockerVSCodeInstance.getDocker();
+    stream = await dockerClient.pull(imageName);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "Unknown error");
+    const friendly = formatDockerPullError(message);
+    serverLogger.error("Error starting Docker pull:", error);
+    emitDockerPullError(state, imageName, friendly);
+    return;
+  }
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      dockerClient.modem.followProgress(
+        stream,
+        (err: Error | null) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        },
+        (event: DockerPullEvent) => {
+          if (!event) return;
+          const status = event.status;
+          if (event.id) {
+            if (status === "Pulling fs layer") {
+              state.layersSeen.add(event.id);
+            } else if (status === "Pull complete" || status === "Already exists") {
+              state.layersComplete.add(event.id);
+            }
+          }
+
+          const layersTotal =
+            state.layersSeen.size > 0 ? state.layersSeen.size : undefined;
+          const layersDownloaded =
+            state.layersComplete.size > 0 ? state.layersComplete.size : undefined;
+          const percent =
+            layersTotal && layersDownloaded !== undefined
+              ? Math.min(layersDownloaded / layersTotal, 1)
+              : undefined;
+
+          const payload: DockerPullProgress = {
+            imageName,
+            status,
+            id: event.id,
+            progress: event.progress,
+            current: event.progressDetail?.current,
+            total: event.progressDetail?.total,
+            layersDownloaded,
+            layersTotal,
+            percent,
+          };
+
+          emitDockerPullProgress(state, payload);
+        }
+      );
+    });
+
+    serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
+    emitDockerPullComplete(state, imageName);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "Unknown error");
+    const friendly = formatDockerPullError(message);
+    serverLogger.error("Docker pull failed:", error);
+    emitDockerPullError(state, imageName, friendly);
+  }
 }
 
 export function setupSocketHandlers(
@@ -2558,96 +2701,60 @@ ${title}`;
           process.env.WORKER_IMAGE_NAME ||
           "docker.io/manaflow/cmux:latest";
 
-        // Check if already pulling
-        if (docker.workerImage?.isPulling) {
-          callback({
-            success: false,
-            imageName,
-            error: `Docker image "${imageName}" is already being pulled.`,
-          });
-          return;
-        }
-
         // Check if already available
         if (docker.workerImage?.isAvailable) {
           callback({
             success: true,
             imageName,
+            state: "already-available",
           });
           return;
         }
 
-        serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+        const existingPull = activeDockerPulls.get(imageName);
+        if (existingPull) {
+          existingPull.sockets.add(socket);
+          if (existingPull.lastProgress) {
+            socket.emit("docker-pull-progress", existingPull.lastProgress);
+          }
+          callback({
+            success: true,
+            imageName,
+            state: "already-pulling",
+          });
+          return;
+        }
 
-        // Use dockerode to pull the image
-        const dockerClient = DockerVSCodeInstance.getDocker();
+        const pullState: DockerPullState = {
+          sockets: new Set([socket]),
+          layersSeen: new Set(),
+          layersComplete: new Set(),
+        };
+        activeDockerPulls.set(imageName, pullState);
 
-        const stream = await dockerClient.pull(imageName);
-
-        // Wait for the pull to complete
-        await new Promise<void>((resolve, reject) => {
-          dockerClient.modem.followProgress(
-            stream,
-            (err: Error | null) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve();
-              }
-            },
-            (event: { status: string; progress?: string; id?: string }) => {
-              if (event.status) {
-                serverLogger.info(
-                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
-                );
-              }
-            }
-          );
+        emitDockerPullProgress(pullState, {
+          imageName,
+          status: "Starting download",
         });
 
-        serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
         callback({
           success: true,
           imageName,
+          state: "started",
+        });
+
+        serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+        void runDockerPullWithProgress(imageName, pullState).finally(() => {
+          activeDockerPulls.delete(imageName);
         });
       } catch (error) {
         serverLogger.error("Error pulling Docker image:", error);
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
 
-        // Provide user-friendly error messages
-        let userFriendlyError: string;
-        if (
-          errorMessage.includes("timeout") ||
-          errorMessage.includes("stalled")
-        ) {
-          userFriendlyError =
-            "Docker image pull timed out. This may be due to slow network or Docker registry issues.";
-        } else if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("manifest unknown")
-        ) {
-          userFriendlyError =
-            "Docker image not found. Please check if the image name is correct.";
-        } else if (
-          errorMessage.includes("unauthorized") ||
-          errorMessage.includes("authentication")
-        ) {
-          userFriendlyError =
-            "Docker authentication failed. Please ensure you have access to the Docker registry.";
-        } else if (
-          errorMessage.includes("ECONNREFUSED") ||
-          errorMessage.includes("connection refused")
-        ) {
-          userFriendlyError =
-            "Cannot connect to Docker daemon. Please ensure Docker is running.";
-        } else {
-          userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
-        }
-
         callback({
           success: false,
-          error: userFriendlyError,
+          error: formatDockerPullError(errorMessage),
         });
       }
     });
