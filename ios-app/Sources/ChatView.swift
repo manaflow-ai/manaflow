@@ -120,10 +120,10 @@ struct MessageBubble: View {
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
             } else {
-                AssistantMarkdownView(text: message.content, layout: markdownLayout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, markdownLayout.assistantMessageTopPadding)
-                    .padding(.bottom, markdownLayout.assistantMessageBottomPadding)
+                AssistantMessageContentView(
+                    message: message,
+                    markdownLayout: markdownLayout
+                )
             }
 
             // Delivery status for sent messages (only on last message)
@@ -161,6 +161,186 @@ struct MessageBubble: View {
         case .sent: return "Sent"
         case .delivered: return "Delivered"
         case .read: return "Read"
+        }
+    }
+}
+
+// MARK: - Tool Calls
+
+private struct AssistantMessageContentView: View {
+    let message: Message
+    let markdownLayout: MarkdownLayoutConfig
+    @State private var selectedToolCall: MessageToolCall?
+
+    var body: some View {
+        let items = resolvedItems()
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(items) { item in
+                switch item.kind {
+                case .text(let text):
+                    AssistantMarkdownView(text: text, layout: markdownLayout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                case .toolCall(let toolCall):
+                    Button {
+                        selectedToolCall = toolCall
+                    } label: {
+                        ToolCallRow(toolCall: toolCall)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.top, markdownLayout.assistantMessageTopPadding)
+        .padding(.bottom, markdownLayout.assistantMessageBottomPadding)
+        .sheet(item: $selectedToolCall) { toolCall in
+            ToolCallDetailSheet(toolCall: toolCall)
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    private func resolvedItems() -> [AssistantMessageItem] {
+        if !message.assistantItems.isEmpty {
+            return message.assistantItems
+        }
+        if message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return message.toolCalls.map { toolCall in
+                AssistantMessageItem(id: "\(message.id)-tool-\(toolCall.id)", kind: .toolCall(toolCall))
+            }
+        }
+        var items = [AssistantMessageItem]()
+        items.append(AssistantMessageItem(id: "\(message.id)-text", kind: .text(message.content)))
+        items.append(contentsOf: message.toolCalls.map { toolCall in
+            AssistantMessageItem(id: "\(message.id)-tool-\(toolCall.id)", kind: .toolCall(toolCall))
+        })
+        return items
+    }
+}
+
+private struct ToolCallRow: View {
+    let toolCall: MessageToolCall
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: toolCall.status.symbolName)
+                .foregroundStyle(toolCall.status.tintColor)
+                .font(.caption.weight(.semibold))
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toolCall.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(toolCall.status.label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color(.separator), lineWidth: 1)
+        )
+    }
+}
+
+private struct ToolCallDetailSheet: View {
+    let toolCall: MessageToolCall
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    detailRow(title: "Tool", value: toolCall.name)
+                    detailRow(title: "Status", value: toolCall.status.label)
+                    detailRow(title: "ID", value: toolCall.id)
+
+                    payloadSection(
+                        title: "Arguments",
+                        value: ToolCallPayloadFormatter.prettify(toolCall.arguments)
+                    )
+
+                    if let result = toolCall.result, !result.isEmpty {
+                        payloadSection(
+                            title: "Result",
+                            value: ToolCallPayloadFormatter.prettify(result)
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+            }
+            .navigationTitle("Tool Call")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    @ViewBuilder
+    private func detailRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.body)
+                .foregroundStyle(.primary)
+        }
+    }
+
+    @ViewBuilder
+    private func payloadSection(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(value.isEmpty ? " " : value)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+            }
+            .padding(10)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color(.separator), lineWidth: 1)
+            )
+        }
+    }
+}
+
+private extension MessageToolCallStatus {
+    var symbolName: String {
+        switch self {
+        case .pending:
+            return "clock"
+        case .running:
+            return "arrow.triangle.2.circlepath"
+        case .completed:
+            return "checkmark.circle"
+        case .failed:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    var tintColor: Color {
+        switch self {
+        case .pending:
+            return .orange
+        case .running:
+            return .blue
+        case .completed:
+            return .green
+        case .failed:
+            return .red
         }
     }
 }

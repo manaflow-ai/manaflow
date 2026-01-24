@@ -104,7 +104,9 @@ struct ChatFix1MainView: View {
                 content: msg.textContent,
                 timestamp: msg.displayTimestamp,
                 isFromMe: msg.isFromUser,
-                status: .delivered
+                status: .delivered,
+                toolCalls: msg.toolCallItems,
+                assistantItems: msg.assistantItems
             )
         }
     }

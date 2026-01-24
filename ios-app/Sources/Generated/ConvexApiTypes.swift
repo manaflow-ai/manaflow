@@ -2068,6 +2068,7 @@ struct AcpListMessagesReturnMessagesItemToolCallsItem: Decodable {
   let name: String
   let status: AcpListMessagesReturnMessagesItemToolCallsItemStatusEnum
   let arguments: String
+  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct AcpListMessagesReturnMessagesItemContentItemResource: Decodable {
@@ -2094,6 +2095,7 @@ struct AcpListMessagesReturnMessagesItemContentItem: Decodable {
   let uri: String?
   @OptionalConvexFloat var size: Double?
   let annotations: AcpListMessagesReturnMessagesItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
   let type: AcpListMessagesReturnMessagesItemContentItemTypeEnum
 }
 
@@ -2125,6 +2127,7 @@ struct AcpSubscribeNewMessagesItemToolCallsItem: Decodable {
   let name: String
   let status: AcpSubscribeNewMessagesItemToolCallsItemStatusEnum
   let arguments: String
+  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct AcpSubscribeNewMessagesItemContentItemResource: Decodable {
@@ -2151,6 +2154,7 @@ struct AcpSubscribeNewMessagesItemContentItem: Decodable {
   let uri: String?
   @OptionalConvexFloat var size: Double?
   let annotations: AcpSubscribeNewMessagesItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
   let type: AcpSubscribeNewMessagesItemContentItemTypeEnum
 }
 
@@ -2176,6 +2180,7 @@ struct AcpGetMessagesItemToolCallsItem: Decodable {
   let name: String
   let status: AcpGetMessagesItemToolCallsItemStatusEnum
   let arguments: String
+  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct AcpGetMessagesItemContentItemResource: Decodable {
@@ -2202,6 +2207,7 @@ struct AcpGetMessagesItemContentItem: Decodable {
   let uri: String?
   @OptionalConvexFloat var size: Double?
   let annotations: AcpGetMessagesItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
   let type: AcpGetMessagesItemContentItemTypeEnum
 }
 
@@ -2642,6 +2648,7 @@ struct ConversationMessagesListByConversationReturnMessagesItemToolCallsItem: De
   let name: String
   let status: ConversationMessagesListByConversationReturnMessagesItemToolCallsItemStatusEnum
   let arguments: String
+  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct ConversationMessagesListByConversationReturnMessagesItemContentItemResource: Decodable {
@@ -2668,6 +2675,7 @@ struct ConversationMessagesListByConversationReturnMessagesItemContentItem: Deco
   let uri: String?
   @OptionalConvexFloat var size: Double?
   let annotations: ConversationMessagesListByConversationReturnMessagesItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
   let type: ConversationMessagesListByConversationReturnMessagesItemContentItemTypeEnum
 }
 
@@ -2729,6 +2737,7 @@ struct ConversationMessagesListByConversationPaginatedReturnPageItemToolCallsIte
   let name: String
   let status: ConversationMessagesListByConversationPaginatedReturnPageItemToolCallsItemStatusEnum
   let arguments: String
+  @OptionalConvexFloat var acpSeq: Double?
 }
 
 struct ConversationMessagesListByConversationPaginatedReturnPageItemContentItemResource: Decodable {
@@ -2758,6 +2767,7 @@ struct ConversationMessagesListByConversationPaginatedReturnPageItemContentItem:
   @OptionalConvexFloat var size: Double?
   let annotations:
     ConversationMessagesListByConversationPaginatedReturnPageItemContentItemAnnotations?
+  @OptionalConvexFloat var acpSeq: Double?
   let type: ConversationMessagesListByConversationPaginatedReturnPageItemContentItemTypeEnum
 }
 

@@ -17,13 +17,25 @@ struct Message: Identifiable, Equatable {
     let timestamp: Date
     let isFromMe: Bool
     let status: MessageStatus
+    let toolCalls: [MessageToolCall]
+    let assistantItems: [AssistantMessageItem]
 
-    init(id: String = UUID().uuidString, content: String, timestamp: Date, isFromMe: Bool, status: MessageStatus) {
+    init(
+        id: String = UUID().uuidString,
+        content: String,
+        timestamp: Date,
+        isFromMe: Bool,
+        status: MessageStatus,
+        toolCalls: [MessageToolCall] = [],
+        assistantItems: [AssistantMessageItem] = []
+    ) {
         self.id = id
         self.content = content
         self.timestamp = timestamp
         self.isFromMe = isFromMe
         self.status = status
+        self.toolCalls = toolCalls
+        self.assistantItems = assistantItems
     }
 
     static func == (lhs: Message, rhs: Message) -> Bool {
@@ -31,7 +43,9 @@ struct Message: Identifiable, Equatable {
         lhs.content == rhs.content &&
         lhs.timestamp == rhs.timestamp &&
         lhs.isFromMe == rhs.isFromMe &&
-        lhs.status == rhs.status
+        lhs.status == rhs.status &&
+        lhs.toolCalls == rhs.toolCalls &&
+        lhs.assistantItems == rhs.assistantItems
     }
 }
 

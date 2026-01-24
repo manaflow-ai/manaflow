@@ -165,4 +165,50 @@ extension ConversationMessagesListByConversationReturnMessagesItem {
         let timestamp = createdAt
         return Date(timeIntervalSince1970: timestamp / 1000)
     }
+
+    var assistantItems: [AssistantMessageItem] {
+        guard role == .assistant else { return [] }
+        let contentParts = content.compactMap { block -> MessageContentPart? in
+            guard block.type == .text else { return nil }
+            guard let text = block.text,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return MessageContentPart(text: text, acpSeq: block.acpSeq)
+        }
+        let toolItems = toolCallItems
+        return AssistantMessageItemBuilder.build(
+            messageId: _id.rawValue,
+            content: contentParts,
+            toolCalls: toolItems
+        )
+    }
+
+    var toolCallItems: [MessageToolCall] {
+        (toolCalls ?? []).map { MessageToolCall($0) }
+    }
+}
+
+extension MessageToolCall {
+    init(_ toolCall: ConversationMessagesListByConversationReturnMessagesItemToolCallsItem) {
+        self.id = toolCall.id
+        self.name = toolCall.name
+        self.status = MessageToolCallStatus(toolCall.status)
+        self.arguments = toolCall.arguments
+        self.result = toolCall.result
+        self.acpSeq = toolCall.acpSeq
+    }
+}
+
+extension MessageToolCallStatus {
+    init(_ status: ConversationMessagesListByConversationReturnMessagesItemToolCallsItemStatusEnum) {
+        switch status {
+        case .pending:
+            self = .pending
+        case .running:
+            self = .running
+        case .completed:
+            self = .completed
+        case .failed:
+            self = .failed
+        }
+    }
 }
