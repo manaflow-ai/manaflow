@@ -29,6 +29,8 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullComplete,
+  DockerPullProgress,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -633,36 +635,128 @@ function DashboardComponent() {
               return;
             }
 
-            // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
-            );
+            // Auto-pull the image with progress tracking
+            const pullToastId = toast.loading("Pulling Docker Image", {
+              description: `Initializing download of ${imageName}...`,
+            });
 
             try {
-              const pullResult = await new Promise<{
+              // Set up listeners for progress and completion events BEFORE emitting
+              const pullComplete = await new Promise<{
                 success: boolean;
-                imageName?: string;
                 error?: string;
-              }>((resolve) => {
+              }>((resolve, reject) => {
+                // Track if we've resolved to avoid double-resolution
+                let resolved = false;
+
+                // Progress handler - updates the toast with download status
+                const handleProgress = (data: DockerPullProgress) => {
+                  if (data.imageName !== imageName) return;
+
+                  let description = data.status;
+                  if (data.layerId) {
+                    description += ` (${data.layerId})`;
+                  }
+                  if (data.progress) {
+                    description += `\n${data.progress}`;
+                  }
+
+                  toast.loading("Pulling Docker Image", {
+                    id: pullToastId,
+                    description,
+                  });
+                };
+
+                // Complete handler - resolves the promise
+                const handleComplete = (data: DockerPullComplete) => {
+                  if (data.imageName !== imageName) return;
+                  if (resolved) return;
+                  resolved = true;
+
+                  // Clean up listeners
+                  socket.off("docker-pull-progress", handleProgress);
+                  socket.off("docker-pull-complete", handleComplete);
+
+                  resolve({
+                    success: data.success,
+                    error: data.error,
+                  });
+                };
+
+                // Register listeners
+                socket.on("docker-pull-progress", handleProgress);
+                socket.on("docker-pull-complete", handleComplete);
+
+                // Emit the pull request - server will acknowledge immediately
                 socket.emit("docker-pull-image", (response) => {
-                  resolve(response);
+                  // If the image was already available or there's an immediate error,
+                  // the callback will have success: true/false accordingly
+                  // If pulling starts, success: true but we wait for docker-pull-complete
+                  if (!response.success) {
+                    // Immediate error (Docker not running, already pulling, etc.)
+                    if (!resolved) {
+                      resolved = true;
+                      socket.off("docker-pull-progress", handleProgress);
+                      socket.off("docker-pull-complete", handleComplete);
+                      resolve({
+                        success: false,
+                        error: response.error,
+                      });
+                    }
+                  }
+                  // If response.success is true and image was already available,
+                  // server won't emit docker-pull-complete, so we need to check
+                  // But the server now always emits docker-pull-complete after pulling,
+                  // and returns success: true immediately if already available (no pull needed)
+                  // So if we get success: true from callback AND no complete event comes,
+                  // it means the image was already available
+                  if (
+                    response.success &&
+                    dockerCheck.workerImage?.isAvailable
+                  ) {
+                    // Image was already available - shouldn't reach here
+                    // but handle it just in case
+                    if (!resolved) {
+                      resolved = true;
+                      socket.off("docker-pull-progress", handleProgress);
+                      socket.off("docker-pull-complete", handleComplete);
+                      resolve({ success: true });
+                    }
+                  }
                 });
+
+                // Timeout after 15 minutes in case something goes wrong
+                setTimeout(() => {
+                  if (!resolved) {
+                    resolved = true;
+                    socket.off("docker-pull-progress", handleProgress);
+                    socket.off("docker-pull-complete", handleComplete);
+                    reject(new Error("Docker pull timed out"));
+                  }
+                }, 15 * 60 * 1000);
               });
 
-              if (!pullResult.success) {
-                toast.dismiss(pullToastId);
+              if (!pullComplete.success) {
                 toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
+                  pullComplete.error ||
+                    `Failed to pull Docker image "${imageName}"`,
+                  { id: pullToastId }
                 );
                 return;
               }
 
-              toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
+              toast.success("Docker image ready", {
+                id: pullToastId,
+                description: imageName,
+              });
             } catch (pullError) {
-              toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              toast.error(
+                pullError instanceof Error
+                  ? pullError.message
+                  : `Failed to pull Docker image "${imageName}"`,
+                { id: pullToastId }
+              );
               return;
             }
           }

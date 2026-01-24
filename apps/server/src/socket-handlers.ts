@@ -2539,6 +2539,11 @@ ${title}`;
         return;
       }
 
+      // Track if we've already acknowledged to know whether to use callback or event for errors
+      let acknowledged = false;
+      let imageName =
+        process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest";
+
       try {
         const { checkDockerStatus } = await import(
           "@cmux/shared/providers/common/check-docker"
@@ -2553,7 +2558,7 @@ ${title}`;
           return;
         }
 
-        const imageName =
+        imageName =
           docker.workerImage?.name ||
           process.env.WORKER_IMAGE_NAME ||
           "docker.io/manaflow/cmux:latest";
@@ -2579,12 +2584,24 @@ ${title}`;
 
         serverLogger.info(`Starting Docker pull for image: ${imageName}`);
 
+        // Immediately acknowledge the request to prevent RPC timeout
+        // The client will listen for docker-pull-progress and docker-pull-complete events
+        callback({
+          success: true,
+          imageName,
+        });
+        acknowledged = true;
+
         // Use dockerode to pull the image
         const dockerClient = DockerVSCodeInstance.getDocker();
 
         const stream = await dockerClient.pull(imageName);
 
-        // Wait for the pull to complete
+        // Track progress for throttling updates
+        let lastProgressUpdate = 0;
+        const PROGRESS_THROTTLE_MS = 250; // Update at most every 250ms
+
+        // Wait for the pull to complete, emitting progress events
         await new Promise<void>((resolve, reject) => {
           dockerClient.modem.followProgress(
             stream,
@@ -2595,18 +2612,36 @@ ${title}`;
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
+            (event: {
+              status: string;
+              progress?: string;
+              id?: string;
+              progressDetail?: { current?: number; total?: number };
+            }) => {
               if (event.status) {
                 serverLogger.info(
                   `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
                 );
+
+                // Throttle progress updates to avoid flooding the client
+                const now = Date.now();
+                if (now - lastProgressUpdate >= PROGRESS_THROTTLE_MS) {
+                  lastProgressUpdate = now;
+                  rt.emit("docker-pull-progress", {
+                    imageName,
+                    status: event.status,
+                    layerId: event.id,
+                    progress: event.progress,
+                    progressDetail: event.progressDetail,
+                  });
+                }
               }
             }
           );
         });
 
         serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
-        callback({
+        rt.emit("docker-pull-complete", {
           success: true,
           imageName,
         });
@@ -2645,10 +2680,21 @@ ${title}`;
           userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
         }
 
-        callback({
-          success: false,
-          error: userFriendlyError,
-        });
+        if (acknowledged) {
+          // Already acknowledged, emit failure via event
+          rt.emit("docker-pull-complete", {
+            success: false,
+            imageName,
+            error: userFriendlyError,
+          });
+        } else {
+          // Not yet acknowledged, send error via callback
+          callback({
+            success: false,
+            imageName,
+            error: userFriendlyError,
+          });
+        }
       }
     });
 
