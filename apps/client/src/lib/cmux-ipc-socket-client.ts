@@ -126,6 +126,18 @@ export class CmuxIpcSocketClient {
   ) {
     const key = String(event);
     const last = args[args.length - 1];
+
+    // Guard against emitting before connection is established
+    if (!this.connected) {
+      const message = `Socket not connected. Cannot emit '${key}'.`;
+      console.error("[CmuxIpcSocketClient]", message);
+      if (typeof last === "function") {
+        const cb = last as (result?: unknown) => void;
+        cb({ error: message });
+      }
+      return this;
+    }
+
     if (typeof last === "function") {
       const cb = last as (result?: unknown) => void;
       const data = args.slice(0, -1);

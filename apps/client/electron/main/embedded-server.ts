@@ -268,35 +268,27 @@ function createIPCRealtimeServer(): RealtimeServer {
       event,
       { event: eventName, args }: { event: string; args: unknown[] },
     ) => {
-      // Basic payload validation
-      const toSerializableError = (e: unknown) => {
+      // Helper to create a proper Error object for IPC serialization.
+      // Electron IPC serializes Error objects correctly, but plain objects
+      // become [object Object]. Always throw Error instances.
+      const toError = (e: unknown): Error => {
         if (e instanceof Error) {
-          return { name: e.name, message: e.message, stack: e.stack };
+          return e;
         }
         const msg = typeof e === "string" ? e : JSON.stringify(e);
-        return {
-          name: "Error",
-          message: msg,
-          stack: undefined as string | undefined,
-        };
+        return new Error(msg);
       };
       if (typeof eventName !== "string" || !Array.isArray(args)) {
-        return Promise.reject(
-          toSerializableError(new Error("Invalid RPC payload")),
-        );
+        throw new Error("Invalid RPC payload");
       }
       const socketId = webContentsToSocketId.get(event.sender.id);
-      if (!socketId)
-        return Promise.reject(
-          toSerializableError(
-            new Error("Socket not registered. Call register first."),
-          ),
-        );
+      if (!socketId) {
+        throw new Error("Socket not registered. Call register first.");
+      }
       const socket = sockets.get(socketId);
-      if (!socket)
-        return Promise.reject(
-          toSerializableError(new Error("Socket not found for sender")),
-        );
+      if (!socket) {
+        throw new Error("Socket not found for sender");
+      }
 
       // Execute through middlewares then call the first handler with ack
       return await new Promise((resolve, reject) => {
@@ -312,18 +304,13 @@ function createIPCRealtimeServer(): RealtimeServer {
             fn(safe);
           } catch (e) {
             // Fall back to rejecting with a clear error
-            const err =
-              e instanceof Error
-                ? e
-                : new Error(`Non-serializable RPC result: ${String(e)}`);
-            reject(toSerializableError(err));
+            reject(toError(e));
           }
         };
         const rejectOnce = (e: unknown) => {
           if (settled) return;
           settled = true;
-          const err = e instanceof Error ? e : new Error(String(e));
-          reject(toSerializableError(err));
+          reject(toError(e));
         };
 
         // Safety timeout so invoke doesn't hang forever if ack is never called

@@ -75,8 +75,15 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
         setAvailableEditors(editors);
       });
 
-      // Connect the socket
-      createdSocket.connect();
+      // Connect the socket and wait for registration to complete.
+      // This prevents race conditions where emit() is called before the
+      // server-side socket handler has registered the connection.
+      try {
+        await createdSocket.connect();
+      } catch (error) {
+        console.error("[ElectronSocket] Failed to connect:", error);
+        return;
+      }
 
       if (!disposed) {
         setSocket(createdSocket);
