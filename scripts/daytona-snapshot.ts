@@ -141,8 +141,15 @@ try {
   await runCommand("devcontainer --version");
 
   const { url } = await sandbox.getPreviewLink(39377);
+  const taskRunJwt = process.env.CMUX_TASK_RUN_JWT;
+  if (!taskRunJwt) {
+    throw new Error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+  }
 
-  const managementSocket = connectToWorkerManagement({ url });
+  const managementSocket = connectToWorkerManagement({
+    url,
+    authToken: taskRunJwt,
+  });
 
   managementSocket.on("connect", () => {
     console.log("Connected to worker management port");
@@ -164,7 +171,7 @@ try {
         cwd: "/",
         backend: "tmux",
         taskRunContext: {
-          taskRunToken: "daytona-snapshot-token",
+          taskRunToken: taskRunJwt,
           prompt: prompt,
           convexUrl,
         },

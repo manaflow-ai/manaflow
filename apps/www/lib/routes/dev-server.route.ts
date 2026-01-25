@@ -4,6 +4,8 @@ import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { env } from "@/lib/utils/www-env";
 import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 import type { WorkerToServerEvents, ServerToWorkerEvents } from "@cmux/shared";
+import { getUserFromRequest } from "@/lib/utils/auth";
+import { SignJWT } from "jose";
 
 // Define the request schema based on StartTaskSchema
 const StartDevServerSchema = z.object({
@@ -135,6 +137,14 @@ const startDevServerRoute = createRoute({
       },
       description: "Development server started successfully",
     },
+    401: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Unauthorized",
+    },
     500: {
       content: {
         "application/json": {
@@ -151,11 +161,42 @@ const startDevServerRoute = createRoute({
 });
 
 devServerRouter.openapi(startDevServerRoute, async (c) => {
+  const user = await getUserFromRequest(c.req.raw);
+  if (!user) {
+    return c.json(
+      {
+        code: 401,
+        message: "Unauthorized",
+      },
+      401
+    );
+  }
+  const { accessToken } = await user.getAuthJson();
+  if (!accessToken) {
+    return c.json(
+      {
+        code: 401,
+        message: "Unauthorized",
+      },
+      401
+    );
+  }
+
   const body = c.req.valid("json");
 
-  const client = new MorphCloudClient();
+  const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
   let instance: Awaited<ReturnType<typeof client.instances.start>> | null = null;
   let stopInstanceOnError = false;
+
+  const taskRunJwt = await new SignJWT({
+    taskRunId: body.taskId,
+    teamId: user.id,
+    userId: user.id,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
   try {
     // Start the instance with provided or default snapshot
@@ -165,6 +206,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
       ttlAction: "pause",
       metadata: {
         app: "cmux",
+        userId: user.id,
         taskId: body.taskId,
         repo: body.repoUrl,
         branch: body.branch || "main",
@@ -210,6 +252,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     const clientSocket: Socket<WorkerToServerEvents, ServerToWorkerEvents> =
       connectToWorkerManagement({
         url: workerService.url,
+        authToken: taskRunJwt,
         timeoutMs: 10_000,
         reconnectionAttempts: 3,
       });
@@ -259,7 +302,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
             command,
             backend: "tmux",
             taskRunContext: {
-              taskRunToken: "dev-server-placeholder-token",
+              taskRunToken: taskRunJwt,
               prompt: body.taskDescription,
               convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
             },

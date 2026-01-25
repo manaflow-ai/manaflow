@@ -25,6 +25,40 @@ function sanitizeForLogging(str: string): string {
   );
 }
 
+const INVALID_GIT_URL_PATTERN = /[\s"'`\\<>|;]/;
+const INVALID_GIT_REF_PATTERN = /[\s~^:?*\[\]\\]/;
+
+function assertSafeGitUrl(value: string, context: string): void {
+  if (!value || value.trim().length === 0) {
+    throw new Error(`Missing ${context}`);
+  }
+  if (INVALID_GIT_URL_PATTERN.test(value)) {
+    throw new Error(`Invalid ${context}: contains unsafe characters`);
+  }
+}
+
+function assertSafeGitRef(ref: string, context: string): void {
+  if (!ref || ref.trim().length === 0) {
+    throw new Error(`Missing ${context}`);
+  }
+  if (ref.startsWith("-")) {
+    throw new Error(`Invalid ${context}: must not start with '-'`);
+  }
+  if (INVALID_GIT_REF_PATTERN.test(ref)) {
+    throw new Error(`Invalid ${context}: contains unsafe characters`);
+  }
+  if (
+    ref.includes("..") ||
+    ref.includes("@{") ||
+    ref.startsWith("/") ||
+    ref.endsWith("/") ||
+    ref.includes("//") ||
+    ref.endsWith(".lock")
+  ) {
+    throw new Error(`Invalid ${context}: contains disallowed sequences`);
+  }
+}
+
 interface RepositoryOperation {
   promise: Promise<void>;
   timestamp: number;
@@ -375,6 +409,7 @@ export class RepositoryManager {
     authenticatedUrl?: string
   ): Promise<string> {
     if (authenticatedUrl) {
+      assertSafeGitUrl(authenticatedUrl, "authenticatedUrl");
       return `"${authenticatedUrl}"`;
     }
 
@@ -416,6 +451,7 @@ export class RepositoryManager {
     ttlMs = 30 * 60 * 1000,
     authenticatedUrl?: string
   ): Promise<void> {
+    assertSafeGitRef(branch, "branch");
     const gitDir = await this.getGitDir(repoPath);
     const stamp = path.join(gitDir, "cmux-prewarm.stamp");
     try {
@@ -483,6 +519,7 @@ export class RepositoryManager {
     ttlMs = 20_000,
     authenticatedUrl?: string
   ): Promise<void> {
+    assertSafeGitRef(branch, "branch");
     const safeBranch = branch.replace(/[^a-zA-Z0-9._-]/g, "_");
     const gitDir = await this.getGitDir(repoPath);
     const stamp = path.join(gitDir, `cmux-fetch-${safeBranch}.stamp`);
@@ -549,6 +586,14 @@ export class RepositoryManager {
   ): Promise<void> {
     this.cleanupStaleOperations();
 
+    assertSafeGitUrl(repoUrl, "repoUrl");
+    if (remoteUrl) {
+      assertSafeGitUrl(remoteUrl, "remoteUrl");
+    }
+    if (branch) {
+      assertSafeGitRef(branch, "branch");
+    }
+
     // Use remoteUrl for storage if provided, otherwise use repoUrl
     const urlForRemote = remoteUrl ?? repoUrl;
 
@@ -581,6 +626,7 @@ export class RepositoryManager {
 
     // Only fetch if a specific branch was requested or if we detected a branch
     if (targetBranch) {
+      assertSafeGitRef(targetBranch, "branch");
       await this.handleFetchOperation(repoUrl, originPath, targetBranch);
     }
   }
@@ -679,6 +725,8 @@ export class RepositoryManager {
     originPath: string,
     branch: string
   ): Promise<void> {
+    assertSafeGitUrl(repoUrl, "repoUrl");
+    assertSafeGitRef(branch, "branch");
     // Similarly, key fetch operations by branch and destination path so that
     // concurrent clones of the same repo in different origins don't conflict.
     const fetchKey = this.getCacheKey(repoUrl, `fetch:${branch}:${originPath}`);
@@ -846,6 +894,7 @@ export class RepositoryManager {
     branch: string,
     authenticatedUrl?: string
   ): Promise<void> {
+    assertSafeGitRef(branch, "branch");
     const pullFlags =
       this.config.pullStrategy === "rebase"
         ? "--rebase"
@@ -906,6 +955,7 @@ export class RepositoryManager {
     branch: string,
     authenticatedUrl?: string
   ): Promise<void> {
+    assertSafeGitRef(branch, "branch");
     serverLogger.info(`Fetching and checking out branch ${branch}...`);
     try {
       // Always fetch and checkout explicitly to reduce reliance on shell availability for rev-parse
@@ -925,6 +975,7 @@ export class RepositoryManager {
     branch: string,
     authenticatedUrl?: string
   ): Promise<void> {
+    assertSafeGitRef(branch, "branch");
     // Fetch the specific branch and explicitly update the remote-tracking ref
     // even if the clone was created with --single-branch.
     // Force-update the remote-tracking ref to tolerate non-fast-forward updates
@@ -1043,6 +1094,8 @@ export class RepositoryManager {
     baseBranch: string = "main",
     authenticatedUrl?: string
   ): Promise<string> {
+    assertSafeGitRef(branchName, "branch");
+    assertSafeGitRef(baseBranch, "base branch");
     // In-process lock keyed by repo+branch to avoid concurrent add for same branch
     const inProcessLockKey = `${originPath}::${branchName}`;
     const existingLock = this.worktreeLocks.get(inProcessLockKey);
@@ -1286,6 +1339,7 @@ export class RepositoryManager {
     worktreePath: string,
     branchName: string
   ): Promise<void> {
+    assertSafeGitRef(branchName, "branch");
     try {
       await this.executeGitCommand(
         `git config branch.${branchName}.remote origin`,

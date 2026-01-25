@@ -118,11 +118,20 @@ async function createTerminalWithPrompt(
   prompt: string
 ): Promise<void> {
   const workerUrl = `http://localhost:${workerPort}`;
+  const taskRunToken = process.env.CMUX_TASK_RUN_JWT;
+  if (!taskRunToken) {
+    throw new Error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+  }
 
   console.log(`Connecting to worker at ${workerUrl}...`);
 
   // Connect to worker
-  const socket = connectToWorkerManagement({ url: workerUrl, timeoutMs: 10_000, reconnectionAttempts: 0 });
+  const socket = connectToWorkerManagement({
+    url: workerUrl,
+    authToken: taskRunToken,
+    timeoutMs: 10_000,
+    reconnectionAttempts: 0,
+  });
 
   return new Promise((resolve, reject) => {
     socket.on("connect", () => {
@@ -157,7 +166,7 @@ async function createTerminalWithPrompt(
           env: {},
           backend: "tmux",
           taskRunContext: {
-            taskRunToken: "spawn-vscode-minimal-token",
+            taskRunToken,
             prompt,
             convexUrl,
           },

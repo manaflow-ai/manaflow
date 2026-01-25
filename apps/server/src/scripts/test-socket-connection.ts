@@ -4,6 +4,11 @@ import { DockerVSCodeInstance } from "../vscode/DockerVSCodeInstance";
 
 async function main() {
   console.log("=== Testing Socket Connection ===\n");
+  const taskRunJwt = process.env.CMUX_TASK_RUN_JWT;
+  if (!taskRunJwt) {
+    console.error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+    process.exit(1);
+  }
 
   // Create VSCode instance
   const vscodeInstance = new DockerVSCodeInstance({
@@ -11,6 +16,7 @@ async function main() {
     taskRunId: "test-task-run-id" as Id<"taskRuns">, // Add required taskRunId for testing
     taskId: "test-task-id" as Id<"tasks">, // Add required taskId for testing
     teamSlugOrId: "default",
+    taskRunJwt,
   });
 
   try {
@@ -67,7 +73,7 @@ async function main() {
       env: {},
       backend: "tmux" as const,
       taskRunContext: {
-        taskRunToken: "test-socket-connection-token",
+        taskRunToken: taskRunJwt,
         prompt: "Echo Hello World",
         convexUrl,
       },

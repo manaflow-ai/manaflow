@@ -50,6 +50,12 @@ import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
+import {
+  assertSafeRepoUrl,
+  assertSafeWorkspaceName,
+  assertValidBranchName,
+  normalizeGitHubRepoUrl,
+} from "./utils/gitValidation";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
 import {
@@ -436,6 +442,25 @@ export function setupSocketHandlers(
           );
         }
 
+        let repoUrl = parsed.repoUrl;
+        let repoFullName = parsed.repoFullName;
+        if (repoFullName) {
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoFullName)) {
+            throw new Error("Invalid repository name");
+          }
+        }
+        if (repoUrl) {
+          const normalized = normalizeGitHubRepoUrl(repoUrl);
+          if (!normalized) {
+            throw new Error("Invalid repository URL");
+          }
+          repoUrl = normalized.repoUrl;
+          repoFullName = repoFullName ?? normalized.repoFullName;
+        }
+        if (repoUrl) {
+          repoUrl = assertSafeRepoUrl(repoUrl);
+        }
+
         const diffs = await runWithAuth(
           currentAuthToken,
           currentAuthHeaderJson,
@@ -443,8 +468,8 @@ export function setupSocketHandlers(
             getGitDiff({
               headRef: parsed.headRef,
               baseRef: parsed.baseRef,
-              repoFullName: parsed.repoFullName,
-              repoUrl: parsed.repoUrl,
+              repoFullName,
+              repoUrl,
               originPathOverride: parsed.originPathOverride,
               includeContents: parsed.includeContents ?? true,
               maxBytes: parsed.maxBytes,
@@ -571,6 +596,40 @@ export function setupSocketHandlers(
       const taskData = taskDataParseResult.data;
       serverLogger.info("starting task!", taskData);
       const taskId = taskData.taskId;
+      let repoUrl = taskData.repoUrl;
+      let branch = taskData.branch;
+      const projectFullName = taskData.projectFullName.trim();
+      if (
+        !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(projectFullName)
+      ) {
+        callback({
+          taskId,
+          error: "Invalid repository name.",
+        });
+        return;
+      }
+      try {
+        if (repoUrl) {
+          const normalized = normalizeGitHubRepoUrl(repoUrl);
+          if (!normalized) {
+            throw new Error("Invalid repository URL");
+          }
+          if (normalized.repoFullName !== projectFullName) {
+            throw new Error("Repository URL does not match project name");
+          }
+          repoUrl = normalized.repoUrl;
+        } else {
+          repoUrl = `https://github.com/${projectFullName}.git`;
+        }
+        repoUrl = assertSafeRepoUrl(repoUrl);
+        branch = assertValidBranchName(branch, "branch");
+      } catch (error) {
+        callback({
+          taskId,
+          error: error instanceof Error ? error.message : "Invalid git inputs",
+        });
+        return;
+      }
       try {
         // In web mode, local (Docker) tasks are not supported
         if (env.NEXT_PUBLIC_WEB_MODE && !taskData.isCloudMode) {
@@ -714,8 +773,8 @@ export function setupSocketHandlers(
             const agentResults = await spawnAllAgents(
               taskId,
               {
-                repoUrl: taskData.repoUrl,
-                branch: taskData.branch,
+                repoUrl,
+                branch,
                 taskDescription: taskData.taskDescription,
                 prTitle: generatedTitle ?? undefined,
                 branchNames, // Pass pre-generated branch names to avoid second API call
@@ -917,12 +976,38 @@ export function setupSocketHandlers(
           return;
         }
 
-        const repoUrl =
+        let repoUrl =
           explicitRepoUrl ??
           (projectFullName
             ? `https://github.com/${projectFullName}.git`
             : undefined);
-        const branch = requestedBranch?.trim();
+        let branch = requestedBranch?.trim();
+        try {
+          if (explicitRepoUrl) {
+            const normalized = normalizeGitHubRepoUrl(explicitRepoUrl);
+            if (!normalized) {
+              throw new Error("Invalid repository URL");
+            }
+            if (
+              projectFullName &&
+              normalized.repoFullName !== projectFullName
+            ) {
+              throw new Error("Repository URL does not match project name");
+            }
+            repoUrl = normalized.repoUrl;
+          }
+          if (repoUrl) {
+            repoUrl = assertSafeRepoUrl(repoUrl);
+          }
+          branch = assertValidBranchName(branch, "branch");
+        } catch (error) {
+          callback({
+            success: false,
+            error:
+              error instanceof Error ? error.message : "Invalid git inputs",
+          });
+          return;
+        }
 
         let workspaceConfig: WorkspaceConfigResponse | null = null;
         if (projectFullName) {
@@ -953,6 +1038,20 @@ export function setupSocketHandlers(
         let taskRunId: Id<"taskRuns"> | null =
           providedTaskRunId !== undefined ? providedTaskRunId : null;
         let workspaceName: string | null = providedWorkspaceName ?? null;
+        if (workspaceName) {
+          try {
+            workspaceName = assertSafeWorkspaceName(workspaceName);
+          } catch (error) {
+            callback({
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Invalid workspace name",
+            });
+            return;
+          }
+        }
         let descriptor: string | null = providedDescriptor ?? null;
         let workspacePath: string | null = null;
         let cleanupWorkspace: (() => Promise<void>) | null = null;
@@ -1368,6 +1467,49 @@ export function setupSocketHandlers(
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        const normalizedProjectFullName = projectFullName?.trim();
+        let normalizedRepoUrl = repoUrl;
+        if (normalizedProjectFullName) {
+          if (
+            !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(
+              normalizedProjectFullName
+            )
+          ) {
+            callback({
+              success: false,
+              error: "Invalid repository name.",
+            });
+            return;
+          }
+        }
+        try {
+          if (normalizedRepoUrl) {
+            const normalized = normalizeGitHubRepoUrl(normalizedRepoUrl);
+            if (!normalized) {
+              throw new Error("Invalid repository URL");
+            }
+            if (
+              normalizedProjectFullName &&
+              normalized.repoFullName !== normalizedProjectFullName
+            ) {
+              throw new Error("Repository URL does not match project name");
+            }
+            normalizedRepoUrl = normalized.repoUrl;
+          }
+          if (!environmentId && normalizedProjectFullName && !normalizedRepoUrl) {
+            normalizedRepoUrl = `https://github.com/${normalizedProjectFullName}.git`;
+          }
+          if (normalizedRepoUrl) {
+            normalizedRepoUrl = assertSafeRepoUrl(normalizedRepoUrl);
+          }
+        } catch (error) {
+          callback({
+            success: false,
+            error:
+              error instanceof Error ? error.message : "Invalid git inputs",
+          });
+          return;
+        }
 
         const convex = getConvex();
         const taskId: Id<"tasks"> | undefined = providedTaskId;
@@ -1443,7 +1585,7 @@ export function setupSocketHandlers(
               isCloudWorkspace: true,
               ...(environmentId
                 ? { environmentId }
-                : { projectFullName, repoUrl }),
+                : { projectFullName: normalizedProjectFullName, repoUrl: normalizedRepoUrl }),
             },
           });
 
@@ -1899,6 +2041,28 @@ export function setupSocketHandlers(
           pattern,
           environmentId,
         } = ListFilesRequestSchema.parse(data);
+        let normalizedRepoUrl = repoUrl;
+        let normalizedBranch = branch;
+        try {
+          if (normalizedRepoUrl) {
+            const normalized = normalizeGitHubRepoUrl(normalizedRepoUrl);
+            if (!normalized) {
+              throw new Error("Invalid repository URL");
+            }
+            normalizedRepoUrl = normalized.repoUrl;
+          }
+          if (normalizedRepoUrl) {
+            normalizedRepoUrl = assertSafeRepoUrl(normalizedRepoUrl);
+          }
+          normalizedBranch = assertValidBranchName(normalizedBranch, "branch");
+        } catch (error) {
+          socket.emit("list-files-response", {
+            files: [],
+            error:
+              error instanceof Error ? error.message : "Invalid git inputs",
+          });
+          return;
+        }
         const repoManager = RepositoryManager.getInstance();
 
         const ignoredPatterns = [
@@ -2105,10 +2269,10 @@ export function setupSocketHandlers(
           return;
         }
 
-        if (repoUrl) {
+        if (normalizedRepoUrl) {
           const fileList = await listFilesForRepo({
-            targetRepoUrl: repoUrl,
-            branchOverride: branch,
+            targetRepoUrl: normalizedRepoUrl,
+            branchOverride: normalizedBranch,
           });
           socket.emit("list-files-response", { files: fileList });
           return;

@@ -47,6 +47,7 @@ export type MainServerSocket = Socket<
 
 export interface WorkerManagementClientParams {
   url: string; // base worker URL, e.g., http://host:39377
+  authToken?: string;
   timeoutMs?: number;
   reconnectionAttempts?: number;
   forceNew?: boolean;
@@ -57,12 +58,15 @@ export function connectToWorkerManagement(
 ): Socket<WorkerToServerEvents, ServerToWorkerEvents> {
   const {
     url,
+    authToken,
     timeoutMs = 30_000,
     reconnectionAttempts = 10,
     forceNew = true,
   } = params;
 
   return io(`${url}/management`, {
+    auth: authToken ? { token: authToken } : undefined,
+    extraHeaders: authToken ? { "x-cmux-token": authToken } : undefined,
     reconnection: true,
     reconnectionAttempts,
     reconnectionDelay: 2000,

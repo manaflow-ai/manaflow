@@ -8,6 +8,11 @@ async function main() {
     console.error("Usage: spawn-vscode-with-class.ts <prompt>");
     process.exit(1);
   }
+  const taskRunJwt = process.env.CMUX_TASK_RUN_JWT;
+  if (!taskRunJwt) {
+    console.error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+    process.exit(1);
+  }
 
   console.log(`Spawning VSCode with prompt: ${prompt}`);
 
@@ -17,6 +22,7 @@ async function main() {
     taskRunId: "test-task-run-id" as Id<"taskRuns">, // Add required taskRunId for testing
     taskId: "test-task-id" as Id<"tasks">, // Add required taskId for testing
     teamSlugOrId: "default",
+    taskRunJwt,
   });
 
   try {
@@ -100,7 +106,7 @@ async function main() {
             },
           ],
           taskRunContext: {
-            taskRunToken: "spawn-vscode-with-class-token",
+            taskRunToken: taskRunJwt,
             prompt,
             convexUrl,
           },

@@ -4,6 +4,10 @@ import readline from "readline";
 import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 
 const client = new MorphCloudClient();
+const taskRunJwt = process.env.CMUX_TASK_RUN_JWT;
+if (!taskRunJwt) {
+  throw new Error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+}
 
 console.log("Starting instance");
 const instance = await client.instances.start({
@@ -108,6 +112,7 @@ console.log("workerUrl", workerUrl.toString());
 // connect to the worker management namespace with socketio
 const clientSocket = connectToWorkerManagement({
   url: workerService.url,
+  authToken: taskRunJwt,
   timeoutMs: 10_000,
   reconnectionAttempts: 3,
   forceNew: true,

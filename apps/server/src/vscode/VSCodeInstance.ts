@@ -84,9 +84,17 @@ export abstract class VSCodeInstance extends EventEmitter {
       `[VSCodeInstance ${this.instanceId}] Connecting to worker at ${workerUrl}`
     );
 
+    const authToken = this.config.taskRunJwt;
+    if (!authToken) {
+      dockerLogger.warn(
+        `[VSCodeInstance ${this.instanceId}] Missing taskRunJwt; worker auth may fail`
+      );
+    }
+
     return new Promise((resolve, reject) => {
       this.workerSocket = connectToWorkerManagement({
         url: workerUrl,
+        authToken,
         timeoutMs: 30_000,
         reconnectionAttempts: 10,
         forceNew: true,

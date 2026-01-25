@@ -83,7 +83,8 @@ else
   HOST_OUTPUT_DIR="$HOST_OUTPUT_ROOT/cmux-screenshots-latest"
 fi
 
-POLLING_BASE="http://localhost:${WORKER_PORT}/socket.io/?EIO=4&transport=polling"
+ENCODED_TOKEN=$(node -e "process.stdout.write(encodeURIComponent(process.env.CMUX_TASK_RUN_JWT || ''))")
+POLLING_BASE="http://localhost:${WORKER_PORT}/socket.io/?EIO=4&transport=polling&token=${ENCODED_TOKEN}"
 
 container_started=false
 
@@ -113,6 +114,10 @@ fi
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Error: ANTHROPIC_API_KEY not set. Add it to your environment or .env before running." >&2
+  exit 1
+fi
+if [ -z "${CMUX_TASK_RUN_JWT:-}" ]; then
+  echo "Error: CMUX_TASK_RUN_JWT not set. Add it to your environment or .env before running." >&2
   exit 1
 fi
 

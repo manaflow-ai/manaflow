@@ -7,10 +7,20 @@ async function main() {
     console.error("Usage: test-simple-socket.ts <worker-url>");
     process.exit(1);
   }
+  const authToken = process.env.CMUX_TASK_RUN_JWT;
+  if (!authToken) {
+    console.error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+    process.exit(1);
+  }
 
   console.log(`Connecting to ${workerUrl}/management...`);
   
-  const socket = connectToWorkerManagement({ url: workerUrl, timeoutMs: 10_000, reconnectionAttempts: 0 });
+  const socket = connectToWorkerManagement({
+    url: workerUrl,
+    authToken,
+    timeoutMs: 10_000,
+    reconnectionAttempts: 0,
+  });
 
   socket.on("connect", () => {
     console.log("Connected! Socket ID:", socket.id);

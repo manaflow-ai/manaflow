@@ -500,6 +500,7 @@ export async function spawnAgent(
         theme: options.theme,
         teamSlugOrId,
         envVars,
+        taskRunJwt,
       });
     }
 

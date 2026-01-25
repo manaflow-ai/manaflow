@@ -1186,6 +1186,10 @@ export type PostApiDevServerStartData = {
 
 export type PostApiDevServerStartErrors = {
     /**
+     * Unauthorized
+     */
+    401: ErrorResponse;
+    /**
      * Failed to start development server
      */
     500: ErrorResponse;
@@ -2560,6 +2564,10 @@ export type PostApiSandboxesByIdStopErrors = {
      */
     401: unknown;
     /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
      * Not found
      */
     404: unknown;
@@ -2592,6 +2600,14 @@ export type GetApiSandboxesByIdStatusErrors = {
      * Unauthorized
      */
     401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Not found
+     */
+    404: unknown;
     /**
      * Failed to get status
      */
@@ -2629,6 +2645,14 @@ export type PostApiSandboxesByIdPublishDevcontainerErrors = {
      * Unauthorized
      */
     401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
     /**
      * Failed to publish devcontainer networking
      */

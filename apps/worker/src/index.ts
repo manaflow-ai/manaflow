@@ -390,6 +390,57 @@ const hasTaskRunId = (
 
 const pendingEvents: PendingEvent[] = [];
 
+const extractManagementAuthToken = (
+  socket: Socket<ServerToWorkerEvents, WorkerToServerEvents>
+): string | null => {
+  const authToken = socket.handshake.auth?.token;
+  if (typeof authToken === "string" && authToken.length > 0) {
+    return authToken;
+  }
+
+  const headerToken = socket.handshake.headers["x-cmux-token"];
+  if (Array.isArray(headerToken)) {
+    return headerToken[0] ?? null;
+  }
+  if (typeof headerToken === "string" && headerToken.length > 0) {
+    return headerToken;
+  }
+
+  const queryToken = socket.handshake.query?.token;
+  if (Array.isArray(queryToken)) {
+    return queryToken[0] ?? null;
+  }
+  if (typeof queryToken === "string" && queryToken.length > 0) {
+    return queryToken;
+  }
+
+  return null;
+};
+
+const authorizeManagementSocket = async (
+  socket: Socket<ServerToWorkerEvents, WorkerToServerEvents>
+): Promise<boolean> => {
+  const secret = process.env.CMUX_TASK_RUN_JWT_SECRET;
+  if (!secret) {
+    log("ERROR", "CMUX_TASK_RUN_JWT_SECRET is not set; rejecting management connection");
+    return false;
+  }
+
+  const token = extractManagementAuthToken(socket);
+  if (!token) {
+    log("WARNING", "Management connection missing auth token");
+    return false;
+  }
+
+  try {
+    await verifyTaskRunToken(token, secret);
+    return true;
+  } catch (error) {
+    log("ERROR", "Invalid task run token for management connection", error);
+    return false;
+  }
+};
+
 /**
  * Emit an event to the main server, queuing it if not connected
  */
@@ -508,6 +559,13 @@ function registerWithMainServer(
 
 // Management socket server (main server connects to this)
 managementIO.on("connection", (socket) => {
+  void (async () => {
+    const authorized = await authorizeManagementSocket(socket);
+    if (!authorized) {
+      socket.disconnect(true);
+      return;
+    }
+
   log(
     "INFO",
     `Main server connected to worker ${WORKER_ID}`,
@@ -1175,6 +1233,10 @@ managementIO.on("connection", (socket) => {
         }
       );
     }
+  });
+  })().catch((error) => {
+    log("ERROR", "Failed to authorize management connection", error);
+    socket.disconnect(true);
   });
 });
 

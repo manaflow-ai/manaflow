@@ -2,6 +2,7 @@ import { api } from "@cmux/convex/api";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
+import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { RepositoryManager } from "./repositoryManager";
 import { getConvex } from "./utils/convexClient";
 import { serverLogger } from "./utils/fileLogger";
@@ -37,13 +38,42 @@ async function getAppDataPath(): Promise<string> {
 }
 
 function extractRepoName(repoUrl: string): string {
-  const match = repoUrl.match(/([^/]+)\.git$/);
-  if (match) {
-    return match[1];
+  const normalized = stripUrlCredentials(repoUrl);
+  const parsed = parseGithubRepoUrl(normalized);
+  if (parsed?.repo) {
+    return parsed.repo;
   }
 
-  const parts = repoUrl.split("/");
-  return parts[parts.length - 1] || "unknown-repo";
+  const match = normalized.match(/([^/]+)\.git$/);
+  if (match) {
+    return sanitizeRepoName(match[1]);
+  }
+
+  const parts = normalized.split("/");
+  const candidate = parts[parts.length - 1] || "";
+  return sanitizeRepoName(candidate);
+}
+
+function stripUrlCredentials(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = "";
+      url.password = "";
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function sanitizeRepoName(value: string): string {
+  const cleaned = value.trim().replace(/[^a-zA-Z0-9._-]/g, "-");
+  const trimmed = cleaned.replace(/^[-.]+|[-.]+$/g, "");
+  if (!trimmed || trimmed === "." || trimmed === "..") {
+    return "unknown-repo";
+  }
+  return trimmed.slice(0, 100);
 }
 
 export async function getWorktreePath(

@@ -22,6 +22,11 @@ if (!vscodeService || !workerService || !proxyService || !vncService || !cdpServ
   throw new Error("VSCode, worker, proxy, VNC, or DevTools service not found");
 }
 
+const taskRunJwt = process.env.CMUX_TASK_RUN_JWT;
+if (!taskRunJwt) {
+  throw new Error("CMUX_TASK_RUN_JWT is required to authenticate with the worker");
+}
+
 console.log(`VSCode: ${vscodeService.url}/?folder=/root/workspace`);
 console.log(`Proxy: ${proxyService.url}`);
 console.log(`VNC: ${vncService.url}/vnc.html`);
@@ -31,6 +36,8 @@ console.log(`DevTools: ${cdpService.url}/json/version`);
 const clientSocket = io(workerService.url + "/management", {
   timeout: 10000,
   reconnectionAttempts: 3,
+  auth: { token: taskRunJwt },
+  extraHeaders: { "x-cmux-token": taskRunJwt },
 }) as Socket<WorkerToServerEvents, ServerToWorkerEvents>;
 
 clientSocket.on("connect", () => {
@@ -48,7 +55,7 @@ clientSocket.on("connect", () => {
       command: "bun x opencode-ai 'whats the time'",
       backend: "tmux",
       taskRunContext: {
-        taskRunToken: "morph-start-snapshot-token",
+        taskRunToken: taskRunJwt,
         prompt: "what's the time",
         convexUrl,
       },
