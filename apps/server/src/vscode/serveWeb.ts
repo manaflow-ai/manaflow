@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
@@ -6,7 +6,6 @@ import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { getLocalVSCodeSettingsSnapshot } from "../utils/editorSettings";
 
 type Logger = {
@@ -15,8 +14,6 @@ type Logger = {
   error: (message: string, ...args: unknown[]) => void;
   debug?: (message: string, ...args: unknown[]) => void;
 };
-
-const execFileAsync = promisify(execFile);
 export const LOCAL_VSCODE_HOST = "localhost";
 const SERVE_WEB_PORT_START = 39_400;
 const SERVE_WEB_MAX_PORT_ATTEMPTS = 200;
@@ -29,7 +26,6 @@ const SERVE_WEB_AGENT_FOLDER = path.join(
 const SERVE_WEB_PROFILE_ID = "default-profile";
 const BUILD_WITH_AGENT_SETTING_KEY = "cmux.buildWithAgent";
 
-let resolvedVSCodeExecutable: string | null = null;
 let currentServeWebBaseUrl: string | null = null;
 let currentServeWebPort: number | null = null;
 
@@ -421,17 +417,38 @@ async function syncLocalVSCodeSettingsForServeWeb(logger: Logger): Promise<void>
   }
 }
 
+/**
+ * Get the VS Code executable path using comprehensive detection.
+ * Uses the new vscodeDetection module for reliable cross-platform detection.
+ */
 async function getVSCodeExecutable(logger: Logger) {
   logger.info("Attempting to resolve VS Code CLI executable for serve-web.");
-  const executable = await resolveVSCodeExecutable(logger);
-  if (!executable) {
+
+  const { getVSCodeInstallation, formatDetectionResultForUser } = await import(
+    "./vscodeDetection"
+  );
+
+  const result = await getVSCodeInstallation(logger);
+
+  if (!result.found || !result.installation) {
+    // Log detailed information for debugging
+    logger.warn(formatDetectionResultForUser(result));
+    // Store the last detection result for retrieval by other modules
+    lastDetectionResult = result;
     return null;
   }
 
+  const executable = result.installation.executablePath;
+  logger.info(
+    `Resolved VS Code CLI executable: ${executable} (${result.installation.variant} via ${result.installation.source})`
+  );
+
+  // Verify it's actually executable
   try {
     if (process.platform !== "win32") {
       await access(executable, fsConstants.X_OK);
     }
+    lastDetectionResult = result;
     return executable;
   } catch (error) {
     logger.error(`VS Code CLI at ${executable} is not executable:`, error);
@@ -439,134 +456,34 @@ async function getVSCodeExecutable(logger: Logger) {
   }
 }
 
-async function resolveVSCodeExecutable(logger: Logger) {
-  if (resolvedVSCodeExecutable) {
-    return resolvedVSCodeExecutable;
-  }
+// Store the last detection result for error reporting
+import type { VSCodeDetectionResult } from "./vscodeDetection";
+let lastDetectionResult: VSCodeDetectionResult | null = null;
 
-  const lookups =
-    process.platform === "win32"
-      ? [
-          { command: "where", args: ["code.cmd"] },
-          { command: "where", args: ["code.exe"] },
-          { command: "where", args: ["code"] },
-        ]
-      : [{ command: "/usr/bin/env", args: ["which", "code"] }];
+/**
+ * Get the last VS Code detection result for error reporting purposes.
+ * This allows socket handlers to provide detailed error messages to users.
+ */
+export function getLastVSCodeDetectionResult(): VSCodeDetectionResult | null {
+  return lastDetectionResult;
+}
 
-  for (const { command, args } of lookups) {
-    try {
-      const { stdout } = await execFileAsync(command, args);
-      const candidate = stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.length > 0);
+/**
+ * Force re-detection of VS Code (useful after user installs it)
+ */
+export async function refreshVSCodeDetection(
+  logger: Logger
+): Promise<VSCodeDetectionResult> {
+  const { getVSCodeInstallation, clearVSCodeDetectionCache } = await import(
+    "./vscodeDetection"
+  );
 
-      if (candidate) {
-        const normalizedCandidate =
-          normalizeVSCodeExecutableCandidate(candidate);
-        resolvedVSCodeExecutable = normalizedCandidate;
-        logger.info(
-          `Resolved VS Code CLI executable: ${
-            normalizedCandidate !== candidate
-              ? `${normalizedCandidate} (from ${candidate})`
-              : normalizedCandidate
-          }`
-        );
-        break;
-      }
-    } catch (error) {
-      logger.debug?.(`VS Code CLI lookup with ${command} failed:`, error);
-    }
-  }
+  clearVSCodeDetectionCache();
 
-  if (!resolvedVSCodeExecutable && process.env.SHELL) {
-    try {
-      const { stdout } = await execFileAsync(process.env.SHELL, [
-        "-lc",
-        "command -v code",
-      ]);
-      const candidate = stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.length > 0);
-      if (candidate) {
-        const normalizedCandidate =
-          normalizeVSCodeExecutableCandidate(candidate);
-        resolvedVSCodeExecutable = normalizedCandidate;
-        logger.info(
-          `Resolved VS Code CLI executable via shell lookup: ${
-            normalizedCandidate !== candidate
-              ? `${normalizedCandidate} (from ${candidate})`
-              : normalizedCandidate
-          }`
-        );
-      }
-    } catch (error) {
-      logger.debug?.(
-        `VS Code CLI SHELL lookup failed (${process.env.SHELL}):`,
-        error
-      );
-    }
-  }
+  const result = await getVSCodeInstallation(logger, { forceRefresh: true });
+  lastDetectionResult = result;
 
-  // Fallback: check common installation paths on macOS
-  if (!resolvedVSCodeExecutable && process.platform === "darwin") {
-    const macOSPaths = [
-      "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-      path.join(
-        os.homedir(),
-        "Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-      ),
-      // VS Code Insiders
-      "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders",
-      path.join(
-        os.homedir(),
-        "Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders"
-      ),
-    ];
-
-    for (const codePath of macOSPaths) {
-      try {
-        await access(codePath, fsConstants.X_OK);
-        resolvedVSCodeExecutable = codePath;
-        logger.info(
-          `Resolved VS Code CLI executable via macOS path lookup: ${codePath}`
-        );
-        break;
-      } catch {
-        logger.debug?.(
-          `VS Code CLI not found at macOS path: ${codePath}`
-        );
-      }
-    }
-  }
-
-  // Fallback: check common installation paths on Linux
-  if (!resolvedVSCodeExecutable && process.platform === "linux") {
-    const linuxPaths = [
-      "/usr/share/code/bin/code",
-      "/usr/bin/code",
-      "/snap/bin/code",
-      path.join(os.homedir(), ".local/share/code/bin/code"),
-    ];
-
-    for (const codePath of linuxPaths) {
-      try {
-        await access(codePath, fsConstants.X_OK);
-        resolvedVSCodeExecutable = codePath;
-        logger.info(
-          `Resolved VS Code CLI executable via Linux path lookup: ${codePath}`
-        );
-        break;
-      } catch {
-        logger.debug?.(
-          `VS Code CLI not found at Linux path: ${codePath}`
-        );
-      }
-    }
-  }
-
-  return resolvedVSCodeExecutable;
+  return result;
 }
 
 /**

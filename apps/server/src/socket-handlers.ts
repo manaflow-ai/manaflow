@@ -66,6 +66,8 @@ import {
   getVSCodeServeWebBaseUrl,
   getVSCodeServeWebPort,
   waitForVSCodeServeWebBaseUrl,
+  getLastVSCodeDetectionResult,
+  refreshVSCodeDetection,
 } from "./vscode/serveWeb";
 import { getProjectPaths } from "./workspace";
 import {
@@ -857,6 +859,80 @@ export function setupSocketHandlers(
       }
     );
 
+    // Handler to check VS Code availability and optionally refresh detection
+    socket.on(
+      "check-vscode-availability",
+      async (
+        data: { refresh?: boolean } | undefined,
+        callback?: (response: {
+          available: boolean;
+          executablePath: string | null;
+          variant: string | null;
+          source: string | null;
+          suggestions: string[];
+          errors: string[];
+        }) => void
+      ) => {
+        if (!callback) {
+          return;
+        }
+
+        // In web mode, local VSCode is not used
+        if (env.NEXT_PUBLIC_WEB_MODE) {
+          callback({
+            available: false,
+            executablePath: null,
+            variant: null,
+            source: null,
+            suggestions: ["Local workspaces are not available in the web version."],
+            errors: [],
+          });
+          return;
+        }
+
+        try {
+          let result = getLastVSCodeDetectionResult();
+
+          // If refresh requested or no cached result, re-detect
+          if (data?.refresh || !result) {
+            result = await refreshVSCodeDetection(serverLogger);
+          }
+
+          if (result?.found && result.installation) {
+            callback({
+              available: true,
+              executablePath: result.installation.executablePath,
+              variant: result.installation.variant,
+              source: result.installation.source,
+              suggestions: [],
+              errors: result.errors,
+            });
+          } else {
+            callback({
+              available: false,
+              executablePath: null,
+              variant: null,
+              source: null,
+              suggestions: result?.suggestions ?? [
+                "Install VS Code from https://code.visualstudio.com/",
+              ],
+              errors: result?.errors ?? [],
+            });
+          }
+        } catch (error) {
+          serverLogger.error("Failed to check VS Code availability:", error);
+          callback({
+            available: false,
+            executablePath: null,
+            variant: null,
+            source: null,
+            suggestions: ["An error occurred while checking VS Code availability."],
+            errors: [error instanceof Error ? error.message : "Unknown error"],
+          });
+        }
+      }
+    );
+
     socket.on(
       "create-local-workspace",
       async (
@@ -924,13 +1000,30 @@ export function setupSocketHandlers(
           // Give serve-web a short window to become ready (it might be starting up)
           const serveWebUrl = await waitForVSCodeServeWebBaseUrl(5_000);
           if (!serveWebUrl) {
+            // Get detailed detection result for better error messaging
+            const detectionResult = getLastVSCodeDetectionResult();
+            const suggestions = detectionResult?.suggestions ?? [];
+
             serverLogger.warn(
-              "[create-local-workspace] VS Code serve-web is not available. Local workspaces require VS Code CLI to be installed."
+              "[create-local-workspace] VS Code serve-web is not available. Local workspaces require VS Code CLI to be installed.",
+              detectionResult
+                ? {
+                    searchedLocations: detectionResult.searchedLocations.length,
+                    errors: detectionResult.errors,
+                  }
+                : {}
             );
+
+            // Build user-friendly error message with suggestions
+            let errorMessage =
+              "VS Code is not available. Local workspaces require VS Code to be installed.";
+            if (suggestions.length > 0) {
+              errorMessage += "\n\nTo fix this:\n• " + suggestions.slice(0, 3).join("\n• ");
+            }
+
             callback({
               success: false,
-              error:
-                "VS Code is not available. Please install VS Code and ensure the 'code' command is accessible from your terminal, then restart the app.",
+              error: errorMessage,
             });
             return;
           }

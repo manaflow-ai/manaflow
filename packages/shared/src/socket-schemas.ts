@@ -580,6 +580,17 @@ export interface ClientToServerEvents {
   "get-local-vscode-serve-web-origin": (
     callback: (response: { baseUrl: string | null; port: number | null }) => void
   ) => void;
+  "check-vscode-availability": (
+    data: { refresh?: boolean } | undefined,
+    callback: (response: {
+      available: boolean;
+      executablePath: string | null;
+      variant: string | null;
+      source: string | null;
+      suggestions: string[];
+      errors: string[];
+    }) => void
+  ) => void;
   "archive-task": (
     data: ArchiveTask,
     callback: (response: { success: boolean; error?: string }) => void

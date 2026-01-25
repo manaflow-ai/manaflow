@@ -834,19 +834,36 @@ function TaskTreeInner({
       }
     }
 
-    // Local/cloud workspaces should show their type icon, never a checkmark
+    // Checkmark only for completed regular tasks (not workspaces)
+    if (task.isCompleted && !isLocalWorkspace && !isCloudWorkspace) {
+      return <CheckCircle className="w-3 h-3 text-green-500" />;
+    }
+
+    // Local workspaces: show error if failed, monitor otherwise
     if (isLocalWorkspace) {
+      // Check if the workspace run failed
+      const hasFailed = localWorkspaceRun?.status === "failed";
+      if (hasFailed) {
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <XCircle className="w-3 h-3 text-red-500" />
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {localWorkspaceRun?.errorMessage || "Failed to start workspace"}
+            </TooltipContent>
+          </Tooltip>
+        );
+      }
       return <Monitor className="w-3 h-3 text-neutral-400" />;
     }
 
+    // Cloud workspaces always show cloud icon
     if (isCloudWorkspace) {
       return <Cloud className="w-3 h-3 text-neutral-400" />;
     }
 
-    if (task.isCompleted) {
-      return <CheckCircle className="w-3 h-3 text-green-500" />;
-    }
-
+    // Pending/in-progress tasks show pulsing circle
     return <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />;
   })();
 
