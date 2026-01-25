@@ -650,8 +650,24 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  // Get primary repo from task for local workspace creation
-  const primaryRepo = task?.projectFullName;
+  // Get environment repos from the selected run (fallback when task.projectFullName is not set)
+  const environmentRepos = useMemo(() => {
+    const repos: string[] = selectedRun?.environment?.selectedRepos ?? [];
+    const trimmed = repos
+      .map((repo) => repo?.trim())
+      .filter((repo): repo is string => Boolean(repo));
+    return Array.from(new Set(trimmed));
+  }, [selectedRun]);
+
+  // Get primary repo for local workspace creation (with fallback to environment repos)
+  const repoFullNames = useMemo(() => {
+    if (task?.projectFullName) {
+      return [task.projectFullName];
+    }
+    return environmentRepos;
+  }, [task?.projectFullName, environmentRepos]);
+
+  const [primaryRepo] = repoFullNames;
 
   // Handle opening a local workspace for the current task run
   const handleOpenLocalWorkspace = useCallback(() => {
