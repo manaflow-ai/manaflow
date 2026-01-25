@@ -21,6 +21,17 @@ export const LOCAL_VSCODE_HOST = "localhost";
 const SERVE_WEB_PORT_START = 39_400;
 const SERVE_WEB_MAX_PORT_ATTEMPTS = 200;
 const SERVER_READY_TIMEOUT_MS = 15_000;
+const SERVE_WEB_START_ATTEMPTS = 2;
+const PORT_CLEANUP_DELAY_MS = 150;
+const PORT_CLEANUP_PROTECTED_PROCESSES = [
+  "orbstack",
+  "com.orbstack",
+  "docker",
+  "docker-desktop",
+  "systemd",
+  "launchd",
+  "kernel_task",
+];
 const SERVE_WEB_AGENT_FOLDER = path.join(
   os.homedir(),
   ".cmux",
@@ -78,94 +89,124 @@ export async function ensureVSCodeServeWeb(
     return null;
   }
 
-  let child: ChildProcess | null = null;
-
   try {
     await syncLocalVSCodeSettingsForServeWeb(logger);
-
-    const port = await claimServeWebPort(logger);
-    logger.info(
-      `Starting VS Code serve-web using executable ${executable} on port ${port}...`
-    );
-
-    child = spawn(
-      executable,
-      [
-        "serve-web",
-        "--accept-server-license-terms",
-        "--without-connection-token",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
-      {
-        detached: false,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          VSCODE_AGENT_FOLDER: SERVE_WEB_AGENT_FOLDER,
-          // Make sure VS Code CLI does not inherit our existing IPC hook.
-          VSCODE_IPC_HOOK_CLI: undefined,
-        },
-      }
-    );
-
-    attachServeWebProcessLogging(child, logger);
-
-    child!.on("error", (error) => {
-      logger.error("VS Code serve-web process error:", error);
-    });
-
-    child!.on("exit", (code, signal) => {
-      const exitMessage = `VS Code serve-web process exited${
-        typeof code === "number" ? ` with code ${code}` : ""
-      }${signal ? ` due to signal ${signal}` : ""}.`;
-      if (code === 0 && !signal) {
-        logger.info(exitMessage);
-      } else {
-        logger.warn(exitMessage);
-      }
-      if (currentServeWebBaseUrl) {
-        logger.info("Clearing cached VS Code serve-web base URL");
-        currentServeWebBaseUrl = null;
-      }
-      currentServeWebPort = null;
-    });
-
-    await waitForServeWebPort(port, logger);
-
-    currentServeWebBaseUrl = `http://${LOCAL_VSCODE_HOST}:${port}`;
-    currentServeWebPort = port;
-    const baseUrl = currentServeWebBaseUrl;
-
-    logger.info(
-      `VS Code serve-web ready at ${baseUrl} (pid ${child.pid ?? "unknown"}).`
-    );
-
-    await warmUpVSCodeServeWeb(port, logger);
-
-    return {
-      process: child!,
-      executable,
-      port,
-    };
   } catch (error) {
-    logger.error("Failed to launch VS Code serve-web:", error);
-    if (child && !child.killed && child.exitCode === null) {
-      try {
-        child.kill();
-      } catch (killError) {
-        logger.warn(
-          "Failed to terminate VS Code serve-web after launch failure:",
-          killError
-        );
-      }
-    }
+    logger.error("Failed to prepare VS Code serve-web settings:", error);
     currentServeWebBaseUrl = null;
     currentServeWebPort = null;
     return null;
   }
+
+  for (let attempt = 0; attempt < SERVE_WEB_START_ATTEMPTS; attempt += 1) {
+    let child: ChildProcess | null = null;
+    let port: number | null = null;
+
+    try {
+      port = await claimServeWebPort(logger);
+      logger.info(
+        `Starting VS Code serve-web using executable ${executable} on port ${port}...`
+      );
+
+      child = spawn(
+        executable,
+        [
+          "serve-web",
+          "--accept-server-license-terms",
+          "--without-connection-token",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          String(port),
+        ],
+        {
+          detached: false,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            VSCODE_AGENT_FOLDER: SERVE_WEB_AGENT_FOLDER,
+            // Make sure VS Code CLI does not inherit our existing IPC hook.
+            VSCODE_IPC_HOOK_CLI: undefined,
+          },
+        }
+      );
+
+      attachServeWebProcessLogging(child, logger);
+
+      child.on("error", (error) => {
+        logger.error("VS Code serve-web process error:", error);
+      });
+
+      child.on("exit", (code, signal) => {
+        const exitMessage = `VS Code serve-web process exited${
+          typeof code === "number" ? ` with code ${code}` : ""
+        }${signal ? ` due to signal ${signal}` : ""}.`;
+        if (code === 0 && !signal) {
+          logger.info(exitMessage);
+        } else {
+          logger.warn(exitMessage);
+        }
+        if (currentServeWebBaseUrl) {
+          logger.info("Clearing cached VS Code serve-web base URL");
+          currentServeWebBaseUrl = null;
+        }
+        currentServeWebPort = null;
+      });
+
+      await waitForServeWebPort(port, logger);
+
+      currentServeWebBaseUrl = `http://${LOCAL_VSCODE_HOST}:${port}`;
+      currentServeWebPort = port;
+      const baseUrl = currentServeWebBaseUrl;
+
+      logger.info(
+        `VS Code serve-web ready at ${baseUrl} (pid ${child.pid ?? "unknown"}).`
+      );
+
+      await warmUpVSCodeServeWeb(port, logger);
+
+      return {
+        process: child!,
+        executable,
+        port,
+      };
+    } catch (error) {
+      logger.error("Failed to launch VS Code serve-web:", error);
+      if (child && !child.killed && child.exitCode === null) {
+        try {
+          child.kill();
+        } catch (killError) {
+          logger.warn(
+            "Failed to terminate VS Code serve-web after launch failure:",
+            killError
+          );
+        }
+      }
+      currentServeWebBaseUrl = null;
+      currentServeWebPort = null;
+
+      if (attempt < SERVE_WEB_START_ATTEMPTS - 1 && port !== null) {
+        const portAvailable = await isPortAvailable(port);
+        if (!portAvailable) {
+          const freed = await tryTerminatePortListeners(
+            port,
+            logger,
+            child?.pid ?? undefined
+          );
+          if (freed) {
+            logger.warn(
+              `Retrying VS Code serve-web launch after freeing port ${port}.`
+            );
+            continue;
+          }
+        }
+      }
+
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export function stopVSCodeServeWeb(
@@ -691,4 +732,150 @@ function isPortAvailable(port: number): Promise<boolean> {
       resolve(false);
     }
   });
+}
+
+type PortListener = {
+  pid: number;
+  command: string;
+};
+
+function isProtectedPortProcess(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return PORT_CLEANUP_PROTECTED_PROCESSES.some((proc) =>
+    normalized.includes(proc)
+  );
+}
+
+function isPidRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function listPortListeners(
+  port: number,
+  logger: Logger
+): Promise<PortListener[]> {
+  if (process.platform === "win32") {
+    logger.debug?.(`Skipping port scan for ${port} on Windows.`);
+    return [];
+  }
+
+  const parseOutput = (output: string): PortListener[] => {
+    const lines = output
+      .trim()
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(1);
+
+    const listeners: PortListener[] = [];
+    const seen = new Set<number>();
+
+    for (const line of lines) {
+      if (!line.includes("LISTEN")) {
+        continue;
+      }
+      const parts = line.split(/\s+/);
+      const command = parts[0];
+      const pid = Number.parseInt(parts[1] ?? "", 10);
+      if (!Number.isFinite(pid)) {
+        continue;
+      }
+      if (seen.has(pid)) {
+        continue;
+      }
+      seen.add(pid);
+      listeners.push({ pid, command });
+    }
+
+    return listeners;
+  };
+
+  try {
+    const { stdout } = await execFileAsync("lsof", [
+      "-n",
+      "-i",
+      `:${port}`,
+      "-P",
+    ]);
+    if (!stdout) {
+      return [];
+    }
+    return parseOutput(stdout);
+  } catch (error) {
+    const execError = error as NodeJS.ErrnoException & { stdout?: string };
+    if (execError?.code === "ENOENT") {
+      logger.debug?.("lsof not available; skipping port cleanup.");
+      return [];
+    }
+    if (execError?.stdout) {
+      return parseOutput(execError.stdout);
+    }
+    return [];
+  }
+}
+
+async function tryTerminatePortListeners(
+  port: number,
+  logger: Logger,
+  excludePid?: number
+): Promise<boolean> {
+  const listeners = await listPortListeners(port, logger);
+  if (listeners.length === 0) {
+    return false;
+  }
+
+  const killTargets = listeners.filter(
+    (listener) =>
+      listener.pid !== excludePid &&
+      !isProtectedPortProcess(listener.command)
+  );
+
+  if (killTargets.length === 0) {
+    logger.warn(
+      `Port ${port} is in use but only protected processes were found.`
+    );
+    return false;
+  }
+
+  logger.warn(
+    `Port ${port} is in use by ${killTargets
+      .map((listener) => `${listener.command}(${listener.pid})`)
+      .join(", ")}. Attempting to terminate.`
+  );
+
+  for (const listener of killTargets) {
+    try {
+      process.kill(listener.pid, "SIGTERM");
+    } catch (error) {
+      logger.debug?.(
+        `Failed to send SIGTERM to pid ${listener.pid}:`,
+        error
+      );
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, PORT_CLEANUP_DELAY_MS));
+
+  for (const listener of killTargets) {
+    if (!isPidRunning(listener.pid)) {
+      continue;
+    }
+    try {
+      process.kill(listener.pid, "SIGKILL");
+    } catch (error) {
+      logger.debug?.(
+        `Failed to send SIGKILL to pid ${listener.pid}:`,
+        error
+      );
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, PORT_CLEANUP_DELAY_MS));
+
+  return await isPortAvailable(port);
 }
