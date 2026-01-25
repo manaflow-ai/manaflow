@@ -1,8 +1,13 @@
+import {
+  clearInlineEditingActive,
+  setInlineEditingActive,
+} from "@/lib/inlineEditingState";
 import { cn } from "@/lib/utils";
 import { Check, Loader2, Pencil, X } from "lucide-react";
 import {
   type FocusEvent,
   type KeyboardEvent,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -52,6 +57,18 @@ export function EditableLabel({
       editableRef.current.textContent = value;
     }
   }, [value, isEditing]);
+
+  // Set/clear global editing state to prevent focus stealing
+  useEffect(() => {
+    if (isEditing) {
+      setInlineEditingActive();
+    } else {
+      clearInlineEditingActive();
+    }
+    return () => {
+      clearInlineEditingActive();
+    };
+  }, [isEditing]);
 
   useLayoutEffect(() => {
     if (!isEditing || !editableRef.current) {

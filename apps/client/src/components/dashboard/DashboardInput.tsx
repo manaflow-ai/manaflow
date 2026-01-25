@@ -1,4 +1,5 @@
 import LexicalEditor from "@/components/lexical/LexicalEditor";
+import { isInlineEditingActive } from "@/lib/inlineEditingState";
 import clsx from "clsx";
 import {
   forwardRef,
@@ -132,6 +133,11 @@ export const DashboardInput = memo(
         }
 
         if (isCommandPaletteOpen()) {
+          return false;
+        }
+
+        // Don't restore focus if inline editing is active (e.g., renaming a task)
+        if (isInlineEditingActive()) {
           return false;
         }
 

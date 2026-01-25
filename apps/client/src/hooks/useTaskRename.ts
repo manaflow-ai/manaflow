@@ -1,3 +1,7 @@
+import {
+  clearInlineEditingActive,
+  setInlineEditingActive,
+} from "@/lib/inlineEditingState";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import { useMutation } from "convex/react";
@@ -107,6 +111,8 @@ export function useTaskRename({
         window.cancelAnimationFrame(pendingRenameFocusFrame.current);
         pendingRenameFocusFrame.current = null;
       }
+      // Clear editing state on unmount if still renaming
+      clearInlineEditingActive();
     },
     []
   );
@@ -131,11 +137,13 @@ export function useTaskRename({
     setRenameValue(currentText);
     setRenameError(null);
     setIsRenaming(false);
+    clearInlineEditingActive();
   }, [currentText]);
 
   const handleRenameSubmit = useCallback(async () => {
     if (!canRename) {
       setIsRenaming(false);
+      clearInlineEditingActive();
       return;
     }
     if (isRenamePending) {
@@ -151,6 +159,7 @@ export function useTaskRename({
     if (trimmed === current) {
       setIsRenaming(false);
       setRenameError(null);
+      clearInlineEditingActive();
       return;
     }
     setIsRenamePending(true);
@@ -162,6 +171,7 @@ export function useTaskRename({
       });
       setIsRenaming(false);
       setRenameError(null);
+      clearInlineEditingActive();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to rename task.";
@@ -215,6 +225,7 @@ export function useTaskRename({
     if (!canRename) {
       return;
     }
+    setInlineEditingActive();
     flushSync(() => {
       setRenameValue(currentText);
       setRenameError(null);
