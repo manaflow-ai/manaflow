@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Docker Hub repository
-REPO="manaflow/cmux"
+# Docker Hub repository (override with CMUX_DOCKER_REPO)
+REPO="${CMUX_DOCKER_REPO:-manaflow/cmux}"
 
 # Get version from package.json or use 'latest'
 VERSION=${1:-latest}

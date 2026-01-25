@@ -21,6 +21,7 @@ ORIGINAL_PACKAGE_JSON=""
 VERSION_BUMPED=false
 CHANGES_COMMITTED=false
 CHANGES_PUSHED=false
+DOCKER_REPO="${CMUX_DOCKER_REPO:-manaflow/cmux}"
 
 # Function to print error messages
 error() {
@@ -152,11 +153,12 @@ echo ""
 echo "Building and pushing Docker image..."
 echo "----------------------------------------"
 # Use simple push script to work around OrbStack issues
+export CMUX_DOCKER_REPO="${DOCKER_REPO}"
 ./scripts/docker-push-simple.sh "$NEW_VERSION"
 # Don't fail on Docker push issues as they're often transient with OrbStack
 if [ $? -ne 0 ]; then
   warning "Docker push had issues (common with OrbStack)"
-  warning "You may need to manually push later: docker push lawrencecchen/cmux:$NEW_VERSION"
+  warning "You may need to manually push later: docker push ${DOCKER_REPO}:$NEW_VERSION"
 else
   success "Docker build and push complete"
 fi
@@ -188,4 +190,4 @@ echo ""
 echo "Next steps:"
 echo "  - Verify the package on npm: https://www.npmjs.com/package/cmux"
 echo "  - Test installation: npm install -g cmux@$NEW_VERSION"
-echo "  - Verify Docker image: docker pull lawrencecchen/cmux:$NEW_VERSION"
+echo "  - Verify Docker image: docker pull ${DOCKER_REPO}:$NEW_VERSION"

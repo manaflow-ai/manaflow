@@ -9,8 +9,8 @@ log() {
     echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1"
 }
 
-# Docker Hub repository
-REPO="lawrencecchen/cmux"
+# Docker Hub repository (override with CMUX_DOCKER_REPO)
+REPO="${CMUX_DOCKER_REPO:-manaflow/cmux}"
 
 # Get version from argument or use 'latest'
 VERSION=${1:-latest}
