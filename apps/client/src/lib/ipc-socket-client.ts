@@ -1,7 +1,7 @@
 import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 
-// Timeout for pending callbacks (30 seconds)
-const CALLBACK_TIMEOUT_MS = 30_000;
+// Timeout for pending callbacks (10 minutes for long operations like docker pull)
+const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 
 // IPC Socket client that mimics Socket.IO API but uses Electron IPC
 export class IPCSocketClient {

@@ -598,6 +598,27 @@ export interface ClientToServerEvents {
   ) => void;
 }
 
+export const DockerPullProgressSchema = z.object({
+  imageName: z.string(),
+  status: z.enum([
+    "starting",
+    "pulling_fs_layer",
+    "downloading",
+    "extracting",
+    "verifying_checksum",
+    "pull_complete",
+    "complete",
+    "retrying",
+    "error",
+  ]),
+  message: z.string(),
+  layerId: z.string().optional(),
+  attempt: z.number().optional(),
+  maxRetries: z.number().optional(),
+});
+
+export type DockerPullProgress = z.infer<typeof DockerPullProgressSchema>;
+
 export interface ServerToClientEvents {
   "git-status-response": (data: GitStatusResponse) => void;
   "git-file-changed": (data: GitFileChanged) => void;
@@ -609,6 +630,7 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "docker-pull-progress": (data: DockerPullProgress) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

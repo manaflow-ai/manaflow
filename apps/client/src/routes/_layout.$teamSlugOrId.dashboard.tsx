@@ -29,6 +29,7 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullProgress,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -633,10 +634,30 @@ function DashboardComponent() {
               return;
             }
 
-            // Auto-pull the image
+            // Auto-pull the image with progress updates
             const pullToastId = toast.loading(
               `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
             );
+
+            // Listen for progress updates
+            const progressHandler = (data: DockerPullProgress) => {
+              if (data.status === "error") {
+                // Error will be handled by the callback
+                return;
+              }
+              if (data.status === "retrying") {
+                toast.loading(
+                  `Retrying Docker pull (attempt ${(data.attempt ?? 0) + 1}/${data.maxRetries ?? 3})...`,
+                  { id: pullToastId }
+                );
+              } else if (data.status === "downloading" || data.status === "extracting") {
+                toast.loading(`${data.message}`, { id: pullToastId });
+              } else if (data.status === "complete") {
+                // Success will be handled by the callback
+              }
+            };
+
+            socket.on("docker-pull-progress", progressHandler);
 
             try {
               const pullResult = await new Promise<{
@@ -649,6 +670,8 @@ function DashboardComponent() {
                 });
               });
 
+              socket.off("docker-pull-progress", progressHandler);
+
               if (!pullResult.success) {
                 toast.dismiss(pullToastId);
                 toast.error(
@@ -660,9 +683,11 @@ function DashboardComponent() {
               toast.dismiss(pullToastId);
               toast.success(`Docker image "${imageName}" pulled successfully`);
             } catch (pullError) {
+              socket.off("docker-pull-progress", progressHandler);
               toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              const errorMessage = pullError instanceof Error ? pullError.message : "Unknown error";
+              toast.error(`Failed to pull Docker image: ${errorMessage}`);
               return;
             }
           }
