@@ -395,6 +395,26 @@ export const DockerPullImageResponseSchema = z.object({
   success: z.boolean(),
   imageName: z.string().optional(),
   error: z.string().optional(),
+  errorDetails: z.string().optional(),
+});
+
+export const DockerPullProgressSchema = z.object({
+  imageName: z.string(),
+  status: z.string(),
+  id: z.string().optional(),
+  progress: z.string().optional(),
+  current: z.number().optional(),
+  total: z.number().optional(),
+});
+
+export const DockerPullCompleteSchema = z.object({
+  imageName: z.string(),
+});
+
+export const DockerPullErrorSchema = z.object({
+  imageName: z.string(),
+  error: z.string(),
+  details: z.string().optional(),
 });
 
 export const GitStatusSchema = z.object({
@@ -481,6 +501,9 @@ export type DockerStatus = z.infer<typeof DockerStatusSchema>;
 export type DockerPullImageResponse = z.infer<
   typeof DockerPullImageResponseSchema
 >;
+export type DockerPullProgress = z.infer<typeof DockerPullProgressSchema>;
+export type DockerPullComplete = z.infer<typeof DockerPullCompleteSchema>;
+export type DockerPullError = z.infer<typeof DockerPullErrorSchema>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
@@ -609,6 +632,9 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "docker-pull-progress": (data: DockerPullProgress) => void;
+  "docker-pull-complete": (data: DockerPullComplete) => void;
+  "docker-pull-error": (data: DockerPullError) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

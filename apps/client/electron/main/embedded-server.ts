@@ -326,8 +326,12 @@ function createIPCRealtimeServer(): RealtimeServer {
           reject(toSerializableError(err));
         };
 
+        const rpcTimeoutsMs: Record<string, number> = {
+          "docker-pull-image": 15 * 60 * 1000,
+          "start-task": 15 * 60 * 1000,
+        };
         // Safety timeout so invoke doesn't hang forever if ack is never called
-        const timeoutMs = 10_000;
+        const timeoutMs = rpcTimeoutsMs[eventName] ?? 10_000;
         const timer = setTimeout(() => {
           rejectOnce(new Error(`RPC '${eventName}' timed out waiting for ack`));
         }, timeoutMs);

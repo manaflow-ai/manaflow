@@ -42,7 +42,7 @@ import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
 import { getRustTime } from "./native/core";
-import type { RealtimeServer } from "./realtime";
+import type { RealtimeServer, RealtimeSocket } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
@@ -211,6 +211,62 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+type DockerPullProgressEvent = {
+  status?: string;
+  id?: string;
+  progress?: string;
+  progressDetail?: {
+    current?: number;
+    total?: number;
+  };
+};
+
+function createDockerPullProgressEmitter(
+  socket: RealtimeSocket,
+  imageName: string
+) {
+  let lastEmitAt = 0;
+  let lastKey = "";
+
+  return (event: DockerPullProgressEvent) => {
+    if (!event.status) return;
+
+    const key = `${event.status}|${event.id ?? ""}|${event.progress ?? ""}`;
+    const now = Date.now();
+    if (key === lastKey && now - lastEmitAt < 500) {
+      return;
+    }
+
+    lastKey = key;
+    lastEmitAt = now;
+
+    const current = event.progressDetail?.current;
+    const total = event.progressDetail?.total;
+
+    socket.emit("docker-pull-progress", {
+      imageName,
+      status: event.status,
+      id: event.id,
+      progress: event.progress,
+      current: typeof current === "number" ? current : undefined,
+      total: typeof total === "number" ? total : undefined,
+    });
+  };
+}
+
+function emitDockerPullComplete(socket: RealtimeSocket, imageName: string): void {
+  socket.emit("docker-pull-complete", { imageName });
+}
+
+function emitDockerPullError(
+  socket: RealtimeSocket,
+  imageName: string,
+  error: string,
+  details?: string
+): void {
+  socket.emit("docker-pull-error", { imageName, error, details });
 }
 
 export function setupSocketHandlers(
@@ -613,6 +669,12 @@ export function setupSocketHandlers(
               );
 
               try {
+                const emitProgress = createDockerPullProgressEmitter(
+                  socket,
+                  imageName
+                );
+                emitProgress({ status: "Starting" });
+
                 const dockerClient = DockerVSCodeInstance.getDocker();
                 const stream = await dockerClient.pull(imageName);
 
@@ -628,14 +690,19 @@ export function setupSocketHandlers(
                       }
                     },
                     (event: {
-                      status: string;
+                      status?: string;
                       progress?: string;
                       id?: string;
+                      progressDetail?: {
+                        current?: number;
+                        total?: number;
+                      };
                     }) => {
                       if (event.status) {
                         serverLogger.info(
                           `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
                         );
+                        emitProgress(event);
                       }
                     }
                   );
@@ -644,15 +711,18 @@ export function setupSocketHandlers(
                 serverLogger.info(
                   `Successfully pulled Docker image: ${imageName}`
                 );
+                emitDockerPullComplete(socket, imageName);
               } catch (pullError) {
                 serverLogger.error("Error auto-pulling Docker image:", pullError);
                 const errorMessage =
                   pullError instanceof Error
                     ? pullError.message
                     : "Unknown error";
+                const userFriendlyError = `Failed to pull Docker image "${imageName}": ${errorMessage}`;
+                emitDockerPullError(socket, imageName, userFriendlyError, errorMessage);
                 callback({
                   taskId,
-                  error: `Failed to pull Docker image "${imageName}": ${errorMessage}`,
+                  error: userFriendlyError,
                 });
                 return;
               }
@@ -2539,6 +2609,8 @@ ${title}`;
         return;
       }
 
+      let imageName: string | undefined;
+
       try {
         const { checkDockerStatus } = await import(
           "@cmux/shared/providers/common/check-docker"
@@ -2553,17 +2625,18 @@ ${title}`;
           return;
         }
 
-        const imageName =
+        const resolvedImageName =
           docker.workerImage?.name ||
           process.env.WORKER_IMAGE_NAME ||
           "docker.io/manaflow/cmux:latest";
+        imageName = resolvedImageName;
 
         // Check if already pulling
         if (docker.workerImage?.isPulling) {
           callback({
             success: false,
-            imageName,
-            error: `Docker image "${imageName}" is already being pulled.`,
+            imageName: resolvedImageName,
+            error: `Docker image "${resolvedImageName}" is already being pulled.`,
           });
           return;
         }
@@ -2572,17 +2645,25 @@ ${title}`;
         if (docker.workerImage?.isAvailable) {
           callback({
             success: true,
-            imageName,
+            imageName: resolvedImageName,
           });
           return;
         }
 
-        serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+        serverLogger.info(
+          `Starting Docker pull for image: ${resolvedImageName}`
+        );
 
         // Use dockerode to pull the image
+        const emitProgress = createDockerPullProgressEmitter(
+          socket,
+          resolvedImageName
+        );
+        emitProgress({ status: "Starting" });
+
         const dockerClient = DockerVSCodeInstance.getDocker();
 
-        const stream = await dockerClient.pull(imageName);
+        const stream = await dockerClient.pull(resolvedImageName);
 
         // Wait for the pull to complete
         await new Promise<void>((resolve, reject) => {
@@ -2595,23 +2676,33 @@ ${title}`;
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
+            (event: {
+              status?: string;
+              progress?: string;
+              id?: string;
+              progressDetail?: { current?: number; total?: number };
+            }) => {
               if (event.status) {
                 serverLogger.info(
                   `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
                 );
+                emitProgress(event);
               }
             }
           );
         });
 
-        serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
+        serverLogger.info(
+          `Successfully pulled Docker image: ${resolvedImageName}`
+        );
+        emitDockerPullComplete(socket, resolvedImageName);
         callback({
           success: true,
-          imageName,
+          imageName: resolvedImageName,
         });
       } catch (error) {
         serverLogger.error("Error pulling Docker image:", error);
+        const safeImageName = imageName ?? "unknown";
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
 
@@ -2645,9 +2736,16 @@ ${title}`;
           userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
         }
 
+        emitDockerPullError(
+          socket,
+          safeImageName,
+          userFriendlyError,
+          errorMessage
+        );
         callback({
           success: false,
           error: userFriendlyError,
+          errorDetails: errorMessage,
         });
       }
     });
