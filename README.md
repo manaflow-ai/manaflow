@@ -125,3 +125,26 @@ cmux upgrade
 ```bash
 cmux uninstall
 ``` -->
+
+## Self-Hosting with Docker
+
+Run cmux in a self-hosted environment with Docker:
+
+```bash
+# Pull the cmux image
+docker pull manaflow/cmux:latest
+
+# Run standalone (simple dev environment)
+docker run -d \
+  --name cmux \
+  --privileged \
+  --cgroupns host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -p 8080:39378 \
+  -e ANTHROPIC_API_KEY=your-api-key \
+  manaflow/cmux:latest
+
+# Access VS Code IDE at http://localhost:8080
+```
+
+For full orchestration with Convex backend, see the [Self-Hosting Guide](SELFHOSTING.md).

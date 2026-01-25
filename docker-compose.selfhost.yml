@@ -1,0 +1,248 @@
+# cmux Self-Hosting Docker Compose
+#
+# This compose file provides a complete self-hosted cmux deployment.
+#
+# Usage:
+#   1. Copy .env.selfhost.template to .env.selfhost and fill in values
+#   2. Run: docker compose -f docker-compose.selfhost.yml --env-file .env.selfhost up -d
+#
+# Services:
+#   - convex_backend: Database and real-time backend
+#   - convex_dashboard: Convex admin UI (optional, for debugging)
+#   - cmux_worker: The sandbox environment where agents run
+#
+# Ports:
+#   - 9777: Convex backend API
+#   - 9778: Convex site proxy
+#   - 6791: Convex dashboard (optional)
+#   - 39375: Worker exec service
+#   - 39377: Worker Socket.IO
+#   - 39378: IDE (VS Code web)
+#   - 39379: cmux-proxy
+#   - 39380: VNC websocket
+#   - 39381: Chrome DevTools (CDP)
+#   - 39383: PTY server
+
+services:
+  # =============================================================================
+  # Convex Backend (Self-Hosted)
+  # =============================================================================
+  convex_backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    container_name: cmux-convex-backend
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "${CONVEX_PORT:-9777}:3210"
+      - "${CONVEX_SITE_PORT:-9778}:3211"
+    volumes:
+      - convex-data:/convex/data
+    environment:
+      - INSTANCE_NAME=${CONVEX_INSTANCE_NAME:-cmux}
+      - INSTANCE_SECRET=${CONVEX_INSTANCE_SECRET:?CONVEX_INSTANCE_SECRET is required - run: openssl rand -hex 32}
+      - CONVEX_SELF_HOSTED_ADMIN_KEY=${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
+      - CONVEX_CLOUD_ORIGIN=http://127.0.0.1:3210
+      - CONVEX_SITE_ORIGIN=http://127.0.0.1:3211
+      - DISABLE_BEACON=1
+      - RUST_LOG=${CONVEX_LOG_LEVEL:-info}
+      # Optional: External database
+      - DATABASE_URL=${DATABASE_URL:-}
+      - POSTGRES_URL=${POSTGRES_URL:-}
+      # Optional: S3 storage
+      - AWS_REGION=${AWS_REGION:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - S3_STORAGE_FILES_BUCKET=${S3_STORAGE_FILES_BUCKET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3210/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cmux-network
+
+  # =============================================================================
+  # Convex Dashboard (Optional - for debugging)
+  # =============================================================================
+  convex_dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    container_name: cmux-convex-dashboard
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "${CONVEX_DASHBOARD_PORT:-6791}:6791"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=http://${HOST_IP:-127.0.0.1}:${CONVEX_PORT:-9777}
+    depends_on:
+      convex_backend:
+        condition: service_healthy
+    networks:
+      - cmux-network
+    profiles:
+      - dashboard
+
+  # =============================================================================
+  # cmux Worker (Agent Sandbox)
+  # =============================================================================
+  # This is the main cmux container where coding agents run.
+  # It provides an isolated environment with:
+  #   - VS Code web IDE
+  #   - Terminal with tmux
+  #   - Docker-in-Docker support
+  #   - VNC for GUI access
+  #   - All development tools (Node, Python, Go, Rust)
+  #
+  # Run modes:
+  #   1. Standalone: Run as an independent dev environment
+  #   2. Orchestrated: Connect to cmux server for multi-agent coordination
+  # =============================================================================
+  cmux_worker:
+    image: manaflow/cmux:${CMUX_VERSION:-latest}
+    container_name: cmux-worker
+    hostname: cmux-sandbox
+    restart: unless-stopped
+    privileged: true  # Required for systemd and Docker-in-Docker
+    # Use cgroupns for proper systemd operation
+    cgroupns: host
+    # Systemd requires /sys/fs/cgroup mounted
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - cmux-workspace:/root/workspace
+      - cmux-docker:/var/lib/docker
+      # Optional: Mount your project directory
+      # - ./my-project:/root/workspace/project
+      # Optional: Mount SSH keys for git
+      # - ~/.ssh:/root/.ssh:ro
+      # Optional: Mount git config
+      # - ~/.gitconfig:/root/.gitconfig:ro
+    ports:
+      # Worker API
+      - "${WORKER_EXEC_PORT:-39375}:39375"
+      - "${WORKER_PORT:-39377}:39377"
+      # VS Code IDE
+      - "${IDE_PORT:-39378}:39378"
+      # Proxy
+      - "${PROXY_PORT:-39379}:39379"
+      # VNC
+      - "${VNC_PORT:-39380}:39380"
+      # Chrome DevTools
+      - "${CDP_PORT:-39381}:39381"
+      - "${CDP_TARGET_PORT:-39382}:39382"
+      # PTY Server
+      - "${PTY_PORT:-39383}:39383"
+    environment:
+      # Worker identification
+      - WORKER_ID=${WORKER_ID:-cmux-worker-1}
+      - WORKER_PORT=39377
+      # Convex connection (for orchestrated mode)
+      - CONVEX_URL=http://convex_backend:3210
+      - CONVEX_SITE_URL=http://convex_backend:3211
+      - NEXT_PUBLIC_CONVEX_URL=http://${HOST_IP:-127.0.0.1}:${CONVEX_PORT:-9777}
+      # Authentication
+      - CMUX_TASK_RUN_JWT_SECRET=${CMUX_TASK_RUN_JWT_SECRET:-}
+      # Git configuration (optional)
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-cmux}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-cmux@localhost}
+      - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-cmux}
+      - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-cmux@localhost}
+      # API keys for agents (optional)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Container configuration
+      - container=docker
+      - IS_SANDBOX=1
+    tmpfs:
+      - /run
+      - /run/lock
+    # Security options for systemd
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    # Capabilities for Docker-in-Docker
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    depends_on:
+      convex_backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:39377/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - cmux-network
+
+  # =============================================================================
+  # Standalone Worker (No Convex - for simple local development)
+  # =============================================================================
+  # Use this for a simple isolated dev environment without orchestration.
+  # Run with: docker compose -f docker-compose.selfhost.yml up cmux_standalone
+  # =============================================================================
+  cmux_standalone:
+    image: manaflow/cmux:${CMUX_VERSION:-latest}
+    container_name: cmux-standalone
+    hostname: cmux-dev
+    restart: unless-stopped
+    privileged: true
+    cgroupns: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - cmux-standalone-workspace:/root/workspace
+      - cmux-standalone-docker:/var/lib/docker
+      # Mount your project here:
+      # - ./my-project:/root/workspace/project
+    ports:
+      - "${STANDALONE_IDE_PORT:-8080}:39378"      # VS Code IDE
+      - "${STANDALONE_VNC_PORT:-8081}:39380"      # VNC
+      - "${STANDALONE_WORKER_PORT:-8082}:39377"   # Worker API
+    environment:
+      - WORKER_ID=cmux-standalone
+      - IS_SANDBOX=1
+      - container=docker
+      # Add your API keys:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    tmpfs:
+      - /run
+      - /run/lock
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    healthcheck:
+      test: ["CMD", "systemctl", "is-active", "cmux.target"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - standalone
+    networks:
+      - cmux-network
+
+networks:
+  cmux-network:
+    driver: bridge
+
+volumes:
+  convex-data:
+    name: cmux-convex-data
+  cmux-workspace:
+    name: cmux-workspace
+  cmux-docker:
+    name: cmux-docker
+  cmux-standalone-workspace:
+    name: cmux-standalone-workspace
+  cmux-standalone-docker:
+    name: cmux-standalone-docker

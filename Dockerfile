@@ -1214,6 +1214,11 @@ EOF
 # 39383: cmux-pty server
 EXPOSE 39375 39377 39378 39379 39380 39381 39382 39383
 
+# Health check for container orchestration
+# Checks that the worker service is responding on port 39377
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:39377/health || exit 1
+
 ENV container=docker
 STOPSIGNAL SIGRTMIN+3
 VOLUME [ "/sys/fs/cgroup" ]
