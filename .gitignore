@@ -62,3 +62,6 @@ apps/www/scripts/pr-review/evals/results/
 .local_version
 .envrc
 *.tsbuildinfo
+
+# Self-hosting workspace directory
+workspace/

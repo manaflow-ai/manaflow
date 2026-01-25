@@ -125,3 +125,40 @@ cmux upgrade
 ```bash
 cmux uninstall
 ``` -->
+
+## Self-Hosting with Docker
+
+Run cmux in a Docker container with a full VS Code environment:
+
+```bash
+# Pull the image
+docker pull manaflow/cmux
+
+# Run with your workspace mounted
+docker run -d \
+  --name cmux \
+  --privileged \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -v $(pwd):/root/workspace \
+  -p 39378:39378 \
+  --tmpfs /run:rw,mode=755 \
+  --tmpfs /run/lock:rw,mode=755 \
+  --stop-signal SIGRTMIN+3 \
+  manaflow/cmux:latest
+
+# Open VS Code at http://localhost:39378
+```
+
+Or use docker-compose for easier management:
+
+```bash
+# Download the compose file
+curl -o docker-compose.yml https://raw.githubusercontent.com/manaflow-ai/cmux/main/docker-compose.standalone.yml
+
+# Start cmux
+docker compose up -d
+
+# Access VS Code at http://localhost:39378
+```
+
+See [SELFHOSTING.md](./SELFHOSTING.md) for detailed self-hosting documentation.

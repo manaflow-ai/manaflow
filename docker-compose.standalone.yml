@@ -1,0 +1,32 @@
+# Standalone cmux worker with VS Code IDE
+# Usage: docker compose -f docker-compose.standalone.yml up -d
+#
+# Access VS Code at http://localhost:39378
+#
+# This is a minimal setup that runs just the cmux worker with VS Code.
+# For full cmux functionality with task orchestration, use docker-compose.selfhost.yml
+
+services:
+  cmux:
+    image: manaflow/cmux:latest
+    container_name: cmux-standalone
+    privileged: true
+    ports:
+      - "39378:39378"  # VS Code IDE - access at http://localhost:39378
+      - "39377:39377"  # Worker Socket.IO API
+      - "39379:39379"  # cmux-proxy
+      - "39380:39380"  # VNC websocket (noVNC)
+    volumes:
+      # Required: cgroups for systemd
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      # Mount your workspace here
+      - ${CMUX_WORKSPACE:-./workspace}:/root/workspace
+    environment:
+      - NODE_ENV=production
+      - WORKER_PORT=39377
+      - IS_SANDBOX=1
+    tmpfs:
+      - /run:rw,mode=755
+      - /run/lock:rw,mode=755
+    stop_signal: SIGRTMIN+3
+    restart: unless-stopped

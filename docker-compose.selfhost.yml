@@ -1,0 +1,83 @@
+# Self-hosting docker-compose for cmux
+# Usage: docker compose -f docker-compose.selfhost.yml up -d
+#
+# This runs a standalone cmux worker with VS Code IDE.
+# Access VS Code at http://localhost:39378
+#
+# For DinD (Docker-in-Docker) support, this requires:
+# - Docker Desktop or OrbStack on macOS/Windows
+# - Docker Engine with appropriate permissions on Linux
+
+services:
+  # Convex backend for state management
+  convex_backend:
+    image: ghcr.io/get-convex/convex-backend:6efab6f2b6c182b90255774d747328cfc7b80dd9
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "3210:3210"  # Convex API
+      - "3211:3211"  # Convex site
+    volumes:
+      - convex-data:/convex/data
+    environment:
+      - INSTANCE_NAME=cmux-selfhost
+      - INSTANCE_SECRET=29dd272e3cd3cce53ff444cac387925c2f6f53fd9f50803a24e5a11832d36b9c
+      - CONVEX_SELF_HOSTED_ADMIN_KEY=cmux-selfhost|017aebe6643f7feb3fe831fbb93a348653c63e5711d2427d1a34b670e3151b0165d86a5ff9
+      - CONVEX_CLOUD_ORIGIN=http://127.0.0.1:3210
+      - CONVEX_SITE_ORIGIN=http://127.0.0.1:3211
+      - DISABLE_BEACON=1
+      - RUST_LOG=info
+    healthcheck:
+      test: curl -f http://localhost:3210/
+      interval: 5s
+      start_period: 10s
+
+  # Convex dashboard UI (optional)
+  convex_dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:6efab6f2b6c182b90255774d747328cfc7b80dd9
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "6791:6791"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=http://127.0.0.1:3210
+    depends_on:
+      convex_backend:
+        condition: service_healthy
+
+  # cmux worker with VS Code IDE
+  cmux:
+    image: manaflow/cmux:latest
+    privileged: true
+    ports:
+      - "39375:39375"  # Exec service
+      - "39377:39377"  # Worker Socket.IO
+      - "39378:39378"  # VS Code IDE
+      - "39379:39379"  # cmux-proxy
+      - "39380:39380"  # VNC websocket proxy
+      - "39381:39381"  # Chrome DevTools
+      - "39382:39382"  # Chrome DevTools target
+      - "39383:39383"  # cmux-pty server
+    volumes:
+      # Mount cgroups for systemd
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      # Mount workspace directory (customize this path)
+      - ./workspace:/root/workspace
+      # Docker socket for DinD (optional)
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - NODE_ENV=production
+      - WORKER_PORT=39377
+      - IS_SANDBOX=1
+      - CONVEX_URL=http://convex_backend:3210
+      - CONVEX_SITE_URL=http://convex_backend:3211
+    tmpfs:
+      - /run:rw,mode=755
+      - /run/lock:rw,mode=755
+    stop_signal: SIGRTMIN+3
+    depends_on:
+      convex_backend:
+        condition: service_healthy
+
+volumes:
+  convex-data:
