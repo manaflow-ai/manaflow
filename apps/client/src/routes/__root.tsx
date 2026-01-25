@@ -22,7 +22,17 @@ export const Route = createRootRouteWithContext<{
 
 function ToasterWithTheme() {
   const { theme } = useTheme();
-  return <Toaster richColors theme={theme} />;
+  return (
+    <Toaster
+      richColors
+      theme={theme}
+      toastOptions={{
+        classNames: {
+          toast: "!max-w-[420px]",
+        },
+      }}
+    />
+  );
 }
 
 function DevTools() {

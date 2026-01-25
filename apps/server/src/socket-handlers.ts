@@ -2584,23 +2584,128 @@ ${title}`;
 
         const stream = await dockerClient.pull(imageName);
 
+        // Track layer progress for aggregate reporting
+        const layerProgress = new Map<
+          string,
+          { current: number; total: number; status: string }
+        >();
+        let lastEmitTime = 0;
+        const EMIT_INTERVAL_MS = 250; // Throttle progress emissions to 4 per second
+
         // Wait for the pull to complete
         await new Promise<void>((resolve, reject) => {
           dockerClient.modem.followProgress(
             stream,
             (err: Error | null) => {
               if (err) {
+                // Emit error progress event
+                socket.emit("docker-pull-progress", {
+                  imageName,
+                  status: "error",
+                  error: err.message,
+                });
                 reject(err);
               } else {
+                // Emit completion event
+                socket.emit("docker-pull-progress", {
+                  imageName,
+                  status: "complete",
+                  progressPercent: 100,
+                });
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
-              if (event.status) {
-                serverLogger.info(
-                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
-                );
+            (event: {
+              status: string;
+              progress?: string;
+              id?: string;
+              progressDetail?: { current?: number; total?: number };
+            }) => {
+              if (!event.status) return;
+
+              serverLogger.info(
+                `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+              );
+
+              // Track layer progress
+              if (event.id && event.progressDetail) {
+                const { current, total } = event.progressDetail;
+                if (current !== undefined && total !== undefined && total > 0) {
+                  layerProgress.set(event.id, {
+                    current,
+                    total,
+                    status: event.status,
+                  });
+                }
               }
+
+              // Throttle progress emissions
+              const now = Date.now();
+              if (now - lastEmitTime < EMIT_INTERVAL_MS) {
+                return;
+              }
+              lastEmitTime = now;
+
+              // Calculate aggregate progress
+              let totalBytes = 0;
+              let downloadedBytes = 0;
+              let downloadingLayers = 0;
+              let extractingLayers = 0;
+              let completedLayers = 0;
+
+              for (const [, layer] of layerProgress) {
+                totalBytes += layer.total;
+                downloadedBytes += layer.current;
+                if (layer.status === "Downloading") downloadingLayers++;
+                else if (layer.status === "Extracting") extractingLayers++;
+                else if (
+                  layer.status === "Pull complete" ||
+                  layer.status === "Already exists"
+                )
+                  completedLayers++;
+              }
+
+              const totalLayers = layerProgress.size;
+              const progressPercent =
+                totalBytes > 0
+                  ? Math.round((downloadedBytes / totalBytes) * 100)
+                  : 0;
+
+              // Determine current status
+              let status: "downloading" | "extracting" | "complete" | "error" =
+                "downloading";
+              if (extractingLayers > 0 && downloadingLayers === 0) {
+                status = "extracting";
+              }
+
+              // Format progress string
+              const formatBytes = (bytes: number) => {
+                if (bytes >= 1024 * 1024 * 1024) {
+                  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+                }
+                if (bytes >= 1024 * 1024) {
+                  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+                }
+                if (bytes >= 1024) {
+                  return `${(bytes / 1024).toFixed(1)}KB`;
+                }
+                return `${bytes}B`;
+              };
+
+              const progress =
+                totalBytes > 0
+                  ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+                  : undefined;
+
+              socket.emit("docker-pull-progress", {
+                imageName,
+                status,
+                layer: event.id,
+                progress,
+                progressPercent,
+                currentLayer: completedLayers + 1,
+                totalLayers: totalLayers > 0 ? totalLayers : undefined,
+              });
             }
           );
         });
@@ -2615,35 +2720,66 @@ ${title}`;
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
 
-        // Provide user-friendly error messages
+        // Provide user-friendly error messages with helpful suggestions
         let userFriendlyError: string;
+        let errorDetails: string | undefined;
+
         if (
           errorMessage.includes("timeout") ||
           errorMessage.includes("stalled")
         ) {
           userFriendlyError =
-            "Docker image pull timed out. This may be due to slow network or Docker registry issues.";
+            "Docker image pull timed out.";
+          errorDetails = "This may be due to slow network or Docker registry issues. Try again or check your internet connection.";
         } else if (
           errorMessage.includes("not found") ||
           errorMessage.includes("manifest unknown")
         ) {
           userFriendlyError =
-            "Docker image not found. Please check if the image name is correct.";
+            "Docker image not found.";
+          errorDetails = "Please check if the image name is correct and exists in the registry.";
         } else if (
           errorMessage.includes("unauthorized") ||
           errorMessage.includes("authentication")
         ) {
           userFriendlyError =
-            "Docker authentication failed. Please ensure you have access to the Docker registry.";
+            "Docker authentication failed.";
+          errorDetails = "Please ensure you have access to the Docker registry. Try 'docker login' if required.";
         } else if (
           errorMessage.includes("ECONNREFUSED") ||
           errorMessage.includes("connection refused")
         ) {
           userFriendlyError =
-            "Cannot connect to Docker daemon. Please ensure Docker is running.";
+            "Cannot connect to Docker daemon.";
+          errorDetails = "Please ensure Docker Desktop is running.";
+        } else if (
+          errorMessage.includes("no space") ||
+          errorMessage.includes("disk full") ||
+          errorMessage.includes("ENOSPC")
+        ) {
+          userFriendlyError =
+            "Not enough disk space.";
+          errorDetails = "Please free up disk space and try again. You may need to run 'docker system prune' to clean up unused images.";
+        } else if (
+          errorMessage.includes("rate limit") ||
+          errorMessage.includes("too many requests")
+        ) {
+          userFriendlyError =
+            "Docker Hub rate limit exceeded.";
+          errorDetails = "Please wait a few minutes and try again, or log in to Docker Hub with 'docker login'.";
         } else {
           userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
         }
+
+        // Emit error progress event with details
+        socket.emit("docker-pull-progress", {
+          imageName:
+            process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest",
+          status: "error",
+          error: errorDetails
+            ? `${userFriendlyError} ${errorDetails}`
+            : userFriendlyError,
+        });
 
         callback({
           success: false,

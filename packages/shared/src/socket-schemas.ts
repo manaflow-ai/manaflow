@@ -397,6 +397,18 @@ export const DockerPullImageResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+// Docker pull progress event (server -> client)
+export const DockerPullProgressSchema = z.object({
+  imageName: z.string(),
+  status: z.enum(["downloading", "extracting", "complete", "error"]),
+  layer: z.string().optional(),
+  progress: z.string().optional(), // e.g., "45.2MB/120.5MB"
+  progressPercent: z.number().optional(), // 0-100
+  currentLayer: z.number().optional(),
+  totalLayers: z.number().optional(),
+  error: z.string().optional(),
+});
+
 export const GitStatusSchema = z.object({
   isAvailable: z.boolean(),
   version: z.string().optional(),
@@ -481,6 +493,7 @@ export type DockerStatus = z.infer<typeof DockerStatusSchema>;
 export type DockerPullImageResponse = z.infer<
   typeof DockerPullImageResponseSchema
 >;
+export type DockerPullProgress = z.infer<typeof DockerPullProgressSchema>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
@@ -609,6 +622,7 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "docker-pull-progress": (data: DockerPullProgress) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

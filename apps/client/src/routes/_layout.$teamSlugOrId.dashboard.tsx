@@ -8,6 +8,7 @@ import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFoote
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
 import { TaskList } from "@/components/dashboard/TaskList";
 import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
+import { DockerPullToast } from "@/components/docker-pull-toast";
 import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
@@ -29,6 +30,7 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullProgress,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -633,10 +635,72 @@ function DashboardComponent() {
               return;
             }
 
-            // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
+            // Auto-pull the image with progress tracking
+            const pullToastId = toast.custom(
+              () => (
+                <DockerPullToast
+                  imageName={imageName}
+                  status="downloading"
+                  progressPercent={0}
+                />
+              ),
+              {
+                duration: Infinity,
+                id: "docker-pull-progress",
+              }
             );
+
+            // Set up progress listener
+            const handlePullProgress = (progress: DockerPullProgress) => {
+              if (progress.status === "complete") {
+                toast.custom(
+                  () => (
+                    <DockerPullToast
+                      imageName={progress.imageName}
+                      status="complete"
+                      progressPercent={100}
+                    />
+                  ),
+                  {
+                    id: "docker-pull-progress",
+                    duration: 3000,
+                  }
+                );
+              } else if (progress.status === "error") {
+                toast.custom(
+                  () => (
+                    <DockerPullToast
+                      imageName={progress.imageName}
+                      status="error"
+                      error={progress.error}
+                    />
+                  ),
+                  {
+                    id: "docker-pull-progress",
+                    duration: 8000,
+                  }
+                );
+              } else {
+                toast.custom(
+                  () => (
+                    <DockerPullToast
+                      imageName={progress.imageName}
+                      status={progress.status}
+                      progress={progress.progress}
+                      progressPercent={progress.progressPercent}
+                      currentLayer={progress.currentLayer}
+                      totalLayers={progress.totalLayers}
+                    />
+                  ),
+                  {
+                    id: "docker-pull-progress",
+                    duration: Infinity,
+                  }
+                );
+              }
+            };
+
+            socket.on("docker-pull-progress", handlePullProgress);
 
             try {
               const pullResult = await new Promise<{
@@ -649,20 +713,33 @@ function DashboardComponent() {
                 });
               });
 
+              // Clean up listener
+              socket.off("docker-pull-progress", handlePullProgress);
+
               if (!pullResult.success) {
+                // Error toast is already shown via progress event
                 toast.dismiss(pullToastId);
-                toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
-                );
                 return;
               }
 
-              toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
+              // Success toast is already shown via progress event
             } catch (pullError) {
+              socket.off("docker-pull-progress", handlePullProgress);
               toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              toast.custom(
+                () => (
+                  <DockerPullToast
+                    imageName={imageName}
+                    status="error"
+                    error="An unexpected error occurred while pulling the Docker image."
+                  />
+                ),
+                {
+                  id: "docker-pull-progress",
+                  duration: 8000,
+                }
+              );
               return;
             }
           }
