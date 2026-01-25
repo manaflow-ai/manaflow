@@ -608,7 +608,7 @@ wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIEN
 # Start Electron if requested
 if [ "$RUN_ELECTRON" = "true" ]; then
     echo -e "${GREEN}Starting Electron app...${NC}"
-    (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bunx dotenv-cli -e ../../.env -- pnpm dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+    (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
     ELECTRON_PID=$!
     check_process $ELECTRON_PID "Electron App"
 fi
