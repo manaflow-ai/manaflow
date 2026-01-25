@@ -141,15 +141,14 @@ services:
       - CONVEX_URL=http://convex_backend:3210
       - CONVEX_SITE_URL=http://convex_backend:3211
       - NEXT_PUBLIC_CONVEX_URL=http://${HOST_IP:-127.0.0.1}:${CONVEX_PORT:-9777}
-      # Authentication
+      # Authentication (for orchestration mode)
       - CMUX_TASK_RUN_JWT_SECRET=${CMUX_TASK_RUN_JWT_SECRET:-}
-      # Git configuration (optional)
+      # Git configuration (optional - for private repos)
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-cmux}
-      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-cmux@localhost}
-      - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-cmux}
-      - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-cmux@localhost}
-      # API keys for agents (optional)
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-}
+      # API keys (optional - only needed when running specific agents)
+      # These are passed through to agents running inside the container
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # Container configuration
@@ -204,12 +203,10 @@ services:
       - "${STANDALONE_WORKER_PORT:-8082}:39377"   # Worker API
     environment:
       - WORKER_ID=cmux-standalone
-      - IS_SANDBOX=1
       - container=docker
-      # Add your API keys:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Optional: Add API keys when running agents
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     tmpfs:
       - /run
       - /run/lock

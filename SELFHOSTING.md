@@ -7,10 +7,7 @@ This guide explains how to self-host cmux, the parallel agent orchestration plat
 The fastest way to get started is with the standalone mode:
 
 ```bash
-# Pull the cmux image
-docker pull manaflow/cmux:latest
-
-# Run in standalone mode (simple isolated dev environment)
+# Pull and run cmux
 docker run -d \
   --name cmux \
   --privileged \
@@ -18,12 +15,13 @@ docker run -d \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -p 8080:39378 \
   -p 8081:39380 \
-  -e ANTHROPIC_API_KEY=your-api-key \
   manaflow/cmux:latest
 
 # Access the IDE at http://localhost:8080
 # Access VNC at http://localhost:8081
 ```
+
+The container works immediately - no API keys needed to start. You only need API keys later when running specific agents (e.g., `ANTHROPIC_API_KEY` for Claude Code).
 
 ## Prerequisites
 
@@ -73,8 +71,6 @@ cmux consists of several components:
 Run a single sandbox without orchestration. Perfect for local development.
 
 ```bash
-docker pull manaflow/cmux:latest
-
 docker run -d \
   --name cmux \
   --privileged \
@@ -84,14 +80,27 @@ docker run -d \
   -v cmux-docker:/var/lib/docker \
   -p 8080:39378 \
   -p 8081:39380 \
-  -e ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} \
-  -e GITHUB_TOKEN=${GITHUB_TOKEN} \
   manaflow/cmux:latest
 ```
 
 Access:
 - **VS Code IDE**: http://localhost:8080
 - **VNC Desktop**: http://localhost:8081
+
+To mount your project and add API keys for agents:
+
+```bash
+docker run -d \
+  --name cmux \
+  --privileged \
+  --cgroupns host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -v ~/my-project:/root/workspace/project \
+  -p 8080:39378 \
+  -e ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} \
+  -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+  manaflow/cmux:latest
+```
 
 ### Option 2: Docker Compose (Full Stack)
 
@@ -109,15 +118,14 @@ cp .env.selfhost.template .env.selfhost
 echo "CONVEX_INSTANCE_SECRET=$(openssl rand -hex 32)" >> .env.selfhost
 echo "CMUX_TASK_RUN_JWT_SECRET=$(openssl rand -hex 32)" >> .env.selfhost
 
-# Add your API keys
-echo "ANTHROPIC_API_KEY=your-key" >> .env.selfhost
-
 # Start services
 docker compose -f docker-compose.selfhost.yml --env-file .env.selfhost up -d
 
 # View logs
 docker compose -f docker-compose.selfhost.yml logs -f
 ```
+
+Add API keys to `.env.selfhost` later when you need to run specific agents.
 
 ### Option 3: Kubernetes (Production)
 
@@ -174,14 +182,16 @@ spec:
 
 ### Environment Variables
 
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude | For Claude | - |
-| `OPENAI_API_KEY` | OpenAI API key | For OpenAI agents | - |
-| `GITHUB_TOKEN` | GitHub PAT for private repos | No | - |
-| `WORKER_ID` | Unique worker identifier | No | `cmux-worker-1` |
-| `CONVEX_URL` | Convex backend URL | For orchestration | - |
-| `CMUX_TASK_RUN_JWT_SECRET` | JWT signing secret | For orchestration | - |
+The container works without any environment variables. These are all optional:
+
+| Variable | Description | When Needed |
+|----------|-------------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic API key | Only when running Claude Code |
+| `OPENAI_API_KEY` | OpenAI API key | Only when running OpenAI-based agents |
+| `GITHUB_TOKEN` | GitHub PAT | Only for private repos |
+| `WORKER_ID` | Unique worker identifier | Only for multi-worker setups |
+| `CONVEX_URL` | Convex backend URL | Only for orchestration mode |
+| `CMUX_TASK_RUN_JWT_SECRET` | JWT signing secret | Only for orchestration mode |
 
 ### Ports
 

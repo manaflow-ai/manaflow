@@ -92,10 +92,6 @@ run_standalone() {
         -p 8081:39380 \
         -p 8082:39377 \
         -e WORKER_ID=cmux-standalone \
-        -e IS_SANDBOX=1 \
-        ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
-        ${OPENAI_API_KEY:+-e OPENAI_API_KEY="$OPENAI_API_KEY"} \
-        ${GITHUB_TOKEN:+-e GITHUB_TOKEN="$GITHUB_TOKEN"} \
         manaflow/cmux:latest
 
     print_success "Container started"
