@@ -650,8 +650,23 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
+  // Get environment repos from the selected run (same logic as git diff page)
+  const environmentRepos = useMemo(() => {
+    const repos = selectedRun?.environment?.selectedRepos ?? [];
+    const trimmed = repos
+      .map((repo: string | undefined) => repo?.trim())
+      .filter((repo: string | undefined): repo is string => Boolean(repo));
+    return Array.from(new Set(trimmed));
+  }, [selectedRun]);
+
   // Get primary repo from task for local workspace creation
-  const primaryRepo = task?.projectFullName;
+  // Falls back to environment repos if task.projectFullName is not available (parity with git diff page)
+  const primaryRepo = useMemo(() => {
+    if (task?.projectFullName?.trim()) {
+      return task.projectFullName.trim();
+    }
+    return environmentRepos[0] ?? null;
+  }, [task?.projectFullName, environmentRepos]);
 
   // Handle opening a local workspace for the current task run
   const handleOpenLocalWorkspace = useCallback(() => {
