@@ -74,7 +74,8 @@ function getConfig() {
 }
 
 const RESTORE_FALLBACK_DELAY_MS = 1500;
-const RECONCILE_INTERVAL_MS = 15000;
+const RECONCILE_INTERVAL_MS = 5000; // Reduced from 15s to 5s for faster terminal detection
+const RESTORE_VISIBILITY_DELAY_MS = 500; // Delay before ensuring terminal visibility
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -812,6 +813,20 @@ class CmuxTerminalManager {
       this._initialSyncDone = true;
       this._resolveInitialSync();
       console.log(`[cmux] Initial state sync complete, ${this._restoreQueue.length} terminals queued`);
+
+      // If we have terminals but provideTerminalProfile hasn't been called,
+      // force drain after a short delay. This handles the case where:
+      // 1. Terminal panel is closed (VSCode won't call provideTerminalProfile)
+      // 2. VSCode already has terminals from another provider
+      if (this._restoreQueue.length > 0) {
+        // Use a short initial delay, then the fallback will handle longer waits
+        setTimeout(() => {
+          if (this._restoreInProgress && this._restoreQueue.length > 0) {
+            console.log('[cmux] Initial sync: forcing terminal restore after short delay');
+            this.drainRestoreQueue();
+          }
+        }, RESTORE_FALLBACK_DELAY_MS);
+      }
     }
 
     if (this._restoreInProgress && this._restoreQueue.length > 0) {
@@ -909,7 +924,11 @@ class CmuxTerminalManager {
     // "editor" -> Editor pane, anything else (including undefined) -> Panel
     const shouldOpenInEditor = info.metadata?.location === 'editor';
 
-    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}, metadata: ${JSON.stringify(info.metadata)}`);
+    // Agent terminals (editor location) should always be shown to ensure visibility
+    // This is critical for the cmux use case where the agent terminal must be visible
+    const forceShow = shouldOpenInEditor || info.metadata?.type === 'agent' || info.name === 'cmux';
+
+    console.log(`[cmux] Creating terminal for PTY ${info.id} (${info.name}), focus: ${shouldFocus}, restore: ${isRestore}, editor: ${shouldOpenInEditor}, forceShow: ${forceShow}, metadata: ${JSON.stringify(info.metadata)}`);
 
     // Skip initial resize for restored sessions to avoid shell prompt redraw
     const pty = new CmuxPseudoterminal(config.serverUrl, info.id, isRestore);
@@ -924,7 +943,11 @@ class CmuxTerminalManager {
     this._terminals.set(info.id, managed);
 
     // Show terminal with appropriate focus
-    terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
+    // For agent/editor terminals, always show (but maybe preserve focus)
+    // For regular terminals, only show if shouldFocus is true
+    if (forceShow || shouldFocus) {
+      terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
+    }
     void this._maybePinEditorTerminal(terminal, shouldOpenInEditor, !shouldFocus);
 
     // Listen for terminal close
@@ -1132,6 +1155,64 @@ class CmuxTerminalManager {
       this._createTerminalForPty(info, false, true); // Don't focus, is restore
     }
     this._restoreInProgress = false; // Restore complete, allow new terminal creation
+
+    // Schedule a visibility check to ensure terminals are visible
+    // This handles the case where VSCode didn't call provideTerminalProfile
+    setTimeout(() => {
+      this._ensureTerminalVisibility();
+    }, RESTORE_VISIBILITY_DELAY_MS);
+  }
+
+  /**
+   * Ensure at least one terminal is visible in VSCode.
+   * Called after restore to handle cases where VSCode didn't auto-show terminals.
+   */
+  private _ensureTerminalVisibility(): void {
+    const terminals = this.getTerminals();
+    if (terminals.length === 0) {
+      console.log('[cmux] No terminals to show');
+      return;
+    }
+
+    // Check if any terminal is already visible (active)
+    const activeTerminal = vscode.window.activeTerminal;
+    const hasVisibleCmuxTerminal = activeTerminal &&
+      terminals.some(t => t.terminal === activeTerminal);
+
+    if (hasVisibleCmuxTerminal) {
+      console.log('[cmux] Terminal already visible');
+      return;
+    }
+
+    // Find the best terminal to show:
+    // 1. "cmux" terminal (main agent)
+    // 2. "dev" terminal (dev server)
+    // 3. First panel terminal
+    // 4. Any terminal
+    const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
+    if (cmuxTerminal) {
+      console.log('[cmux] Showing cmux terminal for visibility');
+      cmuxTerminal.terminal.show(true); // preserveFocus = true to not steal focus from editor
+      return;
+    }
+
+    const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
+    if (devTerminal) {
+      console.log('[cmux] Showing dev terminal for visibility');
+      devTerminal.terminal.show(true);
+      return;
+    }
+
+    const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
+    if (panelTerminal) {
+      console.log('[cmux] Showing panel terminal for visibility');
+      panelTerminal.terminal.show(true);
+      return;
+    }
+
+    // Last resort: show the first terminal
+    console.log(`[cmux] Showing first terminal for visibility: ${terminals[0].info.name}`);
+    terminals[0].terminal.show(true);
   }
 
   /**

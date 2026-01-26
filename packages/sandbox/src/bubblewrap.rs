@@ -411,25 +411,41 @@ async fn start_cmux_pty_background(
     }
 
     // Wait for cmux-pty to start listening
-    sleep(Duration::from_millis(300)).await;
+    // Increased from 300ms to 1000ms for cloud environments where startup may be slower
+    sleep(Duration::from_millis(1000)).await;
 
     // Verify cmux-pty is running by checking if it's listening on the port
+    // Retry up to 5 times with 500ms delay between attempts for cloud environments
     let verify_cmd = vec![
         "/bin/sh".to_string(),
         "-c".to_string(),
         format!("pgrep -f 'cmux-pty.*--port {}'", pty_port),
     ];
-    let verify_result = timeout(
-        Duration::from_secs(5),
-        Command::new(nsenter_path)
-            .args(nsenter_args(inner_pid, None, &verify_cmd))
-            .output(),
-    )
-    .await;
 
-    let pty_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+    let mut pty_running = false;
+    for attempt in 1..=5 {
+        let verify_result = timeout(
+            Duration::from_secs(5),
+            Command::new(nsenter_path)
+                .args(nsenter_args(inner_pid, None, &verify_cmd))
+                .output(),
+        )
+        .await;
+
+        pty_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+        if pty_running {
+            debug!("cmux-pty verified running on attempt {}", attempt);
+            break;
+        }
+
+        if attempt < 5 {
+            debug!("cmux-pty verification attempt {} failed, retrying...", attempt);
+            sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     if !pty_running {
-        return Err(format!("cmux-pty failed to start on port {}", pty_port));
+        return Err(format!("cmux-pty failed to start on port {} after 5 attempts", pty_port));
     }
 
     info!(pty_port = pty_port, "cmux-pty started");

@@ -53,15 +53,31 @@ const delay = (ms: number): Promise<void> =>
 // =============================================================================
 
 async function checkPtyServerHealth(): Promise<boolean> {
-  try {
-    const response = await fetch(`${PTY_SERVER_URL}/health`, {
-      method: "GET",
-      signal: AbortSignal.timeout(2000),
-    });
-    return response.ok;
-  } catch {
-    return false;
+  // Increased timeout and added retry logic for cloud environments
+  const maxRetries = 5;
+  const timeoutMs = 3000;
+  const retryDelayMs = 1000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(`${PTY_SERVER_URL}/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (response.ok) {
+        if (attempt > 1) {
+          console.log(`[ORCHESTRATOR] PTY server health check succeeded on attempt ${attempt}`);
+        }
+        return true;
+      }
+    } catch {
+      if (attempt < maxRetries) {
+        console.log(`[ORCHESTRATOR] PTY server health check attempt ${attempt}/${maxRetries} failed, retrying...`);
+        await delay(retryDelayMs);
+      }
+    }
   }
+  return false;
 }
 
 async function createPtySession(options: {

@@ -55,17 +55,31 @@ export class CmuxPtyClient {
 
   /**
    * Check if the PTY server is healthy
+   * Includes retry logic for cloud environments where startup may be slower
    */
-  async health(): Promise<boolean> {
-    try {
-      const response = await fetch(`${this.baseUrl}/health`, {
-        method: "GET",
-        signal: AbortSignal.timeout(2000),
-      });
-      return response.ok;
-    } catch {
-      return false;
+  async health(options?: { maxRetries?: number; timeoutMs?: number; retryDelayMs?: number }): Promise<boolean> {
+    const maxRetries = options?.maxRetries ?? 3;
+    const timeoutMs = options?.timeoutMs ?? 3000;
+    const retryDelayMs = options?.retryDelayMs ?? 500;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(`${this.baseUrl}/health`, {
+          method: "GET",
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (response.ok) {
+          return true;
+        }
+      } catch {
+        // Continue to retry
+      }
+
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
     }
+    return false;
   }
 
   /**
