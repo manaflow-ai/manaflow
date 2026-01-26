@@ -27,7 +27,7 @@ pub enum CallbackContentBlock {
 }
 
 /// Tool call status for callbacks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CallbackToolCallStatus {
     Pending,
@@ -122,8 +122,22 @@ enum CallbackPayload {
         conversation_id: String,
         #[serde(rename = "messageId")]
         message_id: String,
+        #[serde(rename = "eventSeq", skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
         #[serde(rename = "toolCall")]
         tool_call: CallbackToolCall,
+    },
+    #[serde(rename = "tool_call_update")]
+    ToolCallUpdate {
+        #[serde(rename = "conversationId")]
+        conversation_id: String,
+        #[serde(rename = "messageId")]
+        message_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        status: CallbackToolCallStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result: Option<String>,
     },
     #[serde(rename = "error")]
     Error {
@@ -189,6 +203,11 @@ impl CallbackClient {
             callback_url: callback_url.into(),
             callback_jwt: callback_jwt.into(),
         }
+    }
+
+    /// Get the JWT token used for authentication.
+    pub fn jwt(&self) -> &str {
+        &self.callback_jwt
     }
 
     /// Post a callback payload to Convex and return the response.
@@ -378,11 +397,13 @@ impl CallbackClient {
         &self,
         conversation_id: &str,
         message_id: &str,
+        event_seq: Option<u64>,
         tool_call: CallbackToolCall,
     ) {
         let payload = CallbackPayload::ToolCall {
             conversation_id: conversation_id.to_string(),
             message_id: message_id.to_string(),
+            event_seq,
             tool_call,
         };
 
@@ -392,6 +413,34 @@ impl CallbackClient {
                 message_id = %message_id,
                 error = %e,
                 "Failed to send tool call callback"
+            );
+        }
+    }
+
+    /// Update a tool call status/result.
+    pub async fn update_tool_call(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+        tool_call_id: &str,
+        status: CallbackToolCallStatus,
+        result: Option<String>,
+    ) {
+        let payload = CallbackPayload::ToolCallUpdate {
+            conversation_id: conversation_id.to_string(),
+            message_id: message_id.to_string(),
+            tool_call_id: tool_call_id.to_string(),
+            status,
+            result,
+        };
+
+        if let Err(e) = self.post_callback(payload).await {
+            warn!(
+                conversation_id = %conversation_id,
+                message_id = %message_id,
+                tool_call_id = %tool_call_id,
+                error = %e,
+                "Failed to send tool call update callback"
             );
         }
     }

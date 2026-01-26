@@ -3,7 +3,7 @@
 //! Provides HTTP endpoints for Convex to control the sandbox (init/prompt).
 //! The sandbox can ONLY communicate back to Convex via callbacks using JWT.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -218,6 +218,9 @@ impl RestApiState {
         // Always include HOME so CLIs can find their config files
         // (e.g., ~/.codex/config.toml)
         // Include IS_SANDBOX=1 to signal to CLIs that they're running in a sandbox
+        // IMPORTANT: Always use /root as HOME since that's where CLI configs and tools are installed
+        // during snapshot creation. E2B containers run as non-root user with HOME=/home/user,
+        // but configs are in /root. /root is made accessible to all users in the snapshot.
         let mut env_vars = vec![
             ("HOME".to_string(), "/root".to_string()),
             ("IS_SANDBOX".to_string(), "1".to_string()),
@@ -1317,7 +1320,8 @@ pub async fn init_conversation(
         // We only persist to Convex at message boundaries, not on every token
         let mut message_buffer = String::new();
         let mut reasoning_buffer = String::new();
-        let mut pending_tool_calls: Vec<CallbackToolCall> = Vec::new();
+        let mut pending_tool_calls: Vec<(u64, CallbackToolCall)> = Vec::new();
+        let mut recorded_tool_calls: HashMap<String, String> = HashMap::new();
         let mut last_message_event_at: Option<u64> = None;
         let mut last_message_event_seq: Option<u64> = None;
 
@@ -1523,13 +1527,13 @@ pub async fn init_conversation(
                                     last_message_event_at = None;
                                     last_message_event_seq = None;
                                 }
-                                pending_tool_calls.push(CallbackToolCall {
+                                pending_tool_calls.push((raw_seq, CallbackToolCall {
                                     id,
                                     name,
                                     arguments,
                                     status: CallbackToolCallStatus::Pending,
                                     result: None,
-                                });
+                                }));
                             }
                             AcpEvent::ToolCallUpdate { id, status, result } => {
                                 // Update buffered tool call status
@@ -1539,18 +1543,37 @@ pub async fn init_conversation(
                                     status = %status,
                                     "Updating buffered tool call"
                                 );
-                                let tool_status = match status.as_str() {
-                                    "running" => CallbackToolCallStatus::Running,
-                                    "completed" => CallbackToolCallStatus::Completed,
-                                    "failed" => CallbackToolCallStatus::Failed,
-                                    _ => CallbackToolCallStatus::Pending,
-                                };
-                                if let Some(tc) =
-                                    pending_tool_calls.iter_mut().find(|tc| tc.id == id)
+                                let tool_status =
+                                    resolve_tool_call_status(&status, result.is_some());
+                                let mut updated_pending = false;
+                                if let Some((_, tc)) =
+                                    pending_tool_calls.iter_mut().find(|(_, tc)| tc.id == id)
                                 {
                                     tc.status = tool_status;
                                     if result.is_some() {
-                                        tc.result = result;
+                                        tc.result = result.clone();
+                                    }
+                                    updated_pending = true;
+                                }
+                                if !updated_pending {
+                                    if let Some(message_id) = recorded_tool_calls.get(&id) {
+                                        if let Some(ref client) = callback_client {
+                                            client
+                                                .update_tool_call(
+                                                    &conversation_id,
+                                                    message_id,
+                                                    &id,
+                                                    tool_status,
+                                                    result.clone(),
+                                                )
+                                                .await;
+                                        }
+                                    } else {
+                                        debug!(
+                                            conversation_id = %conversation_id,
+                                            tool_id = %id,
+                                            "Tool call update received before record"
+                                        );
                                     }
                                 }
                             }
@@ -1568,7 +1591,7 @@ pub async fn init_conversation(
                                 if message_buffer.is_empty() && reasoning_buffer.is_empty() {
                                     let tool_outputs: Vec<String> = pending_tool_calls
                                         .iter()
-                                        .filter_map(|tool_call| tool_call.result.as_ref())
+                                        .filter_map(|(_, tool_call)| tool_call.result.as_ref())
                                         .map(|value| value.trim())
                                         .filter(|value| !value.is_empty())
                                         .map(|value| value.to_string())
@@ -1629,15 +1652,18 @@ pub async fn init_conversation(
                                     }
 
                                     // Send buffered tool calls
-                                    for tool_call in &pending_tool_calls {
+                                    for (seq, tool_call) in &pending_tool_calls {
                                         if let Some(ref msg) = *msg_id {
                                             client
                                                 .record_tool_call(
                                                     &conversation_id,
                                                     msg,
+                                                    Some(*seq),
                                                     tool_call.clone(),
                                                 )
                                                 .await;
+                                            recorded_tool_calls
+                                                .insert(tool_call.id.clone(), msg.clone());
                                         }
                                     }
 
@@ -1789,6 +1815,24 @@ impl AcpEvent {
             Self::ToolCallUpdate { .. } => "tool_call_update",
             Self::MessageComplete { .. } => "message_complete",
         }
+    }
+}
+
+fn resolve_tool_call_status(
+    raw_status: &str,
+    has_result: bool,
+) -> CallbackToolCallStatus {
+    let normalized = raw_status.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "pending" => CallbackToolCallStatus::Pending,
+        "running" | "in_progress" | "in-progress" => CallbackToolCallStatus::Running,
+        "completed" | "complete" | "succeeded" | "success" => CallbackToolCallStatus::Completed,
+        "failed" | "error" | "errored" | "cancelled" | "canceled" => {
+            CallbackToolCallStatus::Failed
+        }
+        "unknown" if has_result => CallbackToolCallStatus::Completed,
+        _ if has_result => CallbackToolCallStatus::Completed,
+        _ => CallbackToolCallStatus::Pending,
     }
 }
 
@@ -1976,6 +2020,11 @@ async fn flush_raw_events(
         let events = std::mem::take(raw_events);
         client.record_raw_events(conversation_id, events).await;
     } else {
+        warn!(
+            conversation_id = %conversation_id,
+            event_count = raw_events.len(),
+            "Dropping raw events - callback client not configured"
+        );
         raw_events.clear();
     }
 }

@@ -1164,6 +1164,9 @@ impl ConversationApiProxies {
     /// Sets both the base URL (to route through proxy) and a placeholder API key
     /// (so the CLI doesn't reject requests before they reach the proxy).
     pub fn env_vars(&self) -> Vec<(String, String)> {
+        // IMPORTANT: Always use /root as HOME since that's where CLI configs are installed
+        // during snapshot creation. E2B containers run as non-root user with HOME=/home/user,
+        // but configs are in /root. /root is made accessible to all users in the snapshot.
         vec![
             // HOME is required for CLIs to find their config files (e.g., ~/.codex/config.toml)
             ("HOME".to_string(), "/root".to_string()),

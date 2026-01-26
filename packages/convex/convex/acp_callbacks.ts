@@ -51,7 +51,9 @@ export const appendMessageChunk = internalMutation({
     content: contentBlockValidator,
   },
   handler: async (ctx, args) => {
-    const now = args.createdAt ?? Date.now();
+    // Always use Convex server time for message creation.
+    // Sandbox timestamps can be stale after snapshot restore due to clock sync delays.
+    const now = Date.now();
     const shouldUpdateVisible = isVisibleContentBlock(args.content);
 
     // If no messageId, create a new assistant message
@@ -80,16 +82,28 @@ export const appendMessageChunk = internalMutation({
       throw new Error("Message not found");
     }
 
-    // For text chunks, try to append to the last text block if possible
+    // Track the highest sequence number for the message
     const nextSeq =
       args.eventSeq !== undefined
         ? Math.max(message.acpSeq ?? 0, args.eventSeq)
         : message.acpSeq;
 
+    // Add content block with sequence number for chronological ordering
+    const contentWithSeq = {
+      ...args.content,
+      acpSeq: args.eventSeq,
+    };
+
     if (args.content.type === "text" && args.content.text) {
       const lastBlock = message.content[message.content.length - 1];
-      if (lastBlock?.type === "text" && lastBlock.text !== undefined) {
-        // Append to existing text block
+      // Only append to the last text block if it has the same sequence number
+      // (i.e., it's part of the same streaming chunk, not a new segment after tool calls)
+      if (
+        lastBlock?.type === "text" &&
+        lastBlock.text !== undefined &&
+        lastBlock.acpSeq === args.eventSeq
+      ) {
+        // Append to existing text block with same sequence
         const updatedContent = [...message.content];
         updatedContent[updatedContent.length - 1] = {
           ...lastBlock,
@@ -100,16 +114,16 @@ export const appendMessageChunk = internalMutation({
           acpSeq: nextSeq,
         });
       } else {
-        // Add new text block
+        // Add new text block with sequence number
         await ctx.db.patch(args.messageId, {
-          content: [...message.content, args.content],
+          content: [...message.content, contentWithSeq],
           acpSeq: nextSeq,
         });
       }
     } else {
-      // Add new content block
+      // Add new content block with sequence number
       await ctx.db.patch(args.messageId, {
-        content: [...message.content, args.content],
+        content: [...message.content, contentWithSeq],
         acpSeq: nextSeq,
       });
     }
@@ -140,7 +154,8 @@ export const appendReasoningChunk = internalMutation({
     text: v.string(),
   },
   handler: async (ctx, args) => {
-    const now = args.createdAt ?? Date.now();
+    // Always use Convex server time - sandbox timestamps can be stale after snapshot restore.
+    const now = Date.now();
 
     // If no messageId, create a new assistant message with reasoning
     if (!args.messageId) {
@@ -205,6 +220,11 @@ export const completeMessage = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now();
 
+    // Mark the message as final (this message ends the turn)
+    await ctx.db.patch(args.messageId, {
+      isFinal: true,
+    });
+
     // Update conversation status based on stop reason
     const conversation = await ctx.db.get(args.conversationId);
     if (conversation && conversation.status === "active") {
@@ -238,6 +258,7 @@ export const recordToolCall = internalMutation({
   args: {
     conversationId: v.id("conversations"),
     messageId: v.id("conversationMessages"),
+    eventSeq: v.optional(v.number()),
     toolCall: toolCallValidator,
   },
   handler: async (ctx, args) => {
@@ -248,6 +269,12 @@ export const recordToolCall = internalMutation({
 
     const existingToolCalls = message.toolCalls ?? [];
 
+    // Add sequence number to the tool call for chronological ordering
+    const toolCallWithSeq = {
+      ...args.toolCall,
+      acpSeq: args.eventSeq,
+    };
+
     // Check if this tool call already exists (update) or is new (append)
     const existingIndex = existingToolCalls.findIndex(
       (tc) => tc.id === args.toolCall.id
@@ -255,12 +282,15 @@ export const recordToolCall = internalMutation({
 
     let updatedToolCalls;
     if (existingIndex >= 0) {
-      // Update existing
+      // Update existing - preserve the original sequence number
       updatedToolCalls = [...existingToolCalls];
-      updatedToolCalls[existingIndex] = args.toolCall;
+      updatedToolCalls[existingIndex] = {
+        ...toolCallWithSeq,
+        acpSeq: existingToolCalls[existingIndex].acpSeq ?? args.eventSeq,
+      };
     } else {
       // Append new
-      updatedToolCalls = [...existingToolCalls, args.toolCall];
+      updatedToolCalls = [...existingToolCalls, toolCallWithSeq];
     }
 
     await ctx.db.patch(args.messageId, { toolCalls: updatedToolCalls });
@@ -403,6 +433,8 @@ export const appendRawEvents = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    let hasError = false;
+    let errorMessage: string | undefined;
 
     for (const event of args.rawEvents) {
       await ctx.db.insert("acpRawEvents", {
@@ -415,12 +447,54 @@ export const appendRawEvents = internalMutation({
         eventType: "rpc",
         createdAt: event.createdAt ?? now,
       });
+
+      // Check if this is a JSON-RPC error response
+      // Format: {"jsonrpc":"2.0","id":"...","error":{"code":..,"message":"..."}}
+      try {
+        const parsed = JSON.parse(event.raw);
+        if (parsed.jsonrpc === "2.0" && parsed.error) {
+          hasError = true;
+          const errData = parsed.error.data;
+          errorMessage =
+            errData?.message || parsed.error.message || "Unknown error";
+          console.error("[acp.callback] JSON-RPC error detected", {
+            conversationId: args.conversationId,
+            code: parsed.error.code,
+            message: errorMessage,
+          });
+        }
+      } catch {
+        // Not JSON or malformed - ignore
+      }
     }
 
-    await ctx.db.patch(args.conversationId, {
-      lastMessageAt: now,
-      updatedAt: now,
-    });
+    // If any event contained an error, mark conversation as error
+    if (hasError) {
+      const conversation = await ctx.db.get(args.conversationId);
+      if (conversation) {
+        await ctx.db.patch(args.conversationId, {
+          status: "error",
+          updatedAt: now,
+        });
+
+        // Decrement sandbox conversation count
+        if (conversation.acpSandboxId) {
+          const sandbox = await ctx.db.get(conversation.acpSandboxId);
+          if (sandbox) {
+            await ctx.db.patch(conversation.acpSandboxId, {
+              conversationCount: Math.max(0, sandbox.conversationCount - 1),
+              lastActivityAt: now,
+              lastError: errorMessage,
+            });
+          }
+        }
+      }
+    } else {
+      await ctx.db.patch(args.conversationId, {
+        lastMessageAt: now,
+        updatedAt: now,
+      });
+    }
   },
 });
 
