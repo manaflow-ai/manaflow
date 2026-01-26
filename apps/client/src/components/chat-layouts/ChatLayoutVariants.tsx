@@ -22,6 +22,7 @@ type ChatLayoutProps = {
 };
 
 const MAX_WIDTH = "max-w-3xl";
+const COMPOSER_MAX_WIDTH = "max-w-[52rem]";
 
 /** Threshold in pixels from bottom to consider "at bottom" */
 const AT_BOTTOM_THRESHOLD = 8;
@@ -330,7 +331,7 @@ export function ChatLayout({
         <div className="absolute inset-x-0 bottom-0 pointer-events-none">
           <div className="bg-white dark:bg-[#191919] pointer-events-auto">
             {permissionPrompt}
-            <div className={clsx("mx-auto px-6 pb-4", MAX_WIDTH)}>
+            <div className={clsx("mx-auto px-6 pb-4", COMPOSER_MAX_WIDTH)}>
               {composer}
             </div>
           </div>
