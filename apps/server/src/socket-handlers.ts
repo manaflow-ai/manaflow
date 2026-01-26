@@ -2582,6 +2582,63 @@ ${title}`;
         // Use dockerode to pull the image
         const dockerClient = DockerVSCodeInstance.getDocker();
 
+        type DockerPullProgressEvent = {
+          status?: string;
+          progress?: string;
+          id?: string;
+          progressDetail?: {
+            current?: number;
+            total?: number;
+          };
+        };
+
+        const progressState = {
+          lastEmitAt: 0,
+          lastStatus: "",
+        };
+
+        const emitProgress = (event: DockerPullProgressEvent): void => {
+          if (
+            !event.status &&
+            !event.progress &&
+            !event.progressDetail &&
+            !event.id
+          ) {
+            return;
+          }
+          const now = Date.now();
+          const status = event.status ?? "";
+          const statusChanged = status.length > 0 && status !== progressState.lastStatus;
+          if (statusChanged) {
+            progressState.lastStatus = status;
+            progressState.lastEmitAt = now;
+          } else if (now - progressState.lastEmitAt < 250) {
+            return;
+          } else {
+            progressState.lastEmitAt = now;
+          }
+
+          const progressDetail =
+            event.progressDetail &&
+            (typeof event.progressDetail.current === "number" ||
+              typeof event.progressDetail.total === "number")
+              ? {
+                  current: event.progressDetail.current,
+                  total: event.progressDetail.total,
+                }
+              : undefined;
+
+          socket.emit("docker-pull-progress", {
+            imageName,
+            status: event.status,
+            id: event.id,
+            progress: event.progress,
+            progressDetail,
+          });
+        };
+
+        emitProgress({ status: "Starting Docker pull" });
+
         const stream = await dockerClient.pull(imageName);
 
         // Wait for the pull to complete
@@ -2595,12 +2652,13 @@ ${title}`;
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
+            (event: DockerPullProgressEvent) => {
               if (event.status) {
                 serverLogger.info(
                   `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
                 );
               }
+              emitProgress(event);
             }
           );
         });
@@ -2614,10 +2672,20 @@ ${title}`;
         serverLogger.error("Error pulling Docker image:", error);
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
+        const normalizedErrorMessage = errorMessage.toLowerCase();
 
         // Provide user-friendly error messages
         let userFriendlyError: string;
         if (
+          normalizedErrorMessage.includes("no space left") ||
+          normalizedErrorMessage.includes("enospc") ||
+          normalizedErrorMessage.includes("insufficient space") ||
+          normalizedErrorMessage.includes("not enough space") ||
+          normalizedErrorMessage.includes("disk quota")
+        ) {
+          userFriendlyError =
+            "Docker image pull failed due to insufficient disk space. Free up disk space and try again.";
+        } else if (
           errorMessage.includes("timeout") ||
           errorMessage.includes("stalled")
         ) {
@@ -2648,6 +2716,7 @@ ${title}`;
         callback({
           success: false,
           error: userFriendlyError,
+          details: errorMessage,
         });
       }
     });

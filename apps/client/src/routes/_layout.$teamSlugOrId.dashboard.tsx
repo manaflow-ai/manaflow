@@ -29,6 +29,8 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullImageResponse,
+  DockerPullProgress,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -108,6 +110,157 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
     return [];
   }
 };
+
+type DockerPullLayerProgress = {
+  current: number;
+  total: number;
+};
+
+type DockerPullStatusLineInput = {
+  status?: string;
+  progress?: string;
+  percent?: number;
+  currentBytes?: number;
+  totalBytes?: number;
+};
+
+const DOCKER_PULL_COMMON_CAUSES = [
+  "Not enough disk space for Docker layers",
+  "Registry authentication required (docker login)",
+  "Network or VPN blocking the Docker registry or rate limits",
+  "Docker daemon not responding or stopped",
+];
+
+const DOCKER_PULL_TOAST_CLASSNAME =
+  "rounded-xl border border-neutral-200/70 bg-white/95 shadow-xl backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/90";
+
+const DOCKER_PULL_TOAST_CLASSNAMES = {
+  title: "text-sm font-semibold text-neutral-900 dark:text-neutral-100",
+  description: "text-xs text-neutral-600 dark:text-neutral-300",
+  loader: "text-emerald-500",
+};
+
+const DOCKER_PULL_HINT = "This may take a few minutes on first run.";
+
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = unitIndex === 0 || value >= 10 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+};
+
+const buildDockerPullStatusLine = ({
+  status,
+  progress,
+  percent,
+  currentBytes,
+  totalBytes,
+}: DockerPullStatusLineInput): string => {
+  const baseStatus =
+    status && status.trim().length > 0 ? status.trim() : "Preparing Docker pull";
+
+  if (
+    typeof percent === "number" &&
+    typeof currentBytes === "number" &&
+    typeof totalBytes === "number" &&
+    totalBytes > 0
+  ) {
+    return `${baseStatus} - ${percent}% (${formatBytes(currentBytes)} / ${formatBytes(totalBytes)})`;
+  }
+
+  if (progress && progress.trim().length > 0) {
+    return `${baseStatus} - ${progress.trim()}`;
+  }
+
+  return baseStatus;
+};
+
+const sanitizeDockerPullError = (message: string): string => {
+  const compact = message.replace(/\s+/g, " ").trim();
+  if (compact.length <= 240) {
+    return compact;
+  }
+  return `${compact.slice(0, 237)}...`;
+};
+
+const renderDockerPullDescription = (params: {
+  imageName: string;
+  statusLine: string;
+  percent?: number;
+  showHint: boolean;
+}) => {
+  const normalizedPercent =
+    typeof params.percent === "number"
+      ? Math.max(4, Math.min(100, params.percent))
+      : undefined;
+  const progressWidth = normalizedPercent ?? 24;
+  const progressClassName =
+    normalizedPercent === undefined
+      ? "h-full rounded-full bg-emerald-500/90 animate-pulse"
+      : "h-full rounded-full bg-emerald-500 transition-[width] duration-300 ease-out";
+
+  return (
+    <div className="mt-1 space-y-2">
+      <div className="text-xs text-neutral-500 dark:text-neutral-400">
+        {params.imageName}
+      </div>
+      <div className="text-xs text-neutral-600 dark:text-neutral-300">
+        {params.statusLine}
+      </div>
+      {params.showHint ? (
+        <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
+          {DOCKER_PULL_HINT}
+        </div>
+      ) : null}
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200/80 dark:bg-neutral-800">
+        <div
+          className={progressClassName}
+          style={{ width: `${progressWidth}%` }}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={normalizedPercent}
+        />
+      </div>
+    </div>
+  );
+};
+
+const renderDockerPullErrorDescription = (params: {
+  imageName: string;
+  details?: string;
+  hints: string[];
+}) => (
+  <div className="mt-1 space-y-2">
+    <div className="text-xs text-neutral-500 dark:text-neutral-400">
+      {params.imageName}
+    </div>
+    {params.details ? (
+      <div className="rounded-md border border-neutral-200/70 bg-neutral-50/80 px-2 py-1 text-[11px] font-mono text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-200">
+        {params.details}
+      </div>
+    ) : null}
+    <div className="text-[11px] uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+      Common causes
+    </div>
+    <ul className="list-disc space-y-1 pl-4 text-xs text-neutral-600 dark:text-neutral-300">
+      {params.hints.map((hint) => (
+        <li key={hint}>{hint}</li>
+      ))}
+    </ul>
+  </div>
+);
 
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
@@ -210,6 +363,17 @@ function DashboardComponent() {
     useState<ProviderStatusResponse | null>(null);
   const [isStartingTask, setIsStartingTask] = useState(false);
   const isStartingTaskRef = useRef(false);
+  const dockerPullToastRef = useRef<{
+    toastId: string | number | null;
+    imageName: string | null;
+  }>({ toastId: null, imageName: null });
+  const dockerPullLayerProgressRef = useRef<
+    Map<string, DockerPullLayerProgress>
+  >(new Map());
+  const dockerPullLastUpdateRef = useRef<{ key: string; at: number }>({
+    key: "",
+    at: 0,
+  });
 
   // const [hasDismissedCloudRepoOnboarding, setHasDismissedCloudRepoOnboarding] =
   //   useState<boolean>(false);
@@ -235,6 +399,56 @@ function DashboardComponent() {
       console.warn("Failed to persist agent selection", error);
     }
   }, []);
+
+  const resetDockerPullState = useCallback(() => {
+    dockerPullLayerProgressRef.current.clear();
+    dockerPullToastRef.current = { toastId: null, imageName: null };
+    dockerPullLastUpdateRef.current = { key: "", at: 0 };
+  }, []);
+
+  const showDockerPullToast = useCallback((imageName: string) => {
+    dockerPullLayerProgressRef.current.clear();
+    dockerPullLastUpdateRef.current = { key: "", at: 0 };
+    const initialStatusLine = buildDockerPullStatusLine({
+      status: "Preparing Docker pull",
+    });
+    const toastId = toast.loading("Pulling Docker image", {
+      description: renderDockerPullDescription({
+        imageName,
+        statusLine: initialStatusLine,
+        percent: undefined,
+        showHint: true,
+      }),
+      duration: Infinity,
+      className: DOCKER_PULL_TOAST_CLASSNAME,
+      classNames: DOCKER_PULL_TOAST_CLASSNAMES,
+    });
+    dockerPullToastRef.current = { toastId, imageName };
+    return toastId;
+  }, []);
+
+  const updateDockerPullToast = useCallback(
+    (params: { statusLine: string; percent?: number; showHint: boolean }) => {
+      const { toastId, imageName } = dockerPullToastRef.current;
+      if (!toastId || !imageName) {
+        return;
+      }
+
+      toast.loading("Pulling Docker image", {
+        id: toastId,
+        description: renderDockerPullDescription({
+          imageName,
+          statusLine: params.statusLine,
+          percent: params.percent,
+          showHint: params.showHint,
+        }),
+        duration: Infinity,
+        className: DOCKER_PULL_TOAST_CLASSNAME,
+        classNames: DOCKER_PULL_TOAST_CLASSNAMES,
+      });
+    },
+    []
+  );
 
   // Preselect environment if provided in URL search params
   useEffect(() => {
@@ -634,35 +848,69 @@ function DashboardComponent() {
             }
 
             // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
-            );
+            const pullToastId = showDockerPullToast(imageName);
 
             try {
-              const pullResult = await new Promise<{
-                success: boolean;
-                imageName?: string;
-                error?: string;
-              }>((resolve) => {
-                socket.emit("docker-pull-image", (response) => {
-                  resolve(response);
-                });
-              });
+              const pullResult = await new Promise<DockerPullImageResponse>(
+                (resolve) => {
+                  socket.emit("docker-pull-image", (response) => {
+                    resolve(response);
+                  });
+                }
+              );
 
               if (!pullResult.success) {
-                toast.dismiss(pullToastId);
-                toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
-                );
+                const errorSummary =
+                  pullResult.error ||
+                  `Failed to pull Docker image "${imageName}"`;
+                const detailsCandidate =
+                  pullResult.details ?? pullResult.error;
+                const details =
+                  detailsCandidate && detailsCandidate !== errorSummary
+                    ? sanitizeDockerPullError(detailsCandidate)
+                    : undefined;
+                toast.error(errorSummary, {
+                  id: pullToastId,
+                  description: renderDockerPullErrorDescription({
+                    imageName,
+                    details,
+                    hints: DOCKER_PULL_COMMON_CAUSES,
+                  }),
+                  duration: 15000,
+                  className: DOCKER_PULL_TOAST_CLASSNAME,
+                  classNames: DOCKER_PULL_TOAST_CLASSNAMES,
+                });
+                resetDockerPullState();
                 return;
               }
 
-              toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
+              const resolvedImageName = pullResult.imageName ?? imageName;
+              toast.success("Docker image ready", {
+                id: pullToastId,
+                description: resolvedImageName,
+                duration: 6000,
+                className: DOCKER_PULL_TOAST_CLASSNAME,
+                classNames: DOCKER_PULL_TOAST_CLASSNAMES,
+              });
+              resetDockerPullState();
             } catch (pullError) {
-              toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              const errorMessage =
+                pullError instanceof Error
+                  ? pullError.message
+                  : "Unknown error";
+              toast.error("Failed to pull Docker image", {
+                id: pullToastId,
+                description: renderDockerPullErrorDescription({
+                  imageName,
+                  details: sanitizeDockerPullError(errorMessage),
+                  hints: DOCKER_PULL_COMMON_CAUSES,
+                }),
+                duration: 15000,
+                className: DOCKER_PULL_TOAST_CLASSNAME,
+                classNames: DOCKER_PULL_TOAST_CLASSNAMES,
+              });
+              resetDockerPullState();
               return;
             }
           }
@@ -825,6 +1073,8 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     generateUploadUrl,
+    resetDockerPullState,
+    showDockerPullToast,
   ]);
 
   // Fetch repos on mount if none exist
@@ -1020,6 +1270,77 @@ function DashboardComponent() {
     },
     [addManualRepo, teamSlugOrId, reposByOrgQuery]
   );
+
+  useEffect(() => {
+    if (!socket) {
+      return;
+    }
+
+    const handleDockerPullProgress = (payload: DockerPullProgress) => {
+      const currentPull = dockerPullToastRef.current;
+      if (!currentPull.toastId || !currentPull.imageName) {
+        return;
+      }
+      if (payload.imageName !== currentPull.imageName) {
+        return;
+      }
+
+      const progressDetail = payload.progressDetail;
+      if (
+        payload.id &&
+        progressDetail &&
+        typeof progressDetail.current === "number" &&
+        typeof progressDetail.total === "number" &&
+        progressDetail.total > 0
+      ) {
+        dockerPullLayerProgressRef.current.set(payload.id, {
+          current: progressDetail.current,
+          total: progressDetail.total,
+        });
+      }
+
+      let totalBytes = 0;
+      let currentBytes = 0;
+      dockerPullLayerProgressRef.current.forEach((layer) => {
+        totalBytes += layer.total;
+        currentBytes += Math.min(layer.current, layer.total);
+      });
+
+      const percent =
+        totalBytes > 0
+          ? Math.min(100, Math.round((currentBytes / totalBytes) * 100))
+          : undefined;
+      const statusLine = buildDockerPullStatusLine({
+        status: payload.status,
+        progress: payload.progress,
+        percent,
+        currentBytes,
+        totalBytes,
+      });
+
+      const updateKey = `${payload.status ?? ""}|${payload.progress ?? ""}|${percent ?? ""}`;
+      const now = Date.now();
+      if (
+        updateKey === dockerPullLastUpdateRef.current.key &&
+        now - dockerPullLastUpdateRef.current.at < 250
+      ) {
+        return;
+      }
+      dockerPullLastUpdateRef.current = { key: updateKey, at: now };
+
+      updateDockerPullToast({
+        statusLine,
+        percent,
+        showHint: percent === undefined && !payload.progress,
+      });
+    };
+
+    socket.on("docker-pull-progress", handleDockerPullProgress);
+
+    return () => {
+      socket.off("docker-pull-progress", handleDockerPullProgress);
+    };
+  }, [socket, updateDockerPullToast]);
 
   // Listen for VSCode spawned events
   useEffect(() => {
