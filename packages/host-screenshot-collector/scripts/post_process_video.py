@@ -260,13 +260,13 @@ def add_cursor_overlay_drawtext(outdir, clicks):
 
 def trim_and_speedup(outdir, clicks, video_duration):
     """Trim inactive sections and speed up transitions."""
-    # Trimming parameters
-    FAST_SPEED = 10  # Speed for transition segments
-    ACTION_BEFORE = 0.3  # seconds before click at normal speed
-    ACTION_AFTER = 2.0  # seconds after click at normal speed
-    LAST_ACTION_AFTER = 3.0  # extra time for last click
-    MAX_TRANSITION = 0.3  # max seconds to keep from gaps before speedup
-    END_OF_VIDEO_BUFFER = 1.5  # seconds to keep at end
+    # Trimming parameters (less aggressive to allow content to load)
+    FAST_SPEED = 8  # Speed for transition segments (was 10)
+    ACTION_BEFORE = 0.45  # seconds before click at normal speed (1.5x)
+    ACTION_AFTER = 3.0  # seconds after click at normal speed (1.5x)
+    LAST_ACTION_AFTER = 4.5  # extra time for last click (1.5x)
+    MAX_TRANSITION = 0.45  # max seconds to keep from gaps before speedup (1.5x)
+    END_OF_VIDEO_BUFFER = 2.25  # seconds to keep at end (1.5x)
 
     # Build segments
     video_segments = []  # (start, end, speed)
@@ -353,7 +353,7 @@ def trim_and_speedup(outdir, clicks, video_duration):
 
 def process_no_clicks(outdir):
     """Process video when there are no clicks - just add centered cursor and speed up."""
-    log("No clicks found, drawing cursor at center and speeding up 4x")
+    log("No clicks found, drawing cursor at center and speeding up 2x")
     cx, cy = 960, 540
     cursor_path = f"{outdir}/cursor.png"
 
@@ -363,7 +363,7 @@ def process_no_clicks(outdir):
             "ffmpeg", "-y",
             "-i", f"{outdir}/raw.mp4",
             "-i", cursor_path,
-            "-filter_complex", f"[0:v][1:v]overlay=x={cx-tip_offset}:y={cy-tip_offset},setpts=0.25*PTS[out]",
+            "-filter_complex", f"[0:v][1:v]overlay=x={cx-tip_offset}:y={cy-tip_offset},setpts=0.5*PTS[out]",
             "-map", "[out]",
             "-movflags", "+faststart",
             f"{outdir}/workflow.mp4"
@@ -375,7 +375,7 @@ def process_no_clicks(outdir):
 
     # Fallback to just speed up
     result = subprocess.run(
-        f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.25*PTS" -movflags +faststart "{outdir}/workflow.mp4"',
+        f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.5*PTS" -movflags +faststart "{outdir}/workflow.mp4"',
         shell=True, capture_output=True, text=True
     )
 
