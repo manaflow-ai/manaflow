@@ -106,6 +106,10 @@ type StreamingMessage = {
   content: ContentBlock[];
   createdAt: number;
   lastSeq: number;
+  // Preamble: text that appeared BEFORE the first tool call
+  // This should be rendered above the tool calls section
+  preamble?: string;
+  preambleSeq?: number; // Sequence of last message_chunk before first tool_call
 };
 
 type DraftState = {
@@ -264,6 +268,7 @@ function ConversationThread() {
       toolCalls: undefined,
       reasoning: undefined,
       acpSeq: undefined,
+      isFinal: undefined,
       createdAt: optimisticCreatedAt,
     } satisfies Doc<"conversationMessages">;
   }, [
@@ -286,8 +291,9 @@ function ConversationThread() {
       0
     );
   }, [convexRawEvents]);
+  // TODO: Re-enable ACP stream once streaming preamble rendering is fixed
   const stream = useAcpSandboxStream({
-    enabled: true,
+    enabled: false, // Disabled to debug streaming preamble interference
     streamUrl: streamInfo?.sandboxUrl
       ? `${streamInfo.sandboxUrl}/api/acp/stream/${conversationId}`
       : null,
@@ -737,6 +743,16 @@ function ConversationThread() {
     );
   }, [rawEvents]);
 
+  const messageToolCallIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of visibleMessages) {
+      for (const call of message.toolCalls ?? []) {
+        ids.add(call.id);
+      }
+    }
+    return ids;
+  }, [visibleMessages]);
+
   const lastAssistantSeq = useMemo(() => {
     const seqs = visibleMessages
       .filter((message) => message.role === "assistant")
@@ -752,41 +768,86 @@ function ConversationThread() {
   );
 
   const combinedItems = useMemo(() => {
-    const streamItems = streamingMessage
-      ? [
-          {
-            kind: "stream" as const,
-            createdAt: streamingMessage.createdAt,
-            sortSeq: streamingMessage.lastSeq,
-            message: streamingMessage,
-          },
-        ]
-      : [];
+    const streamItems: Array<
+      | { kind: "stream"; createdAt: number; sortSeq: number; message: StreamingMessage }
+      | { kind: "stream-preamble"; createdAt: number; sortSeq: number; text: string }
+    > = [];
+
+    if (streamingMessage) {
+      // If streaming has preamble (text before first tool call), emit it as separate item
+      // Preamble has lower seq than tools, so it will sort AFTER tools in the array
+      // With flex-col-reverse, that means preamble appears ABOVE tool calls
+      if (streamingMessage.preamble && streamingMessage.preambleSeq !== undefined) {
+        streamItems.push({
+          kind: "stream-preamble" as const,
+          createdAt: streamingMessage.createdAt,
+          sortSeq: streamingMessage.preambleSeq,
+          text: streamingMessage.preamble,
+        });
+      }
+
+      // Main streaming content (text after tool calls, or all text if no tools)
+      // Only include if there's actual content to show
+      const hasContent = streamingMessage.content.some(
+        (b) => b.type === "text" && b.text && b.text.trim().length > 0
+      );
+      if (hasContent) {
+        streamItems.push({
+          kind: "stream" as const,
+          createdAt: streamingMessage.createdAt,
+          sortSeq: streamingMessage.lastSeq,
+          message: streamingMessage,
+        });
+      }
+    }
+
     const serverItems = visibleMessages.map((message) => ({
       kind: "server" as const,
       createdAt: message.createdAt,
       sortSeq: typeof message.acpSeq === "number" ? message.acpSeq : null,
       message,
     }));
-    const toolItems = toolCalls.map((toolCall) => ({
-      kind: "tool" as const,
-      createdAt: toolCall.firstSeenAt,
-      sortSeq: toolCall.firstSeenSeq,
-      toolCall,
-    }));
+    const toolItems = toolCalls
+      .filter((toolCall) => !messageToolCallIds.has(toolCall.id))
+      .map((toolCall) => ({
+        kind: "tool" as const,
+        createdAt: toolCall.firstSeenAt,
+        sortSeq: toolCall.firstSeenSeq,
+        toolCall,
+      }));
 
     return [...streamItems, ...serverItems, ...toolItems].sort((a, b) => {
+      // Both have sequence numbers - sort by sequence (higher = newer = comes first)
       if (a.sortSeq !== null && b.sortSeq !== null) {
         if (a.sortSeq !== b.sortSeq) return b.sortSeq - a.sortSeq;
       }
+
+      // One has sequence, one doesn't (e.g., user message vs ACP event)
+      // User messages (no sortSeq) should come BEFORE ACP events that are responses to them.
+      // If ACP event has higher createdAt, user message should come before it.
+      // If they're close in time (within 5 seconds), prefer putting user message first.
+      if (a.sortSeq === null && b.sortSeq !== null) {
+        // a is user message, b is ACP event
+        // If b was created after a (or within 5s), a should come first (return positive)
+        if (b.createdAt >= a.createdAt - 5000) return 1;
+      }
+      if (b.sortSeq === null && a.sortSeq !== null) {
+        // b is user message, a is ACP event
+        // If a was created after b (or within 5s), b should come first (return negative)
+        if (a.createdAt >= b.createdAt - 5000) return -1;
+      }
+
+      // Fall back to createdAt comparison
       const byCreatedAt = b.createdAt - a.createdAt;
       if (byCreatedAt !== 0) return byCreatedAt;
+
+      // Final tiebreaker
       const aSeq = a.sortSeq ?? 0;
       const bSeq = b.sortSeq ?? 0;
       if (aSeq !== bSeq) return bSeq - aSeq;
       return 0;
     });
-  }, [streamingMessage, toolCalls, visibleMessages]);
+  }, [messageToolCallIds, streamingMessage, toolCalls, visibleMessages]);
 
   const latestUserMessageAt = useMemo(() => {
     const serverUser = visibleMessages
@@ -985,53 +1046,48 @@ function ConversationThread() {
     ?? (isAwaitingResponse ? latestUserMessageAt : null);
   const showTimingOrError = (isAwaitingResponse || isOptimisticConversation || latestUserMessageError) && submittedAt !== null;
 
-  // Group consecutive tool calls while preserving assistant messages in their original positions
-  // This maintains the model's actual output flow: message, tools, message, tools, message
-  const groupedItems = useMemo(() => {
-    const result: Array<
-      | { kind: "stream"; message: StreamingMessage }
-      | { kind: "server"; message: Doc<"conversationMessages"> }
-      | { kind: "collapsed-group"; toolCalls: ToolCallEntry[] }
-    > = [];
-
-    let pendingToolCalls: ToolCallEntry[] = [];
-
-    const flushToolCalls = () => {
-      if (pendingToolCalls.length > 0) {
-        result.push({ kind: "collapsed-group", toolCalls: pendingToolCalls });
-        pendingToolCalls = [];
-      }
-    };
-
-    for (const item of combinedItems) {
-      if (item.kind === "tool") {
-        pendingToolCalls.push(item.toolCall);
-      } else if (item.kind === "stream") {
-        flushToolCalls();
-        result.push({ kind: "stream", message: item.message });
-      } else {
-        flushToolCalls();
-        result.push({ kind: "server", message: item.message });
-      }
-    }
-
-    flushToolCalls();
-
-    return result;
-  }, [combinedItems]);
+  const isIntermediateAssistantMessage = (message: Doc<"conversationMessages">) =>
+    message.role === "assistant" && message.isFinal !== true;
 
   const messagesContent = (
     <>
       {showTimingOrError && (
         <SubmissionTimingDisplay submittedAt={submittedAt} error={latestUserMessageError} />
       )}
-      {groupedItems.map((item, index) =>
-        item.kind === "stream" ? (
-          <StreamingConversationMessage
-            key={`stream-${item.message.createdAt}`}
-            message={item.message}
-          />
-        ) : item.kind === "server" ? (
+      {combinedItems.map((item, index) => {
+        if (item.kind === "stream") {
+          return (
+            <StreamingConversationMessage
+              key={`stream-${item.message.createdAt}`}
+              message={item.message}
+            />
+          );
+        }
+        if (item.kind === "stream-preamble") {
+          return (
+            <StreamingPreambleMessage
+              key={`preamble-${index}`}
+              text={item.text}
+            />
+          );
+        }
+        if (item.kind === "tool") {
+          return (
+            <ToolCallMessage
+              key={`tool-${item.toolCall.id}`}
+              call={item.toolCall}
+            />
+          );
+        }
+        if (isIntermediateAssistantMessage(item.message)) {
+          return (
+            <ThinkingMessage
+              key={`thinking-${item.message._id}`}
+              message={item.message}
+            />
+          );
+        }
+        return (
           <ConversationMessage
             key={`message-${item.message.clientMessageId ?? item.message._id}`}
             message={item.message}
@@ -1043,13 +1099,8 @@ function ConversationThread() {
                 : undefined
             }
           />
-        ) : (
-          <CollapsibleGroup
-            key={`collapsed-group-${index}`}
-            toolCalls={item.toolCalls}
-          />
-        )
-      )}
+        );
+      })}
     </>
   );
 
@@ -1163,6 +1214,22 @@ function StreamingConversationMessage({
   );
 }
 
+/**
+ * Renders the preamble text (assistant's initial response before any tool calls).
+ * This appears above the tool calls section during streaming.
+ */
+function StreamingPreambleMessage({ text }: { text: string }) {
+  return (
+    <StreamingMessageWrapper>
+      <MessageContent
+        blocks={[{ type: "text", text }]}
+        renderMarkdown
+        isStreaming={false}
+      />
+    </StreamingMessageWrapper>
+  );
+}
+
 function ConversationMessage({
   message,
   isOwn,
@@ -1187,6 +1254,28 @@ function ConversationMessage({
     <div className="text-[11px] text-neutral-400">Received · {timeLabel}</div>
   );
 
+  // For assistant messages with tool calls and sequence info, use interleaved rendering
+  const toolCalls = message.toolCalls ?? [];
+  const hasSequenceInfo = message.content.some((b) => b.acpSeq !== undefined) ||
+    toolCalls.some((tc) => tc.acpSeq !== undefined);
+
+  if (!isOwn && toolCalls.length > 0 && hasSequenceInfo) {
+    return (
+      <MessageWrapper
+        isOwn={isOwn}
+        footer={footer}
+        messageId={message._id}
+        messageKey={message.clientMessageId ?? message._id}
+        messageRole={message.role}
+      >
+        <InterleavedAssistantContent
+          content={message.content}
+          toolCalls={toolCalls}
+        />
+      </MessageWrapper>
+    );
+  }
+
   return (
     <MessageWrapper
       isOwn={isOwn}
@@ -1197,6 +1286,147 @@ function ConversationMessage({
     >
       <MessageContent blocks={message.content} renderMarkdown={!isOwn} />
     </MessageWrapper>
+  );
+}
+
+type ToolCallWithSeq = NonNullable<Doc<"conversationMessages">["toolCalls"]>[number];
+type ContentBlockWithSeq = Doc<"conversationMessages">["content"][number];
+
+/**
+ * Renders assistant content interleaved with tool calls based on acpSeq.
+ * - First text segment appears above the tool calls
+ * - Tool calls + intermediate text appear inline (chronologically interleaved)
+ * - Final text segment appears below the tool calls
+ */
+function InterleavedAssistantContent({
+  content,
+  toolCalls,
+}: {
+  content: ContentBlockWithSeq[];
+  toolCalls: ToolCallWithSeq[];
+}) {
+  // Separate content blocks: those without acpSeq go at the beginning
+  const unsequencedBlocks = content.filter((b) => b.acpSeq === undefined);
+  const sequencedBlocks = content.filter((b) => b.acpSeq !== undefined);
+
+  // Merge and sort all sequenced items by sequence number
+  type SequencedItem =
+    | { kind: "content"; block: ContentBlockWithSeq; seq: number }
+    | { kind: "tool"; toolCall: ToolCallWithSeq; seq: number };
+
+  const items: SequencedItem[] = [];
+
+  for (const block of sequencedBlocks) {
+    items.push({ kind: "content", block, seq: block.acpSeq as number });
+  }
+
+  for (const tc of toolCalls) {
+    if (tc.acpSeq !== undefined) {
+      items.push({ kind: "tool", toolCall: tc, seq: tc.acpSeq });
+    }
+  }
+
+  // Sort by sequence number
+  items.sort((a, b) => a.seq - b.seq);
+
+  // If no sequenced items, fall back to simple rendering
+  if (items.length === 0) {
+    return <MessageContent blocks={content} renderMarkdown />;
+  }
+
+  // Find first tool call index to split content
+  const firstToolIndex = items.findIndex((item) => item.kind === "tool");
+  // Find last tool index manually (findLastIndex may not be available in all targets)
+  let lastToolIndex = -1;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].kind === "tool") {
+      lastToolIndex = i;
+      break;
+    }
+  }
+
+  // If no tool calls, just render all content
+  if (firstToolIndex === -1) {
+    return <MessageContent blocks={content} renderMarkdown />;
+  }
+
+  // Split into segments
+  const beforeTools = items.slice(0, firstToolIndex);
+  const toolSection = items.slice(firstToolIndex, lastToolIndex + 1);
+  const afterTools = items.slice(lastToolIndex + 1);
+
+  // Extract content blocks from before section
+  const beforeBlocks = beforeTools
+    .filter((item): item is SequencedItem & { kind: "content" } => item.kind === "content")
+    .map((item) => item.block);
+
+  // Keep the middle section as interleaved items for chronological display
+  const middleItems = toolSection;
+
+  // Extract content blocks from after section
+  const afterBlocks = afterTools
+    .filter((item): item is SequencedItem & { kind: "content" } => item.kind === "content")
+    .map((item) => item.block);
+
+  // Combine unsequenced blocks with before blocks
+  const allBeforeBlocks = [...unsequencedBlocks, ...beforeBlocks];
+
+  return (
+    <div className="space-y-2">
+      {/* First text segment - unsequenced + before any tool calls */}
+      {allBeforeBlocks.length > 0 && (
+        <MessageContent blocks={allBeforeBlocks} renderMarkdown />
+      )}
+
+      {/* Tool calls + thinking - chronologically interleaved */}
+      {middleItems.length > 0 && (
+        <InterleavedInlineSection items={middleItems} />
+      )}
+
+      {/* Final text segment - after all tool calls */}
+      {afterBlocks.length > 0 && (
+        <MessageContent blocks={afterBlocks} renderMarkdown />
+      )}
+    </div>
+  );
+}
+
+type InterleavedItem =
+  | { kind: "content"; block: ContentBlockWithSeq; seq: number }
+  | { kind: "tool"; toolCall: ToolCallWithSeq; seq: number };
+
+/**
+ * Inline section that renders tool calls and thinking in chronological order.
+ */
+function InterleavedInlineSection({ items }: { items: InterleavedItem[] }) {
+  return (
+    <div className="space-y-1 border-l border-neutral-200/70 pl-3 dark:border-neutral-800/70">
+      {items.map((item, idx) =>
+        item.kind === "tool" ? (
+          <ToolCallDisplay
+            key={item.toolCall.id}
+            title={item.toolCall.name}
+            detail={buildToolDetailFromArgs(item.toolCall.arguments)}
+            status={item.toolCall.status}
+            sections={[
+              ...(item.toolCall.arguments
+                ? [{ label: "Arguments", content: item.toolCall.arguments }]
+                : []),
+              ...(item.toolCall.result
+                ? [{ label: "Result", content: item.toolCall.result }]
+                : []),
+            ]}
+          />
+        ) : (
+          <div key={`thinking-${idx}`} className="py-1">
+            <div className="text-[12px] text-neutral-600 dark:text-neutral-300 whitespace-pre-wrap">
+              <span className="mr-2 text-[11px] text-neutral-400">Thinking:</span>
+              <span>{item.block.type === "text" ? item.block.text : ""}</span>
+            </div>
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
@@ -1434,30 +1664,135 @@ function PermissionPrompt({
   );
 }
 
-function ToolCallMessage({
-  call,
-}: {
-  call: ToolCallEntry;
-}) {
-  const status = call.status ?? "pending";
+type ToolCallDisplaySection = {
+  label: string;
+  content: string;
+};
+
+type ToolCallDisplayProps = {
+  title: string;
+  detail: string | null;
+  status: string | null;
+  sections: ToolCallDisplaySection[];
+};
+
+function looksLikeJson(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  const first = trimmed[0];
+  if (first === "{" || first === "[" || first === "\"") return true;
+  if (first === "-" || (first >= "0" && first <= "9")) return true;
+  return trimmed === "true" || trimmed === "false" || trimmed === "null";
+}
+
+function formatToolPayload(value: string): string {
+  if (!looksLikeJson(value)) return value;
+  const parsed = safeParseJson(value);
+  if (parsed === null) return value;
+  if (typeof parsed === "object") {
+    try {
+      return JSON.stringify(parsed, null, 2);
+    } catch (error) {
+      console.error("Failed to stringify tool payload", error);
+      return value;
+    }
+  }
+  if (typeof parsed === "string") return parsed;
+  return String(parsed);
+}
+
+function truncateInline(value: string, maxLength = 120): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function getRecordString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" ? value : null;
+}
+
+function buildToolDetailFromArgs(rawArgs: string | null): string | null {
+  if (!rawArgs) return null;
+  if (!looksLikeJson(rawArgs)) return truncateInline(rawArgs);
+
+  const parsed = safeParseJson(rawArgs);
+  if (parsed === null) return truncateInline(rawArgs);
+  if (typeof parsed === "string") return truncateInline(parsed);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return truncateInline(String(parsed));
+  }
+  if (!isRecord(parsed)) return truncateInline(rawArgs);
+
+  const filePath = getRecordString(parsed, "file_path")
+    ?? getRecordString(parsed, "filepath")
+    ?? getRecordString(parsed, "filePath");
+  if (filePath) return `Read ${filePath}`;
+
+  const url = getRecordString(parsed, "url");
+  if (url) return url;
+
+  const path = getRecordString(parsed, "path");
+  const pattern = getRecordString(parsed, "pattern");
+  const outputMode = getRecordString(parsed, "output_mode");
+  if (path && pattern) {
+    const parts = [path, pattern];
+    if (outputMode) parts.push(outputMode);
+    return parts.join(" · ");
+  }
+  if (path) return path;
+  if (pattern) return pattern;
+
+  const command = getRecordString(parsed, "command");
+  if (command) return command;
+
+  const description = getRecordString(parsed, "description");
+  if (description) return truncateInline(description);
+
+  const prompt = getRecordString(parsed, "prompt");
+  if (prompt) return truncateInline(prompt);
+
+  const query = getRecordString(parsed, "query") ?? getRecordString(parsed, "q");
+  if (query) return truncateInline(query);
+
+  const mode = getRecordString(parsed, "output_mode");
+  if (mode) return `mode: ${mode}`;
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === "string") {
+      return `${key}: ${truncateInline(value)}`;
+    }
+  }
+
+  return truncateInline(rawArgs);
+}
+
+function ToolCallDisplay({
+  title,
+  detail,
+  status,
+  sections,
+}: ToolCallDisplayProps) {
   const [collapsed, setCollapsed] = useState(true);
   const [expanded, setExpanded] = useState(false);
-  const outputs = call.outputs.join("\n\n").trim();
-  const hasOutput = outputs.length > 0;
+  const displaySections = sections
+    .map((section) => ({
+      ...section,
+      content: formatToolPayload(section.content).trim(),
+    }))
+    .filter((section) => section.content.length > 0);
+  const hasOutput = displaySections.length > 0;
   const maxLines = 6;
-  const outputLines = hasOutput ? outputs.split("\n") : [];
+  const outputLines = hasOutput
+    ? displaySections.map((section) => section.content).join("\n").split("\n")
+    : [];
   const shouldTruncate = outputLines.length > maxLines;
-  const displayOutput =
-    shouldTruncate && !expanded
-      ? outputLines.slice(0, maxLines).join("\n")
-      : outputs;
-  const title = call.toolName ?? call.title ?? "Tool call";
-  const detail = call.command ?? call.description ?? null;
 
+  const statusValue = status ?? "pending";
   const statusDot =
-    status === "completed"
+    statusValue === "completed"
       ? "bg-emerald-400"
-      : status === "failed"
+      : statusValue === "failed"
         ? "bg-rose-400"
         : "bg-amber-400 animate-pulse";
 
@@ -1473,7 +1808,7 @@ function ToolCallMessage({
       >
         <span
           className={clsx("mt-1 h-2 w-2 rounded-full", statusDot)}
-          title={status}
+          title={statusValue}
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-2">
@@ -1490,9 +1825,25 @@ function ToolCallMessage({
       </button>
       {hasOutput && !collapsed ? (
         <div className="ml-4 mt-1 pt-1 border-l pl-3 border-neutral-200/70 dark:border-neutral-800/70">
-          <pre className="m-0 max-h-36 overflow-auto rounded-lg border px-3 py-2 text-[11px] border-neutral-200/70 bg-neutral-50 text-neutral-600 dark:border-neutral-800/70 dark:bg-neutral-900/60 dark:text-neutral-200">
-            {displayOutput}
-          </pre>
+          <div className="max-h-56 overflow-auto space-y-2 rounded-lg border px-3 py-2 text-[11px] border-neutral-200/70 bg-neutral-50 text-neutral-600 dark:border-neutral-800/70 dark:bg-neutral-900/60 dark:text-neutral-200">
+            {displaySections.map((section, index) => {
+              const lines = section.content.split("\n");
+              const sectionContent =
+                shouldTruncate && !expanded
+                  ? lines.slice(0, maxLines).join("\n")
+                  : section.content;
+              return (
+                <div key={`${section.label}-${index}`} className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    {section.label}
+                  </div>
+                  <pre className="m-0 whitespace-pre-wrap break-words">
+                    {sectionContent}
+                  </pre>
+                </div>
+              );
+            })}
+          </div>
           {shouldTruncate ? (
             <button
               type="button"
@@ -1510,32 +1861,49 @@ function ToolCallMessage({
   );
 }
 
-function CollapsibleGroup({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
-  const [expanded, setExpanded] = useState(false);
+function ToolCallMessage({
+  call,
+}: {
+  call: ToolCallEntry;
+}) {
+  const sections: ToolCallDisplaySection[] = [];
+  if (call.command) {
+    sections.push({ label: "Command", content: call.command });
+  } else if (call.description) {
+    sections.push({ label: "Description", content: call.description });
+  }
+  if (call.outputs.length > 0) {
+    sections.push({
+      label: "Output",
+      content: call.outputs.join("\n\n"),
+    });
+  }
 
-  if (toolCalls.length === 0) return null;
+  return (
+    <ToolCallDisplay
+      title={call.toolName ?? call.title ?? "Tool call"}
+      detail={call.command ?? call.description ?? null}
+      status={call.status}
+      sections={sections}
+    />
+  );
+}
 
-  const summary = `${toolCalls.length} tool call${toolCalls.length > 1 ? "s" : ""}`;
+function ThinkingMessage({ message }: { message: Doc<"conversationMessages"> }) {
+  const textContent = message.content
+    .filter((block) => block.type === "text" && block.text)
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  if (!textContent) return null;
 
   return (
     <div className="py-1">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
-      >
-        <span className={clsx("transition-transform", expanded ? "rotate-90" : "")}>
-          ▶
-        </span>
-        <span>{summary}</span>
-      </button>
-      {expanded && (
-        <div className="mt-1 space-y-1 border-l border-neutral-200/70 pl-3 dark:border-neutral-800/70">
-          {toolCalls.map((call) => (
-            <ToolCallMessage key={call.id} call={call} />
-          ))}
-        </div>
-      )}
+      <div className="text-[12px] text-neutral-600 dark:text-neutral-300 whitespace-pre-wrap">
+        <span className="mr-2 text-[11px] text-neutral-400">Thinking:</span>
+        <span>{textContent}</span>
+      </div>
     </div>
   );
 }
@@ -1860,40 +2228,66 @@ function buildStreamingMessage(
 ): StreamingMessage | null {
   if (rawEvents.length === 0) return null;
   const ordered = [...rawEvents].sort((a, b) => a.seq - b.seq);
-  let activeText = "";
+
+  // Track text before and after first tool call
+  let preambleText = ""; // Text BEFORE first tool_call
+  let preambleSeq = 0;
+  let streamingText = ""; // Text AFTER first tool_call
   let activeCreatedAt = 0;
   let activeLastSeq = 0;
+  let sawToolCall = false;
 
   for (const event of ordered) {
     const parsed = parseAcpEvent(event.raw);
     if (!parsed) continue;
 
     if (parsed.type === "message_complete") {
-      activeText = "";
+      preambleText = "";
+      preambleSeq = 0;
+      streamingText = "";
       activeCreatedAt = 0;
       activeLastSeq = 0;
+      sawToolCall = false;
       continue;
+    }
+
+    if (parsed.type === "tool_call") {
+      sawToolCall = true;
     }
 
     if (parsed.type === "message_chunk") {
       if (activeCreatedAt === 0) {
         activeCreatedAt = event.createdAt;
       }
-      activeText += parsed.text;
+
+      if (!sawToolCall) {
+        // Haven't seen a tool call yet - this is preamble
+        preambleText += parsed.text;
+        preambleSeq = event.seq;
+      } else {
+        // Already saw tool calls - this is streaming text after
+        streamingText += parsed.text;
+      }
       activeLastSeq = event.seq;
     }
   }
 
-  if (activeText.trim().length === 0) {
+  // Combine text - if we have both preamble and streaming, keep them separate
+  const totalText = preambleText + streamingText;
+  if (totalText.trim().length === 0) {
     return null;
   }
   if (activeLastSeq <= lastAssistantSeq) {
     return null;
   }
 
+  // If we have preamble and tool calls, include preamble info for separate rendering
+  const hasPreamble = preambleText.trim().length > 0 && sawToolCall;
+
   return {
-    content: [{ type: "text", text: activeText }],
+    content: [{ type: "text", text: hasPreamble ? streamingText : totalText }],
     createdAt: activeCreatedAt || Date.now(),
     lastSeq: activeLastSeq,
+    ...(hasPreamble ? { preamble: preambleText, preambleSeq } : {}),
   };
 }
