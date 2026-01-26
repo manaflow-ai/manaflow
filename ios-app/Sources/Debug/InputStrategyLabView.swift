@@ -10,7 +10,7 @@ struct InputStrategyLabView: View {
             topInsetExtra: 4,
             bottomInsetExtra: 5.333333333333333,
             scrollMode: .automatic,
-            pinCaretToBottom: false,
+            pinCaretToBottom: true,
             scrollRangeToVisible: false,
             allowCaretOverflow: false,
             showsActionButton: true,
@@ -200,9 +200,21 @@ private struct StrategyCard: View {
         let deltaText = formatValue(caretDelta)
         let lineCount = DebugInputBarMetrics.lineCount(for: text)
         let caretY = formatValue(caretFrameInWindow == .zero ? nil : caretFrameInWindow.maxY)
-        return Text("lines \(lineCount) | dist \(distanceText) | delta \(deltaText) | caretY \(caretY)")
+        let minHeight = DebugInputBarMetrics.editorHeight(
+            forLineCount: 1,
+            topInsetExtra: strategy.topInsetExtra,
+            bottomInsetExtra: strategy.bottomInsetExtra
+        )
+        let editorHeight = max(minHeight, measuredHeight)
+        let pillHeight = max(DebugInputBarMetrics.inputHeight, editorHeight)
+        let editorHeightText = formatValue(editorHeight)
+        let pillHeightText = formatValue(pillHeight)
+        return Text(
+            "lines \(lineCount) | dist \(distanceText) | delta \(deltaText) | caretY \(caretY) | height \(editorHeightText) | pill \(pillHeightText)"
+        )
             .font(.system(size: 12, design: .monospaced))
             .foregroundStyle(.secondary)
+            .accessibilityIdentifier("debug.strategy.\(strategy.id).metrics")
     }
 
     private func formatValue(_ value: CGFloat?) -> String {
@@ -282,12 +294,22 @@ struct InputStrategyPill: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            StrategyTextView(
-                text: $text,
-                measuredHeight: $measuredHeight,
-                caretFrameInWindow: $caretFrameInWindow,
-                strategy: strategy
-            )
+            ZStack(alignment: .topLeading) {
+                StrategyTextView(
+                    text: $text,
+                    measuredHeight: $measuredHeight,
+                    caretFrameInWindow: $caretFrameInWindow,
+                    strategy: strategy
+                )
+                if text.isEmpty {
+                    let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
+                    Text("Message")
+                        .foregroundStyle(.secondary)
+                        .font(.body)
+                        .padding(.top, verticalInset + strategy.topInsetExtra)
+                        .allowsHitTesting(false)
+                }
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: editorHeight)
             if strategy.showsActionButton {
@@ -325,6 +347,24 @@ struct StrategyTextView: UIViewRepresentable {
     @Binding var measuredHeight: CGFloat
     @Binding var caretFrameInWindow: CGRect
     let strategy: InputStrategy
+    let isFocused: Binding<Bool>?
+    let programmaticChangeToken: Binding<Int>?
+
+    init(
+        text: Binding<String>,
+        measuredHeight: Binding<CGFloat>,
+        caretFrameInWindow: Binding<CGRect>,
+        strategy: InputStrategy,
+        isFocused: Binding<Bool>? = nil,
+        programmaticChangeToken: Binding<Int>? = nil
+    ) {
+        self._text = text
+        self._measuredHeight = measuredHeight
+        self._caretFrameInWindow = caretFrameInWindow
+        self.strategy = strategy
+        self.isFocused = isFocused
+        self.programmaticChangeToken = programmaticChangeToken
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
@@ -348,8 +388,30 @@ struct StrategyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        let programmaticChanged: Bool
+        if let programmaticChangeToken {
+            if context.coordinator.lastProgrammaticToken != programmaticChangeToken.wrappedValue {
+                context.coordinator.lastProgrammaticToken = programmaticChangeToken.wrappedValue
+                programmaticChanged = true
+            } else {
+                programmaticChanged = false
+            }
+        } else {
+            programmaticChanged = false
+        }
         if uiView.text != text {
-            uiView.text = text
+            var shouldApplyText = true
+            if uiView.isFirstResponder {
+                let isComposing = uiView.markedTextRange != nil
+                if programmaticChangeToken != nil {
+                    shouldApplyText = programmaticChanged && !isComposing
+                } else {
+                    shouldApplyText = text.isEmpty && !isComposing
+                }
+            }
+            if shouldApplyText {
+                uiView.text = text
+            }
         }
         let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
         let targetInset = UIEdgeInsets(
@@ -361,8 +423,15 @@ struct StrategyTextView: UIViewRepresentable {
         if uiView.textContainerInset != targetInset {
             uiView.textContainerInset = targetInset
         }
-        context.coordinator.updateLayoutIfNeeded(textView: uiView)
-        context.coordinator.updateCaretFrame(textView: uiView)
+        context.coordinator.scheduleMeasurement(textView: uiView)
+        context.coordinator.scheduleCaretUpdate(textView: uiView)
+        if let isFocused {
+            if isFocused.wrappedValue && !uiView.isFirstResponder {
+                uiView.becomeFirstResponder()
+            } else if !isFocused.wrappedValue && uiView.isFirstResponder {
+                uiView.resignFirstResponder()
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -372,42 +441,83 @@ struct StrategyTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         private let parent: StrategyTextView
         private var lastMeasuredWidth: CGFloat = 0
+        private var pendingMeasurement = false
+        private var pendingCaretUpdate = false
+        var lastProgrammaticToken = 0
 
         init(parent: StrategyTextView) {
             self.parent = parent
+            self.lastProgrammaticToken = parent.programmaticChangeToken?.wrappedValue ?? 0
         }
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
-            applyMeasurement(textView: textView)
-            applyScrollBehavior(textView: textView)
-            updateCaretFrame(textView: textView)
+            if textView.bounds.width > 0 {
+                applyMeasurement(textView: textView)
+                applyScrollBehavior(textView: textView)
+                updateCaretFrame(textView: textView)
+            } else {
+                scheduleMeasurement(textView: textView)
+                scheduleCaretUpdate(textView: textView)
+            }
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if let isFocused = parent.isFocused, !isFocused.wrappedValue {
+                isFocused.wrappedValue = true
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if let isFocused = parent.isFocused, isFocused.wrappedValue {
+                isFocused.wrappedValue = false
+            }
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
-            updateCaretFrame(textView: textView)
+            scheduleCaretUpdate(textView: textView)
         }
 
-        func updateLayoutIfNeeded(textView: UITextView) {
+        func scheduleMeasurement(textView: UITextView) {
             let width = textView.bounds.width
             guard width > 0 else { return }
-            if abs(width - lastMeasuredWidth) > 0.5 {
-                lastMeasuredWidth = width
-                applyMeasurement(textView: textView)
-                applyScrollBehavior(textView: textView)
+            if abs(width - lastMeasuredWidth) <= 0.5, pendingMeasurement {
+                return
+            }
+            lastMeasuredWidth = width
+            guard !pendingMeasurement else { return }
+            pendingMeasurement = true
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.pendingMeasurement = false
+                self.applyMeasurement(textView: textView)
+                self.applyScrollBehavior(textView: textView)
             }
         }
 
         private func applyMeasurement(textView: UITextView) {
+            textView.layoutIfNeeded()
             let width = max(1, textView.bounds.width)
             let size = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+            let layoutManager = textView.layoutManager
+            layoutManager.ensureLayout(for: textView.textContainer)
+            var contentHeight = layoutManager.usedRect(for: textView.textContainer).height
+            if textView.text.isEmpty || textView.text.hasSuffix("\n") {
+                let extraRect = layoutManager.extraLineFragmentRect
+                if extraRect.height > 0 {
+                    contentHeight = max(contentHeight, extraRect.maxY)
+                }
+            }
+            contentHeight += textView.textContainerInset.top + textView.textContainerInset.bottom
             let minHeight = DebugInputBarMetrics.editorHeight(
                 forLineCount: 1,
                 topInsetExtra: parent.strategy.topInsetExtra,
                 bottomInsetExtra: parent.strategy.bottomInsetExtra
             )
-            let rawHeight = max(minHeight, size.height)
-            let clampedHeight = min(parent.strategy.maxHeight, rawHeight)
+            let rawHeight = max(minHeight, max(size.height, contentHeight))
+            let scale = max(1, textView.traitCollection.displayScale)
+            let alignedHeight = (rawHeight * scale).rounded(.up) / scale
+            let clampedHeight = min(parent.strategy.maxHeight, alignedHeight)
             if abs(parent.measuredHeight - clampedHeight) > 0.5 {
                 parent.measuredHeight = clampedHeight
             }
@@ -425,6 +535,12 @@ struct StrategyTextView: UIViewRepresentable {
             }
             if textView.isScrollEnabled != shouldScroll {
                 textView.isScrollEnabled = shouldScroll
+            }
+            if !shouldScroll {
+                let minOffset = -textView.adjustedContentInset.top
+                if abs(textView.contentOffset.y - minOffset) > 0.5 {
+                    textView.setContentOffset(CGPoint(x: 0, y: minOffset), animated: false)
+                }
             }
             if parent.strategy.scrollRangeToVisible {
                 let endRange = NSRange(location: textView.text.count, length: 0)
@@ -462,7 +578,17 @@ struct StrategyTextView: UIViewRepresentable {
             }
         }
 
-        func updateCaretFrame(textView: UITextView) {
+        func scheduleCaretUpdate(textView: UITextView) {
+            guard !pendingCaretUpdate else { return }
+            pendingCaretUpdate = true
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.pendingCaretUpdate = false
+                self.updateCaretFrame(textView: textView)
+            }
+        }
+
+        private func updateCaretFrame(textView: UITextView) {
             textView.layoutIfNeeded()
             let caretPosition = textView.selectedTextRange?.end ?? textView.endOfDocument
             let caretRect = textView.caretRect(for: caretPosition)

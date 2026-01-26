@@ -15,6 +15,13 @@ struct MarkdownDebugView: View {
     @State private var inlineCodeFontDelta: Double = Double(MarkdownLayoutConfig.default.inlineCodeFontSizeDelta)
     @State private var lineHeightMultiple: Double = Double(MarkdownLayoutConfig.default.lineHeightMultiple)
     @State private var didCopyLayout = false
+    @State private var inputText: String = ""
+    @State private var inputMeasuredHeight: CGFloat = DebugInputBarMetrics.editorHeight(
+        forLineCount: 1,
+        topInsetExtra: 4,
+        bottomInsetExtra: 5.333333333333333
+    )
+    @State private var inputCaretFrameInWindow: CGRect = .zero
 
     private var layout: MarkdownLayoutConfig {
         MarkdownLayoutConfig(
@@ -111,6 +118,13 @@ struct MarkdownDebugView: View {
         }
         .navigationTitle("Markdown Debug")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            MarkdownDebugInputBar(
+                text: $inputText,
+                measuredHeight: $inputMeasuredHeight,
+                caretFrameInWindow: $inputCaretFrameInWindow
+            )
+        }
     }
 
     private func copyLayout() {
@@ -151,6 +165,50 @@ struct MarkdownDebugView: View {
             lineHeightMultiple: \(lineHeight)
         )
         """
+    }
+}
+
+private let markdownBaselineStrategy = InputStrategy(
+    id: "markdown-baseline",
+    title: "Markdown baseline",
+    detail: "",
+    topInsetExtra: 4,
+    bottomInsetExtra: 5.333333333333333,
+    scrollMode: .automatic,
+    pinCaretToBottom: true,
+    scrollRangeToVisible: false,
+    allowCaretOverflow: false,
+    showsActionButton: true,
+    alignment: .bottomLeading
+)
+
+private struct MarkdownDebugInputBar: View {
+    @Binding var text: String
+    @Binding var measuredHeight: CGFloat
+    @Binding var caretFrameInWindow: CGRect
+
+    var body: some View {
+        let minHeight = DebugInputBarMetrics.editorHeight(
+            forLineCount: 1,
+            topInsetExtra: markdownBaselineStrategy.topInsetExtra,
+            bottomInsetExtra: markdownBaselineStrategy.bottomInsetExtra
+        )
+        let editorHeight = max(minHeight, measuredHeight)
+        let pillHeight = max(DebugInputBarMetrics.inputHeight, editorHeight)
+        InputStrategyPill(
+            strategy: markdownBaselineStrategy,
+            text: $text,
+            measuredHeight: $measuredHeight,
+            caretFrameInWindow: $caretFrameInWindow,
+            editorHeight: editorHeight,
+            pillHeight: pillHeight
+        ) {
+            text = ""
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 28)
+        .background(Color(UIColor.systemBackground).opacity(0.9))
     }
 }
 

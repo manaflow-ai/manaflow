@@ -30,6 +30,12 @@ struct ChatDebugMenu: View {
                 }
             }
 
+            Section("Main Chat Replica") {
+                NavigationLink("Fix 1 main (mock messages)") {
+                    ChatFix1MainDebugMockView()
+                }
+            }
+
             Section("Markdown") {
                 NavigationLink("Markdown Debug") {
                     MarkdownDebugView()

@@ -42,7 +42,6 @@ struct CMuxApp: App {
         defaults.set(0.0, forKey: "debug.input.bottomInsetSingleExtra")
         defaults.set(4.0, forKey: "debug.input.bottomInsetMultiExtra")
         defaults.set(4.0, forKey: "debug.input.topInsetMultiExtra")
-        defaults.set(2.0, forKey: "debug.input.placeholderOffset")
         defaults.set(-12.0, forKey: "debug.input.micOffset")
         defaults.set(-4.0, forKey: "debug.input.sendOffset")
         defaults.set(1.0, forKey: "debug.input.sendXOffset")

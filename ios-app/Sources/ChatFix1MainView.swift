@@ -15,7 +15,6 @@ struct ChatFix1MainView: View {
     @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
     @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
     @AppStorage("debug.input.topInsetMultiExtra") private var topInsetMultiExtra: Double = 4
-    @AppStorage("debug.input.placeholderOffset") private var placeholderOffset: Double = 2
     @AppStorage("debug.input.micOffset") private var micOffset: Double = -12
     @AppStorage("debug.input.sendOffset") private var sendOffset: Double = -4
     @AppStorage("debug.input.sendXOffset") private var sendXOffset: Double = 1
@@ -63,7 +62,6 @@ struct ChatFix1MainView: View {
                     bottomInsetSingleExtra: $bottomInsetSingleExtra,
                     bottomInsetMultiExtra: $bottomInsetMultiExtra,
                     topInsetMultiExtra: $topInsetMultiExtra,
-                    placeholderOffset: $placeholderOffset,
                     micOffset: $micOffset,
                     sendOffset: $sendOffset,
                     sendXOffset: $sendXOffset,
@@ -112,11 +110,140 @@ struct ChatFix1MainView: View {
     }
 }
 
+struct ChatFix1MainDebugMockView: View {
+    @State private var messages: [Message] = ChatFix1MainDebugMockData.makeMessages()
+    @State private var isSending = false
+    private let topShimHeight: CGFloat
+    @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showTuningPanel = false
+    @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
+    @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
+    @AppStorage("debug.input.topInsetMultiExtra") private var topInsetMultiExtra: Double = 4
+    @AppStorage("debug.input.micOffset") private var micOffset: Double = -12
+    @AppStorage("debug.input.sendOffset") private var sendOffset: Double = -4
+    @AppStorage("debug.input.sendXOffset") private var sendXOffset: Double = 1
+    @AppStorage("debug.input.barYOffset") private var barYOffset: Double = 34
+    @AppStorage("debug.input.bottomMessageGap") private var bottomMessageGap: Double = 10
+    @AppStorage("debug.input.isMultiline") private var isMultilineFlag = false
+
+    init() {
+        self.topShimHeight = 1 / UIScreen.main.scale
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Fix1MainViewController_Wrapper(
+                messages: messages,
+                isSending: isSending,
+                onSend: handleSend,
+                inputBarYOffset: CGFloat(barYOffset),
+                bottomMessageGap: CGFloat(bottomMessageGap)
+            )
+            .ignoresSafeArea()
+            Color.clear
+                .frame(height: topShimHeight)
+                .accessibilityHidden(true)
+            if showTuningPanel {
+                ChatInputTuningPanel(
+                    bottomInsetSingleExtra: $bottomInsetSingleExtra,
+                    bottomInsetMultiExtra: $bottomInsetMultiExtra,
+                    topInsetMultiExtra: $topInsetMultiExtra,
+                    micOffset: $micOffset,
+                    sendOffset: $sendOffset,
+                    sendXOffset: $sendXOffset,
+                    barYOffset: $barYOffset,
+                    bottomMessageGap: $bottomMessageGap,
+                    isMultiline: isMultilineFlag,
+                    showPanel: $showTuningPanel
+                )
+                .padding(.top, 152)
+                .padding(.trailing, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .zIndex(2)
+            }
+        }
+        .background(Color.clear)
+        .ignoresSafeArea()
+        .onAppear {
+            let clampedGap = min(120, max(-20, bottomMessageGap))
+            if bottomMessageGap != clampedGap {
+                bottomMessageGap = clampedGap
+            }
+        }
+    }
+
+    private func handleSend(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let userMessage = Message(
+            content: trimmed,
+            timestamp: .now,
+            isFromMe: true,
+            status: .sent
+        )
+        messages.append(userMessage)
+        isSending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            let assistantMessage = Message(
+                content: "Got it. Reviewing caret behavior now.",
+                timestamp: .now,
+                isFromMe: false,
+                status: .delivered
+            )
+            messages.append(assistantMessage)
+            isSending = false
+        }
+    }
+}
+
+private enum ChatFix1MainDebugMockData {
+    private static let userSnippets: [String] = [
+        "Can you check the caret drift again?",
+        "I pressed Return several times.\nThe cursor moves down.",
+        "The baseline strategy looks stable.",
+        "Does sizeThatFits change scroll behavior?",
+        "Try typing A, Return, A, Return.",
+        "Any difference between simulator and device?",
+        "The input grows upward in the lab.",
+        "We need to match main chat.",
+        "Thanks for digging into this.",
+    ]
+
+    private static let assistantSnippets: [String] = [
+        "Investigating the input bar layout now.",
+        "I suspect the text view insets are shifting.",
+        "Comparing measurement strategies in the lab.",
+        "I will align the scroll logic with baseline.",
+        "Let me add more diagnostics.",
+        "We can add more long messages to stress layout.",
+        "I will reload the app after changes.",
+        "Looking at caret rect vs used rect.",
+        "Let's test with a longer assistant reply to wrap.",
+    ]
+
+    static func makeMessages(count: Int = 80) -> [Message] {
+        let safeCount = min(200, max(20, count))
+        let start = Date().addingTimeInterval(-Double(safeCount) * 90)
+        return (0..<safeCount).map { index in
+            let isFromMe = index % 2 == 0
+            let base = isFromMe ? userSnippets[index % userSnippets.count] : assistantSnippets[index % assistantSnippets.count]
+            let extra = (index % 7 == 0)
+                ? " Here is a longer note that wraps across multiple lines to stress the layout engine."
+                : ""
+            let timestamp = start.addingTimeInterval(Double(index) * 90)
+            return Message(
+                content: base + extra,
+                timestamp: timestamp,
+                isFromMe: isFromMe,
+                status: .delivered
+            )
+        }
+    }
+}
+
 private struct ChatInputTuningPanel: View {
     @Binding var bottomInsetSingleExtra: Double
     @Binding var bottomInsetMultiExtra: Double
     @Binding var topInsetMultiExtra: Double
-    @Binding var placeholderOffset: Double
     @Binding var micOffset: Double
     @Binding var sendOffset: Double
     @Binding var sendXOffset: Double
@@ -127,7 +254,7 @@ private struct ChatInputTuningPanel: View {
     @State private var copied = false
 
     private var summaryText: String {
-        "bottomInsetSingleExtra=\(format(bottomInsetSingleExtra)), bottomInsetMultiExtra=\(format(bottomInsetMultiExtra)), topInsetMultiExtra=\(format(topInsetMultiExtra)), placeholderOffset=\(format(placeholderOffset)), micOffset=\(format(micOffset)), sendOffset=\(format(sendOffset)), sendXOffset=\(format(sendXOffset)), barYOffset=\(format(barYOffset)), bottomMessageGap=\(format(bottomMessageGap))"
+        "bottomInsetSingleExtra=\(format(bottomInsetSingleExtra)), bottomInsetMultiExtra=\(format(bottomInsetMultiExtra)), topInsetMultiExtra=\(format(topInsetMultiExtra)), micOffset=\(format(micOffset)), sendOffset=\(format(sendOffset)), sendXOffset=\(format(sendXOffset)), barYOffset=\(format(barYOffset)), bottomMessageGap=\(format(bottomMessageGap))"
     }
 
     var body: some View {
@@ -140,7 +267,6 @@ private struct ChatInputTuningPanel: View {
             if isMultiline {
                 tuningRow(label: "Top (multi)", value: $topInsetMultiExtra, range: -6...20, step: 1)
             }
-            tuningRow(label: "Placeholder Y", value: $placeholderOffset, range: -6...12, step: 1)
             tuningRow(label: "Mic Y", value: $micOffset, range: -12...12, step: 1)
             tuningRow(label: "Send Y", value: $sendOffset, range: -12...12, step: 1)
             tuningRow(label: "Send X", value: $sendXOffset, range: -20...20, step: 1)
@@ -1279,6 +1405,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             var pillFrame = self.computedPillFrameInView()
             var pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
             var pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
+            let deltaPill = pillTopY - oldPillTopY
             let shouldLockPillBottom = !animated
                 && keyboardVisible
                 && keyboardOverlap > 1
@@ -1311,7 +1438,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             let targetExtraSpacerHeight = self.pixelAlign(desiredGap, scale: scale)
             let targetBottomSpacerHeight = self.pixelAlign(pillFrame.height, scale: scale)
             let targetBelowPillHeight = self.pixelAlign(belowPillGap, scale: scale)
-            let targetBottomInset = self.pixelAlign(max(0, viewBottomY - pillTopY + desiredGap), scale: scale)
+            var targetBottomInset = self.pixelAlign(max(0, viewBottomY - pillTopY + desiredGap), scale: scale)
             let naturalHeight = self.naturalContentHeight()
             let fitsAboveInput = self.contentFitsAboveInput(
                 contentHeight: naturalHeight,
@@ -1319,7 +1446,15 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 topInset: self.scrollView.adjustedContentInset.top,
                 bottomInset: targetBottomInset
             )
-            let shouldAnchorToBottom = wasAnchoredToBottom && (!fitsAboveInput || gapAnchored)
+#if DEBUG
+            if self.uiTestFakeKeyboardEnabled {
+                let minInsetForScroll = max(0, self.scrollView.bounds.height - naturalHeight + keyboardOverlap)
+                if targetBottomInset < minInsetForScroll {
+                    targetBottomInset = minInsetForScroll
+                }
+            }
+#endif
+            let shouldAnchorToBottom = wasAnchoredToBottom && (!fitsAboveInput || gapAnchored || shouldAssumeBottom)
             if self.extraSpacerHeightConstraint.constant != 0 {
                 self.extraSpacerHeightConstraint.constant = 0
             }
@@ -1345,7 +1480,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
             let newMaxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height + targetBottomInset)
             let deltaInset = targetBottomInset - oldBottomInset
-            let deltaPill = pillTopY - oldPillTopY
             let shouldAdjustOffset = animated || abs(deltaPill) > 0.5 || oldAnchorSample != nil || useTransitionSnapshot
             if shouldAdjustOffset {
                 let adjustedTop = self.scrollView.adjustedContentInset.top
@@ -1383,7 +1517,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 if !isInteractiveDismissal {
                     if shouldAnchorToBottom {
                         targetOffsetY = newMaxOffsetY
-                    } else if fitsAboveInput {
+                    } else if fitsAboveInput && !self.hasUserScrolled {
                         targetOffsetY = minY
                     }
                 }
@@ -1925,13 +2059,39 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         uiTestInteractiveDismissalActive = treatAsInteractiveDismissal
         updateBottomInsetsForKeyboard(animated: animated, force: true)
         uiTestInteractiveDismissalActive = false
+#if DEBUG
+        applyUiTestAnchorCorrectionIfNeeded()
+#endif
         if animated {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.updateBottomInsetsForKeyboard(animated: true, force: true)
+#if DEBUG
+                self.applyUiTestAnchorCorrectionIfNeeded()
+#endif
             }
         }
     }
+
+#if DEBUG
+    private func applyUiTestAnchorCorrectionIfNeeded() {
+        guard uiTestFakeKeyboardEnabled else { return }
+        view.layoutIfNeeded()
+        let scale = max(1, view.traitCollection.displayScale)
+        let pillFrame = computedPillFrameInView()
+        let pillTopY = pixelAlign(inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+        guard let anchorIndex = anchorCandidateIndex(pillTopY: pillTopY),
+              let sample = anchorSample(index: anchorIndex, pillTopY: pillTopY),
+              let contentBottom = anchorBottomContentY(index: anchorIndex) else { return }
+        let desiredAnchorBottomY = pillTopY - sample.gap
+        let targetOffsetY = contentBottom - desiredAnchorBottomY
+        let bounds = contentOffsetBounds(keyboardOverlap: uiTestKeyboardOverlap)
+        let clamped = min(max(targetOffsetY, bounds.minY), bounds.maxY)
+        if abs(scrollView.contentOffset.y - clamped) > 0.5 {
+            scrollView.contentOffset.y = clamped
+        }
+    }
+#endif
 
     private func applyUiTestKeyboardDragIfNeeded() {
         guard scrollView != nil, scrollView.isTracking else { return }
