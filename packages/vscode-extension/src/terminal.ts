@@ -75,6 +75,9 @@ function getConfig() {
 
 const RESTORE_FALLBACK_DELAY_MS = 1500;
 const RECONCILE_INTERVAL_MS = 15000;
+const PROTECTED_REOPEN_DELAY_MS = 500;
+const BACKGROUND_RETRY_BASE_DELAY_MS = 15000;
+const BACKGROUND_RETRY_MAX_DELAY_MS = 120000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -104,6 +107,26 @@ function extractTerminalInfos(payload: unknown): TerminalInfo[] | null {
     return payload.sessions.filter(isTerminalInfo);
   }
   return null;
+}
+
+type TerminalKind = Exclude<TerminalMetadata["type"], undefined>;
+const PROTECTED_TERMINAL_TYPES = new Set<TerminalKind>([
+  "agent",
+  "dev",
+  "maintenance",
+]);
+
+function isProtectedTerminal(info: TerminalInfo): boolean {
+  if (info.metadata?.managed) return true;
+  if (info.metadata?.type && PROTECTED_TERMINAL_TYPES.has(info.metadata.type)) {
+    return true;
+  }
+  return info.name === "cmux";
+}
+
+function shouldFocusProtectedTerminal(info: TerminalInfo): boolean {
+  if (info.metadata?.type === "agent") return true;
+  return info.name === "cmux";
 }
 
 
@@ -374,8 +397,9 @@ class PtyClient {
   private _eventHandlers = new Map<string, ((data: unknown) => void)[]>();
   private _connected = false;
   private _reconnectAttempts = 0;
-  private _maxReconnectAttempts = 10;
+  private _maxReconnectAttempts = Number.POSITIVE_INFINITY;
   private _reconnectDelay = 1000;
+  private _maxReconnectDelay = 30000;
 
   constructor(private readonly serverUrl: string) {}
 
@@ -434,7 +458,10 @@ class PtyClient {
   private _tryReconnect(): void {
     if (this._reconnectAttempts < this._maxReconnectAttempts) {
       this._reconnectAttempts++;
-      const delay = this._reconnectDelay * Math.pow(2, this._reconnectAttempts - 1);
+      const delay = Math.min(
+        this._reconnectDelay * Math.pow(2, this._reconnectAttempts - 1),
+        this._maxReconnectDelay
+      );
       console.log(`Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts})`);
       setTimeout(() => this.connect().catch(() => {}), delay);
     }
@@ -564,6 +591,10 @@ class CmuxTerminalManager {
   private _restoreFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private _reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private _reconcileInFlight = false;
+  private _reopenTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private _backgroundRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private _backgroundRetryAttempts = 0;
+  private _connectInFlight = false;
 
   constructor() {
     const config = getConfig();
@@ -645,28 +676,58 @@ class CmuxTerminalManager {
   private async _retryConnect(): Promise<void> {
     // Increased retry count and delay for Docker containers where
     // the PTY server may take longer to become available
+    if (this._connectInFlight || this._initialized) {
+      return;
+    }
+    this._connectInFlight = true;
     const maxRetries = 20;
     const retryDelayMs = 1500;
 
-    for (let i = 0; i < maxRetries; i++) {
-      console.log(`[cmux] Retry ${i + 1}/${maxRetries} connecting to PTY server...`);
-      await new Promise(r => setTimeout(r, retryDelayMs));
-      try {
-        await this._ptyClient.connect();
-        // Handlers already registered in initialize(), just mark as initialized
-        this._initialized = true;
-        this._startReconcileLoop();
-        console.log(`[cmux] Successfully connected to PTY server on retry ${i + 1}`);
-        return;
-      } catch (err) {
-        console.log(`[cmux] Retry ${i + 1}/${maxRetries} failed:`, err instanceof Error ? err.message : err);
+    try {
+      for (let i = 0; i < maxRetries; i++) {
+        console.log(`[cmux] Retry ${i + 1}/${maxRetries} connecting to PTY server...`);
+        await new Promise(r => setTimeout(r, retryDelayMs));
+        try {
+          await this._ptyClient.connect();
+          // Handlers already registered in initialize(), just mark as initialized
+          this._initialized = true;
+          this._startReconcileLoop();
+          this._backgroundRetryAttempts = 0;
+          if (this._backgroundRetryTimer) {
+            clearTimeout(this._backgroundRetryTimer);
+            this._backgroundRetryTimer = null;
+          }
+          console.log(`[cmux] Successfully connected to PTY server on retry ${i + 1}`);
+          return;
+        } catch (err) {
+          console.log(`[cmux] Retry ${i + 1}/${maxRetries} failed:`, err instanceof Error ? err.message : err);
+        }
       }
+    } finally {
+      this._connectInFlight = false;
     }
     // After all retries exhausted, throw an error so callers know PTY is unavailable
-    // The extension will fall back to tmux in this case
+    // Continue background retries to recover if the PTY server comes up later.
     const errMsg = `Failed to connect to PTY server after ${maxRetries} retries`;
     console.error(`[cmux] ${errMsg}`);
+    this._scheduleBackgroundRetry();
     throw new Error(errMsg);
+  }
+
+  private _scheduleBackgroundRetry(): void {
+    if (this._backgroundRetryTimer || this._initialized) return;
+    const delay = Math.min(
+      BACKGROUND_RETRY_BASE_DELAY_MS * Math.pow(2, this._backgroundRetryAttempts),
+      BACKGROUND_RETRY_MAX_DELAY_MS
+    );
+    this._backgroundRetryAttempts += 1;
+    console.log(`[cmux] Scheduling background PTY reconnect in ${delay}ms`);
+    this._backgroundRetryTimer = setTimeout(() => {
+      this._backgroundRetryTimer = null;
+      void this._retryConnect().catch((err) => {
+        console.error("[cmux] Background retry failed:", err);
+      });
+    }, delay);
   }
 
   private _scheduleRestoreFallback(reason: string): void {
@@ -900,10 +961,39 @@ class CmuxTerminalManager {
     }
     this._terminals.delete(ptyId);
     this._pendingCreations.delete(ptyId);
+    const reopenTimer = this._reopenTimers.get(ptyId);
+    if (reopenTimer) {
+      clearTimeout(reopenTimer);
+      this._reopenTimers.delete(ptyId);
+    }
+  }
+
+  private _scheduleProtectedReopen(info: TerminalInfo): void {
+    if (this._isDeactivating) return;
+    if (this._terminals.has(info.id)) return;
+    if (this._pendingCreations.has(info.id)) return;
+    if (this._reopenTimers.has(info.id)) return;
+
+    this._pendingCreations.add(info.id);
+    const shouldFocus = shouldFocusProtectedTerminal(info);
+    const timer = setTimeout(() => {
+      this._reopenTimers.delete(info.id);
+      if (this._isDeactivating) {
+        this._pendingCreations.delete(info.id);
+        return;
+      }
+      if (this._terminals.has(info.id)) {
+        this._pendingCreations.delete(info.id);
+        return;
+      }
+      this._createTerminalForPty(info, shouldFocus, true);
+    }, PROTECTED_REOPEN_DELAY_MS);
+    this._reopenTimers.set(info.id, timer);
   }
 
   private _createTerminalForPty(info: TerminalInfo, shouldFocus: boolean, isRestore = false): void {
     const config = getConfig();
+    this._pendingCreations.delete(info.id);
 
     // Use metadata.location to determine where to open the terminal
     // "editor" -> Editor pane, anything else (including undefined) -> Panel
@@ -927,39 +1017,7 @@ class CmuxTerminalManager {
     terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
     void this._maybePinEditorTerminal(terminal, shouldOpenInEditor, !shouldFocus);
 
-    // Listen for terminal close
-    const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
-      if (closedTerminal === terminal) {
-        console.log(`[cmux] Terminal for PTY ${info.id} closed`);
-        this._terminals.delete(info.id);
-        closeListener.dispose();
-        pty.dispose();
-
-        // Skip delete if server already deleted this PTY
-        if (managed.disposingFromServer) {
-          console.log(`[cmux] PTY ${info.id} was deleted by server, skipping DELETE`);
-          return;
-        }
-
-        // Schedule DELETE with short delay - cancelled on dispose() during page refresh
-        // This allows user-initiated closes to delete, while preserving PTYs on refresh
-        const deleteTimeout = setTimeout(async () => {
-          this._pendingDeletes.delete(info.id);
-          if (this._isDeactivating) {
-            console.log(`[cmux] Deactivating, skipping DELETE for PTY ${info.id}`);
-            return;
-          }
-          try {
-            console.log(`[cmux] Deleting PTY ${info.id} on server`);
-            await fetch(`${config.serverUrl}/sessions/${info.id}`, { method: 'DELETE' });
-          } catch (err) {
-            console.error(`[cmux] Failed to delete PTY ${info.id}:`, err);
-          }
-        }, 50);
-        this._pendingDeletes.set(info.id, deleteTimeout);
-      }
-    });
-    this._disposables.push(closeListener);
+    this._registerTerminalCloseListener(managed);
   }
 
   /**
@@ -1164,8 +1222,6 @@ class CmuxTerminalManager {
       return;
     }
 
-    const config = getConfig();
-
     // Create managed terminal entry using the existing pty (don't create a new one!)
     const managed: ManagedTerminal = {
       terminal,
@@ -1183,36 +1239,54 @@ class CmuxTerminalManager {
     const shouldPin = pending.info.metadata?.location === 'editor';
     void this._maybePinEditorTerminal(terminal, shouldPin, !pending.isNewCreation);
 
-    // Set up close listener
-    const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
-      if (closedTerminal === terminal) {
-        console.log(`[cmux] Terminal ${pending.id} closed`);
-        this._terminals.delete(pending.id);
-        closeListener.dispose();
-        pending.pty.dispose();
+    this._registerTerminalCloseListener(managed);
+  }
 
-        // Skip delete if server already deleted this PTY
-        if (managed.disposingFromServer) {
-          console.log(`[cmux] PTY ${pending.id} was deleted by server, skipping DELETE`);
+  private _registerTerminalCloseListener(managed: ManagedTerminal): void {
+    const terminal = managed.terminal;
+    const info = managed.info;
+    const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
+      if (closedTerminal !== terminal) return;
+
+      console.log(`[cmux] Terminal for PTY ${info.id} closed`);
+      this._terminals.delete(info.id);
+      closeListener.dispose();
+      managed.pty.dispose();
+
+      // Skip delete if server already deleted this PTY
+      if (managed.disposingFromServer) {
+        console.log(`[cmux] PTY ${info.id} was deleted by server, skipping DELETE`);
+        return;
+      }
+
+      if (this._isDeactivating) {
+        console.log(`[cmux] Deactivating, skipping terminal cleanup for PTY ${info.id}`);
+        return;
+      }
+
+      if (isProtectedTerminal(info)) {
+        console.log(`[cmux] Protected terminal ${info.id} closed, scheduling reopen`);
+        this._scheduleProtectedReopen(info);
+        return;
+      }
+
+      // Schedule DELETE with short delay - cancelled on dispose() during page refresh
+      // This allows user-initiated closes to delete, while preserving PTYs on refresh
+      const deleteTimeout = setTimeout(async () => {
+        this._pendingDeletes.delete(info.id);
+        if (this._isDeactivating) {
+          console.log(`[cmux] Deactivating, skipping DELETE for PTY ${info.id}`);
           return;
         }
-
-        // Schedule DELETE with short delay - cancelled on dispose() during page refresh
-        const deleteTimeout = setTimeout(async () => {
-          this._pendingDeletes.delete(pending.id);
-          if (this._isDeactivating) {
-            console.log(`[cmux] Deactivating, skipping DELETE for PTY ${pending.id}`);
-            return;
-          }
-          try {
-            console.log(`[cmux] Deleting PTY ${pending.id} on server`);
-            await fetch(`${config.serverUrl}/sessions/${pending.id}`, { method: 'DELETE' });
-          } catch (err) {
-            console.error(`[cmux] Failed to delete PTY ${pending.id}:`, err);
-          }
-        }, 50);
-        this._pendingDeletes.set(pending.id, deleteTimeout);
-      }
+        try {
+          const config = getConfig();
+          console.log(`[cmux] Deleting PTY ${info.id} on server`);
+          await fetch(`${config.serverUrl}/sessions/${info.id}`, { method: 'DELETE' });
+        } catch (err) {
+          console.error(`[cmux] Failed to delete PTY ${info.id}:`, err);
+        }
+      }, 50);
+      this._pendingDeletes.set(info.id, deleteTimeout);
     });
     this._disposables.push(closeListener);
   }
@@ -1232,6 +1306,14 @@ class CmuxTerminalManager {
       clearTimeout(this._restoreFallbackTimer);
       this._restoreFallbackTimer = null;
     }
+    if (this._backgroundRetryTimer) {
+      clearTimeout(this._backgroundRetryTimer);
+      this._backgroundRetryTimer = null;
+    }
+    for (const timer of this._reopenTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._reopenTimers.clear();
     this._stopReconcileLoop();
 
     for (const d of this._disposables) {

@@ -17,6 +17,11 @@ let workerSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null =
 // Track active terminals
 const activeTerminals = new Map<string, vscode.Terminal>();
 let isSetupComplete = false;
+let isSetupInProgress = false;
+let setupRetryTimer: NodeJS.Timeout | null = null;
+let setupRetryAttempt = 0;
+const SETUP_RETRY_BASE_MS = 2000;
+const SETUP_RETRY_MAX_MS = 30000;
 
 // Track file watcher and debounce timer
 let fileWatcher: vscode.FileSystemWatcher | null = null;
@@ -368,6 +373,29 @@ async function waitForVSCodeReady(maxWaitMs: number = 30000): Promise<void> {
   log(`VSCode ready check complete (took ${Date.now() - startTime}ms)`);
 }
 
+function scheduleSetupRetry(reason: string): void {
+  if (isSetupComplete) return;
+  if (setupRetryTimer) return;
+  const delay = Math.min(
+    SETUP_RETRY_BASE_MS * Math.pow(2, setupRetryAttempt),
+    SETUP_RETRY_MAX_MS
+  );
+  setupRetryAttempt += 1;
+  log(`Scheduling terminal setup retry in ${delay}ms (${reason})`);
+  setupRetryTimer = setTimeout(() => {
+    setupRetryTimer = null;
+    void setupDefaultTerminal();
+  }, delay);
+}
+
+function clearSetupRetry(): void {
+  if (setupRetryTimer) {
+    clearTimeout(setupRetryTimer);
+    setupRetryTimer = null;
+  }
+  setupRetryAttempt = 0;
+}
+
 async function setupDefaultTerminal() {
   log("Setting up default terminal");
 
@@ -376,96 +404,117 @@ async function setupDefaultTerminal() {
     log("Setup already complete, skipping");
     return;
   }
+  if (isSetupInProgress) {
+    log("Setup already in progress, skipping");
+    return;
+  }
+  isSetupInProgress = true;
 
-  // Wait for VSCode to be fully ready before proceeding
-  // This prevents terminals from being created before VSCode is initialized
+  let setupSucceeded = false;
   try {
-    await waitForVSCodeReady();
-  } catch (e) {
-    log("VSCode readiness check failed, continuing anyway", e);
-  }
-
-  // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup
-  const isSystemTab = (label: string | undefined): boolean => {
-    if (!label) return false;
-    // Exact matches for known system tabs
-    if (label === "Welcome" || label === "Get Started") return true;
-    // Prefix matches for tabs that may have suffixes
-    if (label.startsWith("Walkthrough:") || label.startsWith("Release Notes")) return true;
-    return false;
-  };
-  const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
-  const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
-  const preserveFocus = meaningfulTabs.length > 0;
-  if (preserveFocus) {
-    log(
-      `Found ${meaningfulTabs.length} existing tab(s), preserving focus during setup`
-    );
-  }
-
-  isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
-
-  // Check if cmux-pty is managing ANY terminals (not just "cmux")
-  // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
-  // We use a longer timeout (30s) to allow the orchestrator to finish
-  // This is especially important for Docker containers where startup may be slower
-  log("Waiting for cmux-pty terminals (up to 30s)...");
-  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
-
-  if (hasCmuxPtyTerminals) {
-    // cmux-pty has terminals - create all of them from the restore queue
-    log("cmux-pty is managing terminals, creating queued terminals");
-    // This directly creates the terminal using vscode.window.createTerminal with the PTY
-    // It bypasses provideTerminalProfile which requires user action to trigger
-    await createQueuedTerminals({ focus: !preserveFocus });
-
-    // Also check for the specific "cmux" terminal (main agent)
-    // If not present yet, it might still be created by the agent spawner
-    const hasCmuxTerminal = await waitForCmuxPtyTerminal("cmux", 5000);
-    if (hasCmuxTerminal) {
-      log("Found 'cmux' terminal in cmux-pty");
-      // The terminal was already created by createQueuedTerminals
-    } else {
-      log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
+    // Wait for VSCode to be fully ready before proceeding
+    // This prevents terminals from being created before VSCode is initialized
+    try {
+      await waitForVSCodeReady();
+    } catch (e) {
+      log("VSCode readiness check failed, continuing anyway", e);
     }
-  } else {
-    // Fall back to tmux-based terminal
-    log("cmux-pty not available or no terminals, falling back to tmux");
 
-    // Wait for tmux session to exist before creating terminal
-    const tmuxSessionExists = await waitForTmuxSession("cmux");
-    if (!tmuxSessionExists) {
-      log("Tmux session not found, skipping terminal creation");
-      // Still proceed with SCM/multi-diff setup
+    // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup
+    const isSystemTab = (label: string | undefined): boolean => {
+      if (!label) return false;
+      // Exact matches for known system tabs
+      if (label === "Welcome" || label === "Get Started") return true;
+      // Prefix matches for tabs that may have suffixes
+      if (label.startsWith("Walkthrough:") || label.startsWith("Release Notes")) return true;
+      return false;
+    };
+    const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+    const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
+    const preserveFocus = meaningfulTabs.length > 0;
+    if (preserveFocus) {
+      log(
+        `Found ${meaningfulTabs.length} existing tab(s), preserving focus during setup`
+      );
+    }
+
+    // Check if cmux-pty is managing ANY terminals (not just "cmux")
+    // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
+    // We use a longer timeout (30s) to allow the orchestrator to finish
+    // This is especially important for Docker containers where startup may be slower
+    log("Waiting for cmux-pty terminals (up to 30s)...");
+    const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
+
+    if (hasCmuxPtyTerminals) {
+      // cmux-pty has terminals - create all of them from the restore queue
+      log("cmux-pty is managing terminals, creating queued terminals");
+      // This directly creates the terminal using vscode.window.createTerminal with the PTY
+      // It bypasses provideTerminalProfile which requires user action to trigger
+      await createQueuedTerminals({ focus: !preserveFocus });
+      setupSucceeded = true;
+
+      // Also check for the specific "cmux" terminal (main agent)
+      // If not present yet, it might still be created by the agent spawner
+      const hasCmuxTerminal = await waitForCmuxPtyTerminal("cmux", 5000);
+      if (hasCmuxTerminal) {
+        log("Found 'cmux' terminal in cmux-pty");
+        // The terminal was already created by createQueuedTerminals
+      } else {
+        log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
+      }
     } else {
-      const workspacePath =
-        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/workspace";
-      // Create terminal and attach to tmux session (Editor pane for main agent)
-      const terminal = vscode.window.createTerminal({
-        name: "cmux",
-        location: vscode.TerminalLocation.Editor,
-        cwd: workspacePath,
-        env: process.env,
-      });
-      terminal.show(preserveFocus);
-      void pinTerminalEditor(terminal, true, preserveFocus);
-      activeTerminals.set("default", terminal);
-      terminal.sendText("tmux attach-session -t cmux");
+      // Fall back to tmux-based terminal
+      log("cmux-pty not available or no terminals, falling back to tmux");
+
+      // Wait for tmux session to exist before creating terminal
+      const tmuxSessionExists = await waitForTmuxSession("cmux");
+      if (!tmuxSessionExists) {
+        log("Tmux session not found, skipping terminal creation");
+        // Still proceed with SCM/multi-diff setup
+      } else {
+        const workspacePath =
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/workspace";
+        // Create terminal and attach to tmux session (Editor pane for main agent)
+        const terminal = vscode.window.createTerminal({
+          name: "cmux",
+          location: vscode.TerminalLocation.Editor,
+          cwd: workspacePath,
+          env: process.env,
+        });
+        terminal.show(preserveFocus);
+        void pinTerminalEditor(terminal, true, preserveFocus);
+        activeTerminals.set("default", terminal);
+        terminal.sendText("tmux attach-session -t cmux");
+        setupSucceeded = true;
+      }
+    }
+
+    if (setupSucceeded && !preserveFocus) {
+      // Run all UI setup in parallel
+      log("Setting up SCM view, multi-diff editor in parallel...");
+      await Promise.all([
+        vscode.commands.executeCommand("workbench.view.scm"),
+        openMultiDiffEditor(),
+      ]);
+    } else if (!setupSucceeded) {
+      log("Terminal setup incomplete, skipping SCM/multi-diff setup for now");
+    } else {
+      log("Skipping SCM/multi-diff setup due to existing tabs");
+    }
+  } catch (error) {
+    console.error("[cmux] Terminal setup failed:", error);
+    log("Terminal setup failed, will retry", error);
+  } finally {
+    isSetupInProgress = false;
+    if (setupSucceeded) {
+      isSetupComplete = true;
+      clearSetupRetry();
+      log("Terminal setup complete");
+    } else {
+      log("Terminal setup incomplete, will retry");
+      scheduleSetupRetry("no-terminal");
     }
   }
-
-  if (!preserveFocus) {
-    // Run all UI setup in parallel
-    log("Setting up SCM view, multi-diff editor in parallel...");
-    await Promise.all([
-      vscode.commands.executeCommand("workbench.view.scm"),
-      openMultiDiffEditor(),
-    ]);
-  } else {
-    log("Skipping SCM/multi-diff setup due to existing tabs");
-  }
-
-  log("Terminal setup complete");
 }
 
 function connectToWorker() {
@@ -484,8 +533,10 @@ function connectToWorker() {
 
   workerSocket = io("http://localhost:39377/vscode", {
     reconnection: true,
-    reconnectionAttempts: 5,
+    reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
   }) as Socket<ServerToClientEvents, ClientToServerEvents>;
 
   // Set up event handlers only once
@@ -509,6 +560,10 @@ function connectToWorker() {
   // Handle reconnection without duplicating setup
   workerSocket.io.on("reconnect", () => {
     log("Reconnected to worker socket server");
+    if (!isSetupComplete && !isSetupInProgress) {
+      log("Retrying terminal setup after worker reconnect...");
+      void setupDefaultTerminal();
+    }
   });
 }
 
@@ -538,6 +593,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Connect to worker immediately and set up handlers
   connectToWorker();
+  void setupDefaultTerminal();
 
   const disposable = vscode.commands.registerCommand(
     "cmux.helloWorld",
@@ -615,6 +671,8 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   log("cmux extension is now deactivated!");
   isSetupComplete = false;
+  isSetupInProgress = false;
+  clearSetupRetry();
 
   // Deactivate terminal module
   deactivateTerminal();
