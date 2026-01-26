@@ -13,10 +13,17 @@ export const MANIFEST_PATH = path.join(
   "../../../shared/src/sandbox-snapshots.json"
 );
 
+/**
+ * Snapshot strategy - how the provider creates reusable snapshots.
+ */
+export type SnapshotStrategy = "runtime" | "dockerfile";
+
 export interface SnapshotPreset {
   label: string;
   snapshotId: string;
   capturedAt: string;
+  /** Strategy used to create this snapshot (optional for backwards compat) */
+  strategy?: SnapshotStrategy;
 }
 
 export interface ProviderSnapshots {
@@ -30,10 +37,12 @@ export interface SandboxSnapshotManifest {
     morph: ProviderSnapshots;
     freestyle: ProviderSnapshots;
     daytona?: ProviderSnapshots;
+    e2b?: ProviderSnapshots;
+    blaxel?: ProviderSnapshots;
   };
 }
 
-export type ProviderName = "morph" | "freestyle" | "daytona";
+export type ProviderName = "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
 
 /**
  * Load the snapshot manifest from disk.
@@ -69,7 +78,8 @@ export function updateSnapshotId(
   provider: ProviderName,
   preset: string,
   snapshotId: string,
-  label?: string
+  label?: string,
+  strategy?: SnapshotStrategy
 ): void {
   const manifest = loadManifest();
 
@@ -81,6 +91,7 @@ export function updateSnapshotId(
     label: label ?? preset,
     snapshotId,
     capturedAt: new Date().toISOString(),
+    ...(strategy ? { strategy } : {}),
   };
 
   saveManifest(manifest);

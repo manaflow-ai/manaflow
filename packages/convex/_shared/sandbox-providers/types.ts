@@ -1,10 +1,10 @@
 /**
  * Sandbox provider abstraction for ACP.
  *
- * Supports multiple sandbox providers (Morph, Freestyle, Daytona) with a unified interface.
+ * Supports multiple sandbox providers (Morph, Freestyle, Daytona, E2B, Blaxel) with a unified interface.
  */
 
-export type SandboxProviderName = "morph" | "freestyle" | "daytona";
+export type SandboxProviderName = "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
 
 export interface SandboxSpawnOptions {
   /** Team ID for ownership */

@@ -58,6 +58,25 @@ function getCurrentSnapshotId(): string {
   );
 }
 
+/**
+ * Get the snapshot ID for a specific provider, falling back to default provider if not found.
+ */
+function getSnapshotIdForProvider(
+  providerName?: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel"
+): { snapshotId: string; providerName: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel" } {
+  if (providerName) {
+    const snapshotId = getDefaultSnapshotId(providerName);
+    if (snapshotId) {
+      return { snapshotId, providerName };
+    }
+    // Fall back to default if provider has no snapshot configured
+    console.warn(`[acp] No snapshot found for provider ${providerName}, falling back to default`);
+  }
+  const defaultProvider = sandboxProviderResolver.getDefault();
+  const defaultSnapshotId = getDefaultSnapshotId(defaultProvider.name as SnapshotSandboxProvider) ?? "snap_default";
+  return { snapshotId: defaultSnapshotId, providerName: defaultProvider.name as "morph" | "freestyle" | "daytona" | "e2b" | "blaxel" };
+}
+
 // Content block validator (simplified ACP ContentBlock)
 const contentBlockValidator = v.object({
   type: v.union(
@@ -369,8 +388,20 @@ async function replaceSandboxForConversation(
 ): Promise<Id<"acpSandboxes"> | null> {
   const previousSandboxId = conversation.acpSandboxId;
 
+  // Look up user's preferred sandbox provider from workspace settings
+  let userProviderName: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel" | undefined;
+  if (userId) {
+    const workspaceSettings = await ctx.runQuery(
+      internal.workspaceSettings.getByTeamAndUserInternal,
+      { teamId, userId }
+    );
+    userProviderName = workspaceSettings?.acpSandboxProvider;
+  }
+
+  // Get the snapshot ID for the user's preferred provider (or default)
+  const { snapshotId, providerName } = getSnapshotIdForProvider(userProviderName);
+
   let claimedWarmSandbox: Doc<"acpSandboxes"> | null = null;
-  const snapshotId = getCurrentSnapshotId();
 
   if (userId) {
     claimedWarmSandbox = await ctx.runMutation(
@@ -378,7 +409,7 @@ async function replaceSandboxForConversation(
       {
         userId,
         teamId,
-        snapshotId,
+        snapshotId, // Now uses the correct provider's snapshot ID
       },
     );
   }
@@ -388,6 +419,7 @@ async function replaceSandboxForConversation(
   if (!sandboxId) {
     const result = await ctx.runAction(internal.acp.spawnSandbox, {
       teamId,
+      providerName, // Use the resolved provider name
     });
     sandboxId = result.sandboxId;
   }
@@ -648,7 +680,7 @@ type AcpInternalActionCtx = Pick<
   "runQuery" | "runMutation" | "runAction" | "scheduler"
 >;
 type AcpMutationCtx = Pick<ActionCtx, "runMutation">;
-type AcpWarmSandboxCtx = Pick<ActionCtx, "runMutation" | "scheduler">;
+type AcpWarmSandboxCtx = Pick<ActionCtx, "runQuery" | "runMutation" | "scheduler">;
 type AcpSandboxAdminCtx = Pick<ActionCtx, "runQuery" | "runMutation">;
 type AcpSandboxSwapCtx = Pick<
   ActionCtx,
@@ -677,7 +709,13 @@ export const prewarmSandboxEffect = (
       userId: identity.subject,
     });
 
-    const snapshotId = getCurrentSnapshotId();
+    // Look up user's preferred sandbox provider from workspace settings
+    const workspaceSettings = await ctx.runQuery(
+      internal.workspaceSettings.getByTeamAndUserInternal,
+      { teamId, userId: identity.subject },
+    );
+    const userProviderName = workspaceSettings?.acpSandboxProvider;
+    const { snapshotId } = getSnapshotIdForProvider(userProviderName);
 
     const reserved = await ctx.runMutation(
       internal.acpSandboxes.reserveWarmSandbox,
@@ -781,10 +819,21 @@ export const startConversationEffect = (
       }
     }
 
+    // Look up user's preferred sandbox provider from workspace settings
+    const workspaceSettings = yield* Effect.tryPromise(() =>
+      ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+        teamId,
+        userId: identity.subject,
+      }),
+    );
+    const userProviderName = workspaceSettings?.acpSandboxProvider;
+
+    // Get the snapshot ID for the user's preferred provider (or default)
+    const { snapshotId, providerName } = getSnapshotIdForProvider(userProviderName);
+
     let sandboxId = args.sandboxId;
     let status: "starting" | "ready" = "starting";
     let claimedWarmSandbox: Doc<"acpSandboxes"> | null = null;
-    const snapshotId = getCurrentSnapshotId();
 
     if (sandboxId) {
       claimedWarmSandbox = yield* Effect.tryPromise(() =>
@@ -811,7 +860,7 @@ export const startConversationEffect = (
 
     if (!sandboxId) {
       const result = yield* Effect.tryPromise(() =>
-        ctx.runAction(internal.acp.spawnSandbox, { teamId }),
+        ctx.runAction(internal.acp.spawnSandbox, { teamId, providerName }),
       );
       sandboxId = result.sandboxId;
     } else {
@@ -990,7 +1039,14 @@ export const sendMessageOptimistic = authMutation({
         throw new Error("providerId and cwd are required to start a conversation");
       }
 
-      const snapshotId = getCurrentSnapshotId();
+      // Look up user's preferred sandbox provider from workspace settings
+      const workspaceSettings = await ctx.runQuery(
+        internal.workspaceSettings.getByTeamAndUserInternal,
+        { teamId, userId: identity.subject },
+      );
+      const userProviderName = workspaceSettings?.acpSandboxProvider;
+      const { snapshotId } = getSnapshotIdForProvider(userProviderName);
+
       const claimed = await ctx.runMutation(
         internal.acpSandboxes.claimWarmSandbox,
         {
@@ -2023,14 +2079,19 @@ export const updateConversationActivity = internalMutation({
  */
 type SpawnSandboxArgs = {
   teamId: string;
+  /** Optional provider name from user settings. Falls back to default if not specified or invalid. */
+  providerName?: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
 };
 
 export const spawnSandboxEffect = (
   ctx: AcpMutationCtx,
   args: SpawnSandboxArgs,
 ): Effect.Effect<{ sandboxId: Id<"acpSandboxes"> }, Error> =>
-  acpEffect("spawnSandbox", { teamId: args.teamId }, async () => {
-    const provider = sandboxProviderResolver.getDefault();
+  acpEffect("spawnSandbox", { teamId: args.teamId, providerName: args.providerName }, async () => {
+    // Use specified provider if provided, otherwise fall back to default
+    const provider = args.providerName
+      ? sandboxProviderResolver.getByName(args.providerName)
+      : sandboxProviderResolver.getDefault();
     const snapshotId =
       getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
       "snap_default";
@@ -2089,6 +2150,15 @@ export const spawnSandboxEffect = (
 export const spawnSandbox = internalAction({
   args: {
     teamId: v.string(),
+    providerName: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("freestyle"),
+        v.literal("daytona"),
+        v.literal("e2b"),
+        v.literal("blaxel")
+      )
+    ),
   },
   handler: (ctx, args): Promise<{ sandboxId: Id<"acpSandboxes"> }> =>
     runTracedEffect(spawnSandboxEffect(ctx, args), TracingLive),
@@ -2110,10 +2180,14 @@ export const spawnWarmSandboxEffect = (
     "spawnWarmSandbox",
     { reservedUserId: args.reservedUserId, reservedTeamId: args.reservedTeamId },
     async () => {
-      const provider = sandboxProviderResolver.getDefault();
-      const snapshotId =
-        getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
-        "snap_default";
+      // Look up user's preferred sandbox provider from workspace settings
+      const workspaceSettings = await ctx.runQuery(
+        internal.workspaceSettings.getByTeamAndUserInternal,
+        { teamId: args.reservedTeamId, userId: args.reservedUserId },
+      );
+      const userProviderName = workspaceSettings?.acpSandboxProvider;
+      const { snapshotId, providerName } = getSnapshotIdForProvider(userProviderName);
+      const provider = sandboxProviderResolver.getByName(providerName);
       const streamSecret = generateStreamSecret();
 
       const now = Date.now();
@@ -2159,14 +2233,16 @@ export const spawnWarmSandboxEffect = (
       ]);
 
       if (instance.sandboxUrl) {
-        await Effect.runPromise(configureSandboxEffect(instance.sandboxUrl, {
-          callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
-          sandboxJwt: callbackJwt,
-          sandboxId,
-          apiProxyUrl: env.CONVEX_SITE_URL,
-          streamSecret,
-          otelEnabled: isOtelEnabled(),
-        }));
+        await Effect.runPromise(
+          configureSandboxEffect(instance.sandboxUrl, {
+            callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
+            sandboxJwt: callbackJwt,
+            sandboxId,
+            apiProxyUrl: env.CONVEX_SITE_URL,
+            streamSecret,
+            otelEnabled: isOtelEnabled(),
+          }).pipe(Effect.provide(TracingLive))
+        );
       }
 
       await ctx.scheduler.runAfter(

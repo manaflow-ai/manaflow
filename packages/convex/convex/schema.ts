@@ -590,6 +590,16 @@ const convexSchema = defineSchema({
       )
     ),
     conversationTitleCustomPrompt: v.optional(v.string()), // Advanced: custom system prompt override
+    // ACP sandbox provider preference
+    acpSandboxProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("freestyle"),
+        v.literal("daytona"),
+        v.literal("e2b"),
+        v.literal("blaxel")
+      )
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
@@ -1295,6 +1305,8 @@ const convexSchema = defineSchema({
             priority: v.optional(v.number()),
           })
         ),
+        // Sequence number for chronological ordering with tool calls
+        acpSeq: v.optional(v.number()),
       })
     ),
     // Tool call tracking for assistant messages
@@ -1311,6 +1323,8 @@ const convexSchema = defineSchema({
             v.literal("failed")
           ),
           result: v.optional(v.string()), // JSON string of tool result
+          // Sequence number for chronological ordering with content blocks
+          acpSeq: v.optional(v.number()),
         })
       )
     ),
@@ -1318,6 +1332,8 @@ const convexSchema = defineSchema({
     reasoning: v.optional(v.string()),
     // Sequence number from ACP stream for deterministic ordering
     acpSeq: v.optional(v.number()),
+    // True when this message ends the turn (message_complete received)
+    isFinal: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId", "createdAt"])
@@ -1355,14 +1371,16 @@ const convexSchema = defineSchema({
     .index("by_user_team", ["userId", "teamId"]),
 
   // ACP Sandboxes - Provider-agnostic sandbox instances hosting coding CLIs
-  // Supports Morph, Freestyle, Daytona. Many conversations can share a single sandbox (Many:1 model)
+  // Supports Morph, Freestyle, Daytona, E2B. Many conversations can share a single sandbox (Many:1 model)
   acpSandboxes: defineTable({
     teamId: v.string(),
-    // Provider type (morph, freestyle, daytona)
+    // Provider type (morph, freestyle, daytona, e2b, blaxel)
     provider: v.union(
       v.literal("morph"),
       v.literal("freestyle"),
-      v.literal("daytona")
+      v.literal("daytona"),
+      v.literal("e2b"),
+      v.literal("blaxel")
     ),
     instanceId: v.string(), // Provider-specific instance ID (e.g., morphvm_xxx)
     status: v.union(

@@ -627,8 +627,12 @@ SERVICE
           if ip6tables -C INPUT -p tcp --dport 39384 -j ACCEPT 2>/dev/null; then
             echo "ip6tables rule already present"
           else
-            ip6tables -I INPUT -p tcp --dport 39384 -j ACCEPT
-            echo "✓ ip6tables rule added for 39384/tcp"
+            # ip6tables may fail if IPv6 kernel support is unavailable
+            if ip6tables -I INPUT -p tcp --dport 39384 -j ACCEPT 2>/dev/null; then
+              echo "✓ ip6tables rule added for 39384/tcp"
+            else
+              echo "ip6tables failed (IPv6 may not be supported), continuing..."
+            fi
           fi
         else
           echo "ip6tables not installed"

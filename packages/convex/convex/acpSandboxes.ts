@@ -19,7 +19,9 @@ const sandboxStatusValidator = v.union(
 const providerValidator = v.union(
   v.literal("morph"),
   v.literal("freestyle"),
-  v.literal("daytona")
+  v.literal("daytona"),
+  v.literal("e2b"),
+  v.literal("blaxel")
 );
 
 const poolStateValidator = v.union(

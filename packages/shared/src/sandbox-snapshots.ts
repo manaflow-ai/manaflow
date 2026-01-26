@@ -11,7 +11,7 @@ import sandboxSnapshotsJson from "./sandbox-snapshots.json" with {
 };
 
 // Provider names
-export type SandboxProvider = "morph" | "freestyle" | "daytona";
+export type SandboxProvider = "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
 
 // Preset schema
 const presetSchema = z.object({
@@ -72,3 +72,6 @@ export function getPresets(provider: SandboxProvider): Record<string, SnapshotPr
 // Re-export for convenience - default snapshot IDs
 export const DEFAULT_MORPH_SNAPSHOT = getSnapshotId("morph", "standard");
 export const DEFAULT_FREESTYLE_SNAPSHOT = getSnapshotId("freestyle", "standard");
+export const DEFAULT_DAYTONA_SNAPSHOT = getSnapshotId("daytona", "standard");
+export const DEFAULT_E2B_SNAPSHOT = getSnapshotId("e2b", "standard");
+export const DEFAULT_BLAXEL_SNAPSHOT = getSnapshotId("blaxel", "standard");

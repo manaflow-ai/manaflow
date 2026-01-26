@@ -26,6 +26,7 @@ import {
   printHeader,
   printSummary,
   type ProviderName,
+  type SnapshotStrategy,
 } from "./utils";
 import {
   getProvider,
@@ -37,6 +38,15 @@ import {
   createProvisioningRegistry,
   createProvisioningContext,
 } from "./tasks";
+import {
+  getProvisioningCommands,
+  generateBootScript,
+} from "./build-commands";
+import {
+  PROVIDER_CAPABILITIES,
+  getBuilder,
+  isDockerfileProvider,
+} from "./builders";
 
 async function fetchWithTimeout(
   url: string,
@@ -94,6 +104,52 @@ async function verifyPublicHttpAccess(url: string): Promise<void> {
  */
 function getSourceDir(): string {
   return path.resolve(import.meta.dirname, "../..");
+}
+
+/**
+ * Build the cmux-acp-server binary for linux-x86_64.
+ * Uses Docker for cross-compilation to ensure proper linking.
+ * Returns the path to the built binary.
+ */
+function buildAcpServerBinary(): string {
+  const sourceDir = getSourceDir();
+  // Building natively in Docker on x86_64 platform, so no cross-compilation target needed
+  const binaryPath = path.join(sourceDir, "target", "release", "cmux-acp-server");
+
+  // Check if binary already exists and is recent (within 1 hour)
+  if (fs.existsSync(binaryPath)) {
+    const stats = fs.statSync(binaryPath);
+    const ageMs = Date.now() - stats.mtimeMs;
+    if (ageMs < 60 * 60 * 1000) {
+      console.log(`Using existing binary: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB, ${Math.round(ageMs / 1000 / 60)}min old)`);
+      return binaryPath;
+    }
+  }
+
+  console.log("Building cmux-acp-server for linux-x86_64 using Docker...");
+
+  // Build using Docker with Rust image on x86_64 platform
+  // Uses QEMU emulation on ARM Macs
+  const dockerCmd = [
+    "docker run --rm",
+    "--platform linux/amd64",
+    `-v "${sourceDir}:/workspace"`,
+    "-w /workspace",
+    "rust:1-bookworm",
+    `bash -c "cargo build --release --bin cmux-acp-server"`,
+  ].join(" ");
+
+  console.log("Running Docker build...");
+  execSync(dockerCmd, { stdio: "inherit" });
+
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(`Binary not found at ${binaryPath} after build`);
+  }
+
+  const stats = fs.statSync(binaryPath);
+  console.log(`Binary built: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+
+  return binaryPath;
 }
 
 /**
@@ -226,7 +282,7 @@ Usage:
   bun run scripts/snapshot/snapshot.ts [options]
 
 Options:
-  --provider, -p <name>     Provider to use: morph, freestyle, or both (default: both)
+  --provider, -p <name>     Provider to use: morph, freestyle, daytona, e2b, blaxel, all, or both (default: all)
   --preset, -s <name>       Preset to create: standard (default: standard)
   --base-snapshot, -b <id>  Base snapshot ID to start from
   --verbose, -v             Show verbose output (default: quiet, logs on failure only)
@@ -235,6 +291,9 @@ Options:
 
 Examples:
   bun run scripts/snapshot/snapshot.ts
+  bun run scripts/snapshot/snapshot.ts --provider e2b
+  bun run scripts/snapshot/snapshot.ts --provider daytona
+  bun run scripts/snapshot/snapshot.ts --provider blaxel
   bun run scripts/snapshot/snapshot.ts --provider freestyle
   bun run scripts/snapshot/snapshot.ts --provider morph --preset standard
   bun run scripts/snapshot/snapshot.ts --base-snapshot snap_xxx
@@ -244,6 +303,10 @@ Examples:
 Environment Variables:
   MORPH_API_KEY       Required for Morph provider
   FREESTYLE_API_KEY   Required for Freestyle provider
+  DAYTONA_API_KEY     Required for Daytona provider
+  DAYTONA_TARGET      Target region for Daytona (default: us)
+  E2B_API_KEY         Required for E2B provider
+  BLAXEL_API_KEY      Required for Blaxel provider (or BL_API_KEY)
 `);
     process.exit(0);
   }
@@ -268,13 +331,16 @@ Environment Variables:
   const providerArg = values.provider?.toLowerCase();
   let providers: ProviderName[];
 
-  if (providerArg === "both" || !providerArg) {
+  if (providerArg === "all" || !providerArg) {
+    providers = ["morph", "freestyle", "daytona", "e2b", "blaxel"];
+  } else if (providerArg === "both") {
+    // Legacy: "both" means morph + freestyle (not daytona/e2b/blaxel)
     providers = ["morph", "freestyle"];
-  } else if (providerArg === "morph" || providerArg === "freestyle") {
+  } else if (providerArg === "morph" || providerArg === "freestyle" || providerArg === "daytona" || providerArg === "e2b" || providerArg === "blaxel") {
     providers = [providerArg];
   } else {
     console.error(`Invalid provider: ${providerArg}`);
-    console.error("Valid providers: morph, freestyle, both");
+    console.error("Valid providers: morph, freestyle, daytona, e2b, blaxel, all, both");
     process.exit(1);
   }
 
@@ -297,11 +363,23 @@ Environment Variables:
       console.warn(`Warning: FREESTYLE_API_KEY not set, skipping Freestyle provider`);
       continue;
     }
+    if (p === "daytona" && !process.env.DAYTONA_API_KEY) {
+      console.warn(`Warning: DAYTONA_API_KEY not set, skipping Daytona provider`);
+      continue;
+    }
+    if (p === "e2b" && !process.env.E2B_API_KEY) {
+      console.warn(`Warning: E2B_API_KEY not set, skipping E2B provider`);
+      continue;
+    }
+    if (p === "blaxel" && !process.env.BLAXEL_API_KEY && !process.env.BL_API_KEY) {
+      console.warn(`Warning: BLAXEL_API_KEY not set, skipping Blaxel provider`);
+      continue;
+    }
     availableProviders.push(p);
   }
 
   if (availableProviders.length === 0) {
-    console.error("Error: No providers available. Set MORPH_API_KEY or FREESTYLE_API_KEY.");
+    console.error("Error: No providers available. Set MORPH_API_KEY, FREESTYLE_API_KEY, DAYTONA_API_KEY, E2B_API_KEY, or BLAXEL_API_KEY.");
     process.exit(1);
   }
 
@@ -309,7 +387,20 @@ Environment Variables:
   printHeader("ACP Sandbox Snapshot");
   console.log(`Providers: ${availableProviders.join(", ")}`);
   console.log(`Preset: ${preset}`);
-  console.log(`Tasks: ${registry.taskNames.length}`);
+
+  // Show strategy breakdown
+  const runtimeProviders = availableProviders.filter((p) => !isDockerfileProvider(p));
+  const dockerfileProviders = availableProviders.filter((p) => isDockerfileProvider(p));
+
+  if (runtimeProviders.length > 0) {
+    console.log(`Runtime strategy (RAM capture): ${runtimeProviders.join(", ")}`);
+    console.log(`  Tasks: ${registry.taskNames.length}`);
+  }
+  if (dockerfileProviders.length > 0) {
+    console.log(`Dockerfile strategy (image build): ${dockerfileProviders.join(", ")}`);
+    console.log(`  Commands: ${getProvisioningCommands().length}`);
+  }
+
   if (values["base-snapshot"]) {
     console.log(`Base snapshot: ${values["base-snapshot"]}`);
   }
@@ -319,40 +410,91 @@ Environment Variables:
 
   for (const providerName of availableProviders) {
     try {
-      const provider = getProvider(providerName);
+      const capabilities = PROVIDER_CAPABILITIES[providerName];
+      let snapshotId: string;
+      let strategy: SnapshotStrategy;
 
-      const { snapshotId } = await createProvisionedSnapshot(
-        provider,
-        preset,
-        values["base-snapshot"],
-        async (vm) => {
-          // Upload source code for building cmux-acp-server
-          await uploadSourceCode(vm);
+      if (isDockerfileProvider(providerName)) {
+        // =====================================================================
+        // Dockerfile Strategy (Daytona/E2B/Blaxel)
+        // Build Docker images from provisioning commands
+        // =====================================================================
+        printHeader(`Building ${providerName} snapshot (dockerfile strategy)`);
 
-          // Create provisioning context and run task graph
-          const ctx = createProvisioningContext(vm, { verbose });
-          printHeader(`Running provisioning tasks (${registry.taskNames.length} tasks)`);
+        // Build the cmux-acp-server binary for linux-x86_64
+        const acpServerBinaryPath = buildAcpServerBinary();
 
-          const result = await runTaskGraph(registry, ctx);
+        const builder = await getBuilder(providerName);
+        const commands = getProvisioningCommands();
+        const bootScript = generateBootScript();
 
-          if (!result.success) {
-            console.error("\nProvisioning failed!");
-            console.error(`Failed tasks: ${result.failedTasks.join(", ")}`);
-            throw new Error(`Provisioning failed: ${result.failedTasks.join(", ")}`);
-          }
+        // Use timestamp-based name to avoid conflicts with failed builds
+        // Once working, we can switch to fixed names with proper deletion
+        const timestamp = Date.now();
+        const snapshotName = `cmux-acp-${preset}-${timestamp}`;
 
-          console.log(`\nProvisioning completed in ${(result.totalDurationMs / 1000).toFixed(2)}s`);
+        const result = await builder.build({
+          commands,
+          name: snapshotName,
+          bootScript,
+          acpServerBinaryPath,
+          log: (message) => {
+            if (verbose) {
+              console.log(message);
+            }
+          },
+        });
 
-          const publicUrl = ctx.outputs.get("acpPublicUrl");
-          if (!publicUrl) {
-            throw new Error("Public URL not captured during provisioning");
-          }
-          await verifyPublicHttpAccess(publicUrl);
+        snapshotId = result.snapshotId;
+        strategy = "dockerfile";
+
+        console.log(`\nSnapshot built: ${snapshotId}`);
+        if (result.dockerfile) {
+          console.log(`Dockerfile: ${result.dockerfile.split("\n").length} lines`);
         }
-      );
+      } else {
+        // =====================================================================
+        // Runtime Strategy (Morph/Freestyle)
+        // Provision VM and capture RAM snapshot
+        // =====================================================================
+        const provider = getProvider(providerName);
 
-      // Update manifest
-      updateSnapshotId(providerName, preset, snapshotId, preset);
+        const result = await createProvisionedSnapshot(
+          provider,
+          preset,
+          values["base-snapshot"],
+          async (vm) => {
+            // Upload source code for building cmux-acp-server
+            await uploadSourceCode(vm);
+
+            // Create provisioning context and run task graph
+            const ctx = createProvisioningContext(vm, { verbose });
+            printHeader(`Running provisioning tasks (${registry.taskNames.length} tasks)`);
+
+            const taskResult = await runTaskGraph(registry, ctx);
+
+            if (!taskResult.success) {
+              console.error("\nProvisioning failed!");
+              console.error(`Failed tasks: ${taskResult.failedTasks.join(", ")}`);
+              throw new Error(`Provisioning failed: ${taskResult.failedTasks.join(", ")}`);
+            }
+
+            console.log(`\nProvisioning completed in ${(taskResult.totalDurationMs / 1000).toFixed(2)}s`);
+
+            const publicUrl = ctx.outputs.get("acpPublicUrl");
+            if (!publicUrl) {
+              throw new Error("Public URL not captured during provisioning");
+            }
+            await verifyPublicHttpAccess(publicUrl);
+          }
+        );
+
+        snapshotId = result.snapshotId;
+        strategy = "runtime";
+      }
+
+      // Update manifest with strategy info
+      updateSnapshotId(providerName, preset, snapshotId, preset, strategy);
 
       results.push({
         provider: providerName,

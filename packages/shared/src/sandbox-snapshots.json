@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-01-23T09:42:30.547Z",
+  "updatedAt": "2026-01-26T09:42:14.877Z",
   "providers": {
     "morph": {
       "presets": {
         "standard": {
           "label": "standard",
-          "snapshotId": "snapshot_uur0medf",
-          "capturedAt": "2026-01-23T09:42:30.547Z"
+          "snapshotId": "snapshot_v5aou7zg",
+          "capturedAt": "2026-01-24T06:28:09.373Z"
         },
         "performance": {
           "label": "Performance",
@@ -18,6 +18,36 @@
     },
     "freestyle": {
       "presets": {}
+    },
+    "daytona": {
+      "presets": {
+        "standard": {
+          "label": "standard",
+          "snapshotId": "cmux-acp-standard-1769409884985",
+          "capturedAt": "2026-01-26T06:49:47.268Z",
+          "strategy": "dockerfile"
+        }
+      }
+    },
+    "e2b": {
+      "presets": {
+        "standard": {
+          "label": "standard",
+          "snapshotId": "wvgfjhdb2sdgvya6tqzm",
+          "capturedAt": "2026-01-26T09:42:14.877Z",
+          "strategy": "dockerfile"
+        }
+      }
+    },
+    "blaxel": {
+      "presets": {
+        "standard": {
+          "label": "standard",
+          "snapshotId": "cmux-acp-standard-1769410198577",
+          "capturedAt": "2026-01-26T06:50:02.007Z",
+          "strategy": "dockerfile"
+        }
+      }
     }
   }
 }

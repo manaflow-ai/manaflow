@@ -7,12 +7,18 @@
     "snapshot": "bun run scripts/snapshot/snapshot.ts",
     "snapshot:morph": "bun run scripts/snapshot/snapshot.ts --provider morph",
     "snapshot:freestyle": "bun run scripts/snapshot/snapshot.ts --provider freestyle",
+    "snapshot:daytona": "bun run scripts/snapshot/snapshot.ts --provider daytona",
+    "snapshot:e2b": "bun run scripts/snapshot/snapshot.ts --provider e2b",
     "snapshot:graph": "bun run scripts/snapshot/snapshot.ts --show-graph",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@blaxel/core": "^0.2.61",
+    "@daytonaio/sdk": "^0.134.0",
+    "@e2b/code-interpreter": "^2.3.3",
     "@freestyle-sh/with-bun": "^0.2.0",
+    "e2b": "^2.10.4",
     "freestyle-sandboxes": "^0.1.6",
     "morphcloud": "^0.0.20"
   },

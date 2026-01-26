@@ -40,6 +40,15 @@ export const update = authMutation({
       )
     ),
     conversationTitleCustomPrompt: v.optional(v.string()),
+    acpSandboxProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("freestyle"),
+        v.literal("daytona"),
+        v.literal("e2b"),
+        v.literal("blaxel")
+      )
+    ),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -65,6 +74,7 @@ export const update = authMutation({
         };
         conversationTitleStyle?: "sentence" | "lowercase" | "title";
         conversationTitleCustomPrompt?: string;
+        acpSandboxProvider?: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
         updatedAt: number;
       } = { updatedAt: now };
 
@@ -92,6 +102,9 @@ export const update = authMutation({
       if (args.conversationTitleCustomPrompt !== undefined) {
         updates.conversationTitleCustomPrompt = args.conversationTitleCustomPrompt;
       }
+      if (args.acpSandboxProvider !== undefined) {
+        updates.acpSandboxProvider = args.acpSandboxProvider;
+      }
 
       await ctx.db.patch(existing._id, updates);
     } else {
@@ -104,6 +117,7 @@ export const update = authMutation({
         heatmapColors: args.heatmapColors,
         conversationTitleStyle: args.conversationTitleStyle,
         conversationTitleCustomPrompt: args.conversationTitleCustomPrompt,
+        acpSandboxProvider: args.acpSandboxProvider,
         nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,
