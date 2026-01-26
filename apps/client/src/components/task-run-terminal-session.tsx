@@ -5,6 +5,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import type { IDisposable } from "@xterm/xterm";
 import {
   ACTIVE_TERMINAL_SCROLLBACK,
   INACTIVE_TERMINAL_SCROLLBACK,
@@ -58,6 +59,9 @@ export function TaskRunTerminalSession({
   } = useXTerm();
 
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
+  const webglContextLossRef = useRef<IDisposable | null>(null);
+  const [webglEnabled, setWebglEnabled] = useState(true);
 
   useEffect(() => {
     if (!terminal) {
@@ -70,10 +74,6 @@ export function TaskRunTerminalSession({
 
     if (terminal.options.scrollback !== nextScrollback) {
       terminal.options.scrollback = nextScrollback;
-    }
-
-    if (!isActive) {
-      terminal.clear();
     }
   }, [isActive, terminal]);
 
@@ -109,24 +109,60 @@ export function TaskRunTerminalSession({
       return;
     }
 
+    if (!webglEnabled) {
+      return;
+    }
+
+    let cancelled = false;
     let webglAddon: WebglAddon | null = null;
+    let contextLossDisposable: IDisposable | null = null;
     try {
-      webglAddon = new WebglAddon();
+      // Preserve drawing buffer to avoid blank frames when the canvas is hidden.
+      webglAddon = new WebglAddon(true);
       terminal.loadAddon(webglAddon);
+      contextLossDisposable = webglAddon.onContextLoss(() => {
+        if (cancelled) {
+          return;
+        }
+        console.warn("[TaskRunTerminalSession] WebGL context lost; falling back to canvas.");
+        contextLossDisposable?.dispose();
+        contextLossDisposable = null;
+        webglAddon?.dispose();
+        webglAddon = null;
+        webglAddonRef.current = null;
+        webglContextLossRef.current = null;
+        setWebglEnabled(false);
+        if (terminal.rows > 0) {
+          requestAnimationFrame(() => {
+            if (!cancelled) {
+              terminal.refresh(0, terminal.rows - 1);
+            }
+          });
+        }
+      });
+      webglAddonRef.current = webglAddon;
+      webglContextLossRef.current = contextLossDisposable;
     } catch (error) {
       console.warn("[TaskRunTerminalSession] WebGL addon unavailable", error);
-      if (webglAddon) {
-        webglAddon.dispose();
-        webglAddon = null;
-      }
+      webglAddon?.dispose();
+      webglAddon = null;
+      setWebglEnabled(false);
     }
 
     return () => {
+      cancelled = true;
+      contextLossDisposable?.dispose();
       if (webglAddon) {
         webglAddon.dispose();
       }
+      if (webglAddonRef.current === webglAddon) {
+        webglAddonRef.current = null;
+      }
+      if (webglContextLossRef.current === contextLossDisposable) {
+        webglContextLossRef.current = null;
+      }
     };
-  }, [isActive, terminal]);
+  }, [isActive, terminal, webglEnabled]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const attachAddonRef = useRef<AttachAddon | null>(null);
@@ -333,6 +369,9 @@ export function TaskRunTerminalSession({
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (terminal && isActive) {
+            if (terminal.rows > 0) {
+              terminal.refresh(0, terminal.rows - 1);
+            }
             terminal.focus();
           }
         });
