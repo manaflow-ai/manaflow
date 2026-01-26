@@ -94,7 +94,17 @@ const toolCallPayload = z.object({
   type: z.literal("tool_call"),
   conversationId: conversationIdSchema,
   messageId: messageIdSchema,
+  eventSeq: z.number().optional(),
   toolCall: toolCallSchema,
+});
+
+const toolCallUpdatePayload = z.object({
+  type: z.literal("tool_call_update"),
+  conversationId: conversationIdSchema,
+  messageId: messageIdSchema,
+  toolCallId: z.string().min(1),
+  status: z.enum(["pending", "running", "completed", "failed"]),
+  result: z.string().optional(),
 });
 
 const errorPayload = z.object({
@@ -135,6 +145,7 @@ const acpCallbackPayload = z.discriminatedUnion("type", [
   reasoningChunkPayload,
   messageCompletePayload,
   toolCallPayload,
+  toolCallUpdatePayload,
   errorPayload,
   rawEventPayload,
   sandboxReadyPayload,
@@ -308,7 +319,20 @@ export const acpCallbackEffect = (
           ctx.runMutation(internal.acp_callbacks.recordToolCall, {
             conversationId: payload.conversationId,
             messageId: payload.messageId,
+            eventSeq: payload.eventSeq,
             toolCall: payload.toolCall,
+          })
+        );
+        break;
+      }
+
+      case "tool_call_update": {
+        yield* runMutation(() =>
+          ctx.runMutation(internal.conversationMessages.updateToolCall, {
+            messageId: payload.messageId,
+            toolCallId: payload.toolCallId,
+            status: payload.status,
+            result: payload.result,
           })
         );
         break;
