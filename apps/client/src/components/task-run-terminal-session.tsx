@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AttachAddon } from "@xterm/addon-attach";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -104,29 +105,94 @@ export function TaskRunTerminalSession({
     };
   }, [terminal]);
 
+  // Track whether we're using WebGL or Canvas renderer
+  const rendererAddonRef = useRef<WebglAddon | CanvasAddon | null>(null);
+
+  // Force terminal to refresh its display - used after renderer changes or WebSocket opens
+  const forceTerminalRefresh = useCallback(() => {
+    if (!terminal) {
+      return;
+    }
+    // Refresh all visible rows to force a redraw
+    // This ensures the terminal content is rendered after context recovery or initial connection
+    const rows = terminal.rows;
+    if (rows > 0) {
+      terminal.refresh(0, rows - 1);
+    }
+  }, [terminal]);
+
   useEffect(() => {
     if (!terminal || !isActive) {
       return;
     }
 
     let webglAddon: WebglAddon | null = null;
+    let canvasAddon: CanvasAddon | null = null;
+    let disposed = false;
+
+    const loadCanvasFallback = () => {
+      if (disposed || canvasAddon) {
+        return;
+      }
+      try {
+        canvasAddon = new CanvasAddon();
+        terminal.loadAddon(canvasAddon);
+        rendererAddonRef.current = canvasAddon;
+        console.info("[TaskRunTerminalSession] Loaded Canvas renderer as fallback");
+        // Force refresh after loading canvas addon
+        requestAnimationFrame(() => {
+          if (!disposed) {
+            forceTerminalRefresh();
+          }
+        });
+      } catch (canvasError) {
+        console.warn("[TaskRunTerminalSession] Canvas addon also unavailable", canvasError);
+      }
+    };
+
     try {
       webglAddon = new WebglAddon();
+
+      // Handle WebGL context loss - this is crucial for preventing black screens
+      // Context loss can happen when:
+      // - Tab is backgrounded for a long time
+      // - GPU resources are reclaimed by the system
+      // - Multiple WebGL contexts exhaust available contexts
+      webglAddon.onContextLoss(() => {
+        console.warn("[TaskRunTerminalSession] WebGL context lost, falling back to Canvas renderer");
+        if (webglAddon && !disposed) {
+          webglAddon.dispose();
+          webglAddon = null;
+          rendererAddonRef.current = null;
+          loadCanvasFallback();
+        }
+      });
+
       terminal.loadAddon(webglAddon);
+      rendererAddonRef.current = webglAddon;
     } catch (error) {
       console.warn("[TaskRunTerminalSession] WebGL addon unavailable", error);
       if (webglAddon) {
         webglAddon.dispose();
         webglAddon = null;
       }
+      // Fall back to Canvas renderer
+      loadCanvasFallback();
     }
 
     return () => {
+      disposed = true;
       if (webglAddon) {
         webglAddon.dispose();
+        webglAddon = null;
       }
+      if (canvasAddon) {
+        canvasAddon.dispose();
+        canvasAddon = null;
+      }
+      rendererAddonRef.current = null;
     };
-  }, [isActive, terminal]);
+  }, [forceTerminalRefresh, isActive, terminal]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const attachAddonRef = useRef<AttachAddon | null>(null);
@@ -247,11 +313,13 @@ export function TaskRunTerminalSession({
     }
 
     let cancelled = false;
+    let hasReceivedData = false;
     const base = new URL(baseUrl);
     const wsUrl = new URL(`/sessions/${terminalId}/ws`, base);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
 
-    terminal.clear();
+    // Don't clear the terminal here - we'll do it when we receive the first data
+    // This prevents the black screen flash between clear and data arrival
     pendingResizeRef.current = null;
     lastSentResizeRef.current = null;
 
@@ -275,6 +343,26 @@ export function TaskRunTerminalSession({
       flushPendingResize();
     };
 
+    // Handle incoming data - clear terminal on first data to avoid black screen
+    const handleMessage = () => {
+      if (cancelled || hasReceivedData) {
+        return;
+      }
+      hasReceivedData = true;
+      // Clear terminal just before data is displayed to avoid visible black screen
+      // The AttachAddon will immediately write the data after this
+      terminal.clear();
+      // Force a refresh after the first data arrives to ensure rendering is complete
+      // Use double RAF to ensure the clear and new data have been processed
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!cancelled) {
+            forceTerminalRefresh();
+          }
+        });
+      });
+    };
+
     const handleClose = () => {
       if (cancelled) {
         return;
@@ -290,12 +378,14 @@ export function TaskRunTerminalSession({
     };
 
     socket.addEventListener("open", handleOpen);
+    socket.addEventListener("message", handleMessage);
     socket.addEventListener("close", handleClose);
     socket.addEventListener("error", handleError);
 
     return () => {
       cancelled = true;
       socket.removeEventListener("open", handleOpen);
+      socket.removeEventListener("message", handleMessage);
       socket.removeEventListener("close", handleClose);
       socket.removeEventListener("error", handleError);
 
@@ -313,6 +403,7 @@ export function TaskRunTerminalSession({
   }, [
     baseUrl,
     flushPendingResize,
+    forceTerminalRefresh,
     isActive,
     measureAndQueueResize,
     notifyConnectionState,
