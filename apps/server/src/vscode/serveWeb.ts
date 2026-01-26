@@ -7,6 +7,12 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { getLocalVSCodeSettingsSnapshot } from "../utils/editorSettings";
+import {
+  getVSCodeInstallation,
+  formatDetectionResultForUser,
+  clearVSCodeDetectionCache,
+  type VSCodeDetectionResult,
+} from "./vscodeDetection";
 
 type Logger = {
   info: (message: string, ...args: unknown[]) => void;
@@ -417,16 +423,15 @@ async function syncLocalVSCodeSettingsForServeWeb(logger: Logger): Promise<void>
   }
 }
 
+// Store the last detection result for error reporting
+let lastDetectionResult: VSCodeDetectionResult | null = null;
+
 /**
  * Get the VS Code executable path using comprehensive detection.
- * Uses the new vscodeDetection module for reliable cross-platform detection.
+ * Uses the vscodeDetection module for reliable cross-platform detection.
  */
 async function getVSCodeExecutable(logger: Logger) {
   logger.info("Attempting to resolve VS Code CLI executable for serve-web.");
-
-  const { getVSCodeInstallation, formatDetectionResultForUser } = await import(
-    "./vscodeDetection"
-  );
 
   const result = await getVSCodeInstallation(logger);
 
@@ -456,10 +461,6 @@ async function getVSCodeExecutable(logger: Logger) {
   }
 }
 
-// Store the last detection result for error reporting
-import type { VSCodeDetectionResult } from "./vscodeDetection";
-let lastDetectionResult: VSCodeDetectionResult | null = null;
-
 /**
  * Get the last VS Code detection result for error reporting purposes.
  * This allows socket handlers to provide detailed error messages to users.
@@ -474,10 +475,6 @@ export function getLastVSCodeDetectionResult(): VSCodeDetectionResult | null {
 export async function refreshVSCodeDetection(
   logger: Logger
 ): Promise<VSCodeDetectionResult> {
-  const { getVSCodeInstallation, clearVSCodeDetectionCache } = await import(
-    "./vscodeDetection"
-  );
-
   clearVSCodeDetectionCache();
 
   const result = await getVSCodeInstallation(logger, { forceRefresh: true });
