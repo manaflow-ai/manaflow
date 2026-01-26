@@ -1613,6 +1613,18 @@ EOF
         cat >> /root/.zshrc <<'EOF'
 HISTFILE=~/.zsh_history
 setopt HIST_IGNORE_DUPS HIST_VERIFY
+
+# User completions - add to fpath before compinit
+# These directories are synced from the host via cmux
+[[ -d ~/.zsh/completions ]] && fpath=(~/.zsh/completions $fpath)
+[[ -d ~/.zsh/functions ]] && fpath=(~/.zsh/functions $fpath)
+[[ -d ~/.local/share/zsh/site-functions ]] && fpath=(~/.local/share/zsh/site-functions $fpath)
+
+# Initialize completion system
+autoload -Uz compinit && compinit -C
+
+# Source user customizations last (synced from host ~/.zshrc.local)
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 EOF
         cat > /root/.zprofile <<'EOF'
 [[ -f ~/.zshrc ]] && source ~/.zshrc

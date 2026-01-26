@@ -184,6 +184,14 @@ pub const SYNC_FILES: &[SyncFileDef] = &[
         sandbox_path: "/root/.zsh",
         is_dir: true,
     },
+    // Zsh site-functions - common location for tool-generated completions
+    // (e.g., from `bun completions`, `rustup completions zsh`, etc.)
+    SyncFileDef {
+        name: "Zsh Site Functions",
+        host_path: ".local/share/zsh/site-functions",
+        sandbox_path: "/root/.local/share/zsh/site-functions",
+        is_dir: true,
+    },
 ];
 
 pub fn detect_sync_files() -> Vec<SyncFileToUpload> {
