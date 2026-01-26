@@ -513,7 +513,9 @@ struct DebugInputBar: View {
         ZStack(alignment: shouldCenter ? .center : .bottomLeading) {
             inputField
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: pillHeight)
+        .layoutPriority(1)
     }
 }
 
@@ -1101,6 +1103,8 @@ private struct InputTextView: UIViewRepresentable {
         textView.clipsToBounds = true
         textView.backgroundColor = .clear
         textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textView.layoutManager.allowsNonContiguousLayout = false
         let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
         textView.textContainerInset = UIEdgeInsets(
@@ -1110,6 +1114,8 @@ private struct InputTextView: UIViewRepresentable {
             right: 0
         )
         textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.textContainer.widthTracksTextView = true
         textView.returnKeyType = .default
         textView.text = text
         context.coordinator.lastUserText = text
@@ -1129,6 +1135,19 @@ private struct InputTextView: UIViewRepresentable {
             coordinator?.handleLayout(view)
         }
         return textView
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: MeasuringTextView,
+        context: Context
+    ) -> CGSize {
+        let targetWidth = proposal.width ?? uiView.bounds.width
+        let width = max(1, targetWidth)
+        let size = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        return CGSize(width: width, height: size.height)
     }
 
     func updateUIView(_ uiView: MeasuringTextView, context: Context) {
@@ -1520,6 +1539,351 @@ private final class MeasuringTextView: UITextView {
         }
         return lineCount
     }
+}
+
+struct InputHypothesisLabView: View {
+    private let baselineStrategy = InputStrategy(
+        id: "baseline-hypothesis",
+        title: "Baseline",
+        detail: "",
+        topInsetExtra: 4,
+        bottomInsetExtra: 5.333333333333333,
+        scrollMode: .automatic,
+        pinCaretToBottom: true,
+        scrollRangeToVisible: false,
+        allowCaretOverflow: false,
+        showsActionButton: true,
+        alignment: .bottomLeading
+    )
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Type 8+ returns and compare caret drift.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HypothesisCard(
+                    title: "Strategy baseline (control)",
+                    detail: "StrategyTextView + InputStrategyPill"
+                ) {
+                    StrategyBaselineInput(strategy: baselineStrategy)
+                }
+                HypothesisCard(
+                    title: "InputTextView baseline",
+                    detail: "Main UITextView logic, no buttons"
+                ) {
+                    InputTextViewPill(
+                        showPlus: false,
+                        trailingMode: .none,
+                        fixedTrailingWidth: false,
+                        outerPadding: .none
+                    )
+                }
+                HypothesisCard(
+                    title: "InputTextView + dynamic trailing",
+                    detail: "Plus + mic/send width changes"
+                ) {
+                    InputTextViewPill(
+                        showPlus: true,
+                        trailingMode: .dynamic,
+                        fixedTrailingWidth: false,
+                        outerPadding: .none
+                    )
+                }
+                HypothesisCard(
+                    title: "InputTextView + fixed trailing",
+                    detail: "Plus + fixed trailing width"
+                ) {
+                    InputTextViewPill(
+                        showPlus: true,
+                        trailingMode: .dynamic,
+                        fixedTrailingWidth: true,
+                        outerPadding: .none
+                    )
+                }
+                HypothesisCard(
+                    title: "InputTextView + layout padding",
+                    detail: "Adds top/bottom padding like DebugInputBar"
+                ) {
+                    InputTextViewPill(
+                        showPlus: true,
+                        trailingMode: .dynamic,
+                        fixedTrailingWidth: true,
+                        outerPadding: .chatLike
+                    )
+                }
+                HypothesisCard(
+                    title: "DebugInputBar (SwiftUI)",
+                    detail: "Full glass layout without UIKit host"
+                ) {
+                    DebugInputBarPreview()
+                }
+                HypothesisCard(
+                    title: "DebugInputBarViewController",
+                    detail: "UIKit host + preferred height bridge"
+                ) {
+                    DebugInputBarControllerPreview()
+                        .frame(height: 180)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle("Input Hypothesis Lab")
+    }
+}
+
+private struct HypothesisCard<Content: View>: View {
+    let title: String
+    let detail: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            content
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StrategyBaselineInput: View {
+    let strategy: InputStrategy
+    @State private var text: String = ""
+    @State private var measuredHeight: CGFloat
+    @State private var caretFrameInWindow: CGRect = .zero
+
+    init(strategy: InputStrategy) {
+        self.strategy = strategy
+        let minHeight = DebugInputBarMetrics.editorHeight(
+            forLineCount: 1,
+            topInsetExtra: strategy.topInsetExtra,
+            bottomInsetExtra: strategy.bottomInsetExtra
+        )
+        _measuredHeight = State(initialValue: minHeight)
+    }
+
+    var body: some View {
+        let lineCount = DebugInputBarMetrics.lineCount(for: text)
+        let minHeight = DebugInputBarMetrics.editorHeight(
+            forLineCount: lineCount,
+            topInsetExtra: strategy.topInsetExtra,
+            bottomInsetExtra: strategy.bottomInsetExtra
+        )
+        let editorHeight = max(minHeight, measuredHeight)
+        let pillHeight = max(DebugInputBarMetrics.inputHeight, editorHeight)
+        InputStrategyPill(
+            strategy: strategy,
+            text: $text,
+            measuredHeight: $measuredHeight,
+            caretFrameInWindow: $caretFrameInWindow,
+            editorHeight: editorHeight,
+            pillHeight: pillHeight,
+            onSend: { text = "" }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private enum HypothesisTrailingMode {
+    case none
+    case dynamic
+}
+
+private enum HypothesisOuterPadding {
+    case none
+    case chatLike
+}
+
+private struct InputTextViewPill: View {
+    let showPlus: Bool
+    let trailingMode: HypothesisTrailingMode
+    let fixedTrailingWidth: Bool
+    let outerPadding: HypothesisOuterPadding
+
+    @State private var text: String = ""
+    @State private var programmaticChangeToken: Int = 0
+    @State private var textIsEmpty = true
+    @State private var measuredHeight: CGFloat
+    @State private var measuredLineCount: Int = 1
+    @State private var caretFrameInWindow: CGRect = .zero
+    @State private var inputFrameInWindow: CGRect = .zero
+    @State private var isScrollEnabled = false
+    @State private var isFocused = false
+
+    init(
+        showPlus: Bool,
+        trailingMode: HypothesisTrailingMode,
+        fixedTrailingWidth: Bool,
+        outerPadding: HypothesisOuterPadding
+    ) {
+        self.showPlus = showPlus
+        self.trailingMode = trailingMode
+        self.fixedTrailingWidth = fixedTrailingWidth
+        self.outerPadding = outerPadding
+        let minHeight = DebugInputBarMetrics.editorHeight(
+            forLineCount: 1,
+            topInsetExtra: 4,
+            bottomInsetExtra: 5.333333333333333
+        )
+        _measuredHeight = State(initialValue: minHeight)
+    }
+
+    var body: some View {
+        let topInsetExtra: CGFloat = 4
+        let bottomInsetExtra: CGFloat = 5.333333333333333
+        let minHeight = DebugInputBarMetrics.editorHeight(
+            forLineCount: measuredLineCount,
+            topInsetExtra: topInsetExtra,
+            bottomInsetExtra: bottomInsetExtra
+        )
+        let editorHeight = max(minHeight, measuredHeight)
+        let pillHeight = max(DebugInputBarMetrics.inputHeight, editorHeight)
+        let container = HStack(alignment: .bottom, spacing: 8) {
+            if showPlus {
+                Button {} label: {
+                    Image(systemName: "plus")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+                .frame(width: DebugInputBarMetrics.inputHeight, height: DebugInputBarMetrics.inputHeight)
+                .background(
+                    Circle()
+                        .fill(Color(UIColor.tertiarySystemBackground))
+                )
+            }
+            ZStack(alignment: .topLeading) {
+                InputTextView(
+                    text: $text,
+                    programmaticChangeToken: $programmaticChangeToken,
+                    textIsEmpty: $textIsEmpty,
+                    measuredHeight: $measuredHeight,
+                    measuredLineCount: $measuredLineCount,
+                    caretFrameInWindow: $caretFrameInWindow,
+                    inputFrameInWindow: $inputFrameInWindow,
+                    bottomInsetExtra: bottomInsetExtra,
+                    topInsetExtra: topInsetExtra,
+                    isScrollEnabled: $isScrollEnabled,
+                    isFocused: $isFocused
+                )
+                .frame(height: editorHeight)
+                if textIsEmpty {
+                    let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
+                    Text("Message")
+                        .foregroundStyle(.secondary)
+                        .font(.body)
+                        .padding(.top, verticalInset + topInsetExtra)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if trailingMode != .none {
+                if fixedTrailingWidth {
+                    trailingActionView
+                        .frame(width: 44, height: 44)
+                } else {
+                    trailingActionView
+                }
+            }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 6)
+        .frame(height: pillHeight, alignment: .bottom)
+        .background(
+            RoundedRectangle(cornerRadius: DebugInputBarMetrics.pillCornerRadius, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        switch outerPadding {
+        case .none:
+            container
+        case .chatLike:
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                container
+                    .padding(.horizontal, 20)
+                    .padding(.top, DebugInputBarMetrics.topPadding)
+                    .padding(.bottom, 28)
+            }
+            .frame(maxWidth: .infinity, minHeight: 180, alignment: .bottom)
+            .background(Color(UIColor.systemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private var trailingActionView: some View {
+        if textIsEmpty {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .offset(y: -12)
+                .padding(.trailing, 8)
+        } else {
+            Button {
+                text = ""
+                programmaticChangeToken &+= 1
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 30))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .blue)
+                    .offset(x: 1, y: -4)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+private struct DebugInputBarPreview: View {
+    @State private var text: String = ""
+    @State private var programmaticChangeToken: Int = 0
+    @State private var isFocused = false
+    @StateObject private var geometry = InputBarGeometryModel()
+    @StateObject private var layout = InputBarLayoutModel(horizontalPadding: 20, bottomPadding: 28)
+
+    var body: some View {
+        DebugInputBar(
+            text: $text,
+            programmaticChangeToken: $programmaticChangeToken,
+            isFocused: $isFocused,
+            geometry: geometry,
+            layout: layout
+        ) {
+            text = ""
+            programmaticChangeToken &+= 1
+        }
+        .frame(height: 180)
+        .background(Color(UIColor.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct DebugInputBarControllerPreview: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> DebugInputBarViewController {
+        let controller = DebugInputBarViewController()
+        controller.onSend = { [weak controller] in
+            controller?.clearText()
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: DebugInputBarViewController, context: Context) {}
 }
 
 private struct InputBarFrameReader: UIViewRepresentable {

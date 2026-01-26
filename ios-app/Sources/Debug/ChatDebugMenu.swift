@@ -46,6 +46,9 @@ struct ChatDebugMenu: View {
                 NavigationLink("Input Strategy Lab") {
                     InputStrategyLabView()
                 }
+                NavigationLink("Input Hypothesis Lab") {
+                    InputHypothesisLabView()
+                }
             }
 
             Section("Notes") {

@@ -94,6 +94,7 @@ struct InputStrategyLabView: View {
                 }
             }
             .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle("Input Strategy Lab")
     }
@@ -155,6 +156,7 @@ private struct StrategyCard: View {
                 ) {
                     text = ""
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { proxy in
                         Color.clear
@@ -162,6 +164,7 @@ private struct StrategyCard: View {
                     }
                 )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: railHeight)
             .onPreferenceChange(PillFramePreferenceKey.self) { frame in
                 pillFrameInWindow = frame
@@ -183,6 +186,7 @@ private struct StrategyCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color(UIColor.separator), lineWidth: 1)
         )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var caretDistance: CGFloat? {
@@ -373,6 +377,8 @@ struct StrategyTextView: UIViewRepresentable {
         textView.clipsToBounds = !strategy.allowCaretOverflow
         textView.backgroundColor = .clear
         textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
         textView.textContainerInset = UIEdgeInsets(
             top: verticalInset + strategy.topInsetExtra,
@@ -381,10 +387,21 @@ struct StrategyTextView: UIViewRepresentable {
             right: 0
         )
         textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.textContainer.widthTracksTextView = true
         textView.returnKeyType = .default
         textView.text = text
         textView.accessibilityIdentifier = "debug.strategy.\(strategy.id)"
         return textView
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize {
+        let targetWidth = proposal.width ?? uiView.bounds.width
+        let width = max(1, targetWidth)
+        let size = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        return CGSize(width: width, height: size.height)
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
