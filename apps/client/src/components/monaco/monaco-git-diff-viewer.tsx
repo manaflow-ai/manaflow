@@ -99,6 +99,18 @@ function debugGitDiffViewerLog(
   }
 }
 
+function areStringSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const value of a) {
+    if (!b.has(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function splitContentIntoLines(content: string): string[] {
   if (!content) {
     return [""];
@@ -1079,6 +1091,17 @@ export function MonacoGitDiffViewer({
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
     () => new Set(diffs.map((diff) => diff.filePath)),
   );
+  const filePathSetRef = useRef<Set<string>>(
+    new Set(diffs.map((diff) => diff.filePath)),
+  );
+
+  useEffect(() => {
+    const nextPaths = new Set(diffs.map((diff) => diff.filePath));
+    if (!areStringSetsEqual(filePathSetRef.current, nextPaths)) {
+      filePathSetRef.current = nextPaths;
+      setExpandedFiles(new Set(nextPaths));
+    }
+  }, [diffs]);
 
   const fileGroups: MonacoFileGroup[] = useMemo(
     () =>

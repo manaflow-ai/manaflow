@@ -52,13 +52,173 @@ type FileCollapsedState = Map<string, boolean>;
 // Helper Functions
 // ============================================================================
 
+type DiffOperation = {
+  type: "=" | "-" | "+";
+  oldIdx?: number;
+  newIdx?: number;
+  line: string;
+};
+
+const DEFAULT_CONTEXT_LINES = 3;
+
+function computeLineDiff(
+  oldLines: string[],
+  newLines: string[],
+): DiffOperation[] {
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    Array(n + 1).fill(0),
+  );
+
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i]![j] = (dp[i - 1]?.[j - 1] ?? 0) + 1;
+      } else {
+        dp[i]![j] = Math.max(dp[i - 1]?.[j] ?? 0, dp[i]?.[j - 1] ?? 0);
+      }
+    }
+  }
+
+  let i = m;
+  let j = n;
+  const operations: DiffOperation[] = [];
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      operations.unshift({
+        type: "=",
+        oldIdx: i - 1,
+        newIdx: j - 1,
+        line: oldLines[i - 1] ?? "",
+      });
+      i -= 1;
+      j -= 1;
+    } else if (
+      j > 0 &&
+      (i === 0 || (dp[i]?.[j - 1] ?? 0) >= (dp[i - 1]?.[j] ?? 0))
+    ) {
+      operations.unshift({
+        type: "+",
+        newIdx: j - 1,
+        line: newLines[j - 1] ?? "",
+      });
+      j -= 1;
+    } else if (i > 0) {
+      operations.unshift({
+        type: "-",
+        oldIdx: i - 1,
+        line: oldLines[i - 1] ?? "",
+      });
+      i -= 1;
+    }
+  }
+
+  return operations;
+}
+
+function generateUnifiedHunks(
+  operations: DiffOperation[],
+  contextLines: number = DEFAULT_CONTEXT_LINES,
+): string[] {
+  const hunks: string[] = [];
+  const changeIndices: number[] = [];
+
+  for (let index = 0; index < operations.length; index += 1) {
+    if (operations[index]?.type !== "=") {
+      changeIndices.push(index);
+    }
+  }
+
+  if (changeIndices.length === 0) {
+    return [];
+  }
+
+  const hunkRanges: Array<{ start: number; end: number }> = [];
+  let currentStart = Math.max(0, (changeIndices[0] ?? 0) - contextLines);
+  let currentEnd = Math.min(
+    operations.length - 1,
+    (changeIndices[0] ?? 0) + contextLines,
+  );
+
+  for (let index = 1; index < changeIndices.length; index += 1) {
+    const changeIdx = changeIndices[index] ?? 0;
+    const rangeStart = Math.max(0, changeIdx - contextLines);
+    const rangeEnd = Math.min(operations.length - 1, changeIdx + contextLines);
+
+    if (rangeStart <= currentEnd + 1) {
+      currentEnd = rangeEnd;
+    } else {
+      hunkRanges.push({ start: currentStart, end: currentEnd });
+      currentStart = rangeStart;
+      currentEnd = rangeEnd;
+    }
+  }
+  hunkRanges.push({ start: currentStart, end: currentEnd });
+
+  for (const range of hunkRanges) {
+    let oldStart = 1;
+    let newStart = 1;
+
+    for (let index = 0; index < range.start; index += 1) {
+      const op = operations[index];
+      if (op?.type === "=" || op?.type === "-") {
+        oldStart += 1;
+      }
+      if (op?.type === "=" || op?.type === "+") {
+        newStart += 1;
+      }
+    }
+
+    let oldCount = 0;
+    let newCount = 0;
+    const lines: string[] = [];
+
+    for (let index = range.start; index <= range.end; index += 1) {
+      const op = operations[index];
+      if (!op) {
+        continue;
+      }
+
+      if (op.type === "=") {
+        lines.push(` ${op.line}`);
+        oldCount += 1;
+        newCount += 1;
+      } else if (op.type === "-") {
+        lines.push(`-${op.line}`);
+        oldCount += 1;
+      } else if (op.type === "+") {
+        lines.push(`+${op.line}`);
+        newCount += 1;
+      }
+    }
+
+    hunks.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
+    hunks.push(...lines);
+  }
+
+  return hunks;
+}
+
+function areStringSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const value of a) {
+    if (!b.has(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function buildUnifiedDiff(entry: ReplaceDiffEntry): string {
-  // If we have a patch, use it directly
   if (entry.patch) {
     return entry.patch;
   }
 
-  // Otherwise, construct a unified diff from old/new content
   const oldContent = entry.oldContent ?? "";
   const newContent = entry.newContent ?? "";
   const oldPath = entry.oldPath ?? entry.filePath;
@@ -73,30 +233,34 @@ function buildUnifiedDiff(entry: ReplaceDiffEntry): string {
   const oldLines = oldContent.split(/\r?\n/);
   const newLines = newContent.split(/\r?\n/);
 
-  // Simple diff: show all old as deleted, all new as added
-  // This is a simplified approach; for better diffs use a proper diff algorithm
-  const hunks: string[] = [];
+  if (oldLines.length === 1 && oldLines[0] === "") {
+    oldLines.length = 0;
+  }
+  if (newLines.length === 1 && newLines[0] === "") {
+    newLines.length = 0;
+  }
 
-  if (entry.status === "added") {
-    // All lines are additions
-    hunks.push(`@@ -0,0 +1,${newLines.length} @@`);
-    for (const line of newLines) {
-      hunks.push(`+${line}`);
+  let hunks: string[] = [];
+
+  if (entry.status === "added" || oldLines.length === 0) {
+    if (newLines.length > 0) {
+      hunks.push(`@@ -0,0 +1,${newLines.length} @@`);
+      for (const line of newLines) {
+        hunks.push(`+${line}`);
+      }
     }
-  } else if (entry.status === "deleted") {
-    // All lines are deletions
-    hunks.push(`@@ -1,${oldLines.length} +0,0 @@`);
-    for (const line of oldLines) {
-      hunks.push(`-${line}`);
+  } else if (entry.status === "deleted" || newLines.length === 0) {
+    if (oldLines.length > 0) {
+      hunks.push(`@@ -1,${oldLines.length} +0,0 @@`);
+      for (const line of oldLines) {
+        hunks.push(`-${line}`);
+      }
     }
   } else {
-    // Modified - show full replacement
-    hunks.push(`@@ -1,${oldLines.length} +1,${newLines.length} @@`);
-    for (const line of oldLines) {
-      hunks.push(`-${line}`);
-    }
-    for (const line of newLines) {
-      hunks.push(`+${line}`);
+    const operations = computeLineDiff(oldLines, newLines);
+    hunks = generateUnifiedHunks(operations, DEFAULT_CONTEXT_LINES);
+    if (hunks.length === 0) {
+      return "";
     }
   }
 
@@ -137,6 +301,17 @@ export const GitDiffViewerWithHeatmap = memo(
       () => new Map()
     );
     const containerRef = useRef<HTMLDivElement>(null);
+    const filePathSetRef = useRef<Set<string>>(
+      new Set(diffs.map((diff) => diff.filePath))
+    );
+
+    useEffect(() => {
+      const nextPaths = new Set(diffs.map((diff) => diff.filePath));
+      if (!areStringSetsEqual(filePathSetRef.current, nextPaths)) {
+        filePathSetRef.current = nextPaths;
+        setCollapsedState(new Map());
+      }
+    }, [diffs]);
 
     // Calculate totals
     const { totalAdditions, totalDeletions } = useMemo(() => {
