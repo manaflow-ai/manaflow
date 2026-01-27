@@ -547,6 +547,10 @@ class CmuxTerminalManager {
   // Set to false after drain completes, allowing new terminal creation
   private _restoreInProgress = false;
 
+  // True after createQueuedTerminals() has been called
+  // Prevents provideTerminalProfile from creating duplicate terminals
+  private _queueDrainedManually = false;
+
   private _ptyClient: PtyClient;
   private _disposables: { dispose: () => void }[] = [];
   private _initialized = false;
@@ -1113,8 +1117,15 @@ class CmuxTerminalManager {
    * Handles edge cases:
    * - Terminal panel was closed (VSCode doesn't call provideTerminalProfile)
    * - Multiple PTYs but VSCode only calls provideTerminalProfile once
+   * @param manual - If true, this is a manual call from createQueuedTerminals() (extension.ts)
    */
-  drainRestoreQueue(): void {
+  drainRestoreQueue(manual = false): void {
+    if (manual) {
+      // Mark that we've manually drained the queue
+      // This prevents provideTerminalProfile from creating extra terminals
+      this._queueDrainedManually = true;
+    }
+
     if (this._restoreQueue.length === 0) {
       console.log('[cmux] Restore queue empty, restore complete');
       this._restoreInProgress = false; // Restore complete, allow new terminal creation
@@ -1139,6 +1150,14 @@ class CmuxTerminalManager {
    */
   isRestoreInProgress(): boolean {
     return this._restoreInProgress;
+  }
+
+  /**
+   * Check if terminals were created manually via createQueuedTerminals().
+   * Used by provideTerminalProfile to skip creating extra terminals.
+   */
+  wasQueueDrainedManually(): boolean {
+    return this._queueDrainedManually;
   }
 
   /**
@@ -1295,7 +1314,7 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       }
     }
 
-    // Queue is empty - check if restore is still in progress
+    // Queue is empty - check if restore is still in progress or was drained manually
     if (terminalManager.isRestoreInProgress() && terminalManager.hasTerminals()) {
       // Restore in progress but queue is empty - terminals were consumed by earlier calls
       // VSCode is asking for an extra one during restore, skip it
@@ -1306,6 +1325,19 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       }
       // Mark restore complete
       terminalManager.drainRestoreQueue();
+      return undefined;
+    }
+
+    // If queue was drained manually (via createQueuedTerminals from extension.ts),
+    // don't create new terminals - just show existing ones
+    // This prevents VSCode from creating duplicate terminals when it calls
+    // provideTerminalProfile during initialization after we've already created them
+    if (terminalManager.wasQueueDrainedManually() && terminalManager.hasTerminals()) {
+      console.log('[cmux] provideTerminalProfile: queue was drained manually, focusing existing terminal');
+      const terminals = terminalManager.getTerminals();
+      if (terminals.length > 0) {
+        terminals[0].terminal.show();
+      }
       return undefined;
     }
 
@@ -1584,7 +1616,7 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
 export async function createQueuedTerminals(options?: { focus?: boolean }): Promise<void> {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
-  terminalManager.drainRestoreQueue();
+  terminalManager.drainRestoreQueue(true); // manual = true to prevent provideTerminalProfile from creating extras
 
   // Focus the "cmux" terminal (main agent terminal) after creation
   const shouldFocus = options?.focus ?? true;
