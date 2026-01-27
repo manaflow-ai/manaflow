@@ -413,20 +413,30 @@ async function setupDefaultTerminal() {
   const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
 
   if (hasCmuxPtyTerminals) {
+    // Give the agent terminal a chance to appear before creating other terminals,
+    // so it becomes Terminal 1 by default.
+    log("Waiting briefly for agent terminal before creating queued terminals...");
+    const hasAgentTerminal = await waitForCmuxPtyTerminal("cmux", 8000);
+    if (!hasAgentTerminal) {
+      log("Agent terminal not detected yet; proceeding with available terminals");
+    }
+
     // cmux-pty has terminals - create all of them from the restore queue
     log("cmux-pty is managing terminals, creating queued terminals");
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
     await createQueuedTerminals({ focus: !preserveFocus });
 
-    // Also check for the specific "cmux" terminal (main agent)
-    // If not present yet, it might still be created by the agent spawner
-    const hasCmuxTerminal = await waitForCmuxPtyTerminal("cmux", 5000);
-    if (hasCmuxTerminal) {
-      log("Found 'cmux' terminal in cmux-pty");
-      // The terminal was already created by createQueuedTerminals
+    // Also check for the agent terminal (main coding CLI)
+    if (hasAgentTerminal) {
+      log("Found agent terminal in cmux-pty");
     } else {
-      log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
+      const agentAfterCreate = await waitForCmuxPtyTerminal("cmux", 5000);
+      if (agentAfterCreate) {
+        log("Found agent terminal in cmux-pty after creation");
+      } else {
+        log("Agent terminal not found in cmux-pty yet; it may be created later by agent spawner");
+      }
     }
   } else {
     // Fall back to tmux-based terminal

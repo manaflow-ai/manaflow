@@ -106,6 +106,55 @@ function extractTerminalInfos(payload: unknown): TerminalInfo[] | null {
   return null;
 }
 
+type TerminalInfoPredicate = (terminal: TerminalInfo) => boolean;
+
+function isPrimaryAgentTerminal(info: TerminalInfo): boolean {
+  const metadata = info.metadata;
+  if (metadata?.type === 'agent' && metadata.managed) {
+    return true;
+  }
+  if (info.name === 'cmux') {
+    return true;
+  }
+  return metadata?.type === 'agent';
+}
+
+function getTerminalSortPriority(info: TerminalInfo): number {
+  const metadata = info.metadata;
+  if (metadata?.type === 'agent' && metadata.managed) {
+    return 0;
+  }
+  if (info.name === 'cmux') {
+    return 0;
+  }
+  if (metadata?.type === 'agent') {
+    return 1;
+  }
+  if (info.name === 'dev' || metadata?.type === 'dev') {
+    return 2;
+  }
+  if (info.name === 'maintenance' || metadata?.type === 'maintenance') {
+    return 3;
+  }
+  return 4;
+}
+
+function sortTerminalsForDisplay(terminals: TerminalInfo[]): TerminalInfo[] {
+  return [...terminals].sort((a, b) => {
+    const priorityDiff = getTerminalSortPriority(a) - getTerminalSortPriority(b);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+    if (a.index !== b.index) {
+      return a.index - b.index;
+    }
+    if (a.name !== b.name) {
+      return a.name.localeCompare(b.name);
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
 
 // =============================================================================
 // CmuxPseudoterminal - Connects to a single PTY session
@@ -766,8 +815,8 @@ class CmuxTerminalManager {
   }
 
   private _handleStateSync(terminals: TerminalInfo[]): void {
-    // Sort by index to ensure correct order
-    const sorted = [...terminals].sort((a, b) => a.index - b.index);
+    // Sort with agent terminal first to keep Terminal 1 as the coding CLI by default.
+    const sorted = sortTerminalsForDisplay(terminals);
 
     // Track which terminals we've seen
     const seenIds = new Set<string>();
@@ -1059,6 +1108,13 @@ class CmuxTerminalManager {
    */
   hasQueuedTerminal(name: string): boolean {
     return this._restoreQueue.some(t => t.name === name);
+  }
+
+  /**
+   * Check if a queued terminal matches the predicate.
+   */
+  hasQueuedTerminalWhere(predicate: TerminalInfoPredicate): boolean {
+    return this._restoreQueue.some(predicate);
   }
 
   /**
@@ -1461,6 +1517,12 @@ export function hasCmuxPtyTerminal(name: string): boolean {
   if (!terminalManager) return false;
   // Check active terminals
   const terminals = terminalManager.getTerminals();
+  if (name === 'cmux') {
+    if (terminals.some(t => isPrimaryAgentTerminal(t.info))) {
+      return true;
+    }
+    return terminalManager.hasQueuedTerminalWhere(isPrimaryAgentTerminal);
+  }
   if (terminals.some(t => t.info.name === name)) {
     return true;
   }
@@ -1586,7 +1648,7 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
 
-  // Focus the "cmux" terminal (main agent terminal) after creation
+  // Focus the agent terminal (main coding CLI) after creation
   const shouldFocus = options?.focus ?? true;
   if (!shouldFocus) {
     return;
@@ -1595,15 +1657,15 @@ export async function createQueuedTerminals(options?: { focus?: boolean }): Prom
   const terminals = terminalManager.getTerminals();
   console.log(`[cmux] Have ${terminals.length} terminals after drain`);
 
-  // First try to focus the "cmux" terminal (main agent)
-  const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
-  if (cmuxTerminal) {
-    console.log('[cmux] Focusing cmux terminal');
-    cmuxTerminal.terminal.show(false); // false = take focus
+  // First try to focus the agent terminal
+  const agentTerminal = terminals.find(t => isPrimaryAgentTerminal(t.info));
+  if (agentTerminal) {
+    console.log('[cmux] Focusing agent terminal');
+    agentTerminal.terminal.show(false); // false = take focus
     return;
   }
 
-  // If no "cmux" terminal, try to focus the "dev" terminal (for cloud workspaces)
+  // If no agent terminal, try to focus the "dev" terminal (for cloud workspaces)
   const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
   if (devTerminal) {
     console.log('[cmux] Focusing dev terminal');

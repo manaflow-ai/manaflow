@@ -44,38 +44,70 @@ interface SessionInfo {
   id: string;
   name: string;
   index: number;
-  metadata?: { type?: string; location?: string };
+  metadata?: { type?: string; location?: string; managed?: boolean };
 }
 
 interface SessionsListResponse {
   sessions: SessionInfo[];
 }
 
+function getSessionPriority(session: SessionInfo): number {
+  const metadata = session.metadata;
+  if (metadata?.type === "agent" && metadata.managed) {
+    return 0;
+  }
+  if (session.name === "cmux") {
+    return 0;
+  }
+  if (metadata?.type === "agent") {
+    return 1;
+  }
+  if (session.name === "dev" || metadata?.type === "dev") {
+    return 2;
+  }
+  if (session.name === "maintenance" || metadata?.type === "maintenance") {
+    return 3;
+  }
+  return 4;
+}
+
 /**
- * Sort sessions so that the "cmux" (agent) terminal is always first.
- * This ensures Terminal 1 in the UI is always the main agent terminal.
- * Order: cmux > agent type > dev > others (by index)
+ * Sort sessions so that the coding agent terminal is always first.
+ * This ensures Terminal 1 in the UI is the agent by default.
  */
-function sortSessionsWithCmuxFirst(sessions: SessionInfo[]): SessionInfo[] {
+function sortSessionsWithAgentFirst(sessions: SessionInfo[]): SessionInfo[] {
   return [...sessions].sort((a, b) => {
-    // cmux terminal always comes first
-    if (a.name === "cmux") return -1;
-    if (b.name === "cmux") return 1;
+    const priorityDiff = getSessionPriority(a) - getSessionPriority(b);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+    if (a.index !== b.index) {
+      return a.index - b.index;
+    }
+    if (a.name !== b.name) {
+      return a.name.localeCompare(b.name);
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
 
-    // Agent type terminals come next
-    const aIsAgent = a.metadata?.type === "agent";
-    const bIsAgent = b.metadata?.type === "agent";
-    if (aIsAgent && !bIsAgent) return -1;
-    if (bIsAgent && !aIsAgent) return 1;
+function sortTerminalIdsWithAgentFirst(
+  ids: TerminalTabId[],
+  contextKey?: string | number | null
+): TerminalTabId[] {
+  const preferredId =
+    typeof contextKey === "string" && contextKey.length > 0 ? contextKey : null;
 
-    // Dev terminals come after agent
-    const aIsDev = a.name === "dev" || a.metadata?.type === "dev";
-    const bIsDev = b.name === "dev" || b.metadata?.type === "dev";
-    if (aIsDev && !bIsDev) return -1;
-    if (bIsDev && !aIsDev) return 1;
-
-    // Otherwise sort by index
-    return a.index - b.index;
+  return [...ids].sort((a, b) => {
+    if (preferredId) {
+      if (a === preferredId) return -1;
+      if (b === preferredId) return 1;
+    }
+    if (a === "cmux") return -1;
+    if (b === "cmux") return 1;
+    if (a === "dev") return 1;
+    if (b === "dev") return -1;
+    return 0;
   });
 }
 
@@ -119,16 +151,16 @@ export function terminalTabsQueryOptions({
       }
       const payload: unknown = await response.json();
       // Handle new API format: { sessions: [...] }
-      // Sort so that the cmux (agent) terminal is always first (Terminal 1)
+      // Sort so that the coding agent terminal is always first (Terminal 1)
       if (isSessionsListResponse(payload)) {
-        const sorted = sortSessionsWithCmuxFirst(payload.sessions);
+        const sorted = sortSessionsWithAgentFirst(payload.sessions);
         return sorted.map((s) => s.id);
       }
       // Fallback for old API format: [...]
       if (!isTerminalTabIdList(payload)) {
         throw new Error("Unexpected response while loading terminals.");
       }
-      return payload;
+      return sortTerminalIdsWithAgentFirst(payload, contextKey);
     },
     refetchInterval: 10_000,
     refetchOnWindowFocus: true,
