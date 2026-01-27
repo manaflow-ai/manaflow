@@ -23,12 +23,16 @@ import {
   ChevronLeft,
   ChevronDown,
   ChevronRight,
+  Eye,
+  EyeOff,
   FileCode,
   FileEdit,
   FileMinus,
   FilePlus,
   FileText,
   Sparkles,
+  Search,
+  X,
   Copy,
   Check,
   Loader2,
@@ -88,7 +92,6 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
-import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
   HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
@@ -470,6 +473,36 @@ function inferLanguage(filename: string): string | null {
   }
 
   return null;
+}
+
+type FileStatusFilter = GithubFileChange["status"] | "unknown";
+
+const FILE_STATUS_ORDER: ReadonlyArray<FileStatusFilter> = [
+  "added",
+  "modified",
+  "changed",
+  "unchanged",
+  "removed",
+  "renamed",
+  "copied",
+  "unknown",
+];
+
+const FILE_STATUS_LABELS: Record<FileStatusFilter, string> = {
+  added: "Added",
+  modified: "Modified",
+  changed: "Changed",
+  unchanged: "Unchanged",
+  removed: "Removed",
+  renamed: "Renamed",
+  copied: "Copied",
+  unknown: "Other",
+};
+
+function resolveFileStatusFilter(
+  status: GithubFileChange["status"] | undefined
+): FileStatusFilter {
+  return status ?? "unknown";
 }
 
 type FileTreeNode = {
@@ -1150,6 +1183,84 @@ export function PullRequestDiffViewer({
     });
   }, [files]);
 
+  const [fileSearchQuery, setFileSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(fileSearchQuery);
+  const searchTokens = useMemo(() => {
+    const normalized = deferredSearchQuery.trim().toLowerCase();
+    if (!normalized) {
+      return [];
+    }
+    return normalized.split(/\s+/).filter(Boolean);
+  }, [deferredSearchQuery]);
+
+  const [statusFilters, setStatusFilters] = useState<Set<FileStatusFilter>>(
+    () => new Set()
+  );
+  const searchFilteredFiles = useMemo(() => {
+    if (searchTokens.length === 0) {
+      return sortedFiles;
+    }
+
+    return sortedFiles.filter((file) => {
+      const lowerPath = file.filename.toLowerCase();
+      for (const token of searchTokens) {
+        if (!lowerPath.includes(token)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [sortedFiles, searchTokens]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<FileStatusFilter, number> = {
+      added: 0,
+      modified: 0,
+      changed: 0,
+      unchanged: 0,
+      removed: 0,
+      renamed: 0,
+      copied: 0,
+      unknown: 0,
+    };
+
+    for (const file of searchFilteredFiles) {
+      const key = resolveFileStatusFilter(file.status);
+      counts[key] = counts[key] + 1;
+    }
+
+    return counts;
+  }, [searchFilteredFiles]);
+
+  const statusFilterOptions = useMemo(() => {
+    return FILE_STATUS_ORDER.filter((status) => statusCounts[status] > 0);
+  }, [statusCounts]);
+
+  const [hiddenFilePaths, setHiddenFilePaths] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [viewedFilePaths, setViewedFilePaths] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  const filteredFiles = useMemo(() => {
+    if (statusFilters.size === 0) {
+      return searchFilteredFiles;
+    }
+
+    return searchFilteredFiles.filter((file) =>
+      statusFilters.has(resolveFileStatusFilter(file.status))
+    );
+  }, [searchFilteredFiles, statusFilters]);
+
+  const visibleFiles = useMemo(() => {
+    if (hiddenFilePaths.size === 0) {
+      return filteredFiles;
+    }
+
+    return filteredFiles.filter((file) => !hiddenFilePaths.has(file.filename));
+  }, [filteredFiles, hiddenFilePaths]);
+
   const totalFileCount = sortedFiles.length;
 
   const processedFileCount = useMemo(() => {
@@ -1185,6 +1296,79 @@ export function PullRequestDiffViewer({
     }
     return Math.max(totalFileCount - processedFileCount, 0);
   }, [processedFileCount, totalFileCount]);
+
+  const filteredFileCount = filteredFiles.length;
+  const statusScopeCount = searchFilteredFiles.length;
+  const visibleFileCount = visibleFiles.length;
+  const hiddenFilteredCount = useMemo(() => {
+    if (hiddenFilePaths.size === 0) {
+      return 0;
+    }
+    return filteredFiles.reduce((count, file) => {
+      return hiddenFilePaths.has(file.filename) ? count + 1 : count;
+    }, 0);
+  }, [filteredFiles, hiddenFilePaths]);
+  const hasActiveFilters = searchTokens.length > 0 || statusFilters.size > 0;
+
+  const handleSearchChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      setFileSearchQuery(event.target.value);
+    },
+    []
+  );
+
+  const handleClearSearch = useCallback(() => {
+    setFileSearchQuery("");
+  }, []);
+
+  const handleToggleStatusFilter = useCallback((status: FileStatusFilter) => {
+    setStatusFilters((previous) => {
+      const next = new Set(previous);
+      if (next.has(status)) {
+        next.delete(status);
+      } else {
+        next.add(status);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearStatusFilters = useCallback(() => {
+    setStatusFilters(new Set());
+  }, []);
+
+  const handleResetFilters = useCallback(() => {
+    setFileSearchQuery("");
+    setStatusFilters(new Set());
+  }, []);
+
+  const handleToggleFileVisibility = useCallback((path: string) => {
+    setHiddenFilePaths((previous) => {
+      const next = new Set(previous);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleShowAllFiles = useCallback(() => {
+    setHiddenFilePaths(new Set());
+  }, []);
+
+  const handleSetViewed = useCallback((path: string, viewed: boolean) => {
+    setViewedFilePaths((previous) => {
+      const next = new Set(previous);
+      if (viewed) {
+        next.add(path);
+      } else {
+        next.delete(path);
+      }
+      return next;
+    });
+  }, []);
 
   const [heatmapThresholdInput, setHeatmapThresholdInput] = useState(0);
   const heatmapThreshold = useDeferredValue(heatmapThresholdInput);
@@ -1439,7 +1623,7 @@ export function PullRequestDiffViewer({
     ]);
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
-    return sortedFiles.map((file) => {
+    return visibleFiles.map((file) => {
       if (!file.patch) {
         const renameMessage =
           file.status === "renamed"
@@ -1475,7 +1659,7 @@ export function PullRequestDiffViewer({
         };
       }
     });
-  }, [sortedFiles]);
+  }, [visibleFiles]);
 
   const fileEntries = useMemo<FileDiffViewModel[]>(() => {
     return parsedDiffs.map((entry) => {
@@ -1659,7 +1843,7 @@ export function PullRequestDiffViewer({
       : (errorTargets[focusedErrorIndex] ?? null);
 
   const fileTree = useMemo(() => {
-    const tree = buildFileTree(sortedFiles);
+    const tree = buildFileTree(filteredFiles);
     // Add loading state to file nodes
     const addLoadingState = (nodes: FileTreeNode[]): FileTreeNode[] => {
       return nodes.map((node) => {
@@ -1683,7 +1867,7 @@ export function PullRequestDiffViewer({
       });
     };
     return addLoadingState(tree);
-  }, [sortedFiles, fileOutputIndex, streamStateByFile]);
+  }, [filteredFiles, fileOutputIndex, streamStateByFile]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
     [fileTree]
@@ -1993,6 +2177,22 @@ export function PullRequestDiffViewer({
     []
   );
 
+  useEffect(() => {
+    if (visibleFiles.length === 0) {
+      return;
+    }
+
+    const isActiveVisible = visibleFiles.some(
+      (file) => file.filename === activePath
+    );
+    if (!isActiveVisible) {
+      const fallback = visibleFiles[0];
+      if (fallback) {
+        handleNavigate(fallback.filename);
+      }
+    }
+  }, [activePath, handleNavigate, visibleFiles]);
+
   const handleFocusPrevious = useCallback(
     (options?: FocusNavigateOptions) => {
       if (targetCount === 0) {
@@ -2265,14 +2465,42 @@ export function PullRequestDiffViewer({
                   />
                 </div>
               ) : null}
+              <FileFilterPanel
+                query={fileSearchQuery}
+                onQueryChange={handleSearchChange}
+                onClearQuery={handleClearSearch}
+                statusFilters={statusFilters}
+                statusOptions={statusFilterOptions}
+                statusCounts={statusCounts}
+                onToggleStatus={handleToggleStatusFilter}
+                onClearStatus={handleClearStatusFilters}
+                statusScopeCount={statusScopeCount}
+                visibleCount={visibleFileCount}
+                filteredCount={filteredFileCount}
+                totalCount={totalFileCount}
+                hiddenCount={hiddenFilteredCount}
+                hasHiddenFiles={hiddenFilePaths.size > 0}
+                hasActiveFilters={hasActiveFilters}
+                onResetFilters={handleResetFilters}
+                onShowAllFiles={handleShowAllFiles}
+              />
               <div>
-                <FileTreeNavigator
-                  nodes={fileTree}
-                  activePath={activeAnchor}
-                  expandedPaths={expandedPaths}
-                  onToggleDirectory={handleToggleDirectory}
-                  onSelectFile={handleNavigate}
-                />
+                {fileTree.length === 0 ? (
+                  <div className="border border-neutral-200 bg-white px-3 py-4 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+                    No files match the current filters.
+                  </div>
+                ) : (
+                  <FileTreeNavigator
+                    nodes={fileTree}
+                    activePath={activeAnchor}
+                    expandedPaths={expandedPaths}
+                    hiddenPaths={hiddenFilePaths}
+                    viewedPaths={viewedFilePaths}
+                    onToggleDirectory={handleToggleDirectory}
+                    onToggleFileVisibility={handleToggleFileVisibility}
+                    onSelectFile={handleNavigate}
+                  />
+                )}
               </div>
             </div>
             <div className="h-[40px]" />
@@ -2315,72 +2543,104 @@ export function PullRequestDiffViewer({
           </div>
 
           <div className="flex-1 min-w-0 space-y-3">
-            {fileEntries.map(
-              ({ entry, review, diffHeatmap, streamState }) => {
-                const isFocusedFile =
-                  focusedError?.filePath === entry.file.filename;
-                const focusedLine = isFocusedFile
-                  ? focusedError
-                    ? {
-                        side: focusedError.side,
-                        lineNumber: focusedError.lineNumber,
-                      }
-                    : null
-                  : null;
-                const focusedChangeKey = isFocusedFile
-                  ? (focusedError?.changeKey ?? null)
-                  : null;
-                const autoTooltipLine =
-                  isFocusedFile &&
-                  autoTooltipTarget &&
-                  autoTooltipTarget.filePath === entry.file.filename
-                    ? {
-                        side: autoTooltipTarget.side,
-                        lineNumber: autoTooltipTarget.lineNumber,
-                      }
-                    : null;
-
-                const isLoading =
-                  !fileOutputIndex.has(entry.file.filename) &&
-                  (!streamState || streamState.status === "pending");
-
-                return (
-                  <FileDiffCard
-                    key={entry.anchorId}
-                    entry={entry}
-                    isActive={entry.anchorId === activeAnchor}
-                    review={review}
-                    diffHeatmap={diffHeatmap}
-                    focusedLine={focusedLine}
-                    focusedChangeKey={focusedChangeKey}
-                    autoTooltipLine={autoTooltipLine}
-                    isLoading={isLoading}
-                    streamState={streamState}
-                  />
-                );
-              }
-            )}
-            <div className="h-[70dvh] w-full">
-              <div className="px-3 py-6 text-center">
-                <span className="select-none text-xs text-neutral-500">
-                  You&apos;ve reached the end of the diff!
-                </span>
-                <div className="grid place-content-center pb-4">
-                  <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500">
-                    {kitty}
-                  </pre>
+            {fileEntries.length === 0 ? (
+              <div className="border border-neutral-200 bg-white p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+                <p className="font-medium text-neutral-700 dark:text-neutral-200">
+                  No files match the current filters.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {hasActiveFilters ? (
+                    <button
+                      type="button"
+                      onClick={handleResetFilters}
+                      className="rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    >
+                      Clear filters
+                    </button>
+                  ) : null}
+                  {hiddenFilePaths.size > 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleShowAllFiles}
+                      className="rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    >
+                      Show all files
+                    </button>
+                  ) : null}
                 </div>
-                <a
-                  href="https://github.com/manaflow-ai/cmux"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none"
-                >
-                  <Star className="h-3.5 w-3.5" aria-hidden />
-                  Star on GitHub
-                </a>
               </div>
-            </div>
+            ) : (
+              <>
+                {fileEntries.map(
+                  ({ entry, review, diffHeatmap, streamState }) => {
+                    const isFocusedFile =
+                      focusedError?.filePath === entry.file.filename;
+                    const focusedLine = isFocusedFile
+                      ? focusedError
+                        ? {
+                            side: focusedError.side,
+                            lineNumber: focusedError.lineNumber,
+                          }
+                        : null
+                      : null;
+                    const focusedChangeKey = isFocusedFile
+                      ? (focusedError?.changeKey ?? null)
+                      : null;
+                    const autoTooltipLine =
+                      isFocusedFile &&
+                      autoTooltipTarget &&
+                      autoTooltipTarget.filePath === entry.file.filename
+                        ? {
+                            side: autoTooltipTarget.side,
+                            lineNumber: autoTooltipTarget.lineNumber,
+                          }
+                        : null;
+
+                    const isLoading =
+                      !fileOutputIndex.has(entry.file.filename) &&
+                      (!streamState || streamState.status === "pending");
+
+                    return (
+                      <FileDiffCard
+                        key={entry.anchorId}
+                        entry={entry}
+                        isActive={entry.anchorId === activeAnchor}
+                        isViewed={viewedFilePaths.has(entry.file.filename)}
+                        onSetViewed={handleSetViewed}
+                        review={review}
+                        diffHeatmap={diffHeatmap}
+                        focusedLine={focusedLine}
+                        focusedChangeKey={focusedChangeKey}
+                        autoTooltipLine={autoTooltipLine}
+                        isLoading={isLoading}
+                        streamState={streamState}
+                      />
+                    );
+                  }
+                )}
+                <div className="h-[70dvh] w-full">
+                  <div className="px-3 py-6 text-center">
+                    <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+                      You&apos;ve reached the end of the diff!
+                    </span>
+                    <div className="grid place-content-center pb-4">
+                      <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                        {kitty}
+                      </pre>
+                    </div>
+                    <a
+                      href="https://github.com/manaflow-ai/cmux"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    >
+                      <Star className="h-3.5 w-3.5" aria-hidden />
+                      Star on GitHub
+                    </a>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -2858,11 +3118,167 @@ function ErrorNavigator({
   );
 }
 
+type FilterChipProps = {
+  label: string;
+  count?: number;
+  isActive: boolean;
+  onClick: () => void;
+};
+
+function FilterChip({ label, count, isActive, onClick }: FilterChipProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={isActive}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500",
+        isActive
+          ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+          : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+      )}
+    >
+      <span>{label}</span>
+      {typeof count === "number" ? (
+        <span
+          className={cn(
+            "rounded-full px-1.5 py-0.5 text-[10px] font-mono",
+            isActive
+              ? "bg-white/15 text-white dark:bg-neutral-900/20 dark:text-neutral-900"
+              : "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+          )}
+        >
+          {count}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+type FileFilterPanelProps = {
+  query: string;
+  onQueryChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onClearQuery: () => void;
+  statusFilters: Set<FileStatusFilter>;
+  statusOptions: FileStatusFilter[];
+  statusCounts: Record<FileStatusFilter, number>;
+  onToggleStatus: (status: FileStatusFilter) => void;
+  onClearStatus: () => void;
+  statusScopeCount: number;
+  visibleCount: number;
+  filteredCount: number;
+  totalCount: number;
+  hiddenCount: number;
+  hasHiddenFiles: boolean;
+  hasActiveFilters: boolean;
+  onResetFilters: () => void;
+  onShowAllFiles: () => void;
+};
+
+function FileFilterPanel({
+  query,
+  onQueryChange,
+  onClearQuery,
+  statusFilters,
+  statusOptions,
+  statusCounts,
+  onToggleStatus,
+  onClearStatus,
+  statusScopeCount,
+  visibleCount,
+  filteredCount,
+  totalCount,
+  hiddenCount,
+  hasHiddenFiles,
+  hasActiveFilters,
+  onResetFilters,
+  onShowAllFiles,
+}: FileFilterPanelProps) {
+  const summaryText = hasActiveFilters
+    ? `Showing ${visibleCount} of ${filteredCount} matches`
+    : `Showing ${visibleCount} of ${totalCount} files`;
+
+  return (
+    <div className="rounded border border-neutral-200 bg-white p-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400 dark:text-neutral-500"
+          aria-hidden
+        />
+        <input
+          type="text"
+          value={query}
+          onChange={onQueryChange}
+          placeholder="Search files"
+          className="w-full rounded border border-neutral-200 bg-white py-1.5 pl-8 pr-7 text-xs font-medium text-neutral-700 placeholder:text-neutral-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          aria-label="Search file paths"
+        />
+        {query.length > 0 ? (
+          <button
+            type="button"
+            onClick={onClearQuery}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+            aria-label="Clear search"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <FilterChip
+          label="All"
+          count={statusScopeCount}
+          isActive={statusFilters.size === 0}
+          onClick={onClearStatus}
+        />
+        {statusOptions.map((status) => (
+          <FilterChip
+            key={status}
+            label={FILE_STATUS_LABELS[status]}
+            count={statusCounts[status]}
+            isActive={statusFilters.has(status)}
+            onClick={() => onToggleStatus(status)}
+          />
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+        <span>{summaryText}</span>
+        {hiddenCount > 0 ? (
+          <span>{hiddenCount} hidden</span>
+        ) : null}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {hasActiveFilters ? (
+          <button
+            type="button"
+            onClick={onResetFilters}
+            className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            Clear filters
+          </button>
+        ) : null}
+        {hasHiddenFiles ? (
+          <button
+            type="button"
+            onClick={onShowAllFiles}
+            className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            Show all files
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 type FileTreeNavigatorProps = {
   nodes: FileTreeNode[];
   activePath: string;
   expandedPaths: Set<string>;
+  hiddenPaths: Set<string>;
+  viewedPaths: Set<string>;
   onToggleDirectory: (path: string) => void;
+  onToggleFileVisibility: (path: string) => void;
   onSelectFile: (path: string) => void;
   depth?: number;
 };
@@ -2871,7 +3287,10 @@ function FileTreeNavigator({
   nodes,
   activePath,
   expandedPaths,
+  hiddenPaths,
+  viewedPaths,
   onToggleDirectory,
+  onToggleFileVisibility,
   onSelectFile,
   depth = 0,
 }: FileTreeNavigatorProps) {
@@ -2881,6 +3300,8 @@ function FileTreeNavigator({
         const isDirectory = node.children.length > 0;
         const isExpanded = expandedPaths.has(node.path);
         const isActive = activePath === node.path;
+        const isHidden = hiddenPaths.has(node.path);
+        const isViewed = viewedPaths.has(node.path);
 
         if (isDirectory) {
           return (
@@ -2889,8 +3310,10 @@ function FileTreeNavigator({
                 type="button"
                 onClick={() => onToggleDirectory(node.path)}
                 className={cn(
-                  "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
-                  isExpanded ? "text-neutral-900" : "text-neutral-700"
+                  "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100 dark:hover:bg-neutral-800",
+                  isExpanded
+                    ? "text-neutral-900 dark:text-neutral-100"
+                    : "text-neutral-700 dark:text-neutral-300"
                 )}
                 style={{ paddingLeft: depth * 14 + 10 }}
               >
@@ -2924,7 +3347,10 @@ function FileTreeNavigator({
                     nodes={node.children}
                     activePath={activePath}
                     expandedPaths={expandedPaths}
+                    hiddenPaths={hiddenPaths}
+                    viewedPaths={viewedPaths}
                     onToggleDirectory={onToggleDirectory}
+                    onToggleFileVisibility={onToggleFileVisibility}
                     onSelectFile={onSelectFile}
                     depth={depth + 1}
                   />
@@ -2935,36 +3361,83 @@ function FileTreeNavigator({
         }
 
         return (
-          <button
+          <div
             key={node.path}
-            type="button"
-            onClick={() => onSelectFile(node.path)}
             className={cn(
-              "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
-              isActive
-                ? "bg-sky-100/80 text-sky-900 font-semibold"
-                : "text-neutral-700"
+              "flex items-center gap-1",
+              isHidden ? "opacity-70" : undefined
             )}
-            style={{ paddingLeft: depth * 14 + 32 }}
+            style={{ paddingLeft: depth * 14 + 20 }}
           >
-            <span className="truncate">{node.name}</span>
-            {node.isLoading ? (
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center ml-auto">
-                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+            <button
+              type="button"
+              onClick={() => {
+                if (isHidden) {
+                  onToggleFileVisibility(node.path);
+                }
+                onSelectFile(node.path);
+              }}
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100 dark:hover:bg-neutral-800",
+                isActive
+                  ? "bg-sky-100/80 text-sky-900 font-semibold dark:bg-sky-900/40 dark:text-sky-100"
+                  : "text-neutral-700 dark:text-neutral-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "truncate",
+                  isHidden
+                    ? "line-through text-neutral-400 dark:text-neutral-500"
+                    : undefined
+                )}
+              >
+                {node.name}
+              </span>
+              <div className="ml-auto flex items-center gap-1.5">
+                {isViewed ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+                    <Check className="h-3 w-3" aria-hidden />
+                    Viewed
                   </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="right"
-                  align="center"
-                  className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                >
-                  AI review in progress...
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-          </button>
+                ) : null}
+                {node.isLoading ? (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center">
+                        <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="right"
+                      align="center"
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      AI review in progress...
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleFileVisibility(node.path)}
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded border border-transparent text-neutral-500 transition hover:border-neutral-200 hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 dark:hover:border-neutral-800 dark:hover:bg-neutral-800 dark:hover:text-neutral-200",
+                isHidden
+                  ? "text-neutral-700 dark:text-neutral-200"
+                  : "text-neutral-400 dark:text-neutral-500"
+              )}
+              aria-pressed={!isHidden}
+              aria-label={isHidden ? "Show file" : "Hide file"}
+            >
+              {isHidden ? (
+                <Eye className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <EyeOff className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </button>
+          </div>
         );
       })}
     </div>
@@ -2974,6 +3447,8 @@ function FileTreeNavigator({
 type FileDiffCardProps = {
   entry: ParsedFileDiff;
   isActive: boolean;
+  isViewed: boolean;
+  onSetViewed: (path: string, viewed: boolean) => void;
   review: FileOutput | null;
   diffHeatmap: DiffHeatmap | null;
   focusedLine: DiffLineLocation | null;
@@ -2986,6 +3461,8 @@ type FileDiffCardProps = {
 const FileDiffCard = memo(function FileDiffCardComponent({
   entry,
   isActive,
+  isViewed,
+  onSetViewed,
   review,
   diffHeatmap,
   focusedLine,
@@ -3015,6 +3492,12 @@ const FileDiffCard = memo(function FileDiffCardComponent({
     }
     setIsCollapsed(false);
   }, [focusedChangeKey]);
+
+  useEffect(() => {
+    if (isViewed) {
+      setIsCollapsed(true);
+    }
+  }, [isViewed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3264,91 +3747,111 @@ const FileDiffCard = memo(function FileDiffCardComponent({
         aria-current={isActive}
       >
         <div className="flex flex-col divide-y divide-neutral-200">
-          <button
-            type="button"
-            onClick={() => setIsCollapsed((previous) => !previous)}
-            className={clsx(
-              "sticky top-0 z-10 flex w-full items-center gap-0 border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none"
-            )}
-            aria-expanded={!isCollapsed}
-          >
-            <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
-              {isCollapsed ? (
-                <ChevronRight className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </span>
+          <div className="sticky top-0 z-10 flex w-full items-center gap-3 border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900/60 dark:hover:bg-neutral-900">
+            <button
+              type="button"
+              onClick={() => setIsCollapsed((previous) => !previous)}
+              className="flex min-w-0 flex-1 items-center gap-0 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sky-500"
+              aria-expanded={!isCollapsed}
+            >
+              <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
+                {isCollapsed ? (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </span>
 
-            <span
+              <span
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center pl-2",
+                  statusMeta.colorClassName
+                )}
+              >
+                {statusMeta.icon}
+                <span className="sr-only">{statusMeta.label}</span>
+              </span>
+
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="pl-1.5 text-sm text-neutral-700 truncate flex items-center gap-2 dark:text-neutral-200">
+                  {file.filename}
+                  {isLoading ? (
+                    <Tooltip delayDuration={300}>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex items-center">
+                          <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        align="start"
+                        className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                      >
+                        AI review in progress...
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : streamState?.status === "skipped" ? (
+                    <Tooltip delayDuration={300}>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex items-center text-amber-600">
+                          <AlertTriangle className="h-3 w-3" aria-hidden />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        align="start"
+                        className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                      >
+                        {streamState.skipReason ??
+                          streamState.summary ??
+                          "AI skipped this file"}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : streamState?.status === "error" ? (
+                    <Tooltip delayDuration={300}>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex items-center text-rose-600">
+                          <AlertTriangle className="h-3 w-3" aria-hidden />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        align="start"
+                        className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                      >
+                        {streamState.summary ?? "AI review failed"}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600 dark:text-neutral-300">
+                <span className="text-emerald-600">+{file.additions}</span>
+                <span className="text-rose-600">-{file.deletions}</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const nextViewed = !isViewed;
+                onSetViewed(file.filename, nextViewed);
+                if (nextViewed) {
+                  setIsCollapsed(true);
+                }
+              }}
+              aria-pressed={isViewed}
               className={cn(
-                "flex h-5 w-5 items-center justify-center pl-2",
-                statusMeta.colorClassName
+                "inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500",
+                isViewed
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/30 dark:text-emerald-200"
+                  : "border-neutral-200 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
               )}
             >
-              {statusMeta.icon}
-              <span className="sr-only">{statusMeta.label}</span>
-            </span>
-
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="pl-1.5 text-sm text-neutral-700 truncate flex items-center gap-2">
-                {file.filename}
-                {isLoading ? (
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center">
-                        <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      align="start"
-                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                    >
-                      AI review in progress...
-                    </TooltipContent>
-                  </Tooltip>
-                ) : streamState?.status === "skipped" ? (
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center text-amber-600">
-                        <AlertTriangle className="h-3 w-3" aria-hidden />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      align="start"
-                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                    >
-                      {streamState.skipReason ??
-                        streamState.summary ??
-                        "AI skipped this file"}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : streamState?.status === "error" ? (
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center text-rose-600">
-                        <AlertTriangle className="h-3 w-3" aria-hidden />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      align="start"
-                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                    >
-                      {streamState.summary ?? "AI review failed"}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : null}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
-              <span className="text-emerald-600">+{file.additions}</span>
-              <span className="text-rose-600">-{file.deletions}</span>
-            </div>
-          </button>
+              {isViewed ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
+              {isViewed ? "Viewed" : "Mark viewed"}
+            </button>
+          </div>
 
           {showReview && reviewContent ? (
             <div className="border-b border-neutral-200 bg-sky-50 px-4 py-2">
