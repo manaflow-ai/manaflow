@@ -40,7 +40,7 @@ export function getProvisioningCommands(): BuildCommand[] {
       type: "run",
       args: [
         "DEBIAN_FRONTEND=noninteractive apt-get install -y " +
-          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd",
+          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh",
       ],
       description: "Install base system packages (including passwd for useradd)",
     },
@@ -252,6 +252,19 @@ CLAUDEJSONEOF`,
       ],
       description: "Create Claude Code project config",
     },
+    {
+      type: "run",
+      args: [
+        "if id -u user >/dev/null 2>&1; then " +
+          "mkdir -p /home/user/.claude /home/user/.codex && " +
+          "cp /root/.codex/config.toml /home/user/.codex/config.toml && " +
+          "cp /root/.claude/settings.json /home/user/.claude/settings.json && " +
+          "cp /root/.claude.json /home/user/.claude.json && " +
+          "chown -R user:user /home/user/.claude /home/user/.codex /home/user/.claude.json; " +
+        "fi",
+      ],
+      description: "Mirror CLI configs for non-root user",
+    },
   ];
 }
 
@@ -272,9 +285,23 @@ set -e
 export PATH="/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export BUN_INSTALL="/root/.bun"
 
+# Start cmux-pty in the background
+/usr/local/bin/cmux-pty &
+PTY_PID=$!
+
 # Start cmux-acp-server in the background
 /usr/local/bin/cmux-acp-server &
 SERVER_PID=$!
+
+# Wait for cmux-pty to be ready (max 15 seconds)
+echo "Waiting for cmux-pty to be ready..."
+for i in {1..15}; do
+  if curl -sf http://localhost:39383/health > /dev/null 2>&1; then
+    echo "cmux-pty is ready"
+    break
+  fi
+  sleep 1
+done
 
 # Wait for health check to pass (max 30 seconds)
 echo "Waiting for cmux-acp-server to be ready..."

@@ -83,7 +83,8 @@ function generateDockerfile(commands: BuildCommand[]): string {
 function finalizeDockerfile(
   dockerfile: string,
   bootScript?: string,
-  acpServerBinaryPath?: string
+  acpServerBinaryPath?: string,
+  ptyServerBinaryPath?: string
 ): { dockerfile: string; localFiles: Array<{ local: string; remote: string }> } {
   const lines = dockerfile.split("\n");
   const localFiles: Array<{ local: string; remote: string }> = [];
@@ -124,6 +125,14 @@ function finalizeDockerfile(
     lines.push("COPY cmux-acp-server /usr/local/bin/cmux-acp-server");
     lines.push("RUN chmod +x /usr/local/bin/cmux-acp-server");
     localFiles.push({ local: acpServerBinaryPath, remote: "cmux-acp-server" });
+  }
+
+  if (ptyServerBinaryPath) {
+    lines.push("");
+    lines.push("# Add cmux-pty binary");
+    lines.push("COPY cmux-pty /usr/local/bin/cmux-pty");
+    lines.push("RUN chmod +x /usr/local/bin/cmux-pty");
+    localFiles.push({ local: ptyServerBinaryPath, remote: "cmux-pty" });
   }
 
   // If boot script is provided, add it
@@ -179,7 +188,8 @@ export class DaytonaBuilder implements SnapshotBuilder {
     const { dockerfile: finalDockerfile, localFiles } = finalizeDockerfile(
       dockerfile,
       ctx.bootScript,
-      ctx.acpServerBinaryPath
+      ctx.acpServerBinaryPath,
+      ctx.ptyServerBinaryPath
     );
 
     ctx.log("Generated Dockerfile:");

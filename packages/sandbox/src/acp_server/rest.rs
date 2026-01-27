@@ -218,11 +218,11 @@ impl RestApiState {
         // Always include HOME so CLIs can find their config files
         // (e.g., ~/.codex/config.toml)
         // Include IS_SANDBOX=1 to signal to CLIs that they're running in a sandbox
-        // IMPORTANT: Always use /root as HOME since that's where CLI configs and tools are installed
-        // during snapshot creation. E2B containers run as non-root user with HOME=/home/user,
-        // but configs are in /root. /root is made accessible to all users in the snapshot.
+        // IMPORTANT: Use the process HOME so non-root sandboxes (e.g., E2B) can
+        // write config/lock files without permission errors.
+        let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
         let mut env_vars = vec![
-            ("HOME".to_string(), "/root".to_string()),
+            ("HOME".to_string(), home_dir),
             ("IS_SANDBOX".to_string(), "1".to_string()),
         ];
 
@@ -285,6 +285,15 @@ impl RestApiState {
         let guard = self.api_proxies.read().await;
         if let Some(ref proxies) = *guard {
             env_vars.extend(proxies.env_vars());
+        }
+
+        if !env_vars.iter().any(|(key, _)| key == "ANTHROPIC_API_KEY")
+            && std::env::var("ANTHROPIC_API_KEY").is_err()
+        {
+            env_vars.push((
+                "ANTHROPIC_API_KEY".to_string(),
+                "sk-ant-proxy-placeholder".to_string(),
+            ));
         }
 
         env_vars
@@ -1151,12 +1160,20 @@ pub async fn init_conversation(
     };
 
     // Get env vars for CLI (proxy URLs if configured, OTel config if set, trace context for linking)
-    let env_vars = state
+    let mut env_vars = state
         .get_cli_env_vars(
             Some(&request.conversation_id),
             request.trace_context.as_ref(),
         )
         .await;
+    if provider == AcpProvider::Codex {
+        let home_value = "/root".to_string();
+        if let Some(existing) = env_vars.iter_mut().find(|(key, _)| key == "HOME") {
+            existing.1 = home_value;
+        } else {
+            env_vars.push(("HOME".to_string(), home_value));
+        }
+    }
     info!(env_vars = ?env_vars, env_count = env_vars.len(), "CLI environment variables for API proxy");
 
     // Spawn CLI process with env vars

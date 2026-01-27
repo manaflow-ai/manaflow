@@ -1,6 +1,7 @@
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useQuery as useTanstackQuery } from "@tanstack/react-query";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import {
   useAction,
@@ -9,7 +10,7 @@ import {
   useQuery,
 } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import type { SetStateAction } from "react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -29,6 +30,12 @@ import {
   HeaderVariant,
 } from "@/components/chat-layouts";
 import { isConversationManualUnread } from "@/lib/conversationReadOverrides";
+import {
+  TerminalSessionsPanel,
+  type TerminalBackendStatus,
+} from "@/components/TerminalSessionsPanel";
+import { toConversationPtyBaseUrl } from "@/components/web-ui/conversation-terminal-utils";
+import { terminalHealthQueryOptions } from "@/queries/terminals";
 
 const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
 const optimisticStateSchema = z.object({
@@ -176,6 +183,12 @@ type SandboxMeta = {
   status: ConversationSandboxStatus;
   sandboxUrl: string | null;
   lastActivityAt: number;
+};
+
+type TerminalPanelInfo = {
+  status: TerminalBackendStatus;
+  pendingMessage?: string;
+  unsupportedMessage?: string;
 };
 
 const providerLabel: Record<string, string> = {
@@ -343,6 +356,11 @@ function ConversationThread() {
   >(() => new Map());
   const draftsRef = useRef<Map<string, DraftState>>(new Map());
   const [showRawEvents, setShowRawEvents] = useState(false);
+  const [showTerminalPanel, setShowTerminalPanel] = useState(false);
+
+  useEffect(() => {
+    setShowTerminalPanel(false);
+  }, [conversationId]);
   const [isSending, setIsSending] = useState(false);
   const [lastSubmittedAt, setLastSubmittedAt] = useState<number | null>(null);
   const [permissionInFlight, setPermissionInFlight] = useState<string | null>(
@@ -1009,13 +1027,138 @@ function ConversationThread() {
   const providerName = providerLabel[providerId] ?? "Agent";
   const modelLabel = conversation?.modelId ?? "default";
   const cwd = conversation?.cwd ?? "/root";
-  const sandboxMeta: SandboxMeta | null = sandbox
-    ? {
-        status: sandbox.status,
-        sandboxUrl: sandbox.sandboxUrl ?? null,
-        lastActivityAt: sandbox.lastActivityAt,
+  const sandboxMeta = useMemo<SandboxMeta | null>(() => {
+    if (!sandbox) {
+      return null;
+    }
+    return {
+      status: sandbox.status,
+      sandboxUrl: sandbox.sandboxUrl ?? null,
+      lastActivityAt: sandbox.lastActivityAt,
+    };
+  }, [sandbox]);
+
+  const terminalBaseUrl = useMemo(() => {
+    if (!sandboxMeta?.sandboxUrl) {
+      return null;
+    }
+    return toConversationPtyBaseUrl(sandboxMeta.sandboxUrl);
+  }, [sandboxMeta?.sandboxUrl]);
+
+  const shouldCheckTerminalHealth =
+    showTerminalPanel &&
+    sandboxMeta?.status === "running" &&
+    Boolean(terminalBaseUrl);
+
+  const terminalHealthQuery = useTanstackQuery(
+    terminalHealthQueryOptions({
+      baseUrl: terminalBaseUrl,
+      enabled: shouldCheckTerminalHealth,
+    })
+  );
+
+  const terminalPanelInfo = useMemo<TerminalPanelInfo>(() => {
+    if (!sandboxMeta) {
+      return {
+        status: "pending",
+        pendingMessage: "No sandbox connected yet.",
+        unsupportedMessage: undefined,
+      };
+    }
+
+    if (sandboxMeta.status !== "running") {
+      const label =
+        sandboxMeta.status === "offline" ? "offline" : sandboxMeta.status;
+      return {
+        status: "pending",
+        pendingMessage: `Sandbox is ${label}.`,
+        unsupportedMessage: undefined,
+      };
+    }
+
+    if (!terminalBaseUrl) {
+      return {
+        status: "unsupported",
+        pendingMessage: undefined,
+        unsupportedMessage: "Terminals are not available for this sandbox.",
+      };
+    }
+
+    if (shouldCheckTerminalHealth) {
+      if (terminalHealthQuery.isLoading) {
+        return {
+          status: "pending",
+          pendingMessage: "Checking terminal backend health...",
+          unsupportedMessage: undefined,
+        };
       }
-    : null;
+
+      if (terminalHealthQuery.isError) {
+        const message =
+          terminalHealthQuery.error instanceof Error
+            ? terminalHealthQuery.error.message
+            : "Terminal backend is unreachable.";
+        return {
+          status: "pending",
+          pendingMessage: message,
+          unsupportedMessage: undefined,
+        };
+      }
+
+      if (terminalHealthQuery.data?.ok === false) {
+        return {
+          status: "pending",
+          pendingMessage: "Terminal backend is offline.",
+          unsupportedMessage: undefined,
+        };
+      }
+    }
+
+    return {
+      status: "available",
+      pendingMessage: undefined,
+      unsupportedMessage: undefined,
+    };
+  }, [
+    sandboxMeta,
+    shouldCheckTerminalHealth,
+    terminalBaseUrl,
+    terminalHealthQuery.data,
+    terminalHealthQuery.error,
+    terminalHealthQuery.isError,
+    terminalHealthQuery.isLoading,
+  ]);
+
+  const terminalPanel = showTerminalPanel ? (
+    <div className="flex w-full flex-col border-t border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 lg:w-[440px] lg:shrink-0 lg:border-l lg:border-t-0">
+      <div className="flex items-center justify-between gap-4 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
+        <div>
+          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+            Terminals
+          </div>
+          <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
+            Live PTY sessions for the active sandbox.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowTerminalPanel(false)}
+          className="rounded-full p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+          aria-label="Close terminals"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <TerminalSessionsPanel
+        baseUrl={terminalBaseUrl}
+        contextKey={conversationId}
+        status={terminalPanelInfo.status}
+        pendingMessage={terminalPanelInfo.pendingMessage}
+        unsupportedMessage={terminalPanelInfo.unsupportedMessage}
+        className="flex-1"
+      />
+    </div>
+  ) : null;
 
   const headerContent = (
     <HeaderVariant
@@ -1025,6 +1168,8 @@ function ConversationThread() {
       sandbox={sandboxMeta}
       showRawEvents={showRawEvents}
       onToggleRawEvents={() => setShowRawEvents((current) => !current)}
+      showTerminalPanel={showTerminalPanel}
+      onToggleTerminalPanel={() => setShowTerminalPanel((current) => !current)}
       permissionMode={effectivePermissionMode}
       onPermissionModeChange={(mode) => {
         void updatePermissionMode({
@@ -1171,6 +1316,7 @@ function ConversationThread() {
             resetKey={conversationResetKey}
           />
         </div>
+        {terminalPanel}
       </div>
     );
   }
@@ -1198,6 +1344,7 @@ function ConversationThread() {
           streamStatus={stream.status}
         />
       ) : null}
+      {terminalPanel}
     </div>
   );
 }

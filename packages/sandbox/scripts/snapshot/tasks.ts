@@ -124,7 +124,7 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
         `set -e
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          sudo curl git build-essential pkg-config libssl-dev ca-certificates`
+          sudo curl git build-essential pkg-config libssl-dev ca-certificates zsh`
       );
     },
   });
@@ -365,7 +365,7 @@ NODE
 
   registry.register({
     name: "build-cmux-acp-server",
-    description: "Build and install cmux-acp-server binary",
+    description: "Build and install cmux-acp-server and cmux-pty binaries",
     deps: ["install-rust"],
     func: async (ctx) => {
       await ctx.run(
@@ -404,6 +404,31 @@ NODE
         # Verify installation
         /usr/local/bin/cmux-acp-server --help > /dev/null
         echo "cmux-acp-server installed successfully"
+
+        # Install cmux-pty (prebuilt binary preferred)
+        if [ -f /tmp/cmux-build/sandbox/cmux-pty ]; then
+          echo "Installing prebuilt cmux-pty..."
+          cp /tmp/cmux-build/sandbox/cmux-pty /usr/local/bin/cmux-pty
+          chmod +x /usr/local/bin/cmux-pty
+        else
+          echo "Prebuilt cmux-pty not found; building from source..."
+          if [ -f /tmp/cmux-build/crates/cmux-pty/Cargo.toml ]; then
+            cargo build --release --manifest-path /tmp/cmux-build/crates/cmux-pty/Cargo.toml
+            if [ ! -f /tmp/cmux-build/crates/cmux-pty/target/release/cmux-pty ]; then
+              echo "ERROR: Binary not found at /tmp/cmux-build/crates/cmux-pty/target/release/cmux-pty"
+              exit 1
+            fi
+            cp /tmp/cmux-build/crates/cmux-pty/target/release/cmux-pty /usr/local/bin/cmux-pty
+            chmod +x /usr/local/bin/cmux-pty
+          else
+            echo "ERROR: cmux-pty source not found"
+            exit 1
+          fi
+        fi
+
+        # Verify installation
+        /usr/local/bin/cmux-pty --help > /dev/null
+        echo "cmux-pty installed successfully"
 
         # Clean up build directory to save space
         cd /
@@ -501,6 +526,15 @@ EOF
 
         echo "Created /root/.claude.json"
         cat /root/.claude.json
+
+        # Mirror configs for non-root users (e.g., E2B)
+        if id -u user >/dev/null 2>&1; then
+          mkdir -p /home/user/.claude /home/user/.codex
+          cp /root/.codex/config.toml /home/user/.codex/config.toml
+          cp /root/.claude/settings.json /home/user/.claude/settings.json
+          cp /root/.claude.json /home/user/.claude.json
+          chown -R user:user /home/user/.claude /home/user/.codex /home/user/.claude.json
+        fi
         `
       );
     },
@@ -524,13 +558,33 @@ EOF
 
   registry.register({
     name: "setup-acp-service",
-    description: "Install and enable cmux-acp-server systemd service",
+    description: "Install and enable cmux-acp-server and cmux-pty systemd services",
     deps: ["build-cmux-acp-server", "setup-dirs"],
     func: async (ctx) => {
       await ctx.run(
         "setup-acp-service",
         `
         set -e
+
+        # Create systemd unit file for cmux-pty
+        cat > /etc/systemd/system/cmux-pty.service << 'SERVICE'
+[Unit]
+Description=cmux PTY server
+After=network.target
+
+[Service]
+Type=simple
+Environment="PATH=/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PTY_SERVER_HOST=0.0.0.0"
+Environment="PTY_SERVER_PORT=39383"
+ExecStart=/usr/local/bin/cmux-pty
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
 
         # Create systemd unit file for cmux-acp-server
         # The server starts without config and waits for /api/acp/configure call
@@ -557,7 +611,16 @@ SERVICE
         systemctl daemon-reload
 
         # Enable the service (so it starts on boot / after snapshot restore)
+        systemctl enable cmux-pty
         systemctl enable cmux-acp-server
+
+        # Start cmux-pty now - ensure terminal backend is ready in snapshots
+        if ! systemctl start cmux-pty; then
+          echo "cmux-pty failed to start"
+          systemctl status cmux-pty --no-pager || true
+          journalctl -u cmux-pty -n 100 --no-pager || true
+          exit 1
+        fi
 
         # Start the service now - since Morph uses memory snapshots,
         # the running process will be included in the snapshot
@@ -571,7 +634,14 @@ SERVICE
         # Wait for it to be ready
         sleep 2
 
-        # Verify it's running
+        # Verify services are running
+        if ! systemctl is-active --quiet cmux-pty; then
+          echo "cmux-pty failed to start"
+          systemctl status cmux-pty --no-pager || true
+          journalctl -u cmux-pty -n 100 --no-pager || true
+          exit 1
+        fi
+
         if ! systemctl is-active --quiet cmux-acp-server; then
           echo "cmux-acp-server failed to start"
           systemctl status cmux-acp-server --no-pager || true
@@ -579,7 +649,7 @@ SERVICE
           exit 1
         fi
 
-        echo "cmux-acp-server systemd service installed and started"
+        echo "cmux-pty and cmux-acp-server systemd services installed and started"
         `
       );
     },
@@ -776,7 +846,7 @@ EOF
         `
       );
 
-      // Test cmux-acp-server healthcheck (using systemd service)
+      // Test cmux-acp-server + cmux-pty healthchecks (using systemd services)
       await ctx.run(
         "test-cmux-acp-server",
         `
@@ -789,6 +859,16 @@ EOF
           echo "✓ cmux-acp-server healthcheck passed"
         else
           echo "✗ cmux-acp-server healthcheck failed"
+          exit 1
+        fi
+
+        PTY_RESPONSE=$(curl -s http://localhost:39383/health)
+        echo "PTY response: $PTY_RESPONSE"
+
+        if echo "$PTY_RESPONSE" | grep -q '"status":"ok"'; then
+          echo "✓ cmux-pty healthcheck passed"
+        else
+          echo "✗ cmux-pty healthcheck failed"
           exit 1
         fi
 

@@ -19,8 +19,10 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
-    ApiProxies, CallbackClient, RestApiDoc, RestApiState,
+    configure, init_conversation, pty_capture_session, pty_create_session, pty_delete_session,
+    pty_get_session, pty_health, pty_input_session, pty_list_sessions, pty_preflight,
+    pty_resize_session, pty_session_ws, pty_update_session, receive_prompt, send_rpc,
+    stream_acp_events, stream_preflight, ApiProxies, CallbackClient, RestApiDoc, RestApiState,
 };
 
 /// ACP Server for sandbox integration.
@@ -235,6 +237,36 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/acp/stream/{conversation_id}",
             get(stream_acp_events).options(stream_preflight),
+        )
+        .route("/api/pty/health", get(pty_health).options(pty_preflight))
+        .route(
+            "/api/pty/sessions",
+            get(pty_list_sessions)
+                .post(pty_create_session)
+                .options(pty_preflight),
+        )
+        .route(
+            "/api/pty/sessions/{session_id}",
+            get(pty_get_session)
+                .delete(pty_delete_session)
+                .patch(pty_update_session)
+                .options(pty_preflight),
+        )
+        .route(
+            "/api/pty/sessions/{session_id}/resize",
+            post(pty_resize_session).options(pty_preflight),
+        )
+        .route(
+            "/api/pty/sessions/{session_id}/capture",
+            get(pty_capture_session).options(pty_preflight),
+        )
+        .route(
+            "/api/pty/sessions/{session_id}/input",
+            post(pty_input_session).options(pty_preflight),
+        )
+        .route(
+            "/api/pty/sessions/{session_id}/ws",
+            get(pty_session_ws),
         )
         .with_state(rest_state)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));

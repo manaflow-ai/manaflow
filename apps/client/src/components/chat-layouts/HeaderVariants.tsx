@@ -21,6 +21,8 @@ type HeaderVariantProps = {
   } | null;
   showRawEvents: boolean;
   onToggleRawEvents: () => void;
+  showTerminalPanel: boolean;
+  onToggleTerminalPanel: () => void;
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void;
 };
@@ -32,10 +34,19 @@ export function HeaderVariant({
   sandbox,
   showRawEvents,
   onToggleRawEvents,
+  showTerminalPanel,
+  onToggleTerminalPanel,
   permissionMode,
   onPermissionModeChange,
 }: HeaderVariantProps) {
   const status = sandbox?.status ?? "offline";
+  const toggleButtonClass = (active: boolean) =>
+    clsx(
+      "rounded px-2 py-0.5 text-[10px] font-medium transition",
+      active
+        ? "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
+        : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
+    );
 
   return (
     <div className="flex items-center justify-between gap-4">
@@ -59,14 +70,16 @@ export function HeaderVariant({
         <button
           type="button"
           onClick={onToggleRawEvents}
-          className={clsx(
-            "rounded px-2 py-0.5 text-[10px] font-medium transition",
-            showRawEvents
-              ? "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
-              : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
-          )}
+          className={toggleButtonClass(showRawEvents)}
         >
           Debug
+        </button>
+        <button
+          type="button"
+          onClick={onToggleTerminalPanel}
+          className={toggleButtonClass(showTerminalPanel)}
+        >
+          Terminal
         </button>
         <SandboxDot status={status} />
       </div>

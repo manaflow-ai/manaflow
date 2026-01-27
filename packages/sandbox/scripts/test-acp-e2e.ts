@@ -59,6 +59,118 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function testPtyBackend(sandboxUrl: string): Promise<void> {
+  log(`\n→ Testing PTY backend...`, "dim");
+  const baseUrl = `${sandboxUrl}/api/pty`;
+
+  const healthStart = Date.now();
+  try {
+    const response = await fetch(`${baseUrl}/health`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`${response.status}: ${text}`);
+    }
+    log(`  ✓ pty health (${Date.now() - healthStart}ms)`, "green");
+  } catch (error) {
+    console.error("PTY health check failed", error);
+    log(`  ✗ pty health: ${error}`, "red");
+    throw error;
+  }
+
+  let sessionId: string | null = null;
+  try {
+    const createResponse = await fetch(`${baseUrl}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "acp-e2e",
+        cwd: "/tmp",
+        cols: 80,
+        rows: 24,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!createResponse.ok) {
+      const text = await createResponse.text();
+      throw new Error(`${createResponse.status}: ${text}`);
+    }
+
+    const payload: unknown = await createResponse.json();
+    const id =
+      typeof payload === "object" && payload !== null
+        ? Reflect.get(payload, "id")
+        : null;
+    if (typeof id !== "string") {
+      throw new Error("Unexpected PTY create response");
+    }
+    sessionId = id;
+    log("  ✓ pty session created", "green");
+  } catch (error) {
+    console.error("PTY session create failed", error);
+    log(`  ✗ pty session create: ${error}`, "red");
+    throw error;
+  }
+
+  try {
+    const inputResponse = await fetch(`${baseUrl}/sessions/${sessionId}/input`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: "echo 'cmux-pty ok'\n" }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!inputResponse.ok) {
+      const text = await inputResponse.text();
+      throw new Error(`${inputResponse.status}: ${text}`);
+    }
+
+    let sawOutput = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await sleep(500);
+      const captureResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/capture?processed=true`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (!captureResponse.ok) {
+        continue;
+      }
+      const capturePayload: unknown = await captureResponse.json();
+      const content =
+        typeof capturePayload === "object" && capturePayload !== null
+          ? Reflect.get(capturePayload, "content")
+          : null;
+      if (typeof content === "string" && content.includes("cmux-pty ok")) {
+        sawOutput = true;
+        break;
+      }
+    }
+
+    if (!sawOutput) {
+      throw new Error("PTY output did not include expected marker");
+    }
+    log("  ✓ pty output captured", "green");
+  } catch (error) {
+    console.error("PTY input/capture failed", error);
+    log(`  ✗ pty input/capture: ${error}`, "red");
+    throw error;
+  } finally {
+    if (sessionId) {
+      try {
+        await fetch(`${baseUrl}/sessions/${sessionId}`, {
+          method: "DELETE",
+          signal: AbortSignal.timeout(5000),
+        });
+        log("  ✓ pty session deleted", "green");
+      } catch (error) {
+        console.error("PTY session delete failed", error);
+        log(`  ✗ pty session delete: ${error}`, "yellow");
+      }
+    }
+  }
+}
+
 /**
  * Run a Convex function using bunx convex run.
  */
@@ -361,6 +473,7 @@ Examples:
     process.exit(1);
   }
   log(`✓ Sandbox healthy`, "green");
+  await testPtyBackend(sandboxUrl);
 
   // Determine providers to test
   const providersToTest: Provider[] =

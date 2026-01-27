@@ -706,4 +706,38 @@ describe("optimistic conversations e2e", () => {
     },
     40_000
   );
+
+  it(
+    "opens terminal panel from the header",
+    async () => {
+      const baseUrl = buildE2EUrl(createResetToken());
+      await runAgent(["open", baseUrl], SESSION);
+      await runAgent(["wait", "1000"], SESSION);
+      await ensureComposerVisible(SESSION);
+
+      const terminalButtonRef = await waitForRef(SESSION, (entry) => {
+        if (entry.role !== "button") return false;
+        return entry.name?.trim().toLowerCase() === "terminal";
+      });
+      await runAgent(["click", `@${terminalButtonRef}`], SESSION);
+
+      await waitForRef(SESSION, (entry) => {
+        if (entry.role !== "button") return false;
+        return entry.name?.toLowerCase().includes("close terminals") ?? false;
+      });
+
+      const newTerminalRef = await waitForRef(SESSION, (entry) => {
+        if (entry.role !== "button") return false;
+        return entry.name?.trim().toLowerCase() === "new terminal";
+      });
+      await runAgent(["click", `@${newTerminalRef}`], SESSION);
+
+      await waitForRef(SESSION, (entry) => {
+        if (entry.role !== "button") return false;
+        const name = entry.name?.trim().toLowerCase();
+        return Boolean(name && name.startsWith("terminal "));
+      });
+    },
+    20_000
+  );
 });

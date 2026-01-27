@@ -17,7 +17,7 @@
  *   FREESTYLE_API_KEY  - Required for Freestyle provider
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
@@ -107,6 +107,27 @@ function getSourceDir(): string {
 }
 
 /**
+ * Get the workspace root (repo root) for shared crates.
+ */
+function getWorkspaceRoot(): string {
+  return path.resolve(import.meta.dirname, "../../../..");
+}
+
+function isLinuxAmd64Binary(binaryPath: string): boolean {
+  try {
+    const output = execFileSync("file", ["-b", binaryPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+      .toString()
+      .trim();
+    return output.includes("ELF") && output.includes("x86-64");
+  } catch (error) {
+    console.error(`Failed to inspect binary ${binaryPath}`, error);
+    return false;
+  }
+}
+
+/**
  * Build the cmux-acp-server binary for linux-x86_64.
  * Uses Docker for cross-compilation to ensure proper linking.
  * Returns the path to the built binary.
@@ -121,8 +142,15 @@ function buildAcpServerBinary(): string {
     const stats = fs.statSync(binaryPath);
     const ageMs = Date.now() - stats.mtimeMs;
     if (ageMs < 60 * 60 * 1000) {
-      console.log(`Using existing binary: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB, ${Math.round(ageMs / 1000 / 60)}min old)`);
-      return binaryPath;
+      if (isLinuxAmd64Binary(binaryPath)) {
+        console.log(
+          `Using existing binary: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB, ${Math.round(ageMs / 1000 / 60)}min old)`
+        );
+        return binaryPath;
+      }
+      console.warn(
+        `Existing binary at ${binaryPath} is not linux/amd64; rebuilding.`
+      );
     }
   }
 
@@ -148,6 +176,64 @@ function buildAcpServerBinary(): string {
 
   const stats = fs.statSync(binaryPath);
   console.log(`Binary built: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+
+  return binaryPath;
+}
+
+/**
+ * Build the cmux-pty binary for linux-x86_64.
+ * Uses Docker for cross-compilation to ensure proper linking.
+ * Returns the path to the built binary.
+ */
+function buildPtyServerBinary(): string {
+  const workspaceRoot = getWorkspaceRoot();
+  const binaryPath = path.join(
+    workspaceRoot,
+    "crates",
+    "cmux-pty",
+    "target",
+    "release",
+    "cmux-pty"
+  );
+
+  if (fs.existsSync(binaryPath)) {
+    const stats = fs.statSync(binaryPath);
+    const ageMs = Date.now() - stats.mtimeMs;
+    if (ageMs < 60 * 60 * 1000) {
+      if (isLinuxAmd64Binary(binaryPath)) {
+        console.log(
+          `Using existing binary: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB, ${Math.round(ageMs / 1000 / 60)}min old)`
+        );
+        return binaryPath;
+      }
+      console.warn(
+        `Existing binary at ${binaryPath} is not linux/amd64; rebuilding.`
+      );
+    }
+  }
+
+  console.log("Building cmux-pty for linux-x86_64 using Docker...");
+
+  const dockerCmd = [
+    "docker run --rm",
+    "--platform linux/amd64",
+    `-v "${workspaceRoot}:/workspace"`,
+    "-w /workspace",
+    "rust:1-bookworm",
+    `bash -c "cargo build --release --manifest-path crates/cmux-pty/Cargo.toml"`,
+  ].join(" ");
+
+  console.log("Running Docker build...");
+  execSync(dockerCmd, { stdio: "inherit" });
+
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(`Binary not found at ${binaryPath} after build`);
+  }
+
+  const stats = fs.statSync(binaryPath);
+  console.log(
+    `Binary built: ${binaryPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`
+  );
 
   return binaryPath;
 }
@@ -421,8 +507,9 @@ Environment Variables:
         // =====================================================================
         printHeader(`Building ${providerName} snapshot (dockerfile strategy)`);
 
-        // Build the cmux-acp-server binary for linux-x86_64
+        // Build the cmux-acp-server + cmux-pty binaries for linux-x86_64
         const acpServerBinaryPath = buildAcpServerBinary();
+        const ptyServerBinaryPath = buildPtyServerBinary();
 
         const builder = await getBuilder(providerName);
         const commands = getProvisioningCommands();
@@ -438,6 +525,7 @@ Environment Variables:
           name: snapshotName,
           bootScript,
           acpServerBinaryPath,
+          ptyServerBinaryPath,
           log: (message) => {
             if (verbose) {
               console.log(message);
@@ -464,8 +552,21 @@ Environment Variables:
           preset,
           values["base-snapshot"],
           async (vm) => {
+            const ptyServerBinaryPath = buildPtyServerBinary();
             // Upload source code for building cmux-acp-server
             await uploadSourceCode(vm);
+            if (ptyServerBinaryPath && vm.uploadFile) {
+              console.log("Uploading cmux-pty binary to VM...");
+              await vm.uploadFile(
+                ptyServerBinaryPath,
+                "/tmp/cmux-build/sandbox/cmux-pty"
+              );
+              await vm.exec("chmod +x /tmp/cmux-build/sandbox/cmux-pty");
+            } else {
+              console.warn(
+                "Warning: VM does not support file upload for cmux-pty; will attempt build from source."
+              );
+            }
 
             // Create provisioning context and run task graph
             const ctx = createProvisioningContext(vm, { verbose });

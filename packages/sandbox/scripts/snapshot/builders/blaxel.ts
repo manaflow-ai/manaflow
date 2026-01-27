@@ -103,13 +103,19 @@ export class BlaxelBuilder implements SnapshotBuilder {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "blaxel-build-"));
 
     try {
-      // Copy cmux-acp-server binary to temp dir if provided
+      // Copy cmux binaries to temp dir if provided
       const localFiles: Array<{ local: string; dest: string }> = [];
       if (ctx.acpServerBinaryPath) {
         const binaryDest = path.join(tempDir, "cmux-acp-server");
         fs.copyFileSync(ctx.acpServerBinaryPath, binaryDest);
         localFiles.push({ local: "cmux-acp-server", dest: "/usr/local/bin/cmux-acp-server" });
         ctx.log("Copied cmux-acp-server binary to build context");
+      }
+      if (ctx.ptyServerBinaryPath) {
+        const binaryDest = path.join(tempDir, "cmux-pty");
+        fs.copyFileSync(ctx.ptyServerBinaryPath, binaryDest);
+        localFiles.push({ local: "cmux-pty", dest: "/usr/local/bin/cmux-pty" });
+        ctx.log("Copied cmux-pty binary to build context");
       }
 
       // Generate Dockerfile with Blaxel-specific preamble

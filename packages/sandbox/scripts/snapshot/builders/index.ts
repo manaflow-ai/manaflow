@@ -85,6 +85,8 @@ export interface BuildContext {
   bootScript?: string;
   /** Path to cmux-acp-server binary to include (optional) */
   acpServerBinaryPath?: string;
+  /** Path to cmux-pty binary to include (optional) */
+  ptyServerBinaryPath?: string;
   /** Logging function */
   log: (message: string) => void;
 }

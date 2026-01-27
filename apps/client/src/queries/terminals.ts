@@ -14,6 +14,11 @@ export interface CreateTerminalTabResponse {
   wsUrl: string;
 }
 
+export interface TerminalHealthStatus {
+  ok: boolean;
+  status: string | null;
+}
+
 const NO_BASE_PLACEHOLDER = "__no-terminal-base__";
 const NO_CONTEXT_PLACEHOLDER = "__no-terminal-context__";
 
@@ -37,7 +42,11 @@ function ensureBaseUrl(baseUrl: string | null | undefined): string {
 }
 
 function buildTerminalUrl(baseUrl: string, pathname: string) {
-  return new URL(pathname, baseUrl);
+  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const normalizedPath = pathname.startsWith("/")
+    ? pathname.slice(1)
+    : pathname;
+  return new URL(normalizedPath, normalizedBase);
 }
 
 interface SessionsListResponse {
@@ -54,6 +63,53 @@ function isTerminalTabIdList(value: unknown): value is TerminalTabId[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
   );
+}
+
+export function terminalHealthQueryOptions({
+  baseUrl,
+  enabled = true,
+}: {
+  baseUrl: string | null | undefined;
+  enabled?: boolean;
+}) {
+  const effectiveEnabled = Boolean(enabled && baseUrl);
+
+  return queryOptions<TerminalHealthStatus>({
+    queryKey: ["terminal-health", baseUrl ?? NO_BASE_PLACEHOLDER],
+    enabled: effectiveEnabled,
+    queryFn: async () => {
+      const resolvedBaseUrl = ensureBaseUrl(baseUrl);
+      const url = buildTerminalUrl(resolvedBaseUrl, "/health");
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Terminal health check failed (${response.status})`);
+      }
+      let status: string | null = null;
+      try {
+        const payload: unknown = await response.json();
+        const statusValue =
+          typeof payload === "object" && payload !== null
+            ? Reflect.get(payload, "status")
+            : null;
+        if (typeof statusValue === "string") {
+          status = statusValue;
+        }
+      } catch (error) {
+        console.error("Failed to parse terminal health response", error);
+      }
+
+      return {
+        ok: response.ok && (status ? status === "ok" : true),
+        status,
+      };
+    },
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+  });
 }
 
 

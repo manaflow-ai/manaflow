@@ -17,6 +17,19 @@ const MAX_COLS = 320;
 const MIN_ROWS = 8;
 const MAX_ROWS = 120;
 
+function buildTerminalWsUrl(baseUrl: string, sessionId: string): URL {
+  const base = new URL(baseUrl);
+  const basePath = base.pathname.endsWith("/")
+    ? base.pathname
+    : `${base.pathname}/`;
+  const wsPath = `${basePath}sessions/${encodeURIComponent(sessionId)}/ws`;
+  base.pathname = wsPath;
+  base.search = "";
+  base.hash = "";
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  return base;
+}
+
 export type TerminalConnectionState =
   | "connecting"
   | "open"
@@ -247,9 +260,7 @@ export function TaskRunTerminalSession({
     }
 
     let cancelled = false;
-    const base = new URL(baseUrl);
-    const wsUrl = new URL(`/sessions/${terminalId}/ws`, base);
-    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = buildTerminalWsUrl(baseUrl, terminalId);
 
     terminal.clear();
     pendingResizeRef.current = null;

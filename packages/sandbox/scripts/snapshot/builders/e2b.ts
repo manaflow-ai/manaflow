@@ -5,7 +5,7 @@
  * The Template.build() method handles all the heavy lifting.
  */
 
-import { Template, defaultBuildLogger } from "e2b";
+import { Template } from "e2b";
 import * as fs from "node:fs";
 import type { BuildCommand } from "../build-commands";
 import type { BuildContext, SnapshotBuilder, SnapshotBuildResult } from "./index";
@@ -14,13 +14,14 @@ interface TemplateOptions {
   commands: BuildCommand[];
   bootScript?: string;
   acpServerBinaryPath?: string;
+  ptyServerBinaryPath?: string;
 }
 
 /**
  * Convert BuildCommands to an E2B Template builder.
  */
 function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> {
-  const { commands, bootScript, acpServerBinaryPath } = opts;
+  const { commands, bootScript, acpServerBinaryPath, ptyServerBinaryPath } = opts;
   let template = Template().fromDebianImage("bookworm");
 
   // Track environment variables
@@ -29,10 +30,9 @@ function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> 
   for (const cmd of commands) {
     switch (cmd.type) {
       case "run":
-        // E2B's runCmd runs as non-root user, need sudo for system commands
-        // Join multiple commands and prefix with sudo
+        // Run provisioning commands as root to avoid sudo dependency.
         const cmdStr = cmd.args.join(" && ");
-        template = template.runCmd(`sudo bash -c '${cmdStr.replace(/'/g, "'\\''")}'`);
+        template = template.runCmd(cmdStr, { user: "root" });
         break;
 
       case "copy":
@@ -79,7 +79,30 @@ function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> 
       user: "root",
     });
     template = template.runCmd(
-      "sudo bash -c 'gunzip -c /tmp/cmux-acp-server.gz > /usr/local/bin/cmux-acp-server && chmod +x /usr/local/bin/cmux-acp-server && rm /tmp/cmux-acp-server.gz'"
+      "gunzip -c /tmp/cmux-acp-server.gz > /usr/local/bin/cmux-acp-server && chmod +x /usr/local/bin/cmux-acp-server && rm /tmp/cmux-acp-server.gz",
+      { user: "root" }
+    );
+  }
+
+  if (ptyServerBinaryPath) {
+    const zlib = require("node:zlib");
+    const os = require("node:os");
+    const path = require("node:path");
+
+    const binaryData = fs.readFileSync(ptyServerBinaryPath);
+    const compressedData = zlib.gzipSync(binaryData);
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2b-build-"));
+    const compressedPath = path.join(tempDir, "cmux-pty.gz");
+    fs.writeFileSync(compressedPath, compressedData);
+
+    template = template.copy(compressedPath, "/tmp/cmux-pty.gz", {
+      forceUpload: true,
+      user: "root",
+    });
+    template = template.runCmd(
+      "gunzip -c /tmp/cmux-pty.gz > /usr/local/bin/cmux-pty && chmod +x /usr/local/bin/cmux-pty && rm /tmp/cmux-pty.gz",
+      { user: "root" }
     );
   }
 
@@ -89,17 +112,18 @@ function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> 
     // E2B's setStartCmd expects a command, not a script file
     // We'll create the boot script file and make it executable
     template = template.runCmd(
-      `sudo bash -c 'mkdir -p /etc/cmux && cat > /etc/cmux/boot.sh << '\\''BOOTEOF'\\''
+      `bash -c 'mkdir -p /etc/cmux && cat > /etc/cmux/boot.sh << '\\''BOOTEOF'\\''
 ${bootScript}
 BOOTEOF
-chmod +x /etc/cmux/boot.sh'`
+chmod +x /etc/cmux/boot.sh'`,
+      { user: "root" }
     );
 
     // Set the start command to run the boot script
     // The second argument is the ready check command
     template = template.setStartCmd(
       "/etc/cmux/boot.sh",
-      "curl -sf http://localhost:39384/health"
+      "/usr/bin/curl -sf http://localhost:39384/health"
     );
   }
 
@@ -131,6 +155,7 @@ export class E2BBuilder implements SnapshotBuilder {
       commands: ctx.commands,
       bootScript: ctx.bootScript,
       acpServerBinaryPath: ctx.acpServerBinaryPath,
+      ptyServerBinaryPath: ctx.ptyServerBinaryPath,
     });
 
     ctx.log("Building template...");
