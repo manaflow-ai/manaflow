@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { Dropdown } from "@/components/ui/dropdown";
 import {
   Tooltip,
@@ -1928,11 +1929,12 @@ function TaskRunDetails({
 }: TaskRunDetailsProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const isWebMode = Boolean(env.NEXT_PUBLIC_WEB_MODE);
 
   // Fetch linked local workspace for cloud runs (skip for local/cloud workspaces)
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    !isLocalWorkspace && !isCloudWorkspace
+    !isWebMode && !isLocalWorkspace && !isCloudWorkspace
       ? { teamSlugOrId, cloudTaskRunId: run._id }
       : "skip"
   );
@@ -2150,7 +2152,7 @@ function TaskRunDetails({
   ) : null;
 
   // Determine linked local workspace status
-  const hasLinkedLocalWorkspace = Boolean(linkedLocalWorkspace);
+  const hasLinkedLocalWorkspace = !isWebMode && Boolean(linkedLocalWorkspace);
   const linkedLocalTaskRunId = linkedLocalWorkspace?.taskRun?._id;
   const linkedLocalTaskId = linkedLocalWorkspace?.task?._id;
   const isLinkedLocalVSCodeReady =

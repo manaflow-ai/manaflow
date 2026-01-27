@@ -58,6 +58,7 @@ import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { env } from "@/client-env";
 import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { toast } from "sonner";
 
@@ -309,6 +310,7 @@ function TaskDetailPage() {
   const search = Route.useSearch();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const { socket } = useSocket();
+  const isWebMode = Boolean(env.NEXT_PUBLIC_WEB_MODE);
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -482,7 +484,9 @@ function TaskDetailPage() {
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    selectedRunId ? { teamSlugOrId, cloudTaskRunId: selectedRunId } : "skip"
+    selectedRunId && !isWebMode
+      ? { teamSlugOrId, cloudTaskRunId: selectedRunId }
+      : "skip"
   );
 
   useEffect(() => {
@@ -861,7 +865,7 @@ function TaskDetailPage() {
           onPanelSettings={handleOpenPanelSettings}
           onOpenLocalWorkspace={
             // Only show folder icon for regular tasks (not local/cloud workspaces)
-            !isLocalWorkspaceTask && !isCloudWorkspaceTask
+            !isWebMode && !isLocalWorkspaceTask && !isCloudWorkspaceTask
               ? handleOpenLocalWorkspace
               : undefined
           }
