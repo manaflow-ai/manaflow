@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { TaskRunChatPane } from "@/components/TaskRunChatPane";
 import { TaskRunTerminalPane } from "@/components/TaskRunTerminalPane";
 import { FloatingPane } from "@/components/floating-pane";
@@ -482,7 +483,9 @@ function TaskDetailPage() {
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    selectedRunId ? { teamSlugOrId, cloudTaskRunId: selectedRunId } : "skip"
+    selectedRunId && !env.NEXT_PUBLIC_WEB_MODE
+      ? { teamSlugOrId, cloudTaskRunId: selectedRunId }
+      : "skip"
   );
 
   useEffect(() => {
@@ -861,7 +864,7 @@ function TaskDetailPage() {
           onPanelSettings={handleOpenPanelSettings}
           onOpenLocalWorkspace={
             // Only show folder icon for regular tasks (not local/cloud workspaces)
-            !isLocalWorkspaceTask && !isCloudWorkspaceTask
+            !env.NEXT_PUBLIC_WEB_MODE && !isLocalWorkspaceTask && !isCloudWorkspaceTask
               ? handleOpenLocalWorkspace
               : undefined
           }

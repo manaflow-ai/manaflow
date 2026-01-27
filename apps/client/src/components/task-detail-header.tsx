@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
@@ -382,7 +383,7 @@ export function TaskDetailHeader({
             </button>
           )}
 
-          {onOpenLocalWorkspace && (
+          {onOpenLocalWorkspace && !env.NEXT_PUBLIC_WEB_MODE && (
             <button
               onClick={onOpenLocalWorkspace}
               className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none"

@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { FloatingPane } from "@/components/floating-pane";
 import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
 import type {
@@ -357,7 +358,7 @@ function RunDiffPage() {
       teamSlugOrId,
       cloudTaskRunId: runId,
     }),
-    enabled: Boolean(teamSlugOrId && runId),
+    enabled: Boolean(teamSlugOrId && runId) && !env.NEXT_PUBLIC_WEB_MODE,
   });
   const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data;
 
@@ -1071,7 +1072,11 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
-            onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
+            onOpenLocalWorkspace={
+              !env.NEXT_PUBLIC_WEB_MODE && !isWorkspace
+                ? handleOpenLocalWorkspace
+                : undefined
+            }
             teamSlugOrId={teamSlugOrId}
             isAiReviewActive={isAiReviewActive}
             onToggleAiReview={handleToggleAiReview}

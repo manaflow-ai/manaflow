@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { Dropdown } from "@/components/ui/dropdown";
 import {
   Tooltip,
@@ -413,9 +414,12 @@ function TaskTreeInner({
   );
   const isOptimisticTask = isFakeConvexId(task._id);
   const canRenameTask = !isOptimisticTask;
+  const shouldSkipTaskRuns =
+    isOptimisticTask ||
+    (env.NEXT_PUBLIC_WEB_MODE && task.isLocalWorkspace);
   const taskRuns = useQuery(
     api.taskRuns.getByTask,
-    isOptimisticTask
+    shouldSkipTaskRuns
       ? "skip"
       : { teamSlugOrId, taskId: task._id, includeArchived: true }
   );
@@ -747,6 +751,8 @@ function TaskTreeInner({
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
+  const shouldHideLocalWorkspaceTask =
+    env.NEXT_PUBLIC_WEB_MODE && isLocalWorkspace;
   const canExpand = true;
 
   const taskLeadingIcon = (() => {
@@ -882,6 +888,10 @@ function TaskTreeInner({
   ) : (
     taskLeadingIcon
   );
+
+  if (shouldHideLocalWorkspaceTask) {
+    return null;
+  }
 
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
@@ -1932,7 +1942,7 @@ function TaskRunDetails({
   // Fetch linked local workspace for cloud runs (skip for local/cloud workspaces)
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    !isLocalWorkspace && !isCloudWorkspace
+    !env.NEXT_PUBLIC_WEB_MODE && !isLocalWorkspace && !isCloudWorkspace
       ? { teamSlugOrId, cloudTaskRunId: run._id }
       : "skip"
   );
@@ -2150,7 +2160,8 @@ function TaskRunDetails({
   ) : null;
 
   // Determine linked local workspace status
-  const hasLinkedLocalWorkspace = Boolean(linkedLocalWorkspace);
+  const hasLinkedLocalWorkspace =
+    Boolean(linkedLocalWorkspace) && !env.NEXT_PUBLIC_WEB_MODE;
   const linkedLocalTaskRunId = linkedLocalWorkspace?.taskRun?._id;
   const linkedLocalTaskId = linkedLocalWorkspace?.task?._id;
   const isLinkedLocalVSCodeReady =
