@@ -55,12 +55,12 @@ export class CmuxPtyClient {
 
   /**
    * Check if the PTY server is healthy
-   * Includes retry logic for cloud environments where startup may be slower
+   * Includes optional retry logic for cases where server may still be starting
    */
   async health(options?: { maxRetries?: number; timeoutMs?: number; retryDelayMs?: number }): Promise<boolean> {
-    const maxRetries = options?.maxRetries ?? 3;
-    const timeoutMs = options?.timeoutMs ?? 3000;
-    const retryDelayMs = options?.retryDelayMs ?? 500;
+    const maxRetries = options?.maxRetries ?? 1; // Default: single attempt (fast path)
+    const timeoutMs = options?.timeoutMs ?? 2000;
+    const retryDelayMs = options?.retryDelayMs ?? 200;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {

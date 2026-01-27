@@ -1268,10 +1268,10 @@ async function createTerminal(
   // ==========================================================================
   if (backend === "cmux-pty") {
     // Check if cmux-pty server is available, fall back to tmux if not
-    // Use more retries and longer timeout for cloud environments
-    const ptyAvailable = await ptyClient.health({ maxRetries: 5, timeoutMs: 5000, retryDelayMs: 1000 });
+    // Quick check with limited retries - bubblewrap.rs already verified server is listening
+    const ptyAvailable = await ptyClient.health({ maxRetries: 3, timeoutMs: 2000, retryDelayMs: 200 });
     if (!ptyAvailable) {
-      log("INFO", `[createTerminal] cmux-pty server not available after 5 retries, falling back to tmux for ${terminalId}`);
+      log("INFO", `[createTerminal] cmux-pty server not available, falling back to tmux for ${terminalId}`);
       // Fall through to tmux backend below
     } else {
       log("INFO", `[createTerminal] Using cmux-pty backend for ${terminalId}`);

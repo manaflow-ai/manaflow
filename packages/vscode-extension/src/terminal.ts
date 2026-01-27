@@ -641,13 +641,23 @@ class CmuxTerminalManager {
         }
       })
     );
+
+    // Handle disconnection - start HTTP-based reconciliation as backup
+    this._disposables.push(
+      this._ptyClient.on('disconnected', () => {
+        console.log('[cmux] PtyClient disconnected, will rely on HTTP reconciliation');
+        // HTTP reconciliation continues to work even when WebSocket is down
+        // Force an immediate reconciliation attempt
+        void this._reconcileFromServer('websocket-disconnect');
+      })
+    );
   }
 
   private async _retryConnect(): Promise<void> {
-    // Increased retry count and delay for Docker containers where
-    // the PTY server may take longer to become available
-    const maxRetries = 20;
-    const retryDelayMs = 1500;
+    // Retry with shorter delays but more attempts
+    // Total max wait: 15 retries * 500ms = 7.5s (vs 30s before)
+    const maxRetries = 15;
+    const retryDelayMs = 500;
 
     for (let i = 0; i < maxRetries; i++) {
       console.log(`[cmux] Retry ${i + 1}/${maxRetries} connecting to PTY server...`);
@@ -663,11 +673,32 @@ class CmuxTerminalManager {
         console.log(`[cmux] Retry ${i + 1}/${maxRetries} failed:`, err instanceof Error ? err.message : err);
       }
     }
-    // After all retries exhausted, throw an error so callers know PTY is unavailable
-    // The extension will fall back to tmux in this case
-    const errMsg = `Failed to connect to PTY server after ${maxRetries} retries`;
-    console.error(`[cmux] ${errMsg}`);
-    throw new Error(errMsg);
+
+    // After all retries exhausted, start background retry loop instead of giving up
+    // This allows terminals to appear even if PTY server starts very late
+    console.error(`[cmux] Failed to connect after ${maxRetries} retries, starting background retry...`);
+    this._startBackgroundConnectRetry();
+  }
+
+  private _startBackgroundConnectRetry(): void {
+    // Keep trying in background every 5 seconds
+    const backgroundRetry = async () => {
+      if (this._initialized) return; // Already connected
+
+      try {
+        await this._ptyClient.connect();
+        this._initialized = true;
+        this._startReconcileLoop();
+        console.log('[cmux] Background retry succeeded, PTY server connected');
+        // Trigger immediate reconciliation to pick up any terminals
+        this._ptyClient.requestState();
+      } catch {
+        // Schedule next retry
+        setTimeout(backgroundRetry, 5000);
+      }
+    };
+
+    setTimeout(backgroundRetry, 5000);
   }
 
   private _scheduleRestoreFallback(reason: string): void {

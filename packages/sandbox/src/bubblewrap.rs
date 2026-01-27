@@ -410,22 +410,22 @@ async fn start_cmux_pty_background(
         }
     }
 
-    // Wait for cmux-pty to start listening
-    // Increased from 300ms to 1000ms for cloud environments where startup may be slower
-    sleep(Duration::from_millis(1000)).await;
-
-    // Verify cmux-pty is running by checking if it's listening on the port
-    // Retry up to 5 times with 500ms delay between attempts for cloud environments
+    // Verify cmux-pty is actually listening on the port (not just process exists)
+    // Use `ss` to check if port is open - this is more reliable than pgrep
+    // Quick retries with short delays to minimize startup latency
     let verify_cmd = vec![
         "/bin/sh".to_string(),
         "-c".to_string(),
-        format!("pgrep -f 'cmux-pty.*--port {}'", pty_port),
+        format!("ss -tlnH | grep -q ':{} '", pty_port),
     ];
 
     let mut pty_running = false;
-    for attempt in 1..=5 {
+    for attempt in 1..=10 {
+        // Short delay before checking (server needs time to bind)
+        sleep(Duration::from_millis(100)).await;
+
         let verify_result = timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(2),
             Command::new(nsenter_path)
                 .args(nsenter_args(inner_pid, None, &verify_cmd))
                 .output(),
@@ -434,18 +434,31 @@ async fn start_cmux_pty_background(
 
         pty_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
         if pty_running {
-            debug!("cmux-pty verified running on attempt {}", attempt);
+            debug!("cmux-pty port {} verified listening on attempt {}", pty_port, attempt);
             break;
-        }
-
-        if attempt < 5 {
-            debug!("cmux-pty verification attempt {} failed, retrying...", attempt);
-            sleep(Duration::from_millis(500)).await;
         }
     }
 
     if !pty_running {
-        return Err(format!("cmux-pty failed to start on port {} after 5 attempts", pty_port));
+        // Fallback: check if process at least exists (for debugging)
+        let pgrep_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!("pgrep -f 'cmux-pty.*--port {}'", pty_port),
+        ];
+        let pgrep_result = timeout(
+            Duration::from_secs(2),
+            Command::new(nsenter_path)
+                .args(nsenter_args(inner_pid, None, &pgrep_cmd))
+                .output(),
+        )
+        .await;
+
+        let process_exists = matches!(pgrep_result, Ok(Ok(ref output)) if output.status.success());
+        if process_exists {
+            warn!("cmux-pty process exists but port {} not listening after 1s", pty_port);
+        }
+        return Err(format!("cmux-pty failed to listen on port {} after 1s", pty_port));
     }
 
     info!(pty_port = pty_port, "cmux-pty started");

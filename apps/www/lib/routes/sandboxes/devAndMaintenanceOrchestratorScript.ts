@@ -53,10 +53,11 @@ const delay = (ms: number): Promise<void> =>
 // =============================================================================
 
 async function checkPtyServerHealth(): Promise<boolean> {
-  // Increased timeout and added retry logic for cloud environments
-  const maxRetries = 5;
-  const timeoutMs = 3000;
-  const retryDelayMs = 1000;
+  // Fast first attempt, quick retries only if needed
+  // bubblewrap.rs already verified the server is listening, so this should usually succeed immediately
+  const maxRetries = 3;
+  const timeoutMs = 2000;
+  const retryDelayMs = 200; // Short delay - if server is up, retry should succeed quickly
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -65,14 +66,10 @@ async function checkPtyServerHealth(): Promise<boolean> {
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (response.ok) {
-        if (attempt > 1) {
-          console.log(`[ORCHESTRATOR] PTY server health check succeeded on attempt ${attempt}`);
-        }
         return true;
       }
     } catch {
       if (attempt < maxRetries) {
-        console.log(`[ORCHESTRATOR] PTY server health check attempt ${attempt}/${maxRetries} failed, retrying...`);
         await delay(retryDelayMs);
       }
     }
