@@ -13,8 +13,9 @@
 
 mod api_proxy;
 pub mod callback;
-pub mod rest;
+mod opencode_proxy;
 mod pty_proxy;
+pub mod rest;
 mod spawner;
 mod stream;
 
@@ -24,14 +25,15 @@ pub use api_proxy::{
 pub use callback::{
     CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
-pub use rest::{
-    configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
-    RestApiDoc, RestApiState,
-};
+pub use opencode_proxy::{opencode_preflight, opencode_proxy, opencode_pty_ws};
 pub use pty_proxy::{
     pty_capture_session, pty_create_session, pty_delete_session, pty_get_session, pty_health,
     pty_input_session, pty_list_sessions, pty_preflight, pty_resize_session, pty_session_ws,
     pty_update_session,
+};
+pub use rest::{
+    configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
+    RestApiDoc, RestApiState,
 };
 pub use spawner::{AcpProvider, CliSpawner, IsolationMode};
 pub use stream::{StreamEvent, StreamOffset, StreamReadResult, StreamStore};

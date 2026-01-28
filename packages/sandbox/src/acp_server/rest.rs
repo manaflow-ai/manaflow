@@ -3,7 +3,7 @@
 //! Provides HTTP endpoints for Convex to control the sandbox (init/prompt).
 //! The sandbox can ONLY communicate back to Convex via callbacks using JWT.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,6 +23,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
+use url::Url;
 use utoipa::{OpenApi, ToSchema};
 
 use super::api_proxy::ConversationApiProxies;
@@ -87,6 +88,8 @@ pub struct RestApiState {
     stream_secrets: Arc<RwLock<Vec<StreamSecretEntry>>>,
     /// OTel configuration for Claude Code telemetry export
     otel_config: Arc<RwLock<Option<OtelConfig>>>,
+    /// Convex site URL derived from callback URL (used for MCP tools)
+    convex_site_url: Arc<RwLock<Option<String>>>,
 }
 
 impl RestApiState {
@@ -101,6 +104,7 @@ impl RestApiState {
             stream_store: Arc::new(StreamStore::new(20_000)),
             stream_secrets: Arc::new(RwLock::new(Vec::new())),
             otel_config: Arc::new(RwLock::new(None)),
+            convex_site_url: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -141,6 +145,13 @@ impl RestApiState {
         {
             let mut guard = self.callback_client.write().await;
             *guard = Some(Arc::new(client));
+        }
+        if let Some(site_url) = derive_convex_site_url(&callback_url) {
+            let mut guard = self.convex_site_url.write().await;
+            *guard = Some(site_url.clone());
+            info!(convex_site_url = %site_url, "Derived Convex site URL");
+        } else {
+            warn!(callback_url = %callback_url, "Failed to derive Convex site URL");
         }
         // Set sandbox ID
         {
@@ -232,6 +243,10 @@ impl RestApiState {
             env_vars.push(("TRACEPARENT".to_string(), ctx.to_traceparent()));
         }
 
+        if let Some(site_url) = self.get_convex_site_url().await {
+            env_vars.push(("CONVEX_SITE_URL".to_string(), site_url));
+        }
+
         // Add OTel config for Claude Code telemetry
         // Uses sandbox JWT for authentication to the Convex OTel proxy
         let otel_guard = self.otel_config.read().await;
@@ -299,6 +314,10 @@ impl RestApiState {
         env_vars
     }
 
+    pub async fn get_convex_site_url(&self) -> Option<String> {
+        self.convex_site_url.read().await.clone()
+    }
+
     /// Get the callback client (if configured).
     pub async fn get_callback_client(&self) -> Option<Arc<CallbackClient>> {
         self.callback_client.read().await.clone()
@@ -318,6 +337,20 @@ impl RestApiState {
         guard.retain(|entry| now.duration_since(entry.set_at) < STREAM_SECRET_TTL);
         guard.sort_by(|a, b| b.set_at.cmp(&a.set_at));
         guard.iter().map(|entry| entry.secret.clone()).collect()
+    }
+}
+
+fn derive_convex_site_url(callback_url: &str) -> Option<String> {
+    let mut parsed = Url::parse(callback_url).ok()?;
+    parsed.set_path("");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    let base = parsed.to_string();
+    let trimmed = base.trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
     }
 }
 
@@ -366,12 +399,199 @@ pub enum ContentBlock {
     },
 }
 
+const BUILTIN_MCP_UPLOAD_ID: &str = "cmux";
+const LEGACY_MCP_UPLOAD_ID_UPLOAD: &str = "upload";
+const LEGACY_MCP_UPLOAD_ID_CMUX_UPLOAD: &str = "cmux-upload";
+const BUILTIN_MCP_UPLOAD_COMMAND: &str = "/usr/local/bin/mcp-upload";
+
+/// An environment variable to set when launching an MCP server.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct McpServerEnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+/// An HTTP header to set when making requests to the MCP server.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct McpServerHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// Configuration for connecting to an MCP server.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(tag = "transport")]
+pub enum McpServerConfig {
+    #[serde(rename = "stdio")]
+    Stdio {
+        id: String,
+        name: String,
+        enabled: bool,
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: Vec<McpServerEnvVar>,
+    },
+    #[serde(rename = "http")]
+    Http {
+        id: String,
+        name: String,
+        enabled: bool,
+        url: String,
+        #[serde(default)]
+        headers: Vec<McpServerHeader>,
+    },
+    #[serde(rename = "sse")]
+    Sse {
+        id: String,
+        name: String,
+        enabled: bool,
+        url: String,
+        #[serde(default)]
+        headers: Vec<McpServerHeader>,
+    },
+}
+
+fn build_builtin_mcp_server(builtin_env: &[(String, String)]) -> serde_json::Value {
+    let env = builtin_env
+        .iter()
+        .map(|(name, value)| json!({ "name": name, "value": value }))
+        .collect::<Vec<_>>();
+    json!({
+        "name": BUILTIN_MCP_UPLOAD_ID,
+        "command": BUILTIN_MCP_UPLOAD_COMMAND,
+        "args": [],
+        "env": env,
+    })
+}
+
+fn is_builtin_mcp_upload_id(id: &str) -> bool {
+    id == BUILTIN_MCP_UPLOAD_ID
+        || id == LEGACY_MCP_UPLOAD_ID_UPLOAD
+        || id == LEGACY_MCP_UPLOAD_ID_CMUX_UPLOAD
+}
+
+fn mcp_server_to_json(
+    config: &McpServerConfig,
+    builtin_env: &[(String, String)],
+) -> Option<serde_json::Value> {
+    match config {
+        McpServerConfig::Stdio {
+            id,
+            name,
+            enabled,
+            command,
+            args,
+            env,
+        } => {
+            if !*enabled {
+                return None;
+            }
+            let is_builtin = is_builtin_mcp_upload_id(id);
+            if !is_builtin && command.is_empty() {
+                warn!(server_id = %id, "Skipping MCP stdio server with empty command");
+                return None;
+            }
+            let mut env_entries = env
+                .iter()
+                .map(|entry| json!({ "name": entry.name, "value": entry.value }))
+                .collect::<Vec<_>>();
+
+            if is_builtin {
+                let mut existing = HashSet::new();
+                for entry in env {
+                    existing.insert(entry.name.clone());
+                }
+                for (name, value) in builtin_env.iter() {
+                    if !existing.contains(name) {
+                        env_entries.push(json!({ "name": name, "value": value }));
+                    }
+                }
+            }
+
+            let server_name = if is_builtin {
+                BUILTIN_MCP_UPLOAD_ID
+            } else {
+                name.as_str()
+            };
+            let command_value = if is_builtin {
+                BUILTIN_MCP_UPLOAD_COMMAND
+            } else {
+                command.as_str()
+            };
+            Some(json!({
+                "name": server_name,
+                "command": command_value,
+                "args": args,
+                "env": env_entries,
+            }))
+        }
+        McpServerConfig::Http {
+            name,
+            enabled,
+            url,
+            headers,
+            ..
+        } => {
+            if !*enabled {
+                return None;
+            }
+            let header_entries = headers
+                .iter()
+                .map(|entry| json!({ "name": entry.name, "value": entry.value }))
+                .collect::<Vec<_>>();
+            Some(json!({
+                "type": "http",
+                "name": name,
+                "url": url,
+                "headers": header_entries,
+            }))
+        }
+        McpServerConfig::Sse {
+            name,
+            enabled,
+            url,
+            headers,
+            ..
+        } => {
+            if !*enabled {
+                return None;
+            }
+            let header_entries = headers
+                .iter()
+                .map(|entry| json!({ "name": entry.name, "value": entry.value }))
+                .collect::<Vec<_>>();
+            Some(json!({
+                "type": "sse",
+                "name": name,
+                "url": url,
+                "headers": header_entries,
+            }))
+        }
+    }
+}
+
+fn build_mcp_servers(
+    configs: Option<&[McpServerConfig]>,
+    builtin_env: &[(String, String)],
+) -> Vec<serde_json::Value> {
+    match configs {
+        None => vec![build_builtin_mcp_server(builtin_env)],
+        Some(configs) => configs
+            .iter()
+            .filter_map(|config| mcp_server_to_json(config, builtin_env))
+            .collect(),
+    }
+}
+
 /// Perform ACP handshake (initialize + new_session) with the CLI.
 /// Returns the ACP session ID on success.
 async fn perform_acp_handshake(
     stdin: &mut ChildStdin,
     stdout: &mut BufReader<ChildStdout>,
     cwd: &std::path::Path,
+    mcp_servers: &[serde_json::Value],
 ) -> Result<String, String> {
     // Generate unique request IDs
     let init_id = uuid::Uuid::new_v4().to_string();
@@ -432,7 +652,7 @@ async fn perform_acp_handshake(
         "method": "session/new",
         "params": {
             "cwd": cwd.to_string_lossy(),
-            "mcpServers": []
+            "mcpServers": mcp_servers
         }
     });
 
@@ -518,6 +738,9 @@ pub struct InitConversationRequest {
     /// Session ID for the conversation
     #[serde(rename = "session_id")]
     pub session_id: String,
+    /// JWT for authenticating MCP tool calls against Convex
+    #[serde(rename = "conversation_jwt", default)]
+    pub conversation_jwt: Option<String>,
     /// Provider to use (claude, codex, gemini, opencode)
     #[serde(rename = "provider_id")]
     pub provider_id: String,
@@ -532,6 +755,9 @@ pub struct InitConversationRequest {
     /// When provided, will be passed to Claude Code as TRACEPARENT env var.
     #[serde(rename = "trace_context", default)]
     pub trace_context: Option<TraceContext>,
+    /// MCP server configuration for this session.
+    #[serde(rename = "mcp_servers", default)]
+    pub mcp_servers: Option<Vec<McpServerConfig>>,
 }
 
 /// Response from init conversation.
@@ -1174,7 +1400,29 @@ pub async fn init_conversation(
             env_vars.push(("HOME".to_string(), home_value));
         }
     }
+    if let Some(ref jwt) = request.conversation_jwt {
+        env_vars.push(("CMUX_CONVERSATION_JWT".to_string(), jwt.clone()));
+    } else {
+        warn!(
+            conversation_id = %request.conversation_id,
+            "Conversation JWT missing; MCP uploads will be unavailable"
+        );
+    }
     info!(env_vars = ?env_vars, env_count = env_vars.len(), "CLI environment variables for API proxy");
+
+    let mut mcp_env_vars: Vec<(String, String)> = Vec::new();
+    if let Some(ref jwt) = request.conversation_jwt {
+        mcp_env_vars.push(("CMUX_CONVERSATION_JWT".to_string(), jwt.clone()));
+    }
+    if let Some(site_url) = state.get_convex_site_url().await {
+        mcp_env_vars.push(("CONVEX_SITE_URL".to_string(), site_url));
+    } else {
+        warn!(
+            conversation_id = %request.conversation_id,
+            "Convex site URL missing; MCP uploads will be unavailable"
+        );
+    }
+    let mcp_servers = build_mcp_servers(request.mcp_servers.as_deref(), &mcp_env_vars);
 
     // Spawn CLI process with env vars
     let mut spawner = CliSpawner::new(provider, cwd.clone(), SpawnerIsolationMode::None);
@@ -1219,19 +1467,20 @@ pub async fn init_conversation(
     let mut reader = BufReader::new(stdout);
 
     // Perform ACP handshake (initialize + new_session)
-    let acp_session_id = match perform_acp_handshake(&mut stdin, &mut reader, &cwd).await {
-        Ok(id) => id,
-        Err(e) => {
-            error!(error = %e, "ACP handshake failed");
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("ACP handshake failed: {}", e),
-                    code: Some("HANDSHAKE_FAILED".to_string()),
-                }),
-            ));
-        }
-    };
+    let acp_session_id =
+        match perform_acp_handshake(&mut stdin, &mut reader, &cwd, &mcp_servers).await {
+            Ok(id) => id,
+            Err(e) => {
+                error!(error = %e, "ACP handshake failed");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("ACP handshake failed: {}", e),
+                        code: Some("HANDSHAKE_FAILED".to_string()),
+                    }),
+                ));
+            }
+        };
 
     info!(
         conversation_id = %request.conversation_id,
@@ -1544,13 +1793,16 @@ pub async fn init_conversation(
                                     last_message_event_at = None;
                                     last_message_event_seq = None;
                                 }
-                                pending_tool_calls.push((raw_seq, CallbackToolCall {
-                                    id,
-                                    name,
-                                    arguments,
-                                    status: CallbackToolCallStatus::Pending,
-                                    result: None,
-                                }));
+                                pending_tool_calls.push((
+                                    raw_seq,
+                                    CallbackToolCall {
+                                        id,
+                                        name,
+                                        arguments,
+                                        status: CallbackToolCallStatus::Pending,
+                                        result: None,
+                                    },
+                                ));
                             }
                             AcpEvent::ToolCallUpdate { id, status, result } => {
                                 // Update buffered tool call status
@@ -1835,18 +2087,13 @@ impl AcpEvent {
     }
 }
 
-fn resolve_tool_call_status(
-    raw_status: &str,
-    has_result: bool,
-) -> CallbackToolCallStatus {
+fn resolve_tool_call_status(raw_status: &str, has_result: bool) -> CallbackToolCallStatus {
     let normalized = raw_status.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "pending" => CallbackToolCallStatus::Pending,
         "running" | "in_progress" | "in-progress" => CallbackToolCallStatus::Running,
         "completed" | "complete" | "succeeded" | "success" => CallbackToolCallStatus::Completed,
-        "failed" | "error" | "errored" | "cancelled" | "canceled" => {
-            CallbackToolCallStatus::Failed
-        }
+        "failed" | "error" | "errored" | "cancelled" | "canceled" => CallbackToolCallStatus::Failed,
         "unknown" if has_result => CallbackToolCallStatus::Completed,
         _ if has_result => CallbackToolCallStatus::Completed,
         _ => CallbackToolCallStatus::Pending,
@@ -2480,6 +2727,9 @@ async fn update_codex_config_base_url(openai_base_url: &str) -> Result<(), Strin
         ErrorResponse,
         InitConversationRequest,
         InitConversationResponse,
+        McpServerConfig,
+        McpServerEnvVar,
+        McpServerHeader,
         PromptRequest,
         PromptResponse,
         RpcRequest,
@@ -2548,6 +2798,91 @@ mod tests {
 
         let result = handle_permission_request(request);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_mcp_servers_default() {
+        let servers = build_mcp_servers(
+            None,
+            &[("CMUX_CONVERSATION_JWT".to_string(), "jwt".to_string())],
+        );
+
+        assert_eq!(servers.len(), 1);
+        let server = &servers[0];
+        assert_eq!(server["name"], BUILTIN_MCP_UPLOAD_ID);
+        assert_eq!(server["command"], BUILTIN_MCP_UPLOAD_COMMAND);
+        let env = server["env"].as_array().expect("env should be an array");
+        assert!(env.iter().any(|entry| entry["name"] == "CMUX_CONVERSATION_JWT"));
+    }
+
+    #[test]
+    fn test_build_mcp_servers_filters_disabled() {
+        let configs = vec![
+            McpServerConfig::Stdio {
+                id: "custom".to_string(),
+                name: "Custom".to_string(),
+                enabled: true,
+                command: "/bin/mcp".to_string(),
+                args: vec![],
+                env: vec![],
+            },
+            McpServerConfig::Http {
+                id: "disabled".to_string(),
+                name: "Disabled".to_string(),
+                enabled: false,
+                url: "https://example.com".to_string(),
+                headers: vec![],
+            },
+            McpServerConfig::Sse {
+                id: "sse".to_string(),
+                name: "Sse".to_string(),
+                enabled: true,
+                url: "https://example.com/events".to_string(),
+                headers: vec![McpServerHeader {
+                    name: "X-Test".to_string(),
+                    value: "1".to_string(),
+                }],
+            },
+        ];
+
+        let servers = build_mcp_servers(Some(&configs), &[]);
+        assert_eq!(servers.len(), 2);
+        assert!(servers.iter().any(|server| server["name"] == "Custom"));
+        assert!(servers.iter().any(|server| server["name"] == "Sse"));
+    }
+
+    #[test]
+    fn test_build_mcp_servers_merges_builtin_env() {
+        let configs = vec![McpServerConfig::Stdio {
+            id: LEGACY_MCP_UPLOAD_ID_UPLOAD.to_string(),
+            name: LEGACY_MCP_UPLOAD_ID_UPLOAD.to_string(),
+            enabled: true,
+            command: BUILTIN_MCP_UPLOAD_COMMAND.to_string(),
+            args: vec![],
+            env: vec![McpServerEnvVar {
+                name: "CMUX_CONVERSATION_JWT".to_string(),
+                value: "override".to_string(),
+            }],
+        }];
+        let servers = build_mcp_servers(
+            Some(&configs),
+            &[
+                ("CMUX_CONVERSATION_JWT".to_string(), "jwt".to_string()),
+                ("CONVEX_SITE_URL".to_string(), "https://site".to_string()),
+            ],
+        );
+        assert_eq!(servers[0]["name"], BUILTIN_MCP_UPLOAD_ID);
+        let env = servers[0]["env"].as_array().expect("env should be an array");
+        let names = env
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"CMUX_CONVERSATION_JWT"));
+        assert!(names.contains(&"CONVEX_SITE_URL"));
+        assert_eq!(
+            names.iter().filter(|name| **name == "CMUX_CONVERSATION_JWT").count(),
+            1
+        );
     }
 
     #[tokio::test]

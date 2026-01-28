@@ -425,6 +425,10 @@ RUN chmod +x /usr/local/bin/bootstrap-dind.sh /usr/local/bin/docker-mode.sh && \
 # Stored in /usr/share/cmux/agent-config/ and copied into sandbox's /root during bubblewrap setup
 COPY --link packages/sandbox/agent-config /usr/share/cmux/agent-config
 
+# MCP upload tool for ACP sessions
+COPY --link packages/sandbox/scripts/mcp-upload.mjs /usr/local/bin/mcp-upload
+RUN chmod +x /usr/local/bin/mcp-upload
+
 # systemd service units
 COPY --link packages/sandbox/systemd/dockerd.service /etc/systemd/system/dockerd.service
 COPY --link packages/sandbox/systemd/buildkitd.service /etc/systemd/system/buildkitd.service

@@ -128,11 +128,8 @@ async fn proxy_pty_request(
         }
         Err(error) => {
             error!("PTY proxy request failed: {error}");
-            let mut response = (
-                StatusCode::BAD_GATEWAY,
-                format!("PTY proxy error: {error}"),
-            )
-                .into_response();
+            let mut response =
+                (StatusCode::BAD_GATEWAY, format!("PTY proxy error: {error}")).into_response();
             apply_pty_cors(response.headers_mut());
             response
         }
@@ -175,13 +172,7 @@ pub async fn pty_create_session(headers: HeaderMap, body: Bytes) -> Response {
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
 
-    proxy_pty_request(
-        Method::POST,
-        "/sessions",
-        Some(body.to_vec()),
-        content_type,
-    )
-    .await
+    proxy_pty_request(Method::POST, "/sessions", Some(body.to_vec()), content_type).await
 }
 
 pub async fn pty_get_session(Path(session_id): Path<String>) -> Response {
@@ -189,7 +180,11 @@ pub async fn pty_get_session(Path(session_id): Path<String>) -> Response {
     proxy_pty_request(Method::GET, &path, None, None).await
 }
 
-pub async fn pty_update_session(headers: HeaderMap, Path(session_id): Path<String>, body: Bytes) -> Response {
+pub async fn pty_update_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    body: Bytes,
+) -> Response {
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -204,7 +199,11 @@ pub async fn pty_delete_session(Path(session_id): Path<String>) -> Response {
     proxy_pty_request(Method::DELETE, &path, None, None).await
 }
 
-pub async fn pty_resize_session(headers: HeaderMap, Path(session_id): Path<String>, body: Bytes) -> Response {
+pub async fn pty_resize_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    body: Bytes,
+) -> Response {
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -223,7 +222,11 @@ pub async fn pty_capture_session(
     proxy_pty_request(Method::GET, &path_with_query, None, None).await
 }
 
-pub async fn pty_input_session(headers: HeaderMap, Path(session_id): Path<String>, body: Bytes) -> Response {
+pub async fn pty_input_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    body: Bytes,
+) -> Response {
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -259,8 +262,7 @@ async fn proxy_websocket(
     };
     ws_url.set_scheme(scheme).map_err(|_| "invalid scheme")?;
 
-    let (upstream_ws, _) =
-        tokio_tungstenite::connect_async(ws_url.to_string()).await?;
+    let (upstream_ws, _) = tokio_tungstenite::connect_async(ws_url.to_string()).await?;
     let (mut upstream_sink, mut upstream_stream) = upstream_ws.split();
 
     let (mut client_sink, mut client_stream) = client_socket.split();

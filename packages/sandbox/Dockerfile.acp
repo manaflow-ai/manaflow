@@ -71,6 +71,10 @@ RUN npm install -g @anthropics/claude-code-acp 2>/dev/null || echo "claude-code-
 # Copy binary from builder
 COPY --from=builder /workspace/target/release/cmux-acp-server /usr/local/bin/
 
+# MCP upload tool
+COPY scripts/mcp-upload.mjs /usr/local/bin/mcp-upload
+RUN chmod +x /usr/local/bin/mcp-upload
+
 # Create workspace directory
 RUN mkdir -p /workspace
 

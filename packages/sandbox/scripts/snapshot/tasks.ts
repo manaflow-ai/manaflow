@@ -430,6 +430,16 @@ NODE
         /usr/local/bin/cmux-pty --help > /dev/null
         echo "cmux-pty installed successfully"
 
+        # Install MCP upload tool script
+        if [ -f /tmp/cmux-build/sandbox/scripts/mcp-upload.mjs ]; then
+          cp /tmp/cmux-build/sandbox/scripts/mcp-upload.mjs /usr/local/bin/mcp-upload
+          chmod +x /usr/local/bin/mcp-upload
+          echo "mcp-upload installed successfully"
+        else
+          echo "ERROR: MCP upload script not found at /tmp/cmux-build/sandbox/scripts/mcp-upload.mjs"
+          exit 1
+        fi
+
         # Clean up build directory to save space
         cd /
         rm -rf /tmp/cmux-build
@@ -558,7 +568,7 @@ EOF
 
   registry.register({
     name: "setup-acp-service",
-    description: "Install and enable cmux-acp-server and cmux-pty systemd services",
+    description: "Install and enable cmux-acp-server, cmux-pty, and opencode-serve systemd services",
     deps: ["build-cmux-acp-server", "setup-dirs"],
     func: async (ctx) => {
       await ctx.run(
@@ -607,12 +617,34 @@ TimeoutStartSec=0
 WantedBy=multi-user.target
 SERVICE
 
+        # Create systemd unit file for opencode-serve (headless web UI)
+        # Runs on port 39385, proxied via cmux-acp-server at /api/opencode/*
+        cat > /etc/systemd/system/opencode-serve.service << 'SERVICE'
+[Unit]
+Description=OpenCode headless server
+After=network.target
+
+[Service]
+Type=simple
+Environment="PATH=/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/root"
+WorkingDirectory=/workspace
+ExecStart=/root/.bun/bin/opencode serve --port 39385 --hostname 127.0.0.1
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
         # Reload systemd to pick up the new service
         systemctl daemon-reload
 
-        # Enable the service (so it starts on boot / after snapshot restore)
+        # Enable the services (so they start on boot / after snapshot restore)
         systemctl enable cmux-pty
         systemctl enable cmux-acp-server
+        systemctl enable opencode-serve
 
         # Start cmux-pty now - ensure terminal backend is ready in snapshots
         if ! systemctl start cmux-pty; then
@@ -628,6 +660,14 @@ SERVICE
           echo "cmux-acp-server failed to start"
           systemctl status cmux-acp-server --no-pager || true
           journalctl -u cmux-acp-server -n 100 --no-pager || true
+          exit 1
+        fi
+
+        # Start opencode-serve
+        if ! systemctl start opencode-serve; then
+          echo "opencode-serve failed to start"
+          systemctl status opencode-serve --no-pager || true
+          journalctl -u opencode-serve -n 100 --no-pager || true
           exit 1
         fi
 
@@ -649,7 +689,14 @@ SERVICE
           exit 1
         fi
 
-        echo "cmux-pty and cmux-acp-server systemd services installed and started"
+        if ! systemctl is-active --quiet opencode-serve; then
+          echo "opencode-serve failed to start"
+          systemctl status opencode-serve --no-pager || true
+          journalctl -u opencode-serve -n 100 --no-pager || true
+          exit 1
+        fi
+
+        echo "cmux-pty, cmux-acp-server, and opencode-serve systemd services installed and started"
         `
       );
     },
@@ -763,6 +810,8 @@ SERVICE
         echo "Checking systemd services..."
         systemctl is-active cmux-acp-server > /dev/null
         echo "✓ cmux-acp-server service running"
+        systemctl is-active opencode-serve > /dev/null
+        echo "✓ opencode-serve service running"
 
         echo "All tools verified!"
         `
@@ -846,7 +895,7 @@ EOF
         `
       );
 
-      // Test cmux-acp-server + cmux-pty healthchecks (using systemd services)
+      // Test cmux-acp-server + cmux-pty + opencode-serve healthchecks (using systemd services)
       await ctx.run(
         "test-cmux-acp-server",
         `
@@ -869,6 +918,21 @@ EOF
           echo "✓ cmux-pty healthcheck passed"
         else
           echo "✗ cmux-pty healthcheck failed"
+          exit 1
+        fi
+
+        # Test opencode-serve health (via proxy)
+        OPENCODE_RESPONSE=$(curl -s http://localhost:39384/api/opencode/global/health)
+        echo "OpenCode response: $OPENCODE_RESPONSE"
+
+        # OpenCode returns {"healthy":true} for health
+        if echo "$OPENCODE_RESPONSE" | grep -q '"healthy":true'; then
+          echo "✓ opencode-serve healthcheck passed (via proxy)"
+        else
+          echo "✗ opencode-serve healthcheck failed"
+          # Also try direct access
+          DIRECT_RESPONSE=$(curl -s http://localhost:39385/global/health)
+          echo "Direct opencode response: $DIRECT_RESPONSE"
           exit 1
         fi
 

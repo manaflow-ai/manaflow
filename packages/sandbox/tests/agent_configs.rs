@@ -116,6 +116,22 @@ async fn test_agent_config_files_exist_in_sandbox() {
         resp_opencode.stdout
     );
 
+    // Check MCP upload tool exists for stdio MCP server
+    let check_mcp = ExecRequest {
+        command: vec!["test".into(), "-x".into(), "/usr/local/bin/mcp-upload".into()],
+        workdir: None,
+        env: vec![],
+    };
+    let resp_mcp = service
+        .exec(summary.id.to_string(), check_mcp)
+        .await
+        .expect("Failed to exec MCP tool check");
+    assert_eq!(
+        resp_mcp.exit_code, 0,
+        "mcp-upload should be installed and executable: {}",
+        resp_mcp.stderr
+    );
+
     // Clean up
     service.delete(summary.id.to_string()).await.unwrap();
 }

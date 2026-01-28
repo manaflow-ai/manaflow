@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+
 /**
  * Build commands abstraction for DRY snapshot creation.
  *
@@ -27,6 +30,8 @@ export interface BuildCommand {
  * instructions (image build).
  */
 export function getProvisioningCommands(): BuildCommand[] {
+  const mcpUploadPath = resolvePath(process.cwd(), "scripts/mcp-upload.mjs");
+  const mcpUploadBase64 = readFileSync(mcpUploadPath).toString("base64");
   return [
     // ==========================================================================
     // System Packages
@@ -168,6 +173,13 @@ export function getProvisioningCommands(): BuildCommand[] {
       ],
       description: "Symlink CLI tools to /usr/local/bin for global access",
     },
+    {
+      type: "run",
+      args: [
+        `printf '%s' '${mcpUploadBase64}' | base64 -d > /usr/local/bin/mcp-upload && chmod +x /usr/local/bin/mcp-upload`,
+      ],
+      description: "Install MCP upload tool",
+    },
 
     // ==========================================================================
     // Directory Setup
@@ -288,6 +300,10 @@ export BUN_INSTALL="/root/.bun"
 # Start cmux-pty in the background
 /usr/local/bin/cmux-pty &
 PTY_PID=$!
+
+# Start opencode serve in the background (proxied via cmux-acp-server at /api/opencode/*)
+cd /workspace && /root/.bun/bin/opencode serve --port 39385 --hostname 127.0.0.1 &
+OPENCODE_PID=$!
 
 # Start cmux-acp-server in the background
 /usr/local/bin/cmux-acp-server &

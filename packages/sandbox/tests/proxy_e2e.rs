@@ -126,3 +126,71 @@ async fn test_conversation_proxy_starts() {
 
     eprintln!("Proxy started at: {}", proxy.base_url());
 }
+
+/// Test SSE content-type detection for streaming responses.
+/// The OpenCode proxy must detect text/event-stream and stream instead of buffering.
+#[test]
+fn test_sse_content_type_detection() {
+    // Test cases for SSE detection
+    let test_cases = vec![
+        ("text/event-stream", true),
+        ("text/event-stream; charset=utf-8", true),
+        ("TEXT/EVENT-STREAM", true), // case insensitive
+        ("application/json", false),
+        ("text/html", false),
+        ("text/plain", false),
+    ];
+
+    for (content_type, expected_sse) in test_cases {
+        let is_sse = content_type.to_lowercase().contains("text/event-stream");
+        assert_eq!(
+            is_sse, expected_sse,
+            "Content-Type '{}' should be SSE: {}",
+            content_type, expected_sse
+        );
+    }
+}
+
+/// Test SSE event parsing format (matches OpenCode's Bus.publish format).
+#[test]
+fn test_sse_event_format_parsing() {
+    // OpenCode SSE events are JSON with type and properties
+    let event_json = r#"{"type":"message.part.updated","properties":{"part":{"id":"prt_123","sessionID":"ses_abc","type":"text"},"delta":"Hello"}}"#;
+
+    let parsed: serde_json::Value = serde_json::from_str(event_json).unwrap();
+
+    assert_eq!(parsed["type"], "message.part.updated");
+    assert_eq!(parsed["properties"]["delta"], "Hello");
+    assert_eq!(parsed["properties"]["part"]["sessionID"], "ses_abc");
+}
+
+/// Test SSE line parsing (data: prefix handling).
+#[test]
+fn test_sse_line_parsing() {
+    let lines = vec![
+        "data: {\"type\":\"server.connected\",\"properties\":{}}",
+        "",
+        "data: {\"type\":\"message.part.updated\",\"properties\":{\"delta\":\"Hi\"}}",
+        ": comment line (should be ignored)",
+        "data: {\"type\":\"message.complete\",\"properties\":{}}",
+    ];
+
+    let mut events = Vec::new();
+    for line in lines {
+        if line.starts_with("data: ") {
+            let json_str = &line[6..]; // Skip "data: " prefix
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) {
+                events.push(value["type"].as_str().unwrap_or("").to_string());
+            }
+        }
+    }
+
+    assert_eq!(
+        events,
+        vec![
+            "server.connected",
+            "message.part.updated",
+            "message.complete"
+        ]
+    );
+}

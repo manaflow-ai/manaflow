@@ -40,6 +40,21 @@ type HeatmapColors = {
   token: { start: string; end: string };
 };
 
+type McpTransport = "stdio" | "http" | "sse";
+type McpServerEnvVar = { name: string; value: string };
+type McpServerHeader = { name: string; value: string };
+type McpServerConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: McpServerEnvVar[];
+  url?: string;
+  headers?: McpServerHeader[];
+};
+
 const createDefaultHeatmapColors = (): HeatmapColors => ({
   line: { start: "#fefce8", end: "#f8e1c9" },
   token: { start: "#fde047", end: "#ffa270" },
@@ -50,6 +65,33 @@ const areHeatmapColorsEqual = (a: HeatmapColors, b: HeatmapColors): boolean =>
   a.line.end === b.line.end &&
   a.token.start === b.token.start &&
   a.token.end === b.token.end;
+
+const areMcpServersEqual = (
+  a: McpServerConfig[],
+  b: McpServerConfig[]
+): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+const createDefaultMcpServers = (): McpServerConfig[] => [
+  {
+    id: "cmux",
+    name: "cmux",
+    enabled: true,
+    transport: "stdio",
+    command: "/usr/local/bin/mcp-upload",
+    args: [],
+    env: [],
+  },
+];
+
+const createNewMcpServer = (): McpServerConfig => ({
+  id: crypto.randomUUID(),
+  name: "New MCP Server",
+  enabled: true,
+  transport: "stdio",
+  command: "",
+  args: [],
+  env: [],
+});
 
 const PROVIDER_INFO: Record<string, ProviderInfo> = {
   CLAUDE_CODE_OAUTH_TOKEN: {
@@ -259,6 +301,11 @@ function SettingsComponent() {
   );
   const [originalHeatmapColors, setOriginalHeatmapColors] =
     useState<HeatmapColors>(createDefaultHeatmapColors);
+  const [mcpServers, setMcpServers] = useState<McpServerConfig[]>(
+    createDefaultMcpServers
+  );
+  const [originalMcpServers, setOriginalMcpServers] =
+    useState<McpServerConfig[]>(createDefaultMcpServers);
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
@@ -415,6 +462,15 @@ function SettingsComponent() {
         areHeatmapColorsEqual(prev, nextColors) ? prev : nextColors
       );
     }
+
+    const nextMcpServers =
+      workspaceSettings?.mcpServers ?? createDefaultMcpServers();
+    setMcpServers((prev) =>
+      areMcpServersEqual(prev, nextMcpServers) ? prev : nextMcpServers
+    );
+    setOriginalMcpServers((prev) =>
+      areMcpServersEqual(prev, nextMcpServers) ? prev : nextMcpServers
+    );
   }, [workspaceSettings]);
 
   // Track save button visibility
@@ -491,6 +547,141 @@ function SettingsComponent() {
     [originalContainerSettingsData]
   );
 
+  const updateMcpServer = useCallback(
+    (serverId: string, updater: (server: McpServerConfig) => McpServerConfig) => {
+      setMcpServers((prev) =>
+        prev.map((server) => (server.id === serverId ? updater(server) : server))
+      );
+    },
+    []
+  );
+
+  const handleAddMcpServer = useCallback(() => {
+    setMcpServers((prev) => [...prev, createNewMcpServer()]);
+  }, []);
+
+  const handleRemoveMcpServer = useCallback((serverId: string) => {
+    setMcpServers((prev) => prev.filter((server) => server.id !== serverId));
+  }, []);
+
+  const handleMcpTransportChange = useCallback(
+    (serverId: string, transport: McpTransport) => {
+      updateMcpServer(serverId, (server) => {
+        if (transport === "stdio") {
+          return {
+            ...server,
+            transport,
+            command: server.command ?? "",
+            args: server.args ?? [],
+            env: server.env ?? [],
+            url: undefined,
+            headers: undefined,
+          };
+        }
+        return {
+          ...server,
+          transport,
+          url: server.url ?? "",
+          headers: server.headers ?? [],
+          command: undefined,
+          args: undefined,
+          env: undefined,
+        };
+      });
+    },
+    [updateMcpServer]
+  );
+
+  const handleMcpArgsChange = useCallback(
+    (serverId: string, value: string) => {
+      const args = value
+        .split("\n")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      updateMcpServer(serverId, (server) => ({
+        ...server,
+        args,
+      }));
+    },
+    [updateMcpServer]
+  );
+
+  const updateMcpEnvVar = useCallback(
+    (
+      serverId: string,
+      index: number,
+      field: "name" | "value",
+      value: string
+    ) => {
+      updateMcpServer(serverId, (server) => {
+        const env = [...(server.env ?? [])];
+        const current = env[index] ?? { name: "", value: "" };
+        env[index] = { ...current, [field]: value };
+        return { ...server, env };
+      });
+    },
+    [updateMcpServer]
+  );
+
+  const addMcpEnvVar = useCallback(
+    (serverId: string) => {
+      updateMcpServer(serverId, (server) => ({
+        ...server,
+        env: [...(server.env ?? []), { name: "", value: "" }],
+      }));
+    },
+    [updateMcpServer]
+  );
+
+  const removeMcpEnvVar = useCallback(
+    (serverId: string, index: number) => {
+      updateMcpServer(serverId, (server) => {
+        const env = [...(server.env ?? [])];
+        env.splice(index, 1);
+        return { ...server, env };
+      });
+    },
+    [updateMcpServer]
+  );
+
+  const updateMcpHeader = useCallback(
+    (
+      serverId: string,
+      index: number,
+      field: "name" | "value",
+      value: string
+    ) => {
+      updateMcpServer(serverId, (server) => {
+        const headers = [...(server.headers ?? [])];
+        const current = headers[index] ?? { name: "", value: "" };
+        headers[index] = { ...current, [field]: value };
+        return { ...server, headers };
+      });
+    },
+    [updateMcpServer]
+  );
+
+  const addMcpHeader = useCallback(
+    (serverId: string) => {
+      updateMcpServer(serverId, (server) => ({
+        ...server,
+        headers: [...(server.headers ?? []), { name: "", value: "" }],
+      }));
+    },
+    [updateMcpServer]
+  );
+
+  const removeMcpHeader = useCallback(
+    (serverId: string, index: number) => {
+      updateMcpServer(serverId, (server) => {
+        const headers = [...(server.headers ?? [])];
+        headers.splice(index, 1);
+        return { ...server, headers };
+      });
+    },
+    [updateMcpServer]
+  );
+
   // Check if there are any changes
   const hasChanges = () => {
     // Check worktree path changes
@@ -519,6 +710,10 @@ function SettingsComponent() {
     const heatmapTooltipLanguageChanged = heatmapTooltipLanguage !== originalHeatmapTooltipLanguage;
     const heatmapColorsChanged =
       JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+    const mcpServersChanged = !areMcpServersEqual(
+      mcpServers,
+      originalMcpServers
+    );
 
     return (
       worktreePathChanged ||
@@ -528,7 +723,8 @@ function SettingsComponent() {
       heatmapModelChanged ||
       heatmapThresholdChanged ||
       heatmapTooltipLanguageChanged ||
-      heatmapColorsChanged
+      heatmapColorsChanged ||
+      mcpServersChanged
     );
   };
 
@@ -546,7 +742,8 @@ function SettingsComponent() {
         heatmapModel !== originalHeatmapModel ||
         heatmapThreshold !== originalHeatmapThreshold ||
         heatmapTooltipLanguage !== originalHeatmapTooltipLanguage ||
-        JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+        JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors) ||
+        !areMcpServersEqual(mcpServers, originalMcpServers);
 
       if (workspaceSettingsChanged) {
         await convex.mutation(api.workspaceSettings.update, {
@@ -557,6 +754,7 @@ function SettingsComponent() {
           heatmapThreshold,
           heatmapTooltipLanguage,
           heatmapColors,
+          mcpServers,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
@@ -564,6 +762,7 @@ function SettingsComponent() {
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
         setOriginalHeatmapColors(heatmapColors);
+        setOriginalMcpServers(mcpServers);
       }
 
       // Save container settings if changed
@@ -1149,6 +1348,311 @@ function SettingsComponent() {
                 </div>
               </div>
             )}
+
+            {/* MCP Servers */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  MCP Servers
+                </h2>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Configure Model Context Protocol servers available to agents.
+                </p>
+              </div>
+              <div className="p-4 space-y-4">
+                {mcpServers.length === 0 ? (
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                    No MCP servers configured.
+                  </p>
+                ) : (
+                  mcpServers.map((server) => (
+                    <div
+                      key={server.id}
+                      className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 space-y-4"
+                    >
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                Name
+                              </label>
+                              <input
+                                type="text"
+                                value={server.name}
+                                onChange={(e) =>
+                                  updateMcpServer(server.id, (prev) => ({
+                                    ...prev,
+                                    name: e.target.value,
+                                  }))
+                                }
+                                className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                                placeholder="My MCP server"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                Transport
+                              </label>
+                              <div className="relative">
+                                <select
+                                  value={server.transport}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    if (
+                                      value === "stdio" ||
+                                      value === "http" ||
+                                      value === "sse"
+                                    ) {
+                                      handleMcpTransportChange(server.id, value);
+                                    }
+                                  }}
+                                  className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                                >
+                                  <option value="stdio">Stdio</option>
+                                  <option value="http">HTTP</option>
+                                  <option value="sse">SSE</option>
+                                </select>
+                                <ChevronDown
+                                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                                  aria-hidden
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="text-[10px] uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                                Enabled
+                              </span>
+                              <Switch
+                                aria-label={`Toggle MCP server ${server.name}`}
+                                size="sm"
+                                color="primary"
+                                isSelected={server.enabled}
+                                onValueChange={(value) =>
+                                  updateMcpServer(server.id, (prev) => ({
+                                    ...prev,
+                                    enabled: value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMcpServer(server.id)}
+                              className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+
+                        {server.transport === "stdio" ? (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                Command
+                              </label>
+                              <input
+                                type="text"
+                                value={server.command ?? ""}
+                                onChange={(e) =>
+                                  updateMcpServer(server.id, (prev) => ({
+                                    ...prev,
+                                    command: e.target.value,
+                                  }))
+                                }
+                                className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                                placeholder="/usr/local/bin/my-mcp"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                Args (one per line)
+                              </label>
+                              <textarea
+                                value={(server.args ?? []).join("\n")}
+                                onChange={(e) =>
+                                  handleMcpArgsChange(server.id, e.target.value)
+                                }
+                                className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm font-mono"
+                                rows={3}
+                                placeholder="--flag\n--path=/workspace"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                  Environment variables
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => addMcpEnvVar(server.id)}
+                                  className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                >
+                                  + Add env var
+                                </button>
+                              </div>
+                              {(server.env ?? []).length === 0 ? (
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                  No environment variables.
+                                </p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {(server.env ?? []).map((entry, index) => (
+                                    <div
+                                      key={`${server.id}-env-${index}`}
+                                      className="grid grid-cols-[1fr_1fr_auto] gap-2"
+                                    >
+                                      <input
+                                        type="text"
+                                        value={entry.name}
+                                        onChange={(e) =>
+                                          updateMcpEnvVar(
+                                            server.id,
+                                            index,
+                                            "name",
+                                            e.target.value
+                                          )
+                                        }
+                                        className="px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-xs font-mono"
+                                        placeholder="NAME"
+                                      />
+                                      <input
+                                        type="text"
+                                        value={entry.value}
+                                        onChange={(e) =>
+                                          updateMcpEnvVar(
+                                            server.id,
+                                            index,
+                                            "value",
+                                            e.target.value
+                                          )
+                                        }
+                                        className="px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-xs font-mono"
+                                        placeholder="value"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          removeMcpEnvVar(server.id, index)
+                                        }
+                                        className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                URL
+                              </label>
+                              <input
+                                type="url"
+                                value={server.url ?? ""}
+                                onChange={(e) =>
+                                  updateMcpServer(server.id, (prev) => ({
+                                    ...prev,
+                                    url: e.target.value,
+                                  }))
+                                }
+                                className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                                placeholder="https://mcp.example.com"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                  Headers
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => addMcpHeader(server.id)}
+                                  className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                >
+                                  + Add header
+                                </button>
+                              </div>
+                              {(server.headers ?? []).length === 0 ? (
+                                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                                  No headers configured.
+                                </p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {(server.headers ?? []).map((entry, index) => (
+                                    <div
+                                      key={`${server.id}-header-${index}`}
+                                      className="grid grid-cols-[1fr_1fr_auto] gap-2"
+                                    >
+                                      <input
+                                        type="text"
+                                        value={entry.name}
+                                        onChange={(e) =>
+                                          updateMcpHeader(
+                                            server.id,
+                                            index,
+                                            "name",
+                                            e.target.value
+                                          )
+                                        }
+                                        className="px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-xs font-mono"
+                                        placeholder="Header"
+                                      />
+                                      <input
+                                        type="text"
+                                        value={entry.value}
+                                        onChange={(e) =>
+                                          updateMcpHeader(
+                                            server.id,
+                                            index,
+                                            "value",
+                                            e.target.value
+                                          )
+                                        }
+                                        className="px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-xs font-mono"
+                                        placeholder="Value"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          removeMcpHeader(server.id, index)
+                                        }
+                                        className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={handleAddMcpServer}
+                    className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    + Add MCP server
+                  </button>
+                  <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                    Only enabled servers are sent to agents.
+                  </span>
+                </div>
+              </div>
+            </div>
 
             {/* AI Provider Authentication */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">

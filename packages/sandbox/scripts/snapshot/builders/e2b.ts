@@ -37,7 +37,10 @@ function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> 
 
       case "copy":
         // copy(src, dest)
-        template = template.copy(cmd.args[0], cmd.args[1]);
+        template = template.copy(cmd.args[0], cmd.args[1], {
+          forceUpload: true,
+          user: "root",
+        });
         break;
 
       case "env":

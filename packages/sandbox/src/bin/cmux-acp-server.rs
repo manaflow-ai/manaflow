@@ -19,10 +19,11 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    configure, init_conversation, pty_capture_session, pty_create_session, pty_delete_session,
-    pty_get_session, pty_health, pty_input_session, pty_list_sessions, pty_preflight,
-    pty_resize_session, pty_session_ws, pty_update_session, receive_prompt, send_rpc,
-    stream_acp_events, stream_preflight, ApiProxies, CallbackClient, RestApiDoc, RestApiState,
+    configure, init_conversation, opencode_preflight, opencode_proxy, opencode_pty_ws,
+    pty_capture_session, pty_create_session, pty_delete_session, pty_get_session, pty_health,
+    pty_input_session, pty_list_sessions, pty_preflight, pty_resize_session, pty_session_ws,
+    pty_update_session, receive_prompt, send_rpc, stream_acp_events, stream_preflight, ApiProxies,
+    CallbackClient, RestApiDoc, RestApiState,
 };
 
 /// ACP Server for sandbox integration.
@@ -264,9 +265,24 @@ async fn main() -> anyhow::Result<()> {
             "/api/pty/sessions/{session_id}/input",
             post(pty_input_session).options(pty_preflight),
         )
+        .route("/api/pty/sessions/{session_id}/ws", get(pty_session_ws))
+        // OpenCode headless server proxy - WebSocket route must be explicit
+        .route("/api/opencode/pty/{pty_id}/connect", get(opencode_pty_ws))
+        // OpenCode catch-all proxy (strips /api/opencode prefix)
         .route(
-            "/api/pty/sessions/{session_id}/ws",
-            get(pty_session_ws),
+            "/api/opencode/{*path}",
+            get(opencode_proxy)
+                .post(opencode_proxy)
+                .put(opencode_proxy)
+                .patch(opencode_proxy)
+                .delete(opencode_proxy)
+                .options(opencode_preflight),
+        )
+        .route(
+            "/api/opencode",
+            get(opencode_proxy)
+                .post(opencode_proxy)
+                .options(opencode_preflight),
         )
         .with_state(rest_state)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));

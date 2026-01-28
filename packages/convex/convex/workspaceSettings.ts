@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { z } from "zod";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { internalQuery } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
@@ -17,6 +18,49 @@ export const get = authQuery({
     return settings ?? null;
   },
 });
+
+const mcpServerEnvSchema = z.object({
+  name: z.string().min(1),
+  value: z.string(),
+});
+const mcpServerHeaderSchema = z.object({
+  name: z.string().min(1),
+  value: z.string(),
+});
+const mcpServerBaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+});
+const mcpServerSchema = z.discriminatedUnion("transport", [
+  mcpServerBaseSchema.extend({
+    transport: z.literal("stdio"),
+    command: z.string().min(1),
+    args: z.array(z.string()).optional(),
+    env: z.array(mcpServerEnvSchema).optional(),
+  }),
+  mcpServerBaseSchema.extend({
+    transport: z.literal("http"),
+    url: z.string().url(),
+    headers: z.array(mcpServerHeaderSchema).optional(),
+  }),
+  mcpServerBaseSchema.extend({
+    transport: z.literal("sse"),
+    url: z.string().url(),
+    headers: z.array(mcpServerHeaderSchema).optional(),
+  }),
+]);
+const mcpServersSchema = z.array(mcpServerSchema);
+
+export type McpServerConfig = z.infer<typeof mcpServerSchema>;
+
+export function parseMcpServers(input: unknown): McpServerConfig[] {
+  const parsed = mcpServersSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(`Invalid MCP server settings: ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
 
 export const update = authMutation({
   args: {
@@ -49,6 +93,39 @@ export const update = authMutation({
         v.literal("blaxel")
       )
     ),
+    mcpServers: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+          enabled: v.boolean(),
+          transport: v.union(
+            v.literal("stdio"),
+            v.literal("http"),
+            v.literal("sse")
+          ),
+          command: v.optional(v.string()),
+          args: v.optional(v.array(v.string())),
+          env: v.optional(
+            v.array(
+              v.object({
+                name: v.string(),
+                value: v.string(),
+              })
+            )
+          ),
+          url: v.optional(v.string()),
+          headers: v.optional(
+            v.array(
+              v.object({
+                name: v.string(),
+                value: v.string(),
+              })
+            )
+          ),
+        })
+      )
+    ),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -60,6 +137,11 @@ export const update = authMutation({
       )
       .first();
     const now = Date.now();
+
+    let parsedMcpServers: McpServerConfig[] | undefined;
+    if (args.mcpServers !== undefined) {
+      parsedMcpServers = parseMcpServers(args.mcpServers);
+    }
 
     if (existing) {
       const updates: {
@@ -75,6 +157,7 @@ export const update = authMutation({
         conversationTitleStyle?: "sentence" | "lowercase" | "title";
         conversationTitleCustomPrompt?: string;
         acpSandboxProvider?: "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
+        mcpServers?: McpServerConfig[];
         updatedAt: number;
       } = { updatedAt: now };
 
@@ -105,6 +188,9 @@ export const update = authMutation({
       if (args.acpSandboxProvider !== undefined) {
         updates.acpSandboxProvider = args.acpSandboxProvider;
       }
+      if (parsedMcpServers !== undefined) {
+        updates.mcpServers = parsedMcpServers;
+      }
 
       await ctx.db.patch(existing._id, updates);
     } else {
@@ -118,6 +204,7 @@ export const update = authMutation({
         conversationTitleStyle: args.conversationTitleStyle,
         conversationTitleCustomPrompt: args.conversationTitleCustomPrompt,
         acpSandboxProvider: args.acpSandboxProvider,
+        mcpServers: parsedMcpServers,
         nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,

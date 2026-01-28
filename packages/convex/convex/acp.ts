@@ -50,14 +50,6 @@ export function setSandboxProviderResolverForTests(
   sandboxProviderResolver = resolver;
 }
 
-function getCurrentSnapshotId(): string {
-  const provider = sandboxProviderResolver.getDefault();
-  return (
-    getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
-    "snap_default"
-  );
-}
-
 /**
  * Get the snapshot ID for a specific provider, falling back to default provider if not found.
  */
@@ -118,6 +110,21 @@ const providerIdValidator = v.union(
   v.literal("opencode"),
 );
 type ProviderId = "claude" | "codex" | "gemini" | "opencode";
+
+type McpServerTransport = "stdio" | "http" | "sse";
+type McpServerEnvVar = { name: string; value: string };
+type McpServerHeader = { name: string; value: string };
+type McpServerConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  transport: McpServerTransport;
+  command?: string;
+  args?: string[];
+  env?: McpServerEnvVar[];
+  url?: string;
+  headers?: McpServerHeader[];
+};
 
 const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-5-20251101";
 const WARM_POOL_TEAM_ID = "__warm_pool__";
@@ -827,6 +834,7 @@ export const startConversationEffect = (
       }),
     );
     const userProviderName = workspaceSettings?.acpSandboxProvider;
+    const mcpServers = workspaceSettings?.mcpServers;
 
     // Get the snapshot ID for the user's preferred provider (or default)
     const { snapshotId, providerName } = getSnapshotIdForProvider(userProviderName);
@@ -926,12 +934,15 @@ export const startConversationEffect = (
                 eventType: "init",
               }),
             );
+            const conversationJwt = yield* getConversationJwtEffect(ctx, conversationId);
             yield* initConversationOnSandboxEffect(
               sandboxUrlReady,
               conversationId,
               sessionId,
               args.providerId,
               args.cwd,
+              conversationJwt,
+              mcpServers,
               "auto_allow_always",
             );
             yield* Effect.tryPromise(() =>
@@ -1202,6 +1213,13 @@ export const sendMessageEffect = (
         userId: identity.subject,
       }),
     );
+    const workspaceSettings = yield* Effect.tryPromise(() =>
+      ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+        teamId,
+        userId: identity.subject,
+      }),
+    );
+    const mcpServers = workspaceSettings?.mcpServers;
 
     if (args.clientMessageId) {
       const clientMessageId = args.clientMessageId;
@@ -1336,12 +1354,18 @@ export const sendMessageEffect = (
             eventType: "init",
           }),
         );
+        const conversationJwt = yield* getConversationJwtEffect(
+          ctx,
+          args.conversationId,
+        );
         yield* initConversationOnSandboxEffect(
           sandboxUrlReady,
           args.conversationId,
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversationJwt,
+          mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
         yield* Effect.tryPromise(() =>
@@ -1538,6 +1562,13 @@ export const retryMessageEffect = (
     }
 
     const sandboxUrlReady = readiness.sandboxUrl;
+    const workspaceSettings = yield* Effect.tryPromise(() =>
+      ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+        teamId,
+        userId: identity.subject,
+      }),
+    );
+    const mcpServers = workspaceSettings?.mcpServers;
 
     const retryResult = yield* Effect.gen(function* () {
       yield* Effect.tryPromise(() =>
@@ -1559,12 +1590,18 @@ export const retryMessageEffect = (
             eventType: "init",
           }),
         );
+        const conversationJwt = yield* getConversationJwtEffect(
+          ctx,
+          args.conversationId,
+        );
         yield* initConversationOnSandboxEffect(
           sandboxUrlReady,
           args.conversationId,
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversationJwt,
+          mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
         yield* Effect.tryPromise(() =>
@@ -1702,6 +1739,13 @@ export const sendRpcEffect = (
         userId: identity.subject,
       }),
     );
+    const workspaceSettings = yield* Effect.tryPromise(() =>
+      ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+        teamId: conversation.teamId,
+        userId: identity.subject,
+      }),
+    );
+    const mcpServers = workspaceSettings?.mcpServers;
 
     if (!conversation.acpSandboxId) {
       return { status: "error" as const, error: "Sandbox not ready" };
@@ -1762,12 +1806,18 @@ export const sendRpcEffect = (
             eventType: "init",
           }),
         );
+        const conversationJwt = yield* getConversationJwtEffect(
+          ctx,
+          args.conversationId,
+        );
         yield* initConversationOnSandboxEffect(
           sandboxUrlReady,
           args.conversationId,
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversationJwt,
+          mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
         yield* Effect.tryPromise(() =>
@@ -2165,6 +2215,51 @@ export const spawnSandbox = internalAction({
 });
 
 /**
+ * Spawn a sandbox for Rivet chat integration.
+ * Returns the sandbox URL that can be passed to the Rivet actor.
+ * Uses the user's configured sandbox provider from workspace settings.
+ */
+export const spawnRivetSandbox = action({
+  args: {
+    teamId: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ sandboxId: string; sandboxUrl: string }> => {
+    // Look up user's preferred sandbox provider
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Get workspace settings for provider preference
+    const workspaceSettings = await ctx.runQuery(
+      internal.workspaceSettings.getByTeamAndUserInternal,
+      { teamId: args.teamId, userId: identity.subject },
+    );
+    const providerName = workspaceSettings?.acpSandboxProvider;
+
+    // Spawn the sandbox
+    const result = await ctx.runAction(internal.acp.spawnSandbox, {
+      teamId: args.teamId,
+      providerName,
+    });
+
+    // Get the sandbox details
+    const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
+      sandboxId: result.sandboxId,
+    });
+
+    if (!sandbox?.sandboxUrl) {
+      throw new Error("Sandbox URL not available");
+    }
+
+    return {
+      sandboxId: result.sandboxId,
+      sandboxUrl: sandbox.sandboxUrl,
+    };
+  },
+});
+
+/**
  * Spawn a warm sandbox reserved for a user intent signal.
  */
 type SpawnWarmSandboxArgs = {
@@ -2358,6 +2453,17 @@ export const deliverMessageInternalEffect = (
     // Capture non-null values for use in nested generators
     const sandboxUrlReady = readiness.sandboxUrl;
     const sandboxIdReady = sandboxId as Id<"acpSandboxes">; // Already checked sandboxId is not null above
+    let workspaceSettings = null;
+    const conversationUserId = conversation.userId;
+    if (conversationUserId) {
+      workspaceSettings = yield* Effect.tryPromise(() =>
+        ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+          teamId: conversation.teamId,
+          userId: conversationUserId,
+        }),
+      );
+    }
+    const mcpServers = workspaceSettings?.mcpServers;
 
     const deliveryEffect = Effect.gen(function* () {
       yield* Effect.tryPromise(() =>
@@ -2379,12 +2485,18 @@ export const deliverMessageInternalEffect = (
             eventType: "init",
           }),
         );
+        const conversationJwt = yield* getConversationJwtEffect(
+          ctx,
+          args.conversationId,
+        );
         yield* initConversationOnSandboxEffect(
           sandboxUrlReady,
           args.conversationId,
           conversation.sessionId,
           conversation.providerId,
           conversation.cwd,
+          conversationJwt,
+          mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
         yield* Effect.tryPromise(() =>
@@ -2676,6 +2788,25 @@ function configureSandboxEffect(
   );
 }
 
+function getConversationJwtEffect(
+  ctx: Pick<ActionCtx, "runMutation">,
+  conversationId: Id<"conversations">
+): Effect.Effect<string, Error> {
+  return Effect.gen(function* () {
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        ctx.runMutation(internal.conversations.generateJwt, {
+          conversationId,
+        }),
+      catch: (error) =>
+        error instanceof Error
+          ? error
+          : new Error("Failed to generate conversation JWT"),
+    });
+    return result.jwt;
+  });
+}
+
 /**
  * Initialize a conversation on a sandbox.
  * Automatically captures and forwards trace context to link Convex → Claude Code traces.
@@ -2686,6 +2817,8 @@ function initConversationOnSandboxEffect(
   sessionId: string,
   providerId: string,
   cwd: string,
+  conversationJwt: string,
+  mcpServers?: McpServerConfig[],
   permissionMode?: string,
 ): Effect.Effect<void, Error> {
   return Effect.gen(function* () {
@@ -2707,6 +2840,8 @@ function initConversationOnSandboxEffect(
             provider_id: providerId,
             cwd,
             permission_mode: permissionMode,
+            conversation_jwt: conversationJwt,
+            mcp_servers: mcpServers,
             // Pass trace context for linking Convex traces to Claude Code traces
             trace_context: traceCtx ?? undefined,
           }),

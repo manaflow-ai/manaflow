@@ -28,6 +28,10 @@ import {
 } from "./hostScreenshotCollector_http";
 import { acpCallback } from "./acp_http";
 import {
+  acpStorageResolveUrl,
+  acpStorageUploadUrl,
+} from "./acp_storage_http";
+import {
   anthropicProxy,
   anthropicCountTokens,
   anthropicEventLogging,
@@ -162,6 +166,18 @@ http.route({
   path: "/api/acp/callback",
   method: "POST",
   handler: acpCallback,
+});
+
+http.route({
+  path: "/api/acp/storage/upload-url",
+  method: "POST",
+  handler: acpStorageUploadUrl,
+});
+
+http.route({
+  path: "/api/acp/storage/resolve-url",
+  method: "POST",
+  handler: acpStorageResolveUrl,
 });
 
 http.route({

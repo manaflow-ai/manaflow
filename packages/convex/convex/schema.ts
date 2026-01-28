@@ -600,6 +600,39 @@ const convexSchema = defineSchema({
         v.literal("blaxel")
       )
     ),
+    mcpServers: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+          enabled: v.boolean(),
+          transport: v.union(
+            v.literal("stdio"),
+            v.literal("http"),
+            v.literal("sse")
+          ),
+          command: v.optional(v.string()),
+          args: v.optional(v.array(v.string())),
+          env: v.optional(
+            v.array(
+              v.object({
+                name: v.string(),
+                value: v.string(),
+              })
+            )
+          ),
+          url: v.optional(v.string()),
+          headers: v.optional(
+            v.array(
+              v.object({
+                name: v.string(),
+                value: v.string(),
+              })
+            )
+          ),
+        })
+      )
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),

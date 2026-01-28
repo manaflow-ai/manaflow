@@ -82,6 +82,17 @@ describe("getProvisioningCommands", () => {
     expect(mkdirCmd).toBeDefined();
   });
 
+  it("should include MCP upload tool install", () => {
+    const commands = getProvisioningCommands();
+
+    const mcpCopy = commands.find(
+      (c) =>
+        c.type === "run" &&
+        c.args.some((arg) => arg.includes("/usr/local/bin/mcp-upload"))
+    );
+    expect(mcpCopy).toBeDefined();
+  });
+
   it("should have descriptions for most commands", () => {
     const commands = getProvisioningCommands();
 
