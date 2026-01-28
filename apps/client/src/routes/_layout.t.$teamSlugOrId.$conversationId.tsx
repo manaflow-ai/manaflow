@@ -1,7 +1,11 @@
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { useQuery as useTanstackQuery } from "@tanstack/react-query";
+import {
+  useMutation as useTanstackMutation,
+  useQuery as useTanstackQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import {
   useAction,
@@ -10,8 +14,8 @@ import {
   useQuery,
 } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
-import { Loader2, X } from "lucide-react";
-import type { SetStateAction } from "react";
+import { Loader2 } from "lucide-react";
+import type { MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -31,11 +35,37 @@ import {
 } from "@/components/chat-layouts";
 import { isConversationManualUnread } from "@/lib/conversationReadOverrides";
 import {
-  TerminalSessionsPanel,
-  type TerminalBackendStatus,
-} from "@/components/TerminalSessionsPanel";
+  disableDragPointerEvents,
+  restoreDragPointerEvents,
+} from "@/lib/drag-pointer-events";
+import type { TerminalBackendStatus } from "@/components/TerminalSessionsPanel";
+import { TaskRunTerminalSession } from "@/components/task-run-terminal-session";
+import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
+import {
+  findWorkspaceTab,
+  insertWorkspaceTab,
+  normalizeWorkspace,
+  removeWorkspaceTab,
+  splitWorkspacePanel,
+  type WorkspaceNode,
+  type WorkspacePanelNode,
+  type WorkspaceTab,
+} from "@/components/workspace/workspace-layout-model";
+import {
+  DEFAULT_WORKSPACE_TAB_STYLE,
+  WORKSPACE_TAB_STYLE_OPTIONS,
+  type WorkspaceTabStyle,
+} from "@/components/workspace/workspace-tab-styles";
 import { toConversationPtyBaseUrl } from "@/components/web-ui/conversation-terminal-utils";
-import { terminalHealthQueryOptions } from "@/queries/terminals";
+import {
+  createTerminalTab,
+  deleteTerminalTab,
+  terminalHealthQueryOptions,
+  terminalTabsQueryKey,
+  terminalTabsQueryOptions,
+  type CreateTerminalTabResponse,
+  type TerminalTabId,
+} from "@/queries/terminals";
 
 const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
 const optimisticStateSchema = z.object({
@@ -190,6 +220,110 @@ type TerminalPanelInfo = {
   pendingMessage?: string;
   unsupportedMessage?: string;
 };
+
+type WorkspacePanelHint = {
+  panelId: string | null;
+};
+
+type WorkspaceE2EControls = {
+  addTab: (title?: string) => string;
+  splitTab: (tabId: string, edge: "left" | "right" | "top" | "bottom") => boolean;
+  getState: () => WorkspaceNode;
+};
+
+declare global {
+  interface Window {
+    __cmuxWorkspaceE2E?: WorkspaceE2EControls;
+  }
+}
+
+const TERMINAL_PENDING_MESSAGE =
+  "Waiting for the sandbox terminal backend to come online...";
+const TERMINAL_UNSUPPORTED_MESSAGE =
+  "Terminals are not available for this sandbox.";
+
+const WORKSPACE_WIDTH_STORAGE_KEY = "cmux:conversation-workspace-width";
+const WORKSPACE_WIDTH_DEFAULT = 440;
+const WORKSPACE_WIDTH_MIN = 320;
+const WORKSPACE_WIDTH_MAX = 900;
+const WORKSPACE_TAB_STYLE_STORAGE_KEY = "cmux:workspace-tab-style";
+const workspaceTabStyleSet = new Set<string>(
+  WORKSPACE_TAB_STYLE_OPTIONS.map((option) => option.value)
+);
+
+function isWorkspaceTabStyle(value: string): value is WorkspaceTabStyle {
+  return workspaceTabStyleSet.has(value);
+}
+
+function createEmptyWorkspaceRoot(): WorkspaceNode {
+  return {
+    type: "panel",
+    id: crypto.randomUUID(),
+    tabs: [],
+    activeTabId: null,
+  };
+}
+
+function findFirstPanelId(node: WorkspaceNode): string | null {
+  if (node.type === "panel") return node.id;
+  for (const child of node.children) {
+    const id = findFirstPanelId(child);
+    if (id) return id;
+  }
+  return null;
+}
+
+function ensureWorkspaceTab(
+  root: WorkspaceNode,
+  tab: WorkspaceTab,
+  hint: WorkspacePanelHint
+): WorkspaceNode {
+  if (findWorkspaceTab(root, tab.id)) return root;
+  const targetPanelId = hint.panelId ?? findFirstPanelId(root);
+  if (!targetPanelId) return root;
+  return insertWorkspaceTab(root, targetPanelId, tab);
+}
+
+const TERMINAL_TAB_PREFIX = "terminal:";
+
+function terminalTabId(terminalId: string): string {
+  return `${TERMINAL_TAB_PREFIX}${terminalId}`;
+}
+
+function parseTerminalTabId(tabId: string): string | null {
+  if (!tabId.startsWith(TERMINAL_TAB_PREFIX)) return null;
+  return tabId.slice(TERMINAL_TAB_PREFIX.length);
+}
+
+function collectWorkspaceTabs(node: WorkspaceNode): WorkspaceTab[] {
+  if (node.type === "panel") return node.tabs;
+  const tabs: WorkspaceTab[] = [];
+  for (const child of node.children) {
+    tabs.push(...collectWorkspaceTabs(child));
+  }
+  return tabs;
+}
+
+function collectWorkspaceTabsByKind(
+  node: WorkspaceNode,
+  kind: WorkspaceTab["kind"]
+): WorkspaceTab[] {
+  return collectWorkspaceTabs(node).filter((tab) => tab.kind === kind);
+}
+
+function findPanelIdByTabKind(
+  node: WorkspaceNode,
+  kind: WorkspaceTab["kind"]
+): string | null {
+  if (node.type === "panel") {
+    return node.tabs.some((tab) => tab.kind === kind) ? node.id : null;
+  }
+  for (const child of node.children) {
+    const id = findPanelIdByTabKind(child, kind);
+    if (id) return id;
+  }
+  return null;
+}
 
 const providerLabel: Record<string, string> = {
   claude: "Claude",
@@ -355,12 +489,236 @@ function ConversationThread() {
     Map<string, DraftState>
   >(() => new Map());
   const draftsRef = useRef<Map<string, DraftState>>(new Map());
+  const [workspaceTabStyle, setWorkspaceTabStyle] = useState<WorkspaceTabStyle>(() => {
+    if (typeof window === "undefined") return DEFAULT_WORKSPACE_TAB_STYLE;
+    const stored = localStorage.getItem(WORKSPACE_TAB_STYLE_STORAGE_KEY);
+    if (stored && isWorkspaceTabStyle(stored)) {
+      return stored;
+    }
+    return DEFAULT_WORKSPACE_TAB_STYLE;
+  });
+  const [isE2E] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    const enabled = params.get("e2e") === "1" || window.__cmuxE2E === true;
+    if (params.get("e2e") === "1") {
+      window.__cmuxE2E = true;
+    }
+    return enabled;
+  });
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [showTerminalPanel, setShowTerminalPanel] = useState(false);
+  const rawEventsTab = useMemo<WorkspaceTab>(
+    () => ({
+      id: `${conversationId}-debug-${crypto.randomUUID()}`,
+      title: "Debug",
+      kind: "raw-events",
+    }),
+    [conversationId]
+  );
+  const terminalPanelHints = useRef<Map<string, string>>(new Map());
+  const rawEventsPanelHint = useRef<WorkspacePanelHint>({ panelId: null });
+  const [workspaceRoot, setWorkspaceRoot] = useState<WorkspaceNode>(() =>
+    createEmptyWorkspaceRoot()
+  );
+  const workspaceRootRef = useRef<WorkspaceNode>(workspaceRoot);
+  const normalizeWorkspaceRoot = useCallback(
+    (next: WorkspaceNode) => normalizeWorkspace(next, { maxEmptyPanels: 0 }),
+    []
+  );
+  const setWorkspaceRootNormalized = useCallback(
+    (
+      next: WorkspaceNode | ((current: WorkspaceNode) => WorkspaceNode)
+    ) => {
+      setWorkspaceRoot((current) => {
+        const resolved = typeof next === "function" ? next(current) : next;
+        return normalizeWorkspaceRoot(resolved);
+      });
+    },
+    [normalizeWorkspaceRoot]
+  );
+  const e2eTabCounterRef = useRef(0);
+  const queryClient = useQueryClient();
+  const [workspaceWidth, setWorkspaceWidth] = useState(() => {
+    const stored = localStorage.getItem(WORKSPACE_WIDTH_STORAGE_KEY);
+    const parsed = stored
+      ? Number.parseInt(stored, 10)
+      : WORKSPACE_WIDTH_DEFAULT;
+    if (Number.isNaN(parsed)) return WORKSPACE_WIDTH_DEFAULT;
+    return Math.min(Math.max(parsed, WORKSPACE_WIDTH_MIN), WORKSPACE_WIDTH_MAX);
+  });
+  const [isLargeScreen, setIsLargeScreen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 1024px)").matches;
+  });
+  const workspaceContainerRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRightRef = useRef<number>(0);
+  const workspaceRafRef = useRef<number | null>(null);
+  const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
 
   useEffect(() => {
     setShowTerminalPanel(false);
-  }, [conversationId]);
+    terminalPanelHints.current.clear();
+    rawEventsPanelHint.current.panelId = null;
+    e2eTabCounterRef.current = 0;
+    setWorkspaceRootNormalized(createEmptyWorkspaceRoot());
+  }, [conversationId, setWorkspaceRootNormalized]);
+  useEffect(() => {
+    workspaceRootRef.current = workspaceRoot;
+  }, [workspaceRoot]);
+  useEffect(() => {
+    if (showRawEvents) {
+      setWorkspaceRootNormalized((current) =>
+        ensureWorkspaceTab(current, rawEventsTab, rawEventsPanelHint.current)
+      );
+    } else {
+      setWorkspaceRootNormalized((current) => {
+        const removal = removeWorkspaceTab(current, rawEventsTab.id);
+        if (removal.panelId) {
+          rawEventsPanelHint.current.panelId = removal.panelId;
+        }
+        return removal.node;
+      });
+    }
+  }, [rawEventsTab, setWorkspaceRootNormalized, showRawEvents]);
+  useEffect(() => {
+    localStorage.setItem(
+      WORKSPACE_WIDTH_STORAGE_KEY,
+      String(workspaceWidth)
+    );
+  }, [workspaceWidth]);
+  useEffect(() => {
+    localStorage.setItem(
+      WORKSPACE_TAB_STYLE_STORAGE_KEY,
+      workspaceTabStyle
+    );
+  }, [workspaceTabStyle]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(min-width: 1024px)");
+    const handler = (event: MediaQueryListEvent) => {
+      setIsLargeScreen(event.matches);
+    };
+    media.addEventListener("change", handler);
+    return () => media.removeEventListener("change", handler);
+  }, []);
+
+  const handleWorkspaceMouseMove = useCallback((event: MouseEvent) => {
+    if (workspaceRafRef.current != null) return;
+    workspaceRafRef.current = window.requestAnimationFrame(() => {
+      workspaceRafRef.current = null;
+      const containerRight = workspaceRightRef.current;
+      const nextWidth = Math.min(
+        Math.max(containerRight - event.clientX, WORKSPACE_WIDTH_MIN),
+        WORKSPACE_WIDTH_MAX
+      );
+      setWorkspaceWidth(nextWidth);
+    });
+  }, []);
+
+  const stopWorkspaceResize = useCallback(() => {
+    setIsResizingWorkspace(false);
+    document.body.style.cursor = "";
+    document.body.classList.remove("select-none");
+    if (workspaceRafRef.current != null) {
+      cancelAnimationFrame(workspaceRafRef.current);
+      workspaceRafRef.current = null;
+    }
+    restoreDragPointerEvents();
+    window.removeEventListener("mousemove", handleWorkspaceMouseMove);
+    window.removeEventListener("mouseup", stopWorkspaceResize);
+  }, [handleWorkspaceMouseMove]);
+
+  const startWorkspaceResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!workspaceContainerRef.current) return;
+      event.preventDefault();
+      setIsResizingWorkspace(true);
+      document.body.style.cursor = "col-resize";
+      document.body.classList.add("select-none");
+      const rect = workspaceContainerRef.current.getBoundingClientRect();
+      workspaceRightRef.current = rect.right;
+      disableDragPointerEvents();
+      window.addEventListener("mousemove", handleWorkspaceMouseMove);
+      window.addEventListener("mouseup", stopWorkspaceResize);
+    },
+    [handleWorkspaceMouseMove, stopWorkspaceResize]
+  );
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("mousemove", handleWorkspaceMouseMove);
+      window.removeEventListener("mouseup", stopWorkspaceResize);
+    };
+  }, [handleWorkspaceMouseMove, stopWorkspaceResize]);
+
+  const addE2EWorkspaceTab = useCallback(
+    (title?: string) => {
+      const nextIndex = e2eTabCounterRef.current + 1;
+      e2eTabCounterRef.current = nextIndex;
+      const tab: WorkspaceTab = {
+        id: `e2e:${conversationId}:${nextIndex}`,
+        title: title ?? `Tab ${nextIndex}`,
+        kind: "e2e",
+      };
+      setWorkspaceRootNormalized((current) => {
+        const targetPanelId =
+          findPanelIdByTabKind(current, "e2e") ?? findFirstPanelId(current);
+        if (!targetPanelId) return current;
+        return insertWorkspaceTab(current, targetPanelId, tab);
+      });
+      return tab.id;
+    },
+    [conversationId, setWorkspaceRootNormalized]
+  );
+
+  const splitE2EWorkspaceTab = useCallback(
+    (tabId: string, edge: "left" | "right" | "top" | "bottom") => {
+      let didSplit = false;
+      setWorkspaceRootNormalized((current) => {
+        const removal = removeWorkspaceTab(current, tabId);
+        const removedTab =
+          removal.removedTab ?? findWorkspaceTab(current, tabId);
+        const targetPanelId = removal.panelId ?? findFirstPanelId(current);
+        if (!removedTab || !targetPanelId) return current;
+        const direction = edge === "left" || edge === "right"
+          ? "row"
+          : "column";
+        const insertBefore = edge === "left" || edge === "top";
+        const newPanel: WorkspacePanelNode = {
+          type: "panel",
+          id: crypto.randomUUID(),
+          tabs: [removedTab],
+          activeTabId: removedTab.id,
+        };
+        didSplit = true;
+        return splitWorkspacePanel(
+          removal.node,
+          targetPanelId,
+          direction,
+          newPanel,
+          insertBefore
+        );
+      });
+      return didSplit;
+    },
+    [setWorkspaceRootNormalized]
+  );
+
+  useEffect(() => {
+    if (!isE2E || typeof window === "undefined") return;
+    const controls: WorkspaceE2EControls = {
+      addTab: (title) => addE2EWorkspaceTab(title),
+      splitTab: (tabId, edge) => splitE2EWorkspaceTab(tabId, edge),
+      getState: () => workspaceRootRef.current,
+    };
+    window.__cmuxWorkspaceE2E = controls;
+    return () => {
+      if (window.__cmuxWorkspaceE2E === controls) {
+        delete window.__cmuxWorkspaceE2E;
+      }
+    };
+  }, [addE2EWorkspaceTab, isE2E, splitE2EWorkspaceTab]);
   const [isSending, setIsSending] = useState(false);
   const [lastSubmittedAt, setLastSubmittedAt] = useState<number | null>(null);
   const [permissionInFlight, setPermissionInFlight] = useState<string | null>(
@@ -1080,7 +1438,7 @@ function ConversationThread() {
       return {
         status: "unsupported",
         pendingMessage: undefined,
-        unsupportedMessage: "Terminals are not available for this sandbox.",
+        unsupportedMessage: TERMINAL_UNSUPPORTED_MESSAGE,
       };
     }
 
@@ -1129,32 +1487,421 @@ function ConversationThread() {
     terminalHealthQuery.isLoading,
   ]);
 
-  const terminalPanel = showTerminalPanel ? (
-    <div className="flex w-full flex-col border-t border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 lg:w-[440px] lg:shrink-0 lg:border-l lg:border-t-0">
-      <div className="flex items-center justify-between gap-4 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-        <div>
-          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            Terminals
-          </div>
-          <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
-            Live PTY sessions for the active sandbox.
-          </div>
+  const hasTerminalBackend =
+    terminalPanelInfo.status === "available" && Boolean(terminalBaseUrl);
+
+  const terminalTabsQuery = useTanstackQuery(
+    terminalTabsQueryOptions({
+      baseUrl: terminalBaseUrl,
+      contextKey: conversationId,
+      enabled: Boolean(terminalBaseUrl),
+    })
+  );
+
+  const terminalTabIds = useMemo<TerminalTabId[]>(
+    () => terminalTabsQuery.data ?? [],
+    [terminalTabsQuery.data]
+  );
+
+  const terminalTabs = useMemo<WorkspaceTab[]>(
+    () =>
+      terminalTabIds.map((terminalId, index) => ({
+        id: terminalTabId(terminalId),
+        title: `Terminal ${index + 1}`,
+        kind: "terminal",
+      })),
+    [terminalTabIds]
+  );
+
+  const terminalTabsErrorMessage = terminalTabsQuery.isError
+    ? terminalTabsQuery.error instanceof Error
+      ? terminalTabsQuery.error.message
+      : "Unable to load terminals."
+    : null;
+
+  type DeleteTerminalMutationContext = {
+    previousTabs: TerminalTabId[];
+    previousWorkspace: WorkspaceNode;
+  };
+
+  const createTerminalMutation = useTanstackMutation<
+    CreateTerminalTabResponse,
+    unknown,
+    { panelId: string | null },
+    void
+  >({
+    mutationKey: ["terminal-tabs", conversationId, terminalBaseUrl, "create"],
+    mutationFn: async (_variables) =>
+      createTerminalTab({
+        baseUrl: terminalBaseUrl,
+        request: undefined,
+      }),
+    onSuccess: (payload, variables) => {
+      const queryKey = terminalTabsQueryKey(terminalBaseUrl, conversationId);
+      const previousTabs =
+        queryClient.getQueryData<TerminalTabId[]>(queryKey) ?? terminalTabIds;
+      const nextTabs = previousTabs.includes(payload.id)
+        ? previousTabs
+        : [...previousTabs, payload.id];
+      queryClient.setQueryData(queryKey, nextTabs);
+      const tabIndex = nextTabs.indexOf(payload.id);
+      const tab = {
+        id: terminalTabId(payload.id),
+        title: `Terminal ${tabIndex + 1}`,
+        kind: "terminal",
+      } satisfies WorkspaceTab;
+      setWorkspaceRootNormalized((current) => {
+        const targetPanelId =
+          variables.panelId ??
+          findPanelIdByTabKind(current, "terminal") ??
+          findFirstPanelId(current);
+        if (!targetPanelId) return current;
+        return insertWorkspaceTab(current, targetPanelId, tab);
+      });
+    },
+    onError: (error) => {
+      console.error("Failed to create terminal", error);
+      toast.error("Unable to create terminal.");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: terminalTabsQueryKey(terminalBaseUrl, conversationId),
+      });
+    },
+  });
+
+  const deleteTerminalMutation = useTanstackMutation<
+    void,
+    unknown,
+    TerminalTabId,
+    DeleteTerminalMutationContext
+  >({
+    mutationKey: ["terminal-tabs", conversationId, terminalBaseUrl, "delete"],
+    mutationFn: async (terminalId) =>
+      deleteTerminalTab({
+        baseUrl: terminalBaseUrl,
+        tabId: terminalId,
+      }),
+    onMutate: async (terminalId) => {
+      const queryKey = terminalTabsQueryKey(terminalBaseUrl, conversationId);
+      await queryClient.cancelQueries({ queryKey });
+      const previousTabs =
+        queryClient.getQueryData<TerminalTabId[]>(queryKey) ?? terminalTabIds;
+      const previousWorkspace = workspaceRootRef.current;
+      const nextTabs = previousTabs.filter((id) => id !== terminalId);
+      queryClient.setQueryData(queryKey, nextTabs);
+      setWorkspaceRootNormalized((current) => {
+        const removal = removeWorkspaceTab(
+          current,
+          terminalTabId(terminalId)
+        );
+        if (removal.panelId) {
+          terminalPanelHints.current.set(
+            terminalTabId(terminalId),
+            removal.panelId
+          );
+        }
+        return removal.node;
+      });
+      return { previousTabs, previousWorkspace };
+    },
+    onError: (error, _terminalId, context) => {
+      console.error("Failed to close terminal", error);
+      toast.error("Unable to close terminal.");
+      if (!context) return;
+      const queryKey = terminalTabsQueryKey(terminalBaseUrl, conversationId);
+      queryClient.setQueryData(queryKey, context.previousTabs);
+      setWorkspaceRootNormalized(context.previousWorkspace);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: terminalTabsQueryKey(terminalBaseUrl, conversationId),
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (!showTerminalPanel) {
+      setWorkspaceRootNormalized((current) => {
+        const terminalTabsInLayout = collectWorkspaceTabsByKind(
+          current,
+          "terminal"
+        );
+        if (terminalTabsInLayout.length === 0) return current;
+        let next = current;
+        let changed = false;
+        for (const tab of terminalTabsInLayout) {
+          const removal = removeWorkspaceTab(next, tab.id);
+          if (removal.panelId) {
+            terminalPanelHints.current.set(tab.id, removal.panelId);
+          }
+          if (removal.node !== next) {
+            next = removal.node;
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+      return;
+    }
+
+    setWorkspaceRootNormalized((current) => {
+      const desiredTabs = new Map(
+        terminalTabs.map((tab) => [tab.id, tab])
+      );
+      const existingTabs = collectWorkspaceTabsByKind(current, "terminal");
+      let next = current;
+      let changed = false;
+
+      for (const tab of existingTabs) {
+        if (!desiredTabs.has(tab.id)) {
+          const removal = removeWorkspaceTab(next, tab.id);
+          if (removal.panelId) {
+            terminalPanelHints.current.set(tab.id, removal.panelId);
+          }
+          if (removal.node !== next) {
+            next = removal.node;
+            changed = true;
+          }
+        }
+      }
+
+      for (const tab of terminalTabs) {
+        if (!findWorkspaceTab(next, tab.id)) {
+          const targetPanelId =
+            terminalPanelHints.current.get(tab.id) ??
+            findPanelIdByTabKind(next, "terminal") ??
+            findFirstPanelId(next);
+          if (!targetPanelId) continue;
+          next = insertWorkspaceTab(next, targetPanelId, tab);
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [setWorkspaceRootNormalized, showTerminalPanel, terminalTabs]);
+
+  const showWorkspace = showTerminalPanel || showRawEvents;
+
+  const terminalFallbackMessage =
+    terminalPanelInfo.status === "unsupported"
+      ? terminalPanelInfo.unsupportedMessage ?? TERMINAL_UNSUPPORTED_MESSAGE
+      : terminalPanelInfo.pendingMessage ?? TERMINAL_PENDING_MESSAGE;
+
+  const canCreateTerminal = showTerminalPanel && hasTerminalBackend;
+  const isCreatingTerminal = createTerminalMutation.isPending;
+
+  const handleWorkspaceTabClose = useCallback(
+    (tab: WorkspaceTab) => {
+      if (tab.kind === "raw-events") {
+        setShowRawEvents(false);
+        setWorkspaceRootNormalized((current) => {
+          const removal = removeWorkspaceTab(current, tab.id);
+          if (removal.panelId) {
+            rawEventsPanelHint.current.panelId = removal.panelId;
+          }
+          return removal.node;
+        });
+        return;
+      }
+      if (tab.kind === "terminal") {
+        const terminalId = parseTerminalTabId(tab.id);
+        if (!terminalId) return;
+        deleteTerminalMutation.mutate(terminalId);
+      }
+    },
+    [deleteTerminalMutation, setShowRawEvents, setWorkspaceRootNormalized]
+  );
+
+  const canCloseWorkspaceTab = useCallback(
+    (tab: WorkspaceTab) => {
+      if (tab.kind === "raw-events") return true;
+      if (tab.kind === "terminal") return hasTerminalBackend;
+      return false;
+    },
+    [hasTerminalBackend]
+  );
+
+  const workspaceToolbarPanelId = useMemo(
+    () => findFirstPanelId(workspaceRoot),
+    [workspaceRoot]
+  );
+
+  const renderPanelActions = useCallback(
+    (panel: WorkspacePanelNode) => {
+      const showStylePicker = panel.id === workspaceToolbarPanelId;
+      const canShowTerminalButton = showTerminalPanel;
+      if (!showStylePicker && !canShowTerminalButton) return null;
+      return (
+        <div className="flex items-center gap-1">
+          {showStylePicker ? (
+            <div className="flex items-center">
+              <label
+                htmlFor={`workspace-tab-style-${panel.id}`}
+                className="sr-only"
+              >
+                Tab style
+              </label>
+              <select
+                id={`workspace-tab-style-${panel.id}`}
+                value={workspaceTabStyle}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (!isWorkspaceTabStyle(next)) return;
+                  setWorkspaceTabStyle(next);
+                }}
+                className="h-7 rounded-none border border-neutral-200 bg-white px-1.5 text-[11px] text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-800 focus:border-neutral-300 focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:border-neutral-700 dark:hover:text-neutral-100 dark:focus:border-neutral-700"
+                title="Tab style"
+                data-workspace-action="tab-style"
+              >
+                {WORKSPACE_TAB_STYLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          {canShowTerminalButton ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!canCreateTerminal || isCreatingTerminal) return;
+                createTerminalMutation.mutate({ panelId: panel.id });
+              }}
+              disabled={!canCreateTerminal || isCreatingTerminal}
+              className="flex h-7 w-7 items-center justify-center rounded-none border border-neutral-200 text-xs text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-100"
+              title="New terminal"
+              aria-label="New terminal"
+              data-workspace-action="new-terminal"
+            >
+              {isCreatingTerminal ? "..." : "+"}
+            </button>
+          ) : null}
         </div>
-        <button
-          type="button"
-          onClick={() => setShowTerminalPanel(false)}
-          className="rounded-full p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-          aria-label="Close terminals"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      <TerminalSessionsPanel
-        baseUrl={terminalBaseUrl}
-        contextKey={conversationId}
-        status={terminalPanelInfo.status}
-        pendingMessage={terminalPanelInfo.pendingMessage}
-        unsupportedMessage={terminalPanelInfo.unsupportedMessage}
+      );
+    },
+    [
+      canCreateTerminal,
+      createTerminalMutation,
+      isCreatingTerminal,
+      showTerminalPanel,
+      workspaceTabStyle,
+      workspaceToolbarPanelId,
+    ]
+  );
+
+  const renderWorkspaceTab = useCallback(
+    (tab: WorkspaceTab, _panelId: string) => {
+      if (tab.kind === "terminal") {
+        const terminalId = parseTerminalTabId(tab.id);
+        if (!terminalId || !terminalBaseUrl || !hasTerminalBackend) {
+          return (
+            <div className="flex flex-1 items-center justify-center px-4 text-xs text-neutral-400">
+              {terminalFallbackMessage}
+            </div>
+          );
+        }
+        return (
+          <div className="relative flex min-h-0 flex-1 bg-neutral-950">
+            <TaskRunTerminalSession
+              baseUrl={terminalBaseUrl}
+              terminalId={terminalId}
+              isActive
+            />
+          </div>
+        );
+      }
+      if (tab.kind === "raw-events") {
+        return (
+          <RawAcpEventsPanel
+            rawEvents={rawEvents}
+            streamStatus={stream.status}
+            className="flex-1"
+          />
+        );
+      }
+      return (
+        <div className="flex flex-1 items-center justify-center px-4 text-xs text-neutral-400">
+          No content yet.
+        </div>
+      );
+    },
+    [
+      hasTerminalBackend,
+      rawEvents,
+      stream.status,
+      terminalBaseUrl,
+      terminalFallbackMessage,
+    ]
+  );
+
+  const emptyWorkspaceMessage = useMemo(() => {
+    if (!showTerminalPanel && showRawEvents) {
+      return "Drop tabs to split.";
+    }
+    if (showTerminalPanel && !hasTerminalBackend) {
+      return terminalFallbackMessage;
+    }
+    if (showTerminalPanel) {
+      if (terminalTabsQuery.isLoading) {
+        return "Loading terminals...";
+      }
+      if (terminalTabsErrorMessage) {
+        return terminalTabsErrorMessage;
+      }
+      if (terminalTabIds.length === 0) {
+        return "No terminals yet. Use + to create one.";
+      }
+    }
+    return "Drop tabs to split.";
+  }, [
+    hasTerminalBackend,
+    showRawEvents,
+    showTerminalPanel,
+    terminalTabIds.length,
+    terminalTabsErrorMessage,
+    terminalTabsQuery.isLoading,
+    terminalFallbackMessage,
+  ]);
+
+  const workspacePanel = showWorkspace ? (
+    <div
+      ref={workspaceContainerRef}
+      className="relative flex w-full min-h-0 min-w-0 flex-col border-t border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 lg:shrink-0 lg:border-l lg:border-t-0"
+      style={{
+        width: isLargeScreen ? `${workspaceWidth}px` : undefined,
+        minWidth: isLargeScreen ? `${workspaceWidth}px` : undefined,
+        maxWidth: isLargeScreen ? `${workspaceWidth}px` : undefined,
+        userSelect: isResizingWorkspace ? "none" : undefined,
+      }}
+      data-workspace-container
+    >
+      {isLargeScreen ? (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          onMouseDown={startWorkspaceResize}
+          className="absolute -left-1 top-0 hidden h-full w-2 cursor-col-resize lg:block"
+          style={{
+            zIndex: "var(--z-sidebar-resize-handle)",
+          }}
+          title="Resize workspace"
+          data-workspace-resize-handle
+        />
+      ) : null}
+      <WorkspaceLayout
+        root={workspaceRoot}
+        onChange={setWorkspaceRootNormalized}
+        renderTabContent={renderWorkspaceTab}
+        renderEmptyPanel={() => (
+          <div className="text-xs text-neutral-400">{emptyWorkspaceMessage}</div>
+        )}
+        renderPanelActions={renderPanelActions}
+        onTabClose={(tab) => handleWorkspaceTabClose(tab)}
+        canCloseTab={(tab) => canCloseWorkspaceTab(tab)}
+        tabStyle={workspaceTabStyle}
         className="flex-1"
       />
     </div>
@@ -1316,7 +2063,7 @@ function ConversationThread() {
             resetKey={conversationResetKey}
           />
         </div>
-        {terminalPanel}
+        {workspacePanel}
       </div>
     );
   }
@@ -1337,14 +2084,7 @@ function ConversationThread() {
           resetKey={conversationResetKey}
         />
       </div>
-
-      {showRawEvents ? (
-        <RawAcpEventsPanel
-          rawEvents={rawEvents}
-          streamStatus={stream.status}
-        />
-      ) : null}
-      {terminalPanel}
+      {workspacePanel}
     </div>
   );
 }
@@ -1552,7 +2292,7 @@ function InterleavedInlineSection({ items }: { items: InterleavedItem[] }) {
         item.kind === "tool" ? (
           <ToolCallDisplay
             key={item.toolCall.id}
-            title={item.toolCall.name}
+            title={formatToolDisplayName(item.toolCall.name) ?? item.toolCall.name}
             detail={buildToolDetailFromArgs(item.toolCall.arguments)}
             status={item.toolCall.status}
             sections={[
@@ -1823,6 +2563,34 @@ type ToolCallDisplayProps = {
   sections: ToolCallDisplaySection[];
 };
 
+function formatToolDisplayName(toolName: string | null): string | null {
+  if (!toolName) return null;
+  if (!toolName.startsWith("mcp__")) return toolName;
+  const parts = toolName.split("__");
+  if (parts.length < 3) return toolName;
+  const toolPart = parts.slice(2).join("__");
+  const normalized = toolPart.replace(/_/g, " ").trim();
+  if (!normalized) return toolName;
+  return normalized[0]?.toUpperCase()
+    ? `${normalized[0].toUpperCase()}${normalized.slice(1)}`
+    : toolName;
+}
+
+function formatToolDetail(
+  command: string | null,
+  toolName: string | null,
+  description: string | null
+): string | null {
+  if (command) {
+    if (toolName && command.startsWith(toolName)) {
+      const stripped = command.slice(toolName.length).trim();
+      return stripped.length > 0 ? stripped : null;
+    }
+    return command;
+  }
+  return description ?? null;
+}
+
 function looksLikeJson(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed.length === 0) return false;
@@ -2028,8 +2796,8 @@ function ToolCallMessage({
 
   return (
     <ToolCallDisplay
-      title={call.toolName ?? call.title ?? "Tool call"}
-      detail={call.command ?? call.description ?? null}
+      title={formatToolDisplayName(call.toolName) ?? call.title ?? "Tool call"}
+      detail={formatToolDetail(call.command, call.toolName, call.description)}
       status={call.status}
       sections={sections}
     />
@@ -2058,9 +2826,11 @@ function ThinkingMessage({ message }: { message: Doc<"conversationMessages"> }) 
 function RawAcpEventsPanel({
   rawEvents,
   streamStatus,
+  className,
 }: {
   rawEvents: RawEventView[];
   streamStatus: AcpStreamStatus;
+  className?: string;
 }) {
   const streamLabel =
     streamStatus === "live"
@@ -2094,7 +2864,12 @@ function RawAcpEventsPanel({
   };
 
   return (
-    <div className="flex w-full min-h-0 max-h-[40vh] flex-col overflow-hidden border-t border-neutral-200/70 bg-neutral-50/70 px-4 py-4 dark:border-neutral-800/70 dark:bg-neutral-900/40 lg:h-full lg:max-h-none lg:w-[360px] lg:min-h-0 lg:border-l lg:border-t-0">
+    <div
+      className={clsx(
+        "flex min-h-0 flex-1 flex-col overflow-hidden bg-neutral-50/70 px-4 py-4 dark:bg-neutral-900/40",
+        className
+      )}
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-400">
           <span>Raw ACP events</span>
