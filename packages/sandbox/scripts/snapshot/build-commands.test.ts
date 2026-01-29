@@ -73,6 +73,24 @@ describe("getProvisioningCommands", () => {
     expect(acpInstall).toBeDefined();
   });
 
+  it("should include agent-browser install", () => {
+    const commands = getProvisioningCommands();
+
+    const agentBrowserInstall = commands.find((c) =>
+      c.args.some((arg) => arg.includes("agent-browser"))
+    );
+    expect(agentBrowserInstall).toBeDefined();
+  });
+
+  it("should include Chrome install", () => {
+    const commands = getProvisioningCommands();
+
+    const chromeInstall = commands.find((c) =>
+      c.args.some((arg) => arg.includes("google-chrome-stable"))
+    );
+    expect(chromeInstall).toBeDefined();
+  });
+
   it("should include directory creation", () => {
     const commands = getProvisioningCommands();
 
@@ -91,6 +109,28 @@ describe("getProvisioningCommands", () => {
         c.args.some((arg) => arg.includes("/usr/local/bin/mcp-upload"))
     );
     expect(mcpCopy).toBeDefined();
+  });
+
+  it("should include Chrome launcher install", () => {
+    const commands = getProvisioningCommands();
+
+    const chromeLauncher = commands.find(
+      (c) =>
+        c.type === "run" &&
+        c.args.some((arg) => arg.includes("/usr/local/bin/cmux-start-chrome"))
+    );
+    expect(chromeLauncher).toBeDefined();
+  });
+
+  it("should include agent-browser skill install", () => {
+    const commands = getProvisioningCommands();
+
+    const skillInstall = commands.find(
+      (c) =>
+        c.type === "run" &&
+        c.args.some((arg) => arg.includes("skills/agent-browser"))
+    );
+    expect(skillInstall).toBeDefined();
   });
 
   it("should have descriptions for most commands", () => {
@@ -121,6 +161,13 @@ describe("generateBootScript", () => {
     const script = generateBootScript();
 
     expect(script).toContain("cmux-acp-server");
+  });
+
+  it("should start VNC and Chrome", () => {
+    const script = generateBootScript();
+
+    expect(script).toContain("vncserver");
+    expect(script).toContain("cmux-start-chrome");
   });
 
   it("should include health check loop", () => {

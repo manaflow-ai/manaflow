@@ -130,6 +130,40 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
   });
 
   registry.register({
+    name: "install-desktop",
+    description: "Install VNC, minimal desktop, and Chrome dependencies",
+    deps: ["install-node"],
+    func: async (ctx) => {
+      await ctx.run(
+        "install-desktop",
+        `set -e
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          tigervnc-standalone-server tigervnc-common \
+          xvfb x11-xserver-utils xterm novnc dbus-x11 openbox \
+          libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+          libxrandr2 libxrender1 libxtst6 libnss3 libatk1.0-0 \
+          libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 \
+          libpango-1.0-0 libcairo2 fonts-liberation xauth
+
+        arch="$(dpkg --print-architecture)"
+        case "$arch" in
+          amd64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" ;;
+          arm64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb" ;;
+          *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
+        esac
+        cd /tmp
+        curl -fsSL -o chrome.deb "$chrome_url"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ./chrome.deb || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -yf
+        rm -f chrome.deb
+        rm -rf /var/lib/apt/lists/*
+        `
+      );
+    },
+  });
+
+  registry.register({
     name: "install-node",
     description: "Install Node.js 22",
     deps: ["apt-install"],
@@ -166,7 +200,7 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
   registry.register({
     name: "install-docker",
     description: "Install Docker packages",
-    deps: ["install-docker-repo", "install-node"],  // Wait for install-node to avoid apt lock
+    deps: ["install-docker-repo", "install-desktop"],  // Wait for desktop install to avoid apt lock
     func: async (ctx) => {
       await ctx.run(
         "install-docker",
@@ -359,6 +393,22 @@ NODE
     },
   });
 
+  registry.register({
+    name: "install-agent-browser",
+    description: "Install agent-browser CLI",
+    deps: ["install-node", "install-desktop"],
+    func: async (ctx) => {
+      await ctx.run(
+        "install-agent-browser",
+        `
+        set -e
+        npm install -g agent-browser
+        agent-browser --version
+        `
+      );
+    },
+  });
+
   // =========================================================================
   // cmux-acp-server (Rust binary, depends on rust and deps)
   // =========================================================================
@@ -440,9 +490,6 @@ NODE
           exit 1
         fi
 
-        # Clean up build directory to save space
-        cd /
-        rm -rf /tmp/cmux-build
         `
       );
     },
@@ -544,6 +591,108 @@ EOF
           cp /root/.claude/settings.json /home/user/.claude/settings.json
           cp /root/.claude.json /home/user/.claude.json
           chown -R user:user /home/user/.claude /home/user/.codex /home/user/.claude.json
+        fi
+        `
+      );
+    },
+  });
+
+  // =========================================================================
+  // Desktop + Agent Browser Setup
+  // =========================================================================
+
+  registry.register({
+    name: "install-openbox-config",
+    description: "Install Openbox menu configuration",
+    deps: ["install-desktop"],
+    func: async (ctx) => {
+      await ctx.run(
+        "install-openbox-config",
+        `
+        set -e
+        mkdir -p /root/.config/openbox
+        if [ -f /tmp/cmux-build/configs/openbox/menu.xml ]; then
+          cp /tmp/cmux-build/configs/openbox/menu.xml /root/.config/openbox/menu.xml
+        else
+          cat > /root/.config/openbox/menu.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu>
+  <menu id="root-menu" label="Applications">
+    <item label="Terminal">
+      <action name="Execute">
+        <command>xterm</command>
+      </action>
+    </item>
+  </menu>
+</openbox_menu>
+EOF
+        fi
+        `
+      );
+    },
+  });
+
+  registry.register({
+    name: "install-chrome-launcher",
+    description: "Install cmux-start-chrome helper",
+    deps: ["install-desktop"],
+    func: async (ctx) => {
+      await ctx.run(
+        "install-chrome-launcher",
+        `
+        set -e
+        if [ -f /tmp/cmux-build/sandbox/scripts/cmux-start-chrome.sh ]; then
+          install -m 0755 /tmp/cmux-build/sandbox/scripts/cmux-start-chrome.sh /usr/local/bin/cmux-start-chrome
+        else
+          echo "ERROR: cmux-start-chrome not found in repo" >&2
+          exit 1
+        fi
+        `
+      );
+    },
+  });
+
+  registry.register({
+    name: "install-agent-browser-skill",
+    description: "Install agent-browser skill for supported CLIs",
+    deps: ["install-agent-browser", "setup-cli-configs"],
+    func: async (ctx) => {
+      await ctx.run(
+        "install-agent-browser-skill",
+        `
+        set -e
+        SKILL_SOURCE="/tmp/cmux-build/sandbox/skills/agent-browser/SKILL.md"
+        if [ ! -f "$SKILL_SOURCE" ]; then
+          echo "ERROR: agent-browser skill not found at $SKILL_SOURCE" >&2
+          exit 1
+        fi
+        for dir in /root/.claude/skills/agent-browser /root/.codex/skills/agent-browser /root/.agents/skills/agent-browser /root/.config/opencode/skills/agent-browser; do
+          mkdir -p "$dir"
+          cp "$SKILL_SOURCE" "$dir/SKILL.md"
+        done
+        if id -u user >/dev/null 2>&1; then
+          for dir in /home/user/.claude/skills/agent-browser /home/user/.codex/skills/agent-browser /home/user/.agents/skills/agent-browser /home/user/.config/opencode/skills/agent-browser; do
+            mkdir -p "$dir"
+            cp "$SKILL_SOURCE" "$dir/SKILL.md"
+          done
+          chown -R user:user /home/user/.claude /home/user/.codex /home/user/.agents /home/user/.config/opencode
+        fi
+        `
+      );
+    },
+  });
+
+  registry.register({
+    name: "cleanup-build-dir",
+    description: "Remove temporary build directory",
+    deps: ["install-openbox-config", "install-chrome-launcher", "install-agent-browser-skill"],
+    func: async (ctx) => {
+      await ctx.run(
+        "cleanup-build-dir",
+        `
+        set -e
+        if [ -d /tmp/cmux-build ]; then
+          rm -rf /tmp/cmux-build
         fi
         `
       );
@@ -764,7 +913,23 @@ SERVICE
   registry.register({
     name: "verify",
     description: "Verify all installations",
-    deps: ["setup-dirs", "setup-user", "install-bun", "install-rust", "install-uv", "setup-docker", "setup-acp-service", "setup-cli-configs", "allow-acp-port"],
+    deps: [
+      "setup-dirs",
+      "setup-user",
+      "install-bun",
+      "install-rust",
+      "install-uv",
+      "install-desktop",
+      "install-agent-browser",
+      "install-openbox-config",
+      "install-chrome-launcher",
+      "install-agent-browser-skill",
+      "cleanup-build-dir",
+      "setup-docker",
+      "setup-acp-service",
+      "setup-cli-configs",
+      "allow-acp-port",
+    ],
     func: async (ctx) => {
       await ctx.run(
         "verify",
@@ -804,6 +969,20 @@ SERVICE
         echo "✓ Gemini CLI"
         which opencode > /dev/null
         echo "✓ OpenCode"
+        agent-browser --version > /dev/null
+        echo "✓ agent-browser"
+        vncserver -version > /dev/null
+        echo "✓ tigervnc"
+        if command -v google-chrome-stable > /dev/null 2>&1; then
+          google-chrome-stable --version > /dev/null
+          echo "✓ Google Chrome"
+        elif command -v google-chrome > /dev/null 2>&1; then
+          google-chrome --version > /dev/null
+          echo "✓ Google Chrome"
+        else
+          echo "Chrome not found"
+          exit 1
+        fi
         which cmux-acp-server > /dev/null
         echo "✓ cmux-acp-server"
 
@@ -976,6 +1155,51 @@ EOF
     },
   });
 
+  registry.register({
+    name: "start-desktop",
+    description: "Start VNC desktop and warm Chrome CDP",
+    deps: ["final-test", "install-openbox-config", "install-chrome-launcher"],
+    func: async (ctx) => {
+      await ctx.run(
+        "start-desktop",
+        `
+        set -e
+        mkdir -p /root/.vnc /var/log/cmux
+        if [ ! -f /root/.vnc/passwd ]; then
+          echo "cmux" | vncpasswd -f > /root/.vnc/passwd
+          chmod 600 /root/.vnc/passwd
+        fi
+        cat > /root/.vnc/xstartup << 'EOF'
+#!/bin/sh
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+xrdb "$HOME/.Xresources" 2>/dev/null || true
+openbox-session >/var/log/cmux/openbox.log 2>&1 &
+exec xterm
+EOF
+        chmod +x /root/.vnc/xstartup
+
+        vncserver -kill :1 >/dev/null 2>&1 || true
+        vncserver :1 -geometry 1920x1080 -depth 24
+
+        export DISPLAY=:1
+        export CDP_TARGET_PORT=9222
+        nohup /usr/local/bin/cmux-start-chrome > /var/log/cmux/chrome.log 2>&1 &
+
+        for i in $(seq 1 20); do
+          if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+            echo "✓ Chrome DevTools ready on 9222"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "ERROR: Chrome DevTools did not start on 9222" >&2
+        exit 1
+        `
+      );
+    },
+  });
+
   // =========================================================================
   // Expose HTTP and Verify Public Access
   // =========================================================================
@@ -983,7 +1207,7 @@ EOF
   registry.register({
     name: "expose-http",
     description: "Expose ACP server HTTP port and verify public access",
-    deps: ["final-test"],
+    deps: ["start-desktop"],
     func: async (ctx) => {
       // Expose the ACP server port to the public internet
       if (!ctx.vm.exposeHttp) {

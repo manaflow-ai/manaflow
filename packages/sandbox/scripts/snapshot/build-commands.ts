@@ -32,6 +32,23 @@ export interface BuildCommand {
 export function getProvisioningCommands(): BuildCommand[] {
   const mcpUploadPath = resolvePath(process.cwd(), "scripts/mcp-upload.mjs");
   const mcpUploadBase64 = readFileSync(mcpUploadPath).toString("base64");
+  const agentBrowserSkillPath = resolvePath(
+    process.cwd(),
+    "skills/agent-browser/SKILL.md"
+  );
+  const agentBrowserSkillBase64 = readFileSync(agentBrowserSkillPath).toString(
+    "base64"
+  );
+  const openboxMenuPath = resolvePath(
+    process.cwd(),
+    "../../configs/openbox/menu.xml"
+  );
+  const openboxMenuBase64 = readFileSync(openboxMenuPath).toString("base64");
+  const chromeLauncherPath = resolvePath(
+    process.cwd(),
+    "scripts/cmux-start-chrome.sh"
+  );
+  const chromeLauncherBase64 = readFileSync(chromeLauncherPath).toString("base64");
   return [
     // ==========================================================================
     // System Packages
@@ -45,9 +62,28 @@ export function getProvisioningCommands(): BuildCommand[] {
       type: "run",
       args: [
         "DEBIAN_FRONTEND=noninteractive apt-get install -y " +
-          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh",
+          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh " +
+          "tigervnc-standalone-server tigervnc-common xvfb x11-xserver-utils xterm novnc dbus-x11 openbox xauth " +
+          "libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libxrender1 libxtst6 libnss3 " +
+          "libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 libpango-1.0-0 libcairo2 fonts-liberation",
       ],
       description: "Install base system packages (including passwd for useradd)",
+    },
+    {
+      type: "run",
+      args: [
+        'arch="$(dpkg --print-architecture)" && ' +
+          'case "$arch" in ' +
+          'amd64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" ;; ' +
+          'arm64) chrome_url="https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb" ;; ' +
+          '*) echo "Unsupported architecture: $arch" >&2; exit 1 ;; ' +
+          "esac && " +
+          'cd /tmp && curl -fsSL -o chrome.deb "$chrome_url" && ' +
+          "DEBIAN_FRONTEND=noninteractive apt-get install -y ./chrome.deb || true && " +
+          "DEBIAN_FRONTEND=noninteractive apt-get install -yf && " +
+          "rm -f chrome.deb",
+      ],
+      description: "Install Google Chrome",
     },
 
     // ==========================================================================
@@ -76,6 +112,11 @@ export function getProvisioningCommands(): BuildCommand[] {
       type: "run",
       args: ["apt-get install -y nodejs"],
       description: "Install Node.js",
+    },
+    {
+      type: "run",
+      args: ["npm install -g agent-browser"],
+      description: "Install agent-browser CLI",
     },
 
     // ==========================================================================
@@ -180,6 +221,20 @@ export function getProvisioningCommands(): BuildCommand[] {
       ],
       description: "Install MCP upload tool",
     },
+    {
+      type: "run",
+      args: [
+        `printf '%s' '${chromeLauncherBase64}' | base64 -d > /usr/local/bin/cmux-start-chrome && chmod +x /usr/local/bin/cmux-start-chrome`,
+      ],
+      description: "Install Chrome launcher script",
+    },
+    {
+      type: "run",
+      args: [
+        `mkdir -p /root/.config/openbox && printf '%s' '${openboxMenuBase64}' | base64 -d > /root/.config/openbox/menu.xml`,
+      ],
+      description: "Install Openbox menu configuration",
+    },
 
     // ==========================================================================
     // Directory Setup
@@ -267,12 +322,27 @@ CLAUDEJSONEOF`,
     {
       type: "run",
       args: [
+        `for dir in /root/.claude/skills/agent-browser /root/.codex/skills/agent-browser /root/.agents/skills/agent-browser /root/.config/opencode/skills/agent-browser; do ` +
+          `mkdir -p "$dir"; ` +
+          `printf '%s' '${agentBrowserSkillBase64}' | base64 -d > "$dir/SKILL.md"; ` +
+          "done",
+      ],
+      description: "Install agent-browser skill for CLIs",
+    },
+    {
+      type: "run",
+      args: [
         "if id -u user >/dev/null 2>&1; then " +
           "mkdir -p /home/user/.claude /home/user/.codex && " +
           "cp /root/.codex/config.toml /home/user/.codex/config.toml && " +
           "cp /root/.claude/settings.json /home/user/.claude/settings.json && " +
           "cp /root/.claude.json /home/user/.claude.json && " +
-          "chown -R user:user /home/user/.claude /home/user/.codex /home/user/.claude.json; " +
+          "mkdir -p /home/user/.claude/skills/agent-browser /home/user/.codex/skills/agent-browser /home/user/.agents/skills/agent-browser /home/user/.config/opencode/skills/agent-browser && " +
+          `printf '%s' '${agentBrowserSkillBase64}' | base64 -d > /home/user/.claude/skills/agent-browser/SKILL.md && ` +
+          `printf '%s' '${agentBrowserSkillBase64}' | base64 -d > /home/user/.codex/skills/agent-browser/SKILL.md && ` +
+          `printf '%s' '${agentBrowserSkillBase64}' | base64 -d > /home/user/.agents/skills/agent-browser/SKILL.md && ` +
+          `printf '%s' '${agentBrowserSkillBase64}' | base64 -d > /home/user/.config/opencode/skills/agent-browser/SKILL.md && ` +
+          "chown -R user:user /home/user/.claude /home/user/.codex /home/user/.agents /home/user/.config/opencode /home/user/.claude.json; " +
         "fi",
       ],
       description: "Mirror CLI configs for non-root user",
@@ -297,17 +367,64 @@ set -e
 export PATH="/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export BUN_INSTALL="/root/.bun"
 
+# Resolve runtime directories for root/non-root environments
+HOME_DIR="\${HOME:-/root}"
+LOG_DIR="/var/log/cmux"
+if ! mkdir -p "$LOG_DIR" >/dev/null 2>&1; then
+  LOG_DIR="/tmp/cmux-logs"
+  mkdir -p "$LOG_DIR"
+fi
+VNC_DIR="$HOME_DIR/.vnc"
+if ! mkdir -p "$VNC_DIR" >/dev/null 2>&1; then
+  VNC_DIR="/tmp/cmux-vnc"
+  mkdir -p "$VNC_DIR"
+fi
+export HOME="$HOME_DIR"
+
+# Prepare VNC config (start after ACP is ready)
+if [ ! -f "$VNC_DIR/passwd" ] && command -v vncpasswd >/dev/null 2>&1; then
+  echo "cmux" | vncpasswd -f > "$VNC_DIR/passwd"
+  chmod 600 "$VNC_DIR/passwd"
+fi
+if [ ! -f "$VNC_DIR/xstartup" ]; then
+  cat > "$VNC_DIR/xstartup" << VNCX
+#!/bin/sh
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+xrdb "$HOME/.Xresources" 2>/dev/null || true
+openbox-session > "$LOG_DIR/openbox.log" 2>&1 &
+exec xterm
+VNCX
+  chmod +x "$VNC_DIR/xstartup"
+fi
+
 # Start cmux-pty in the background
-/usr/local/bin/cmux-pty &
-PTY_PID=$!
+if [ -x /usr/local/bin/cmux-pty ]; then
+  /usr/local/bin/cmux-pty &
+  PTY_PID=$!
+else
+  echo "WARNING: cmux-pty not installed" >&2
+fi
 
 # Start opencode serve in the background (proxied via cmux-acp-server at /api/opencode/*)
-cd /workspace && /root/.bun/bin/opencode serve --port 39385 --hostname 127.0.0.1 &
-OPENCODE_PID=$!
+if command -v opencode >/dev/null 2>&1; then
+  cd /workspace && opencode serve --port 39385 --hostname 127.0.0.1 &
+  OPENCODE_PID=$!
+elif [ -x /root/.bun/bin/opencode ]; then
+  cd /workspace && /root/.bun/bin/opencode serve --port 39385 --hostname 127.0.0.1 &
+  OPENCODE_PID=$!
+else
+  echo "WARNING: opencode not installed" >&2
+fi
 
 # Start cmux-acp-server in the background
-/usr/local/bin/cmux-acp-server &
-SERVER_PID=$!
+if [ -x /usr/local/bin/cmux-acp-server ]; then
+  /usr/local/bin/cmux-acp-server &
+  SERVER_PID=$!
+else
+  echo "ERROR: cmux-acp-server not installed" >&2
+  exit 1
+fi
 
 # Wait for cmux-pty to be ready (max 15 seconds)
 echo "Waiting for cmux-pty to be ready..."
@@ -319,20 +436,44 @@ for i in {1..15}; do
   sleep 1
 done
 
-# Wait for health check to pass (max 30 seconds)
+# Wait for health check to pass (max 180 seconds)
 echo "Waiting for cmux-acp-server to be ready..."
-for i in {1..30}; do
+READY=0
+for i in {1..180}; do
   if curl -sf http://localhost:39384/health > /dev/null 2>&1; then
     echo "cmux-acp-server is ready"
-    # Keep the container running
-    wait $SERVER_PID
-    exit 0
+    READY=1
+    break
   fi
   sleep 1
 done
 
-echo "ERROR: cmux-acp-server failed to start within 30 seconds"
-exit 1
+if [ "$READY" -ne 1 ]; then
+  echo "ERROR: cmux-acp-server failed to start within 180 seconds"
+  exit 1
+fi
+
+# Start VNC desktop now that ACP is ready
+if command -v vncserver >/dev/null 2>&1; then
+  vncserver -kill :1 >/dev/null 2>&1 || true
+  (vncserver :1 -geometry 1920x1080 -depth 24 > "$LOG_DIR/vnc.log" 2>&1 || \
+    echo "WARNING: vncserver failed to start" >&2) &
+else
+  echo "WARNING: vncserver not installed" >&2
+fi
+
+# Start Chrome with CDP for agent-browser
+export DISPLAY=:1
+export CDP_TARGET_PORT=9222
+if [ -x /usr/local/bin/cmux-start-chrome ]; then
+  /usr/local/bin/cmux-start-chrome > "$LOG_DIR/chrome.log" 2>&1 &
+else
+  echo "WARNING: cmux-start-chrome not installed" >&2
+fi
+
+# Keep the container running
+wait $SERVER_PID
+exit 0
 `;
 }
 
