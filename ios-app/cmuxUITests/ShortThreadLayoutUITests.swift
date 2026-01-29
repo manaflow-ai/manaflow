@@ -46,9 +46,9 @@ final class ShortThreadLayoutUITests: XCTestCase {
     }
 
     private func waitForMessages(app: XCUIApplication) {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.")
-        let messages = app.otherElements.matching(predicate)
-        let first = messages.element(boundBy: 0)
+        let scroll = app.scrollViews["chat.scroll"]
+        _ = scroll.waitForExistence(timeout: 8)
+        let first = messageQuery(app: app).firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 6))
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
     }
@@ -91,8 +91,7 @@ final class ShortThreadLayoutUITests: XCTestCase {
     }
 
     private func orderedVisibleMessages(app: XCUIApplication, in scroll: XCUIElement) -> [XCUIElement] {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.")
-        let messages = app.otherElements.matching(predicate).allElementsBoundByIndex
+        let messages = messageQuery(app: app).allElementsBoundByIndex
         let scrollFrame = scroll.frame
         let visible = messages.filter { element in
             element.exists && !element.frame.isEmpty && element.frame.intersects(scrollFrame)
@@ -136,5 +135,14 @@ final class ShortThreadLayoutUITests: XCTestCase {
             return scroll
         }
         return app.otherElements["chat.scroll"]
+    }
+
+    private func messageQuery(app: XCUIApplication) -> XCUIElementQuery {
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.")
+        let scroll = app.scrollViews["chat.scroll"]
+        if scroll.exists {
+            return scroll.descendants(matching: .any).matching(predicate)
+        }
+        return app.descendants(matching: .any).matching(predicate)
     }
 }

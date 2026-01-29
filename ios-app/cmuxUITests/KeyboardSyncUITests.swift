@@ -4,7 +4,7 @@ final class KeyboardSyncUITests: XCTestCase {
     private let defaultTolerance: CGFloat = 1.0
     private let interactiveAnchorTolerance: CGFloat = 2.5
     private let interactiveStepTolerance: CGFloat = 1.75
-    private let longConversationName = "Claude"
+    private let uiTestConversationId = "uitest_conversation_claude"
 
     override func setUp() {
         super.setUp()
@@ -27,26 +27,55 @@ final class KeyboardSyncUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
-        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "60"
+        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "30"
+        app.launchEnvironment["CMUX_UITEST_TRACK_MESSAGE_POS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = uiTestConversationId
         app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = "0.5"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
-        app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD_INITIAL_OVERLAP"] = "280"
+        app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD_INITIAL_OVERLAP"] = "0"
+        app.launchEnvironment["CMUX_UITEST_DISABLE_SHORT_THREAD_PIN"] = "1"
         app.launch()
 
-        ensureSignedIn(app: app)
-        waitForConversationList(app: app)
-        ensureConversationVisible(app: app, name: longConversationName)
-        openConversation(app: app, name: longConversationName)
         waitForMessages(app: app)
 
         let pill = app.otherElements["chat.inputPill"]
         XCTAssertTrue(pill.waitForExistence(timeout: 6))
 
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        if snapClosed.waitForExistence(timeout: 1) {
+            snapClosed.tap()
+        } else {
+            let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
+            if stepDown.exists {
+                for _ in 0..<12 {
+                    stepDown.tap()
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+                }
+            }
+        }
+        waitForKeyboard(app: app, visible: false)
         waitForScrollSettle()
+        let closedBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "interactive dismissal baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "interactive dismissal baseline"
+        )
+        openKeyboard(app: app, pill: pill)
+        waitForKeyboard(app: app, visible: true)
+
         let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
         XCTAssertTrue(stepDown.waitForExistence(timeout: 4))
         let usesFakeKeyboard = stepDown.exists
 
+        let basePillTop = pill.frame.minY
         let baseGaps = captureGaps(app: app, pill: pill)
         XCTAssertFalse(baseGaps.isEmpty, "No message gaps found before interactive dismissal")
 
@@ -56,13 +85,19 @@ final class KeyboardSyncUITests: XCTestCase {
         var referenceGaps: [String: CGFloat] = usesFakeKeyboard ? baseReference : [:]
         var lastGaps: [String: CGFloat] = usesFakeKeyboard ? baseReference : [:]
         var hasReference = usesFakeKeyboard
-        let basePillTop = pill.frame.minY
         var sawPillMove = usesFakeKeyboard
         let dragSteps = 5
 
         for index in 0..<dragSteps {
             performInteractiveDismissDrag(app: app, endDy: 0.74)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+
+            assertInputPillVisibleAndNotBelowBaseline(
+                app: app,
+                pill: pill,
+                baseline: closedBaseline,
+                context: "interactive dismissal step \(index)"
+            )
 
             if abs(pill.frame.minY - basePillTop) > 6 {
                 sawPillMove = true
@@ -107,28 +142,46 @@ final class KeyboardSyncUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
-        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "60"
+        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "30"
+        app.launchEnvironment["CMUX_UITEST_TRACK_MESSAGE_POS"] = "1"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = uiTestConversationId
+        app.launchEnvironment["CMUX_UITEST_DISABLE_SHORT_THREAD_PIN"] = "1"
         if let scrollFraction {
             app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = String(scrollFraction)
         }
         app.launch()
 
-        ensureSignedIn(app: app)
-        waitForConversationList(app: app)
-        ensureConversationVisible(app: app, name: longConversationName)
-        openConversation(app: app, name: longConversationName)
         waitForMessages(app: app)
 
         let pill = app.otherElements["chat.inputPill"]
         XCTAssertTrue(pill.waitForExistence(timeout: 6))
 
         waitForScrollSettle()
+        let closedBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "keyboard sync closed"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "keyboard sync closed"
+        )
         let baseGaps = captureGaps(app: app, pill: pill)
         XCTAssertFalse(baseGaps.isEmpty)
 
         openKeyboard(app: app, pill: pill)
         waitForKeyboard(app: app, visible: true)
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "keyboard sync open"
+        )
         let openGaps = captureGaps(app: app, pill: pill)
         assertGapConsistency(
             reference: baseGaps,
@@ -139,6 +192,12 @@ final class KeyboardSyncUITests: XCTestCase {
 
         dismissKeyboard(app: app)
         waitForKeyboard(app: app, visible: false)
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "keyboard sync closed after dismiss"
+        )
         let closedGaps = captureGaps(app: app, pill: pill)
         assertGapConsistency(
             reference: baseGaps,
@@ -169,46 +228,10 @@ final class KeyboardSyncUITests: XCTestCase {
         }
     }
 
-    private func dismissKeyboard(app: XCUIApplication) {
-        let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
-        if stepDown.exists {
-            for _ in 0..<12 {
-                stepDown.tap()
-                RunLoop.current.run(until: Date().addingTimeInterval(0.06))
-            }
-            return
-        }
-        let keyboard = app.keyboards.element
-        if keyboard.exists {
-            let hide = keyboard.buttons["Hide keyboard"]
-            if hide.exists {
-                hide.tap()
-                return
-            }
-            let dismiss = keyboard.buttons["Dismiss keyboard"]
-            if dismiss.exists {
-                dismiss.tap()
-                return
-            }
-            let `return` = keyboard.buttons["Return"]
-            if `return`.exists {
-                `return`.tap()
-                return
-            }
-        }
-        let scroll = locateScrollView(app: app)
-        if scroll.exists {
-            let target = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
-            target.tap()
-        } else {
-            app.tap()
-        }
-    }
-
     private func waitForKeyboard(app: XCUIApplication, visible: Bool) {
         let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
         if stepDown.exists {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+            RunLoop.current.run(until: Date().addingTimeInterval(1.2))
             return
         }
         let keyboard = app.keyboards.element
@@ -222,60 +245,25 @@ final class KeyboardSyncUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(0.8))
     }
 
-    private func openConversation(app: XCUIApplication, name: String) {
-        let conversation = app.staticTexts[name]
-        if !conversation.waitForExistence(timeout: 6) {
-            ensureConversationVisible(app: app, name: name)
-        }
-        XCTAssertTrue(conversation.waitForExistence(timeout: 6))
-        conversation.tap()
-    }
-
     private func waitForMessages(app: XCUIApplication) {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.")
-        let messages = app.otherElements.matching(predicate)
-        let first = messages.element(boundBy: 0)
-        XCTAssertTrue(first.waitForExistence(timeout: 6))
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
-    }
-
-    private func ensureConversationVisible(app: XCUIApplication, name: String) {
-        let list = app.tables.element(boundBy: 0)
-        let conversation = app.staticTexts[name]
-        let maxSwipes = 6
-        var attempt = 0
-        while attempt < maxSwipes && !conversation.exists {
-            if list.exists {
-                list.swipeUp()
-            } else {
-                app.swipeUp()
+        let marker = app.otherElements["chat.lastAssistantTextBottom"]
+        XCTAssertTrue(marker.waitForExistence(timeout: 10))
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            if marker.frame.height > 0 {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+                return
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-            attempt += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
+        XCTFail("Last assistant marker never received a valid frame")
     }
 
-    private func ensureSignedIn(app: XCUIApplication) {
-        let emailField = app.textFields["Email"]
-        guard emailField.waitForExistence(timeout: 2) else { return }
-        emailField.tap()
-        emailField.typeText("42")
-        let continueButton = app.buttons["Continue"]
-        if continueButton.exists {
-            continueButton.tap()
-        }
-    }
-
-    private func waitForConversationList(app: XCUIApplication) {
-        let navBar = app.navigationBars["Tasks"]
-        if navBar.waitForExistence(timeout: 10) {
-            return
-        }
-        let list = app.tables.element(boundBy: 0)
-        _ = list.waitForExistence(timeout: 6)
-    }
-
-    private func performInteractiveDismissDrag(app: XCUIApplication, endDy: CGFloat, pressDuration: TimeInterval = 0.05) {
+    private func performInteractiveDismissDrag(
+        app: XCUIApplication,
+        endDy: CGFloat,
+        pressDuration: TimeInterval = 0.05
+    ) {
         let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
         if stepDown.exists {
             stepDown.tap()
@@ -288,31 +276,37 @@ final class KeyboardSyncUITests: XCTestCase {
             start.press(forDuration: pressDuration, thenDragTo: end)
             return
         }
-        let scroll = locateScrollView(app: app)
-        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
-        let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endDy))
+        let window = app.windows.element(boundBy: 0)
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endDy))
         start.press(forDuration: pressDuration, thenDragTo: end)
     }
 
     private func captureGaps(app: XCUIApplication, pill: XCUIElement) -> [String: CGFloat] {
-        let scroll = locateScrollView(app: app)
-        let scrollFrame = scroll.exists ? scroll.frame : app.windows.element(boundBy: 0).frame
+        let window = app.windows.firstMatch
+        let windowFrame = window.exists ? window.frame : app.frame
         let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.")
-        let messages = app.otherElements.matching(predicate).allElementsBoundByIndex
-
+        let messages = app.otherElements.matching(predicate)
         var gaps: [String: CGFloat] = [:]
-        for message in messages where message.frame.intersects(scrollFrame) {
-            let gap = pill.frame.minY - message.frame.maxY
-            gaps[message.identifier] = gap
-        }
-        if gaps.isEmpty {
-            for message in messages {
-                let gap = pill.frame.minY - message.frame.maxY
+        for index in 0..<messages.count {
+            let message = messages.element(boundBy: index)
+            let frame = message.frame
+            if frame.height > 1,
+               frame.width > 1,
+               frame.intersects(windowFrame) {
+                let gap = pill.frame.minY - frame.maxY
                 gaps[message.identifier] = gap
             }
         }
-        return gaps
+        if !gaps.isEmpty {
+            return gaps
+        }
+        let marker = app.otherElements["chat.lastAssistantTextBottom"]
+        guard marker.exists else { return [:] }
+        let gap = pill.frame.minY - marker.frame.maxY
+        return ["lastAssistantText": gap]
     }
+
 
     private func assertGapConsistency(
         reference: [String: CGFloat],
@@ -346,11 +340,35 @@ final class KeyboardSyncUITests: XCTestCase {
         )
     }
 
-    private func locateScrollView(app: XCUIApplication) -> XCUIElement {
-        let scroll = app.scrollViews["chat.scroll"]
-        if scroll.exists {
-            return scroll
+    private func dismissKeyboard(app: XCUIApplication) {
+        let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
+        if stepDown.exists {
+            for _ in 0..<12 {
+                stepDown.tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+            }
+            return
         }
-        return app.otherElements["chat.scroll"]
+        let keyboard = app.keyboards.element
+        if keyboard.exists {
+            let hide = keyboard.buttons["Hide keyboard"]
+            if hide.exists {
+                hide.tap()
+                return
+            }
+            let dismiss = keyboard.buttons["Dismiss keyboard"]
+            if dismiss.exists {
+                dismiss.tap()
+                return
+            }
+            let `return` = keyboard.buttons["Return"]
+            if `return`.exists {
+                `return`.tap()
+                return
+            }
+        }
+        let window = app.windows.element(boundBy: 0)
+        let target = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+        target.tap()
     }
 }

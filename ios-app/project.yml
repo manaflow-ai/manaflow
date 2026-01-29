@@ -89,6 +89,7 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/cmux DEV.app/cmux DEV"
         BUNDLE_LOADER: "$(TEST_HOST)"
+        DEVELOPMENT_TEAM: 7WLXT3NR37
   cmuxUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -100,3 +101,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.cmux.app.dev.uitests
         GENERATE_INFOPLIST_FILE: "YES"
+        DEVELOPMENT_TEAM: 7WLXT3NR37

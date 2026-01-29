@@ -241,6 +241,10 @@ struct DebugInputBar: View {
             }
             if newValue.isEmpty {
                 didEnterMultiline = false
+                let resetHeight = alignToPixel(DebugInputBarMetrics.singleLineEditorHeight)
+                if abs(measuredTextHeight - resetHeight) > 0.5 {
+                    measuredTextHeight = resetHeight
+                }
             } else if DebugInputBarMetrics.lineCount(for: newValue) > 1 {
                 didEnterMultiline = true
             }
@@ -414,7 +418,7 @@ struct DebugInputBar: View {
                 .frame(height: 1)
                 .background(
                     Group {
-                        if UITestConfig.mockDataEnabled {
+                        if UITestConfig.presentationSamplingEnabled {
                             InputBarFrameReader(usePresentationLayer: true) { frame in
                                 geometry.pillBottomEdgePresentationFrameInWindow = frame
                             }
@@ -434,6 +438,7 @@ struct DebugInputBar: View {
                 VStack(spacing: 0) {
                     Button {
                         text = "Line 1\nLine 2\nLine 3"
+                        programmaticChangeToken += 1
                     } label: {
                         Color.clear
                             .frame(width: 44, height: 44)
@@ -443,6 +448,7 @@ struct DebugInputBar: View {
 
                     Button {
                         text = ""
+                        programmaticChangeToken += 1
                     } label: {
                         Color.clear
                             .frame(width: 44, height: 44)
@@ -655,8 +661,11 @@ final class DebugInputBarViewController: UIViewController {
         pillAccessibilityView.isUserInteractionEnabled = false
         view.addSubview(pillAccessibilityView)
 
-        liveBottomEdgeView.isAccessibilityElement = true
-        liveBottomEdgeView.accessibilityIdentifier = "chat.inputPillBottomEdgeLive"
+        let liveBottomEdgeEnabled = UITestConfig.presentationSamplingEnabled
+        liveBottomEdgeView.isAccessibilityElement = liveBottomEdgeEnabled
+        if liveBottomEdgeEnabled {
+            liveBottomEdgeView.accessibilityIdentifier = "chat.inputPillBottomEdgeLive"
+        }
         liveBottomEdgeView.backgroundColor = .clear
         liveBottomEdgeView.isUserInteractionEnabled = false
         view.addSubview(liveBottomEdgeView)
@@ -2070,7 +2079,7 @@ private final class InputBarFrameReaderView: UIView {
     private func refreshDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
-        guard usePresentationLayer, window != nil, UITestConfig.mockDataEnabled else { return }
+        guard usePresentationLayer, window != nil, UITestConfig.presentationSamplingEnabled else { return }
         let link = CADisplayLink(target: self, selector: #selector(handleDisplayLink))
         link.add(to: .main, forMode: .common)
         displayLink = link

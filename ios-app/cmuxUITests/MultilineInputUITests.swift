@@ -40,6 +40,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "placeholder baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "placeholder baseline"
+        )
 
         assertInputCenterAligned(app: app, pill: pill, input: input, context: "placeholder")
 
@@ -56,6 +67,12 @@ final class MultilineInputUITests: XCTestCase {
             "Expected send button to appear after typing"
         )
         assertInputCenterAligned(app: app, pill: pill, input: input, context: "single-line text")
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "single-line text"
+        )
     }
 
     func testCaretStaysCenteredAfterFirstCharacter() {
@@ -76,6 +93,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "caret centered baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "caret centered baseline"
+        )
 
         let caret = waitForInputCaret(app: app)
         let baselinePillFrame = waitForStableElementFrame(element: pill, timeout: 2)
@@ -113,6 +141,12 @@ final class MultilineInputUITests: XCTestCase {
             caretShiftTolerance,
             "Expected caret to stay vertically centered after first character, delta=\(shiftDelta) baseline=\(baselineCaretFrame) typed=\(typedCaretFrame)"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "caret centered after typing"
+        )
     }
 
     func testInputExpandsForMultilineText() {
@@ -135,6 +169,17 @@ final class MultilineInputUITests: XCTestCase {
         clearInput(app: app, input: input)
 
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "multiline expand baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "multiline expand baseline"
+        )
         let baselinePillHeight = waitForStablePillHeight(app: app, pill: pill, timeout: 2)
         let baselineInputHeight = waitForStableInputFrame(app: app, input: input, timeout: 2).height
 
@@ -189,6 +234,12 @@ final class MultilineInputUITests: XCTestCase {
             pillFrame.maxY + frameTolerance,
             "Input text should stay within pill bounds (bottom)"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "multiline expand"
+        )
     }
 
     func testPillExpandsForReturnsOnlyAndShowsSend() {
@@ -210,6 +261,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "returns expand baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "returns expand baseline"
+        )
 
         let baselinePillHeight = pill.frame.height
         let baselineInputHeight = input.frame.height
@@ -252,6 +314,12 @@ final class MultilineInputUITests: XCTestCase {
             baselineInputHeight + minReturnGrowth,
             "Expected input field to grow for return-only input"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "returns expand"
+        )
 
         clearInput(app: app, input: input)
         typeText(app: app, input: input, text: "   ")
@@ -263,6 +331,12 @@ final class MultilineInputUITests: XCTestCase {
         XCTAssertFalse(
             placeholder.exists,
             "Expected placeholder to hide when spaces are entered"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "returns expand after spaces"
         )
     }
 
@@ -286,6 +360,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "pill bottom grows baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "pill bottom grows baseline"
+        )
 
         let baselineBottom = waitForStablePillBottom(
             bottomEdge: bottomEdge,
@@ -344,6 +429,12 @@ final class MultilineInputUITests: XCTestCase {
             duration: 0.5,
             context: "after return-only growth"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "pill bottom grows after typing"
+        )
     }
 
     func testPillBottomEdgeStaysFixedWhenGrowingWithText() {
@@ -366,6 +457,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "pill bottom text baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "pill bottom text baseline"
+        )
 
         let baselineBottom = waitForStablePillBottom(
             bottomEdge: bottomEdge,
@@ -425,6 +527,12 @@ final class MultilineInputUITests: XCTestCase {
             duration: 0.5,
             context: "after multiline growth"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "pill bottom text after typing"
+        )
     }
 
     func testPillBottomEdgeStaysFixedAtTwoLines() {
@@ -447,6 +555,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "pill bottom two lines baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "pill bottom two lines baseline"
+        )
 
         let baselineBottom = waitForStablePillBottom(
             bottomEdge: bottomEdge,
@@ -500,6 +619,12 @@ final class MultilineInputUITests: XCTestCase {
             duration: 0.4,
             context: "after two-line growth"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "pill bottom two lines after typing"
+        )
     }
 
     func testCaretDistanceToBottomStaysFixedThroughReturns() {
@@ -521,6 +646,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "caret distance baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "caret distance baseline"
+        )
 
         let caret = waitForInputCaret(app: app)
         typeText(app: app, input: input, text: "A")
@@ -686,6 +822,12 @@ final class MultilineInputUITests: XCTestCase {
             caretDriftRangeTolerance,
             "Caret-to-viewport-bottom drift range exceeded tolerance: range=\(caretViewportRange) min=\(minCaretToViewportBottom) max=\(maxCaretToViewportBottom)"
         )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "caret distance after returns"
+        )
     }
 
     func testKeyboardDoesNotJumpOnReturnAndBackspace() {
@@ -706,6 +848,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "keyboard jump baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "keyboard jump baseline"
+        )
 
         let baselineKeyboardMinY = app.keyboards.firstMatch.frame.minY
         typeText(app: app, input: input, text: "\n")
@@ -721,6 +874,12 @@ final class MultilineInputUITests: XCTestCase {
             keyboardShift,
             keyboardTolerance,
             "Keyboard should remain stable after return + backspace (shift \(keyboardShift))"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "keyboard jump after return"
         )
     }
 
@@ -743,6 +902,17 @@ final class MultilineInputUITests: XCTestCase {
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
         waitForKeyboard(app: app)
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "placeholder reset baseline"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "placeholder reset baseline"
+        )
 
         assertInputCenterAligned(app: app, pill: pill, input: input, context: "placeholder baseline")
         let baselinePillHeight = pill.frame.height
@@ -792,6 +962,12 @@ final class MultilineInputUITests: XCTestCase {
             "Expected input height to return to single-line baseline"
         )
         assertInputCenterAligned(app: app, pill: pill, input: input, context: "placeholder after multiline")
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "placeholder reset after multiline"
+        )
     }
 
     private func assertInputCenterAligned(

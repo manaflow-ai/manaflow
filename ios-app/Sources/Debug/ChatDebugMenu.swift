@@ -21,6 +21,15 @@ struct ChatDebugMenu: View {
                 }
             }
 
+            Section("Input Lab") {
+                NavigationLink("Input Strategy Lab") {
+                    InputStrategyLabView()
+                }
+                NavigationLink("Input Hypothesis Lab") {
+                    InputHypothesisLabView()
+                }
+            }
+
             Section("Original (with dropdown)") {
                 NavigationLink("Picker (default: none)") {
                     ChatApproachI(conversation: fakeConversations[0])
@@ -36,18 +45,18 @@ struct ChatDebugMenu: View {
                 }
             }
 
-            Section("Markdown") {
-                NavigationLink("Markdown Debug") {
-                    MarkdownDebugView()
+            Section("Jank Debug") {
+                NavigationLink("Jank scenarios") {
+                    ChatFix1MainJankDebugMenuView()
+                }
+                NavigationLink("Single user message") {
+                    ChatFix1MainSingleMessageDebugView()
                 }
             }
 
-            Section("Input Lab") {
-                NavigationLink("Input Strategy Lab") {
-                    InputStrategyLabView()
-                }
-                NavigationLink("Input Hypothesis Lab") {
-                    InputHypothesisLabView()
+            Section("Markdown") {
+                NavigationLink("Markdown Debug") {
+                    MarkdownDebugView()
                 }
             }
 

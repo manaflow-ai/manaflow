@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -50,6 +50,7 @@
 		CC62BB48ED0957484E001EFB /* ConversationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D3B3CB64500DDB27D7C781 /* ConversationE2ETests.swift */; };
 		D593A476423097F95F227570 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */; };
 		D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D367AC3D322118AE559DBF /* AuthManager.swift */; };
+		D8A1B4B558D251DE7BF82D4A /* InputPillVisibilityAssertions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FADE32B7A47A43C3608972AC /* InputPillVisibilityAssertions.swift */; };
 		DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */; };
 		E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0C333BDE07456C757877E2 /* ConvexMobile */; };
 		E53E64DA59BFCB7E396E0865 /* AuthPersistenceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */; };
@@ -94,7 +95,7 @@
 		2F94540C907EB9AC1DCCD6DD /* ConvexApiTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexApiTypes.swift; sourceTree = "<group>"; };
 		38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1_ContentInsetNever.swift; sourceTree = "<group>"; };
 		4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1MainView.swift; sourceTree = "<group>"; };
-		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; name = cmux.app; path = "cmux DEV.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4873F8C34F5557AD1E6F6CF3 /* DebugLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogStore.swift; sourceTree = "<group>"; };
 		4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConfig.swift; sourceTree = "<group>"; };
 		5D62642C09CEB3EB28FD2733 /* ConversationReadOverrides.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationReadOverrides.swift; sourceTree = "<group>"; };
@@ -136,10 +137,11 @@
 		DEF1E409D552C017B2175D56 /* CrashReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashReporter.swift; sourceTree = "<group>"; };
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
 		EA3E777383A04F6153583A5E /* InputStrategyLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputStrategyLabView.swift; sourceTree = "<group>"; };
-		EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = cmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EF7C1F4696125951D2F69BC0 /* cmuxUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = cmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
 		F777FEA9A0D8BB7601CE1AED /* ToolCallModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallModels.swift; sourceTree = "<group>"; };
 		F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthPersistenceUITests.swift; sourceTree = "<group>"; };
+		FADE32B7A47A43C3608972AC /* InputPillVisibilityAssertions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputPillVisibilityAssertions.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -182,6 +184,7 @@
 				F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */,
 				D6035599D28E289AD2154C1C /* ChatFix1MainMockUITests.swift */,
 				D4D3B3CB64500DDB27D7C781 /* ConversationE2ETests.swift */,
+				FADE32B7A47A43C3608972AC /* InputPillVisibilityAssertions.swift */,
 				C032FB689174A5691978BF3C /* InputStrategyLabUITests.swift */,
 				C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */,
 				605A8CE9A196BFC7BD787310 /* MessagePositionUITests.swift */,
@@ -389,7 +392,6 @@
 				7C6D10429B3DC21D021B1E06 /* XCRemoteSwiftPackageReference "convex-swift" */,
 				6483AD9AFDD51874D0F6EECF /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -467,6 +469,7 @@
 				E53E64DA59BFCB7E396E0865 /* AuthPersistenceUITests.swift in Sources */,
 				5ADD69A102CC3AE5FF533DCC /* ChatFix1MainMockUITests.swift in Sources */,
 				CC62BB48ED0957484E001EFB /* ConversationE2ETests.swift in Sources */,
+				D8A1B4B558D251DE7BF82D4A /* InputPillVisibilityAssertions.swift in Sources */,
 				B2DC2BC8C0D8DFC2241C18A5 /* InputStrategyLabUITests.swift in Sources */,
 				1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */,
 				EA2D0A26446CB2B9E8AF3E56 /* MessagePositionUITests.swift in Sources */,
@@ -506,6 +509,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -523,6 +527,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -627,6 +632,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -700,6 +706,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -820,6 +827,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -837,6 +845,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 7WLXT3NR37;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

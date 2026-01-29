@@ -21,8 +21,29 @@ class ChatViewModel: ObservableObject {
 
     init(conversationId: String) {
         self.conversationId = conversationId
-        Task {
-            await loadMessages()
+        #if DEBUG
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil {
+            let mockFlag = env["CMUX_UITEST_MOCK_DATA"] ?? "nil"
+            let chatFlag = env["CMUX_UITEST_CHAT_VIEW"] ?? "nil"
+            DebugLog.add(
+                "ChatViewModel init conversationId=\(conversationId) mockData=\(UITestConfig.mockDataEnabled) envMock=\(mockFlag) envChat=\(chatFlag)"
+            )
+        }
+        #endif
+        if UITestConfig.mockDataEnabled {
+            messages = UITestMockData.messages(for: conversationId)
+            isLoading = false
+            error = nil
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                DebugLog.add("ChatViewModel mock messages loaded count=\(messages.count)")
+            }
+            #endif
+        } else {
+            Task {
+                await loadMessages()
+            }
         }
     }
 

@@ -159,6 +159,7 @@ struct MessageBubble: View {
                 HStack(alignment: .bottom, spacing: 4) {
                     Spacer(minLength: 60)
                     Text(message.content)
+                        .accessibilityIdentifier("chat.messageBody.\(message.id)")
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -183,6 +184,9 @@ struct MessageBubble: View {
                 }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("chat.message.\(message.id)")
+        .accessibilityLabel(message.content)
     }
 
     func formatTimestamp(_ date: Date) -> String {
@@ -225,6 +229,7 @@ private struct AssistantMessageContentView: View {
                 switch item.kind {
                 case .text(let text):
                     AssistantMarkdownView(text: text, layout: markdownLayout)
+                        .accessibilityIdentifier("chat.messageBody.\(message.id)")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .toolCall(let toolCall):
                     Button {

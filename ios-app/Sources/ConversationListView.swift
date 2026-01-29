@@ -159,6 +159,8 @@ struct ConversationListView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
+                            .accessibilityLabel("More")
+                            .accessibilityIdentifier("conversation.menu")
                     }
                 }
             }

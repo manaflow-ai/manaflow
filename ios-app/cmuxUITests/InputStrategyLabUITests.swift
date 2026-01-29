@@ -80,6 +80,7 @@ final class InputStrategyLabUITests: XCTestCase {
 
     private func openSettings(app: XCUIApplication) {
         let menuButtons = [
+            app.buttons["conversation.menu"],
             app.buttons["ellipsis.circle"],
             app.buttons["More"],
         ]
@@ -118,6 +119,15 @@ final class InputStrategyLabUITests: XCTestCase {
 
     private func openInputStrategyLab(app: XCUIApplication) {
         let entry = app.staticTexts["Input Strategy Lab"]
+        if !entry.exists {
+            let list = app.tables.element(boundBy: 0)
+            if list.exists {
+                for _ in 0..<6 where !entry.exists {
+                    list.swipeUp()
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                }
+            }
+        }
         XCTAssertTrue(entry.waitForExistence(timeout: 4))
         entry.tap()
         XCTAssertTrue(
