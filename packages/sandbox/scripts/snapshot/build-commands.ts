@@ -62,8 +62,8 @@ export function getProvisioningCommands(): BuildCommand[] {
       type: "run",
       args: [
         "DEBIAN_FRONTEND=noninteractive apt-get install -y " +
-          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh " +
-          "tigervnc-standalone-server tigervnc-common xvfb x11-xserver-utils xterm novnc dbus-x11 openbox xauth " +
+          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh jq " +
+          "tigervnc-standalone-server tigervnc-common xvfb x11-xserver-utils novnc dbus-x11 openbox xauth " +
           "libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libxrender1 libxtst6 libnss3 " +
           "libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 libpango-1.0-0 libcairo2 fonts-liberation",
       ],
@@ -117,6 +117,89 @@ export function getProvisioningCommands(): BuildCommand[] {
       type: "run",
       args: ["npm install -g agent-browser"],
       description: "Install agent-browser CLI",
+    },
+    {
+      type: "run",
+      args: [
+        "set -e && " +
+          'AGENT_BROWSER_BIN="$(command -v agent-browser)" && ' +
+          'if [ -n "$AGENT_BROWSER_BIN" ] && [ ! -x /usr/local/bin/agent-browser-real ]; then ' +
+          'mv "$AGENT_BROWSER_BIN" /usr/local/bin/agent-browser-real && ' +
+          "cat > /usr/local/bin/agent-browser << 'EOF'\n" +
+          "#!/bin/sh\n" +
+          "set -e\n" +
+          "REAL=\"/usr/local/bin/agent-browser-real\"\n" +
+          "if [ ! -x \"$REAL\" ]; then\n" +
+          "  echo \"agent-browser-real not found\" >&2\n" +
+          "  exit 1\n" +
+          "fi\n" +
+          "case \"$1\" in\n" +
+          "  connect|launch|close)\n" +
+          "    exec \"$REAL\" \"$@\"\n" +
+          "    ;;\n" +
+          "esac\n" +
+          "for arg in \"$@\"; do\n" +
+          "  case \"$arg\" in\n" +
+          "    --cdp|--cdp=*)\n" +
+          "      exec \"$REAL\" \"$@\"\n" +
+          "      ;;\n" +
+          "  esac\n" +
+          "done\n" +
+          "exec \"$REAL\" --cdp \"${AGENT_BROWSER_CDP_PORT:-9222}\" \"$@\"\n" +
+          "EOF\n" +
+          "chmod +x /usr/local/bin/agent-browser; " +
+          "fi",
+      ],
+      description: "Wrap agent-browser to use Chrome CDP by default",
+    },
+
+    // ==========================================================================
+    // cmux-code (VS Code server)
+    // ==========================================================================
+    {
+      type: "run",
+      args: [
+        'CODE_RELEASE="${CMUX_CODE_RELEASE:-}" && ' +
+        'arch="$(dpkg --print-architecture)" && ' +
+        'case "${arch}" in ' +
+        'amd64) ARCH="x64" ;; ' +
+        'arm64) ARCH="arm64" ;; ' +
+        '*) echo "Unsupported architecture ${arch}" >&2; exit 1 ;; ' +
+        "esac && " +
+        "mkdir -p /app/cmux-code && " +
+        'download() { ' +
+        'if ! curl -fSL --retry 6 --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$1"; then ' +
+        'curl -fSL4 --retry 6 --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$1"; ' +
+        "fi; " +
+        "} && " +
+        'if [ -n "${CODE_RELEASE}" ]; then ' +
+        'url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; ' +
+        'download "${url}"; ' +
+        'else ' +
+        'url="https://github.com/manaflow-ai/vscode-1/releases/latest/download/vscode-server-linux-${ARCH}-web.tar.gz"; ' +
+        'if ! download "${url}"; then ' +
+        'if ! command -v jq >/dev/null 2>&1; then echo "jq not installed" >&2; exit 1; fi; ' +
+        'CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | jq -r \'.tag_name\' | sed \'s|^v||\')"; ' +
+        'if [ -z "${CODE_RELEASE}" ] || [ "${CODE_RELEASE}" = "null" ]; then echo "Failed to determine cmux-code release" >&2; exit 1; fi; ' +
+        'url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; ' +
+        'download "${url}"; ' +
+        "fi; " +
+        "fi && " +
+          "tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1 && " +
+          "rm -f /tmp/cmux-code.tar.gz && " +
+          "mkdir -p /root/.vscode-server-oss/data/User && " +
+          "cat > /root/.vscode-server-oss/data/User/settings.json << 'EOF'\n" +
+          "{\n" +
+          '  "workbench.startupEditor": "none",\n' +
+          '  "workbench.secondarySideBar.defaultVisibility": "hidden",\n' +
+          '  "security.workspace.trust.enabled": false,\n' +
+          '  "telemetry.telemetryLevel": "off",\n' +
+          '  "update.mode": "none",\n' +
+          '  "extensions.verifySignature": false\n' +
+          "}\n" +
+          "EOF",
+      ],
+      description: "Install cmux-code (VS Code server)",
     },
 
     // ==========================================================================
@@ -373,6 +456,13 @@ LOG_DIR="/var/log/cmux"
 if ! mkdir -p "$LOG_DIR" >/dev/null 2>&1; then
   LOG_DIR="/tmp/cmux-logs"
   mkdir -p "$LOG_DIR"
+else
+  if ! touch "$LOG_DIR/.write_test" >/dev/null 2>&1; then
+    LOG_DIR="/tmp/cmux-logs"
+    mkdir -p "$LOG_DIR"
+  else
+    rm -f "$LOG_DIR/.write_test"
+  fi
 fi
 VNC_DIR="$HOME_DIR/.vnc"
 if ! mkdir -p "$VNC_DIR" >/dev/null 2>&1; then
@@ -382,10 +472,10 @@ fi
 export HOME="$HOME_DIR"
 
 # Prepare VNC config (start after ACP is ready)
-if [ ! -f "$VNC_DIR/passwd" ] && command -v vncpasswd >/dev/null 2>&1; then
-  echo "cmux" | vncpasswd -f > "$VNC_DIR/passwd"
-  chmod 600 "$VNC_DIR/passwd"
-fi
+rm -f "$VNC_DIR/passwd"
+cat > "$VNC_DIR/config" << VNC_CONF
+SecurityTypes=None
+VNC_CONF
 if [ ! -f "$VNC_DIR/xstartup" ]; then
   cat > "$VNC_DIR/xstartup" << VNCX
 #!/bin/sh
@@ -393,7 +483,7 @@ unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
 xrdb "$HOME/.Xresources" 2>/dev/null || true
 openbox-session > "$LOG_DIR/openbox.log" 2>&1 &
-exec xterm
+exec sleep infinity
 VNCX
   chmod +x "$VNC_DIR/xstartup"
 fi
@@ -456,7 +546,7 @@ fi
 # Start VNC desktop now that ACP is ready
 if command -v vncserver >/dev/null 2>&1; then
   vncserver -kill :1 >/dev/null 2>&1 || true
-  (vncserver :1 -geometry 1920x1080 -depth 24 > "$LOG_DIR/vnc.log" 2>&1 || \
+  (vncserver :1 -geometry 1920x1080 -depth 24 -SecurityTypes None > "$LOG_DIR/vnc.log" 2>&1 || \
     echo "WARNING: vncserver failed to start" >&2) &
 else
   echo "WARNING: vncserver not installed" >&2
@@ -469,6 +559,19 @@ if [ -x /usr/local/bin/cmux-start-chrome ]; then
   /usr/local/bin/cmux-start-chrome > "$LOG_DIR/chrome.log" 2>&1 &
 else
   echo "WARNING: cmux-start-chrome not installed" >&2
+fi
+
+# Start cmux-code (VS Code server)
+if [ -x /app/cmux-code/bin/code-server-oss ]; then
+  /app/cmux-code/bin/code-server-oss \
+    --host 0.0.0.0 --port 39378 \
+    --without-connection-token \
+    --disable-workspace-trust \
+    --disable-telemetry \
+    --telemetry-level off \
+    /workspace > "$LOG_DIR/cmux-code.log" 2>&1 &
+else
+  echo "WARNING: cmux-code not installed" >&2
 fi
 
 # Keep the container running

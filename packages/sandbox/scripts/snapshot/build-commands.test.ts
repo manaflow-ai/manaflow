@@ -82,6 +82,31 @@ describe("getProvisioningCommands", () => {
     expect(agentBrowserInstall).toBeDefined();
   });
 
+  it("should wrap agent-browser to use CDP Chrome by default", () => {
+    const commands = getProvisioningCommands();
+
+    const agentBrowserWrapper = commands.find(
+      (c) =>
+        c.type === "run" &&
+        c.args.some(
+          (arg) =>
+            arg.includes("agent-browser-real") &&
+            arg.includes("--cdp") &&
+            arg.includes("AGENT_BROWSER_CDP_PORT")
+        )
+    );
+    expect(agentBrowserWrapper).toBeDefined();
+  });
+
+  it("should include cmux-code install", () => {
+    const commands = getProvisioningCommands();
+
+    const cmuxCodeInstall = commands.find((c) =>
+      c.args.some((arg) => arg.includes("vscode-1/releases"))
+    );
+    expect(cmuxCodeInstall).toBeDefined();
+  });
+
   it("should include Chrome install", () => {
     const commands = getProvisioningCommands();
 
@@ -168,6 +193,13 @@ describe("generateBootScript", () => {
 
     expect(script).toContain("vncserver");
     expect(script).toContain("cmux-start-chrome");
+  });
+
+  it("should start cmux-code", () => {
+    const script = generateBootScript();
+
+    expect(script).toContain("cmux-code");
+    expect(script).toContain("code-server-oss");
   });
 
   it("should include health check loop", () => {

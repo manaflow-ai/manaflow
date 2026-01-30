@@ -577,7 +577,7 @@ async fn subdomain_proxy(
 }
 
 /// Proxy WebSocket connection to sandbox internal port.
-/// Used for noVNC websockify connections.
+/// Used for noVNC WebSocket connections (native VNC proxy).
 async fn proxy_websocket(
     client_socket: axum::extract::ws::WebSocket,
     sandbox_ip: &str,

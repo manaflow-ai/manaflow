@@ -19,6 +19,7 @@
 
 import { execFileSync, execSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -58,6 +59,65 @@ async function fetchWithTimeout(
     return await fetch(url, { signal: controller.signal });
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function downloadCmuxCodeTarball(arch: string): Promise<string | null> {
+  const normalizedArch =
+    arch === "amd64" ? "x64" : arch === "arm64" ? "arm64" : null;
+  if (!normalizedArch) {
+    console.warn(`Unsupported cmux-code arch: ${arch}`);
+    return null;
+  }
+
+  const cacheDir = path.join(os.tmpdir(), "cmux-code-cache");
+  const cachePath = path.join(
+    cacheDir,
+    `vscode-server-linux-${normalizedArch}-web.tar.gz`
+  );
+
+  try {
+    if (fs.existsSync(cachePath)) {
+      const stats = fs.statSync(cachePath);
+      if (stats.size > 0) {
+        return cachePath;
+      }
+    }
+
+    await fs.promises.mkdir(cacheDir, { recursive: true });
+
+    const release = process.env.CMUX_CODE_RELEASE?.trim();
+    let url = release
+      ? `https://github.com/manaflow-ai/vscode-1/releases/download/v${release}/vscode-server-linux-${normalizedArch}-web.tar.gz`
+      : `https://github.com/manaflow-ai/vscode-1/releases/latest/download/vscode-server-linux-${normalizedArch}-web.tar.gz`;
+
+    let response = await fetchWithTimeout(url, 60000);
+    if (!response.ok && !release) {
+      const apiResponse = await fetchWithTimeout(
+        "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest",
+        15000
+      );
+      if (apiResponse.ok) {
+        const data = (await apiResponse.json()) as { tag_name?: string };
+        const tag = data.tag_name?.replace(/^v/, "");
+        if (tag) {
+          url = `https://github.com/manaflow-ai/vscode-1/releases/download/v${tag}/vscode-server-linux-${normalizedArch}-web.tar.gz`;
+          response = await fetchWithTimeout(url, 60000);
+        }
+      }
+    }
+
+    if (!response.ok) {
+      console.error(`Failed to download cmux-code tarball: ${response.status}`);
+      return null;
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.promises.writeFile(cachePath, buffer);
+    return cachePath;
+  } catch (error) {
+    console.error("Failed to download cmux-code tarball", error);
+    return null;
   }
 }
 
@@ -566,6 +626,21 @@ Environment Variables:
               console.warn(
                 "Warning: VM does not support file upload for cmux-pty; will attempt build from source."
               );
+            }
+
+            if (vm.uploadFile) {
+              try {
+                const arch = (await vm.exec("dpkg --print-architecture")).trim();
+                const cmuxCodeTarball = await downloadCmuxCodeTarball(arch);
+                if (cmuxCodeTarball) {
+                  console.log("Uploading cmux-code tarball to VM...");
+                  await vm.uploadFile(cmuxCodeTarball, "/tmp/cmux-code.tar.gz");
+                  const listing = await vm.exec("ls -la /tmp/cmux-code.tar.gz");
+                  console.log(`cmux-code tarball on VM: ${listing.trim()}`);
+                }
+              } catch (error) {
+                console.error("Failed to preload cmux-code tarball", error);
+              }
             }
 
             // Create provisioning context and run task graph

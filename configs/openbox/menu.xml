@@ -1,20 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="root-menu" label="Openbox">
-    <item label="Terminal">
-      <action name="Execute">
-        <command>xterm</command>
-      </action>
-    </item>
     <item label="Chrome">
       <action name="Execute">
-        <command>/usr/local/lib/cmux/cmux-start-chrome</command>
-      </action>
-    </item>
-    <separator />
-    <item label="htop">
-      <action name="Execute">
-        <command>xterm -e htop</command>
+        <command>/usr/local/bin/cmux-start-chrome</command>
       </action>
     </item>
     <separator />

@@ -26,7 +26,8 @@ import {
   useEffect,
   useRef,
   useState,
-  type MouseEvent,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type Ref,
 } from "react";
 import SearchableSelect, {
@@ -43,6 +44,10 @@ import {
   clearConversationManualUnread,
   markConversationManualUnread,
 } from "@/lib/conversationReadOverrides";
+import {
+  disableDragPointerEvents,
+  restoreDragPointerEvents,
+} from "@/lib/drag-pointer-events";
 import { Menu } from "@base-ui-components/react/menu";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
@@ -134,6 +139,10 @@ interface ConversationsSidebarProps {
 const PAGE_SIZE = 30;
 const DEFAULT_PIN_LEFT_PX = 7;
 const DEFAULT_PIN_TOP_PX = 16;
+const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:conversation-sidebar-width";
+const SIDEBAR_WIDTH_DEFAULT = 320;
+const SIDEBAR_WIDTH_MIN = 240;
+const SIDEBAR_WIDTH_MAX = 560;
 
 const providerMeta: Record<
   ProviderId,
@@ -430,6 +439,26 @@ export function ConversationsSidebar({
 }: ConversationsSidebarProps) {
   const canLoadMore = status === "CanLoadMore";
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const containerLeftRef = useRef<number>(0);
+  const rafIdRef = useRef<number | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    const parsed = stored
+      ? Number.parseInt(stored, 10)
+      : SIDEBAR_WIDTH_DEFAULT;
+    if (Number.isNaN(parsed)) return SIDEBAR_WIDTH_DEFAULT;
+    return Math.min(
+      Math.max(parsed, SIDEBAR_WIDTH_MIN),
+      SIDEBAR_WIDTH_MAX
+    );
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const [isLargeScreen, setIsLargeScreen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 768px)").matches;
+  });
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
   const isLoadingMore = status === "LoadingMore";
@@ -453,6 +482,20 @@ export function ConversationsSidebar({
   });
 
   useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(min-width: 768px)");
+    const handler = (event: MediaQueryListEvent) => {
+      setIsLargeScreen(event.matches);
+    };
+    media.addEventListener("change", handler);
+    return () => media.removeEventListener("change", handler);
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const handleFocus = () => setIsWindowFocused(true);
     const handleBlur = () => setIsWindowFocused(false);
@@ -463,6 +506,59 @@ export function ConversationsSidebar({
       window.removeEventListener("blur", handleBlur);
     };
   }, []);
+
+  const onMouseMove = useCallback((event: globalThis.MouseEvent) => {
+    if (rafIdRef.current != null) return;
+    rafIdRef.current = window.requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      const containerLeft = containerLeftRef.current;
+      const nextWidth = Math.min(
+        Math.max(event.clientX - containerLeft, SIDEBAR_WIDTH_MIN),
+        SIDEBAR_WIDTH_MAX
+      );
+      setSidebarWidth(nextWidth);
+    });
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+    document.body.style.cursor = "";
+    document.body.classList.remove("select-none");
+    if (rafIdRef.current != null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    restoreDragPointerEvents();
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", stopResizing);
+  }, [onMouseMove]);
+
+  const startResizing = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!containerRef.current) return;
+      event.preventDefault();
+      setIsResizing(true);
+      document.body.style.cursor = "col-resize";
+      document.body.classList.add("select-none");
+      const rect = containerRef.current.getBoundingClientRect();
+      containerLeftRef.current = rect.left;
+      disableDragPointerEvents();
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", stopResizing);
+    },
+    [onMouseMove, stopResizing]
+  );
+
+  const resetWidth = useCallback(() => {
+    setSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", stopResizing);
+    };
+  }, [onMouseMove, stopResizing]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -498,7 +594,18 @@ export function ConversationsSidebar({
   }, []);
 
   return (
-    <aside className="flex h-dvh w-full flex-col border-b border-neutral-200/70 bg-white dark:border-neutral-800/70 dark:bg-neutral-950 md:w-[320px] md:border-b-0 md:border-r">
+    <aside
+      ref={containerRef}
+      className="relative flex h-dvh w-full flex-col border-b border-neutral-200/70 bg-white dark:border-neutral-800/70 dark:bg-neutral-950 md:border-b-0 md:border-r"
+      style={
+        {
+          width: isLargeScreen ? `${sidebarWidth}px` : undefined,
+          minWidth: isLargeScreen ? `${sidebarWidth}px` : undefined,
+          maxWidth: isLargeScreen ? `${sidebarWidth}px` : undefined,
+          userSelect: isResizing ? ("none" as const) : undefined,
+        } as CSSProperties
+      }
+    >
       <div className="flex items-center justify-between px-4 py-2">
         <div className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
           cmux
@@ -610,6 +717,24 @@ export function ConversationsSidebar({
         enabled={mutationLogEnabled}
         listElement={listElement}
       />
+      {isLargeScreen ? (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          onMouseDown={startResizing}
+          onDoubleClick={resetWidth}
+          className="absolute top-0 right-0 h-full cursor-col-resize"
+          style={
+            {
+              width: "12px",
+              transform: "translateX(6px)",
+              background: "transparent",
+              zIndex: "var(--z-sidebar-resize-handle)",
+            } as CSSProperties
+          }
+          title="Drag to resize"
+        />
+      ) : null}
     </aside>
   );
 }
@@ -1196,7 +1321,7 @@ function ConversationRow({
   });
 
   const handleLinkClick = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
+    (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (isRenaming || event.defaultPrevented) {
         event.preventDefault();
       }

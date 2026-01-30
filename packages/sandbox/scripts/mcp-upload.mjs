@@ -1,25 +1,119 @@
 #!/usr/bin/env node
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { basename, resolve as resolvePath } from "node:path";
+import { basename, extname, resolve as resolvePath } from "node:path";
 import { env, stdin, stdout } from "node:process";
 import readline from "node:readline";
 
 const TOOL_NAME = "upload_file";
 const PROTOCOL_VERSION = "2024-11-05";
 
+const EXTENSION_TO_CONTENT_TYPE = new Map([
+  ["png", "image/png"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["gif", "image/gif"],
+  ["webp", "image/webp"],
+  ["svg", "image/svg+xml"],
+  ["mp4", "video/mp4"],
+  ["mov", "video/quicktime"],
+  ["webm", "video/webm"],
+  ["pdf", "application/pdf"],
+  ["txt", "text/plain"],
+  ["md", "text/markdown"],
+  ["json", "application/json"],
+]);
+
+const CONTENT_TYPE_TO_EXTENSION = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/gif", "gif"],
+  ["image/webp", "webp"],
+  ["image/svg+xml", "svg"],
+  ["video/mp4", "mp4"],
+  ["video/quicktime", "mov"],
+  ["video/webm", "webm"],
+  ["application/pdf", "pdf"],
+  ["text/plain", "txt"],
+  ["text/markdown", "md"],
+  ["application/json", "json"],
+]);
+
+function inferContentType(pathValue) {
+  const ext = extname(pathValue).toLowerCase().replace(/^\./, "");
+  if (!ext) return null;
+  return EXTENSION_TO_CONTENT_TYPE.get(ext) ?? null;
+}
+
+function ensureFileNameExtension(fileName, contentType) {
+  const existingExt = extname(fileName).toLowerCase();
+  if (existingExt) return fileName;
+  const extension = CONTENT_TYPE_TO_EXTENSION.get(contentType);
+  if (!extension) return fileName;
+  return `${fileName}.${extension}`;
+}
+const EXTENSION_TO_CONTENT_TYPE = new Map([
+  ["png", "image/png"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["gif", "image/gif"],
+  ["webp", "image/webp"],
+  ["svg", "image/svg+xml"],
+  ["mp4", "video/mp4"],
+  ["mov", "video/quicktime"],
+  ["webm", "video/webm"],
+  ["pdf", "application/pdf"],
+  ["txt", "text/plain"],
+  ["md", "text/markdown"],
+  ["json", "application/json"],
+]);
+
+const CONTENT_TYPE_TO_EXTENSION = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/gif", "gif"],
+  ["image/webp", "webp"],
+  ["image/svg+xml", "svg"],
+  ["video/mp4", "mp4"],
+  ["video/quicktime", "mov"],
+  ["video/webm", "webm"],
+  ["application/pdf", "pdf"],
+  ["text/plain", "txt"],
+  ["text/markdown", "md"],
+  ["application/json", "json"],
+]);
+
+function inferContentType(pathValue) {
+  const ext = extname(pathValue).toLowerCase().replace(/^\./, "");
+  if (!ext) return null;
+  return EXTENSION_TO_CONTENT_TYPE.get(ext) ?? null;
+}
+
+function ensureFileNameExtension(fileName, contentType) {
+  const existingExt = extname(fileName).toLowerCase();
+  if (existingExt) return fileName;
+  const extension = CONTENT_TYPE_TO_EXTENSION.get(contentType);
+  if (!extension) return fileName;
+  return `${fileName}.${extension}`;
+}
+
 const toolDefinition = {
   name: TOOL_NAME,
   description:
-    "Upload a local file (images/videos supported). This is the only supported way to embed files in the final Markdown response with a whitelisted domain.",
+    "Upload a local file (images/videos supported). This is the only supported way to embed files in the final Markdown response with a whitelisted domain. Provide fileName and contentType to preserve file extensions on download.",
   inputSchema: {
     type: "object",
     properties: {
       path: { type: "string", description: "Absolute or relative file path." },
-      fileName: { type: "string", description: "Optional file name override." },
+      fileName: {
+        type: "string",
+        description:
+          "Optional file name override (recommended; include extension when possible).",
+      },
       contentType: {
         type: "string",
-        description: "Optional MIME type override.",
+        description:
+          "Optional MIME type override (recommended; helps downloads keep the right type).",
       },
     },
     required: ["path"],
@@ -139,13 +233,19 @@ async function uploadFileToConvex({ path, fileName, contentType }) {
     throw new Error("path must point to a regular file");
   }
 
-  const finalFileName = fileName && fileName.trim().length > 0
+  const rawFileName = fileName && fileName.trim().length > 0
     ? fileName.trim()
     : basename(resolvedPath);
+  const inferredContentType =
+    inferContentType(rawFileName) ?? inferContentType(resolvedPath);
   const effectiveContentType =
     typeof contentType === "string" && contentType.trim().length > 0
       ? contentType.trim()
-      : "application/octet-stream";
+      : inferredContentType ?? "application/octet-stream";
+  const finalFileName = ensureFileNameExtension(
+    rawFileName,
+    effectiveContentType
+  );
   const uploadUrl = await requestUploadUrl(
     finalFileName,
     effectiveContentType,

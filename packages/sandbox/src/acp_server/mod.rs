@@ -18,6 +18,8 @@ mod pty_proxy;
 pub mod rest;
 mod spawner;
 mod stream;
+mod ui_proxy;
+mod ws_util;
 
 pub use api_proxy::{
     ApiProxies, ApiProxy, ConversationApiProxies, ConversationApiProxy, JwtHolder,
@@ -31,6 +33,7 @@ pub use pty_proxy::{
     pty_input_session, pty_list_sessions, pty_preflight, pty_resize_session, pty_session_ws,
     pty_update_session,
 };
+pub use ui_proxy::{cmux_code_asset_proxy, cmux_code_proxy, novnc_proxy, novnc_ws, vnc_ws};
 pub use rest::{
     configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
     RestApiDoc, RestApiState,

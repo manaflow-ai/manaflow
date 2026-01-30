@@ -16,6 +16,11 @@ agent-browser fill @e2 "text"   # Fill input by ref
 agent-browser close             # Close browser
 ```
 
+Note: In cmux sandboxes, agent-browser is wrapped to use the already-running
+Chrome via CDP on port 9222 by default. Use `agent-browser connect 9222` or
+`--cdp <port>` to override. Avoid `agent-browser close` unless you intend to
+close the shared Chrome instance.
+
 ## Core workflow
 
 1. Navigate: `agent-browser open <url>`

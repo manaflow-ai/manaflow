@@ -10,7 +10,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::routing::{get, post};
+use axum::http::StatusCode;
+use axum::routing::{any, get, post};
 use axum::Router;
 use clap::Parser;
 use tracing::{error, info, warn, Level};
@@ -19,12 +20,17 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    configure, init_conversation, opencode_preflight, opencode_proxy, opencode_pty_ws,
-    pty_capture_session, pty_create_session, pty_delete_session, pty_get_session, pty_health,
-    pty_input_session, pty_list_sessions, pty_preflight, pty_resize_session, pty_session_ws,
-    pty_update_session, receive_prompt, send_rpc, stream_acp_events, stream_preflight, ApiProxies,
+    cmux_code_asset_proxy, cmux_code_proxy, configure, init_conversation, novnc_proxy, novnc_ws,
+    opencode_preflight, opencode_proxy, opencode_pty_ws, pty_capture_session, pty_create_session,
+    pty_delete_session, pty_get_session, pty_health, pty_input_session, pty_list_sessions,
+    pty_preflight, pty_resize_session, pty_session_ws, pty_update_session, receive_prompt,
+    send_rpc, stream_acp_events, stream_preflight, vnc_ws, ApiProxies,
     CallbackClient, RestApiDoc, RestApiState,
 };
+
+async fn empty_204() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
 
 /// ACP Server for sandbox integration.
 #[derive(Parser, Debug)]
@@ -231,6 +237,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/healthz", get(health))
+        .route("/favicon.ico", get(empty_204))
+        .route("/manifest.json", get(empty_204))
         .route("/api/acp/configure", post(configure))
         .route("/api/acp/init", post(init_conversation))
         .route("/api/acp/prompt", post(receive_prompt))
@@ -266,6 +274,17 @@ async fn main() -> anyhow::Result<()> {
             post(pty_input_session).options(pty_preflight),
         )
         .route("/api/pty/sessions/{session_id}/ws", get(pty_session_ws))
+        // cmux-code (VS Code) proxy - strip /api/cmux-code prefix
+        .route("/api/cmux-code/{*path}", any(cmux_code_proxy))
+        .route("/api/cmux-code", any(cmux_code_proxy))
+        .route("/api/cmux-code/", any(cmux_code_proxy))
+        // noVNC static assets and WebSocket proxy
+        .route("/api/novnc/ws", get(novnc_ws))
+        .route("/api/novnc/websockify", get(novnc_ws))
+        .route("/api/novnc/{*path}", get(novnc_proxy))
+        .route("/api/novnc", get(novnc_proxy))
+        // Raw VNC WebSocket proxy
+        .route("/api/vnc", get(vnc_ws))
         // OpenCode headless server proxy - WebSocket route must be explicit
         .route("/api/opencode/pty/{pty_id}/connect", get(opencode_pty_ws))
         // OpenCode catch-all proxy (strips /api/opencode prefix)
@@ -284,6 +303,8 @@ async fn main() -> anyhow::Result<()> {
                 .post(opencode_proxy)
                 .options(opencode_preflight),
         )
+        // cmux-code static assets served at /oss-*
+        .fallback(cmux_code_asset_proxy)
         .with_state(rest_state)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));
 

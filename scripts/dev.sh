@@ -251,8 +251,8 @@ export WORKER_IMAGE_NAME="cmux-worker:0.0.1"
 
 # Only clean ports when not in devcontainer (devcontainer handles this)
 if [ "$IS_DEVCONTAINER" = "false" ]; then
-    # Check if anything is running on ports 5173, $CONVEX_PORT, 9777, 9778, 9779
-    PORTS_TO_CHECK="5173 9779"
+    # Check if anything is running on ports 5173, 9779, 6421 (Rivet)
+    PORTS_TO_CHECK="5173 9779 6421"
     # Use shared port cleanup helper
     source "$(dirname "$0")/_port-clean.sh"
     clean_ports $PORTS_TO_CHECK
@@ -358,7 +358,7 @@ cleanup() {
 
     echo -e "\n${BLUE}Shutting down...${NC}"
 
-    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
+    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$OPENAPI_CLIENT_PID" "$RIVET_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
         kill_process_group "$pid" TERM
     done
 
@@ -369,7 +369,7 @@ cleanup() {
     # Give processes 2 seconds to cleanup gracefully
     sleep 2
 
-    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$OPENAPI_CLIENT_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
+    for pid in "$DOCKER_BUILD_PID" "$DOCKER_COMPOSE_PID" "$CONVEX_DEV_PID" "$SERVER_PID" "$CLIENT_PID" "$WWW_PID" "$OPENAPI_CLIENT_PID" "$RIVET_PID" "$ELECTRON_PID" "$SERVER_GLOBAL_PID"; do
         kill_process_group "$pid" 9
     done
 
@@ -567,6 +567,12 @@ echo -e "${GREEN}Starting openapi client generator...${NC}"
 (cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
 OPENAPI_CLIENT_PID=$!
 check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
+
+# Start the Rivet demo server
+echo -e "${GREEN}Starting Rivet demo server on port 6420...${NC}"
+(cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun --env-file=../../.env.production run rivet:dev 2>&1 | tee "$LOG_DIR/rivet.log" | prefix_output "RIVET" "$RED"') &
+RIVET_PID=$!
+check_process $RIVET_PID "Rivet Demo Server"
 OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
 OPENAPI_READY_MARKER="watch-openapi complete"
 wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
@@ -583,6 +589,7 @@ echo -e "${GREEN}Terminal app is running!${NC}"
 echo -e "${BLUE}Frontend: http://localhost:5173${NC}"
 echo -e "${BLUE}Backend: http://localhost:9776${NC}"
 echo -e "${BLUE}WWW: http://localhost:9779${NC}"
+echo -e "${BLUE}Rivet: http://localhost:6421${NC}"
 if [ "$SKIP_CONVEX" != "true" ]; then
     echo -e "${BLUE}Convex: http://localhost:$CONVEX_PORT${NC}"
 fi

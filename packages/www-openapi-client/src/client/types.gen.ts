@@ -425,7 +425,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_gnjo1w2g' | 'snapshot_whbzjn0r' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_0480ipvw' | 'snapshot_txvpcqr4' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {

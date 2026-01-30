@@ -9,6 +9,8 @@ use axum::{
 };
 use reqwest::Method;
 use tracing::error;
+
+use super::ws_util::try_set_ws_nodelay;
 use url::Url;
 
 const DEFAULT_PTY_BASE_URL: &str = "http://127.0.0.1:39383";
@@ -263,6 +265,7 @@ async fn proxy_websocket(
     ws_url.set_scheme(scheme).map_err(|_| "invalid scheme")?;
 
     let (upstream_ws, _) = tokio_tungstenite::connect_async(ws_url.to_string()).await?;
+    try_set_ws_nodelay(&upstream_ws);
     let (mut upstream_sink, mut upstream_stream) = upstream_ws.split();
 
     let (mut client_sink, mut client_stream) = client_socket.split();

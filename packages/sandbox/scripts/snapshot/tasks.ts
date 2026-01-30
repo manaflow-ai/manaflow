@@ -74,6 +74,8 @@ export function createProvisioningContext(
         console.error(`\n[${label}] FAILED after ${(duration / 1000).toFixed(2)}s`);
         if (error instanceof Error) {
           console.error(`  Error: ${error.message}`);
+        } else {
+          console.error(`  Error: ${String(error)}`);
         }
         throw error;
       }
@@ -124,7 +126,7 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
         `set -e
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          sudo curl git build-essential pkg-config libssl-dev ca-certificates zsh`
+          sudo curl git build-essential pkg-config libssl-dev ca-certificates zsh jq`
       );
     },
   });
@@ -140,7 +142,7 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
         DEBIAN_FRONTEND=noninteractive apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
           tigervnc-standalone-server tigervnc-common \
-          xvfb x11-xserver-utils xterm novnc dbus-x11 openbox \
+          xvfb x11-xserver-utils novnc dbus-x11 openbox \
           libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
           libxrandr2 libxrender1 libxtst6 libnss3 libatk1.0-0 \
           libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 \
@@ -404,6 +406,66 @@ NODE
         set -e
         npm install -g agent-browser
         agent-browser --version
+        AGENT_BROWSER_BIN="$(command -v agent-browser)"
+        if [ -n "$AGENT_BROWSER_BIN" ] && [ ! -x /usr/local/bin/agent-browser-real ]; then
+          mv "$AGENT_BROWSER_BIN" /usr/local/bin/agent-browser-real
+          cat > /usr/local/bin/agent-browser << 'EOF'
+#!/bin/sh
+set -e
+REAL="/usr/local/bin/agent-browser-real"
+if [ ! -x "$REAL" ]; then
+  echo "agent-browser-real not found" >&2
+  exit 1
+fi
+case "$1" in
+  connect|launch|close)
+    exec "$REAL" "$@"
+    ;;
+esac
+for arg in "$@"; do
+  case "$arg" in
+    --cdp|--cdp=*)
+      exec "$REAL" "$@"
+      ;;
+  esac
+done
+exec "$REAL" --cdp "\${AGENT_BROWSER_CDP_PORT:-9222}" "$@"
+EOF
+          chmod +x /usr/local/bin/agent-browser
+        fi
+        `
+      );
+    },
+  });
+
+  registry.register({
+    name: "install-cmux-code",
+    description: "Install cmux-code (VS Code server)",
+    deps: ["apt-install"],
+    func: async (ctx) => {
+      await ctx.run(
+        "install-cmux-code",
+        `
+        set -e
+        mkdir -p /app/cmux-code
+        if [ ! -f /tmp/cmux-code.tar.gz ]; then
+          echo "cmux-code tarball missing at /tmp/cmux-code.tar.gz" >&2
+          exit 1
+        fi
+        tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1
+        rm -f /tmp/cmux-code.tar.gz
+
+        mkdir -p /root/.vscode-server-oss/data/User
+        cat > /root/.vscode-server-oss/data/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "security.workspace.trust.enabled": false,
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.verifySignature": false
+}
+EOF
         `
       );
     },
@@ -618,10 +680,14 @@ EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu>
   <menu id="root-menu" label="Applications">
-    <item label="Terminal">
+    <item label="Chrome">
       <action name="Execute">
-        <command>xterm</command>
+        <command>/usr/local/bin/cmux-start-chrome</command>
       </action>
+    </item>
+    <separator />
+    <item label="Reconfigure">
+      <action name="Reconfigure" />
     </item>
   </menu>
 </openbox_menu>
@@ -921,6 +987,7 @@ SERVICE
       "install-uv",
       "install-desktop",
       "install-agent-browser",
+      "install-cmux-code",
       "install-openbox-config",
       "install-chrome-launcher",
       "install-agent-browser-skill",
@@ -985,6 +1052,13 @@ SERVICE
         fi
         which cmux-acp-server > /dev/null
         echo "✓ cmux-acp-server"
+        if [ -x /app/cmux-code/bin/code-server-oss ]; then
+          /app/cmux-code/bin/code-server-oss --version > /dev/null
+          echo "✓ cmux-code"
+        else
+          echo "cmux-code not found"
+          exit 1
+        fi
 
         echo "Checking systemd services..."
         systemctl is-active cmux-acp-server > /dev/null
@@ -1158,33 +1232,50 @@ EOF
   registry.register({
     name: "start-desktop",
     description: "Start VNC desktop and warm Chrome CDP",
-    deps: ["final-test", "install-openbox-config", "install-chrome-launcher"],
+    deps: [
+      "final-test",
+      "install-openbox-config",
+      "install-chrome-launcher",
+      "install-cmux-code",
+    ],
     func: async (ctx) => {
       await ctx.run(
         "start-desktop",
         `
         set -e
         mkdir -p /root/.vnc /var/log/cmux
-        if [ ! -f /root/.vnc/passwd ]; then
-          echo "cmux" | vncpasswd -f > /root/.vnc/passwd
-          chmod 600 /root/.vnc/passwd
-        fi
+        rm -f /root/.vnc/passwd
+        cat > /root/.vnc/config << 'VNC_CONF'
+SecurityTypes=None
+VNC_CONF
         cat > /root/.vnc/xstartup << 'EOF'
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
 xrdb "$HOME/.Xresources" 2>/dev/null || true
 openbox-session >/var/log/cmux/openbox.log 2>&1 &
-exec xterm
+exec sleep infinity
 EOF
         chmod +x /root/.vnc/xstartup
 
         vncserver -kill :1 >/dev/null 2>&1 || true
-        vncserver :1 -geometry 1920x1080 -depth 24
+        vncserver :1 -geometry 1920x1080 -depth 24 -SecurityTypes None
 
         export DISPLAY=:1
         export CDP_TARGET_PORT=9222
         nohup /usr/local/bin/cmux-start-chrome > /var/log/cmux/chrome.log 2>&1 &
+
+        if [ -x /app/cmux-code/bin/code-server-oss ]; then
+          nohup /app/cmux-code/bin/code-server-oss \
+            --host 0.0.0.0 --port 39378 \
+            --without-connection-token \
+            --disable-workspace-trust \
+            --disable-telemetry \
+            --telemetry-level off \
+            /workspace > /var/log/cmux/cmux-code.log 2>&1 &
+        else
+          echo "WARNING: cmux-code not installed" >&2
+        fi
 
         for i in $(seq 1 20); do
           if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then

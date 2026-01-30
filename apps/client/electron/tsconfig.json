@@ -1,7 +1,6 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "composite": true,
     "types": ["electron-vite/node"]
   },
   "include": [
@@ -9,6 +8,7 @@
     "**/*.d.ts",
     "../electron-vite.config.ts",
     "../src",
-    "../src/lib/electron-logs/**/*.ts"
+    "../src/lib/electron-logs/**/*.ts",
+    "../rivet-server"
   ]
 }

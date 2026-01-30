@@ -1467,11 +1467,10 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
         }}
         while IFS='|' read -r publisher name version; do
           [ -z "${{publisher}}" ] && continue
-          download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
+          download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix"
         done <<'EXTENSIONS'
 {extensions_blob}
 EXTENSIONS
-        wait
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
           if [ -f "${{vsix}}" ]; then

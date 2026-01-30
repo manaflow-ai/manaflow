@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-01-28T23:54:57.112Z",
+  "updatedAt": "2026-01-30T05:29:56.331Z",
   "providers": {
     "morph": {
       "presets": {
         "standard": {
           "label": "standard",
-          "snapshotId": "snapshot_3bqp6wm6",
-          "capturedAt": "2026-01-28T23:53:37.423Z",
+          "snapshotId": "snapshot_xkq6ze6a",
+          "capturedAt": "2026-01-30T05:29:56.331Z",
           "strategy": "runtime"
         },
         "performance": {
@@ -34,8 +34,8 @@
       "presets": {
         "standard": {
           "label": "standard",
-          "snapshotId": "qnwkrk3ft2lwbsvsdhpt",
-          "capturedAt": "2026-01-28T23:54:57.112Z",
+          "snapshotId": "zzyomg61gjaj4d22e2de",
+          "capturedAt": "2026-01-30T03:13:29.302Z",
           "strategy": "dockerfile"
         }
       }
