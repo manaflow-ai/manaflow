@@ -3,6 +3,7 @@ import XCTest
 final class InputStrategyLabUITests: XCTestCase {
     private let baselineMetricsId = "debug.strategy.baseline.metrics"
     private let baselineInputId = "debug.strategy.baseline"
+    private let caretYWrapTolerance: Double = 3.0
 
     override func setUp() {
         super.setUp()
@@ -54,6 +55,55 @@ final class InputStrategyLabUITests: XCTestCase {
             abs(dist6 - dist4),
             tolerance,
             "Expected line 6 caret distance to stay stable. line4=\(dist4) line6=\(dist6)"
+        )
+    }
+
+    func testCaretYStableWhenWrappingToSecondLine() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        openSettings(app: app)
+        openChatDebugMenu(app: app)
+        openInputStrategyLab(app: app)
+
+        let input = app.textViews[baselineInputId]
+        XCTAssertTrue(input.waitForExistence(timeout: 6))
+        input.tap()
+
+        let metrics = app.staticTexts[baselineMetricsId]
+        XCTAssertTrue(metrics.waitForExistence(timeout: 6))
+
+        input.typeText("the only way i could be happy")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        let baselineMetrics = requireMetrics(
+            metricsElement: metrics,
+            timeout: 3,
+            message: "Missing baseline metrics"
+        )
+        let baselineCaretY = requireValue(
+            baselineMetrics.caretY,
+            message: "Missing baseline caretY"
+        )
+
+        input.typeText(" hello")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        let wrappedMetrics = requireMetrics(
+            metricsElement: metrics,
+            timeout: 3,
+            message: "Missing wrapped metrics"
+        )
+        let wrappedCaretY = requireValue(
+            wrappedMetrics.caretY,
+            message: "Missing wrapped caretY"
+        )
+
+        XCTAssertGreaterThanOrEqual(
+            wrappedCaretY,
+            baselineCaretY - caretYWrapTolerance,
+            "Expected caretY to stay near baseline after wrap. baseline=\(baselineCaretY) wrapped=\(wrappedCaretY)"
         )
     }
 
@@ -160,12 +210,27 @@ final class InputStrategyLabUITests: XCTestCase {
         return lastValue
     }
 
+    private func requireMetrics(
+        metricsElement: XCUIElement,
+        timeout: TimeInterval,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> StrategyMetrics {
+        guard let metrics = waitForStableMetrics(metricsElement: metricsElement, timeout: timeout) else {
+            XCTFail(message, file: file, line: line)
+            return StrategyMetrics(lineCount: 0, distance: 0, caretY: nil)
+        }
+        return metrics
+    }
+
     private func parseMetrics(_ text: String) -> StrategyMetrics? {
         guard let lineCount = parseInt(after: "lines ", in: text),
               let distance = parseDouble(after: "dist ", in: text) else {
             return nil
         }
-        return StrategyMetrics(lineCount: lineCount, distance: distance)
+        let caretY = parseDouble(after: "caretY ", in: text)
+        return StrategyMetrics(lineCount: lineCount, distance: distance, caretY: caretY)
     }
 
     private func parseInt(after prefix: String, in text: String) -> Int? {
@@ -197,4 +262,5 @@ final class InputStrategyLabUITests: XCTestCase {
 private struct StrategyMetrics {
     let lineCount: Int
     let distance: Double
+    let caretY: Double?
 }

@@ -526,13 +526,20 @@ struct StrategyTextView: UIViewRepresentable {
                 topInsetExtra: parent.strategy.topInsetExtra,
                 bottomInsetExtra: parent.strategy.bottomInsetExtra
             )
+            let lineHeight = textView.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+            let insets = textView.textContainerInset
+            let rawCount = (sizeHeight - insets.top - insets.bottom) / lineHeight
+            let fittedLineCount = max(1, Int(round(rawCount)))
+            let wrapsBeyondFallback = fittedLineCount > fallbackLineCount
+                && sizeHeight - expectedHeight > lineHeight * 0.75
             if !includesTrailingLine {
-                let lineHeight = textView.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
                 let extra = sizeHeight - expectedHeight
-                if abs(extra) <= lineHeight * 0.5 {
-                    contentHeight = expectedHeight
-                } else if extra > lineHeight * 0.5, extra < lineHeight * 1.5 {
-                    contentHeight = max(0, sizeHeight - lineHeight)
+                if !wrapsBeyondFallback {
+                    if abs(extra) <= lineHeight * 0.5 {
+                        contentHeight = expectedHeight
+                    } else if extra > lineHeight * 0.5, extra < lineHeight * 1.5 {
+                        contentHeight = max(0, sizeHeight - lineHeight)
+                    }
                 }
             }
             let minHeight = DebugInputBarMetrics.editorHeight(

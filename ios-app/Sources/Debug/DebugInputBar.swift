@@ -953,13 +953,14 @@ final class DebugInputBarViewController: UIViewController {
         var resolvedFrame = resolveCaretFrameInWindow()
         guard let window = view.window else { return }
         if UITestConfig.mockDataEnabled,
+           !UITestConfig.rawCaretFrameEnabled,
            let baseline = geometryModel.baselineCaretDistanceToBottom,
            DebugInputBarMetrics.lineCount(for: textModel.text) > 1 {
             let bottomFrame = geometryModel.pillFrameInWindow
             if bottomFrame != .zero {
                 let targetMaxY = bottomFrame.maxY - baseline
                 let delta = targetMaxY - resolvedFrame.maxY
-                if abs(delta) > 0.5 {
+                if abs(delta) > 0.25 {
                     let scale = max(1, window.screen.scale)
                     let alignedDelta = (delta * scale).rounded(.toNearestOrAwayFromZero) / scale
                     resolvedFrame = resolvedFrame.offsetBy(dx: 0, dy: alignedDelta)
@@ -1497,6 +1498,11 @@ private struct InputTextView: UIViewRepresentable {
                     caretRect = textView.caretRect(for: endPosition)
                 }
             }
+            if !textView.isScrollEnabled,
+               textView.isFirstResponder,
+               ensureCaretVisibleIfNeeded(textView: textView, caretRect: caretRect) {
+                caretRect = textView.caretRect(for: endPosition)
+            }
             let scale = max(1, textView.window?.screen.scale ?? textView.traitCollection.displayScale)
             func alignToPixel(_ value: CGFloat) -> CGFloat {
                 (value * scale).rounded(.toNearestOrAwayFromZero) / scale
@@ -1562,10 +1568,47 @@ private struct InputTextView: UIViewRepresentable {
             return true
         }
 
+        private func ensureCaretVisibleIfNeeded(textView: UITextView, caretRect: CGRect) -> Bool {
+            let visibleMinY = textView.bounds.minY + textView.textContainerInset.top
+            let visibleMaxY = textView.bounds.maxY - textView.textContainerInset.bottom
+            let delta: CGFloat
+            if caretRect.minY < visibleMinY - 0.5 {
+                delta = caretRect.minY - visibleMinY
+            } else if caretRect.maxY > visibleMaxY + 0.5 {
+                delta = caretRect.maxY - visibleMaxY
+            } else {
+                return false
+            }
+            var targetOffset = textView.contentOffset
+            targetOffset.y += delta
+            let minOffset = -textView.adjustedContentInset.top
+            let maxOffset = max(
+                minOffset,
+                textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom
+            )
+            targetOffset.y = min(max(targetOffset.y, minOffset), maxOffset)
+            guard abs(targetOffset.y - textView.contentOffset.y) > 0.5 else { return false }
+            textView.setContentOffset(targetOffset, animated: false)
+            return true
+        }
+
+        private func resetContentOffsetIfNeeded(textView: UITextView) -> Bool {
+            let targetY = -textView.adjustedContentInset.top
+            guard abs(textView.contentOffset.y - targetY) > 0.5 else { return false }
+            textView.setContentOffset(
+                CGPoint(x: textView.contentOffset.x, y: targetY),
+                animated: false
+            )
+            return true
+        }
+
         func handleLayout(_ textView: MeasuringTextView) {
             let width = textView.bounds.width
             guard width >= DebugInputBarMetrics.minStableMeasureWidth else { return }
             updateCaretFrame(textView: textView)
+            if !textView.isScrollEnabled, resetContentOffsetIfNeeded(textView: textView) {
+                updateCaretFrame(textView: textView)
+            }
             if abs(width - lastMeasuredWidth) > 0.5 {
                 lastMeasuredWidth = width
                 scheduleMeasurement(textView: textView, reason: "layout")
@@ -1592,6 +1635,9 @@ private struct InputTextView: UIViewRepresentable {
             }
             if parent.isScrollEnabled != shouldScroll {
                 parent.isScrollEnabled = shouldScroll
+            }
+            if !shouldScroll, resetContentOffsetIfNeeded(textView: textView) {
+                updateCaretFrame(textView: textView)
             }
             DebugLog.addDedup(
                 "input.measure.height",
@@ -1641,13 +1687,30 @@ private final class MeasuringTextView: UITextView {
         let minHeight = insets.top + lineHeight + insets.bottom
         layoutIfNeeded()
         layoutManager.ensureLayout(for: textContainer)
-        let rawHeight = max(minHeight, contentSize.height)
+        let targetWidth = max(1, bounds.width)
+        let fittingSize = sizeThatFits(
+            CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
+        )
+        let fittingHeight = fittingSize.height
+        let layoutLineCount = max(0, measuredLineCount())
+        let fallbackLineCount = DebugInputBarMetrics.lineCount(for: text)
+        let fittingExtra = fittingHeight - minHeight
+        let fittedLineCount: Int
+        if fittingExtra > lineHeight * 0.75 {
+            let rawCount = (fittingHeight - insets.top - insets.bottom) / lineHeight
+            fittedLineCount = max(1, Int(round(rawCount)))
+        } else {
+            fittedLineCount = 1
+        }
+        let lineCount = max(1, layoutLineCount, fallbackLineCount, fittedLineCount)
+        let lineCountHeight = insets.top + lineHeight * CGFloat(lineCount) + insets.bottom
+        var rawHeight = max(minHeight, lineCountHeight)
+        if lineCount > 1 {
+            rawHeight = max(rawHeight, contentSize.height, fittingHeight)
+        }
         let clampedHeight = min(DebugInputBarMetrics.maxInputHeight, rawHeight)
         let scale = max(1, traitCollection.displayScale)
         let alignedHeight = (clampedHeight * scale).rounded(.toNearestOrAwayFromZero) / scale
-        let layoutLineCount = max(0, measuredLineCount())
-        let fallbackLineCount = DebugInputBarMetrics.lineCount(for: text)
-        let lineCount = max(1, layoutLineCount, fallbackLineCount)
         return (height: alignedHeight, rawHeight: rawHeight, lineCount: lineCount)
     }
 

@@ -2370,6 +2370,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         if shouldPinShortThreadToTop() {
             maxY = minY
         }
+        if maxY < minY {
+            maxY = minY
+        }
         if let keyboardOverlap, isInteractiveDismissalActive {
             let slack = interactiveDismissalSlack(currentOverlap: keyboardOverlap)
             if slack > 0.5 {
@@ -3307,7 +3310,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let scale = max(1, view.traitCollection.displayScale)
         let pillTopY = currentPillTopY(scale: scale)
         let viewBottomY = pixelAlign(view.bounds.maxY, scale: scale)
-        return shortThreadFitsAboveInput(
+        let baselineFits = shortThreadFitsAboveInput(
             contentHeight: contentHeight,
             boundsHeight: boundsHeight,
             topInset: topInset,
@@ -3317,6 +3320,17 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             viewBottomY: viewBottomY,
             scale: scale
         )
+        if messageCount <= 3 {
+            let fallbackBottomInset = min(scrollView.contentInset.bottom, boundsHeight * 0.5)
+            let fallbackFits = contentFitsAboveInput(
+                contentHeight: contentHeight,
+                boundsHeight: boundsHeight,
+                topInset: topInset,
+                bottomInset: fallbackBottomInset
+            )
+            return baselineFits || fallbackFits
+        }
+        return baselineFits
     }
 
     private func alignShortThreadToTopIfNeeded(reason: String) {
@@ -3451,7 +3465,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let maxOffsetY = contentHeight - boundsHeight + bottomInset
         // Min offset: content starts below header
         let minOffsetY = -topInset
-        let targetOffsetY = shouldPinShortThreadToTop() ? minOffsetY : maxOffsetY
+        let effectiveMaxOffsetY = max(maxOffsetY, minOffsetY)
+        let targetOffsetY = shouldPinShortThreadToTop() ? minOffsetY : effectiveMaxOffsetY
 
         log("scrollToBottom:")
         log("  contentHeight: \(contentHeight), boundsHeight: \(boundsHeight)")

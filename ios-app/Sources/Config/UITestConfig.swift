@@ -25,4 +25,13 @@ enum UITestConfig {
         return false
         #endif
     }
+
+    static var rawCaretFrameEnabled: Bool {
+        #if DEBUG
+        let env = ProcessInfo.processInfo.environment
+        return env["CMUX_UITEST_RAW_CARET"] == "1"
+        #else
+        return false
+        #endif
+    }
 }

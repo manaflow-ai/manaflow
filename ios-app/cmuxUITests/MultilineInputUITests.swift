@@ -15,6 +15,7 @@ final class MultilineInputUITests: XCTestCase {
     private let caretYTolerance: CGFloat = 0.25
     private let caretViewportTolerance: CGFloat = 0.25
     private let caretDriftRangeTolerance: CGFloat = 0.75
+    private let caretVisibilityTolerance: CGFloat = 1.5
 
     override func setUp() {
         super.setUp()
@@ -239,6 +240,92 @@ final class MultilineInputUITests: XCTestCase {
             pill: pill,
             baseline: inputBaseline,
             context: "multiline expand"
+        )
+    }
+
+    func testInputWrapsAfterAppendingHello() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
+        app.launchEnvironment["CMUX_UITEST_RAW_CARET"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        ensureConversationVisible(app: app, name: conversationName)
+        openConversation(app: app, name: conversationName)
+
+        let pill = waitForInputPill(app: app)
+        let input = waitForInputField(app: app)
+        let caret = waitForInputCaret(app: app)
+        focusInput(app: app, pill: pill, input: input)
+        clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
+
+        let inputBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "wrap baseline"
+        )
+        let baselinePillHeight = waitForStablePillHeight(app: app, pill: pill, timeout: 2)
+        let baselineInputHeight = waitForStableInputFrame(app: app, input: input, timeout: 2).height
+
+        typeText(app: app, input: input, text: "the only way i could be happy")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+        let singleLinePillHeight = waitForStablePillHeight(app: app, pill: pill, timeout: 2)
+        let singleLineInputHeight = waitForStableInputFrame(app: app, input: input, timeout: 2).height
+        XCTAssertLessThanOrEqual(
+            singleLinePillHeight,
+            baselinePillHeight + frameTolerance,
+            "Expected pill to remain single-line before wrapping"
+        )
+        XCTAssertLessThanOrEqual(
+            singleLineInputHeight,
+            baselineInputHeight + frameTolerance,
+            "Expected input to remain single-line before wrapping"
+        )
+
+        typeText(app: app, input: input, text: " hello")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+
+        let expandedPillHeight = waitForPillHeightIncrease(
+            app: app,
+            pill: pill,
+            baseline: baselinePillHeight,
+            minGrowth: minReturnGrowth,
+            timeout: 2
+        )
+        let expandedInputHeight = waitForHeightIncrease(
+            element: input,
+            baseline: baselineInputHeight,
+            minGrowth: minReturnGrowth,
+            timeout: 2
+        )
+        assertCaretVisibleInInput(
+            app: app,
+            caret: caret,
+            pill: pill,
+            input: input,
+            context: "wrap after hello"
+        )
+        XCTAssertGreaterThanOrEqual(
+            expandedPillHeight,
+            baselinePillHeight + minReturnGrowth,
+            "Expected pill to grow after wrapping text"
+        )
+        XCTAssertGreaterThanOrEqual(
+            expandedInputHeight,
+            baselineInputHeight + minReturnGrowth,
+            "Expected input to grow after wrapping text"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: inputBaseline,
+            context: "wrap after hello"
         )
     }
 
@@ -986,6 +1073,32 @@ final class MultilineInputUITests: XCTestCase {
             delta,
             centerTolerance,
             "Input center misaligned for \(context): \(delta)"
+        )
+    }
+
+    private func assertCaretVisibleInInput(
+        app: XCUIApplication,
+        caret: XCUIElement,
+        pill: XCUIElement,
+        input: XCUIElement,
+        context: String
+    ) {
+        let inputFrame = waitForStableInputFrame(app: app, input: input, timeout: 2)
+        let pillFrame = waitForStableElementFrame(element: pill, timeout: 2)
+        let caretFrame = waitForCaretFrameNearPill(
+            caret: caret,
+            pillFrame: pillFrame,
+            timeout: 2
+        )
+        XCTAssertGreaterThanOrEqual(
+            caretFrame.minY,
+            inputFrame.minY - caretVisibilityTolerance,
+            "Caret should be visible inside input for \(context): caret=\(caretFrame) input=\(inputFrame)"
+        )
+        XCTAssertLessThanOrEqual(
+            caretFrame.maxY,
+            inputFrame.maxY + caretVisibilityTolerance,
+            "Caret should be visible inside input for \(context): caret=\(caretFrame) input=\(inputFrame)"
         )
     }
 
