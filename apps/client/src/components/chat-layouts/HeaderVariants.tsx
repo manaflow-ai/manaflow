@@ -47,6 +47,10 @@ export function HeaderVariant({
         ? "bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
         : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
     );
+  const linkButtonClass = toggleButtonClass(false);
+  const sandboxLinks = sandbox?.sandboxUrl
+    ? buildSandboxLinks(sandbox.sandboxUrl)
+    : null;
 
   return (
     <div className="flex items-center justify-between gap-4">
@@ -67,6 +71,26 @@ export function HeaderVariant({
           mode={permissionMode}
           onChange={onPermissionModeChange}
         />
+        {sandboxLinks?.vscodeUrl ? (
+          <a
+            href={sandboxLinks.vscodeUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={linkButtonClass}
+          >
+            VS Code
+          </a>
+        ) : null}
+        {sandboxLinks?.vncUrl ? (
+          <a
+            href={sandboxLinks.vncUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={linkButtonClass}
+          >
+            VNC
+          </a>
+        ) : null}
         <button
           type="button"
           onClick={onToggleRawEvents}
@@ -131,4 +155,34 @@ function SandboxDot({ status }: { status: ConversationSandboxStatus }) {
           : "bg-neutral-400";
 
   return <span className={clsx("h-2 w-2 rounded-full", color)} title={status} />;
+}
+
+function buildSandboxLinks(sandboxUrl: string): {
+  vscodeUrl: string | null;
+  vncUrl: string | null;
+} {
+  try {
+    const vscodeUrl = new URL(sandboxUrl);
+    vscodeUrl.pathname = "/api/cmux-code";
+    vscodeUrl.search = "folder=/workspace";
+    vscodeUrl.hash = "";
+
+    const vncUrl = new URL(sandboxUrl);
+    vncUrl.pathname = "/api/novnc/vnc.html";
+    const vncParams = new URLSearchParams();
+    vncParams.set("path", "api/novnc/websockify");
+    vncParams.set("autoconnect", "1");
+    vncParams.set("resize", "scale");
+    vncParams.set("reconnect", "1");
+    vncParams.set("reconnect_delay", "1000");
+    vncUrl.search = vncParams.toString();
+    vncUrl.hash = "";
+
+    return {
+      vscodeUrl: vscodeUrl.toString(),
+      vncUrl: vncUrl.toString(),
+    };
+  } catch {
+    return { vscodeUrl: null, vncUrl: null };
+  }
 }
