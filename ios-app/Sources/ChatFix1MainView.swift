@@ -685,6 +685,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var pendingBottomInsetsUpdate = false
     private var keyboardOpenOffsetFloor: CGFloat?
     private var keyboardBaselineOffsetY: CGFloat?
+    private var toolCallSheetKeyboardOverlap: CGFloat?
+    private var toolCallSheetHoldKeyboardOverlap = false
+    private var toolCallSheetIsPresented = false
+    private var toolCallSheetPinnedInputBarConstant: CGFloat?
+    private var toolCallSheetPinnedPillBottomY: CGFloat?
+    private var toolCallSheetReleaseWorkItem: DispatchWorkItem?
+    private var shouldRestoreKeyboardAfterToolCallSheet = false
 #if DEBUG
     private let uiTestTrackMessagePositions: Bool = UITestConfig.mockDataEnabled
     private let uiTestUnderreportContentSize: Bool = {
@@ -696,6 +703,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var uiTestBottomInsetMarker: UIView?
     private var uiTestContentFitsMarker: UIView?
     private var uiTestKeyboardOverlapMarker: UIView?
+    private var uiTestToolCallHoldMarker: UIView?
+    private var uiTestInputBarConstantMarker: UIView?
     private let uiTestJankMonitorEnabled: Bool = {
         UITestConfig.mockDataEnabled &&
             ProcessInfo.processInfo.environment["CMUX_UITEST_JANK_MONITOR"] == "1"
@@ -1005,6 +1014,18 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             self,
             selector: #selector(handleKeyboardFrameChange),
             name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleToolCallSheetWillPresent),
+            name: .toolCallSheetWillPresent,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleToolCallSheetDidDismiss),
+            name: .toolCallSheetDidDismiss,
             object: nil
         )
 
@@ -1344,6 +1365,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         overlapMarker.accessibilityIdentifier = "chat.keyboardOverlapValue"
         view.addSubview(overlapMarker)
         uiTestKeyboardOverlapMarker = overlapMarker
+        let holdMarker = UIView()
+        holdMarker.translatesAutoresizingMaskIntoConstraints = true
+        holdMarker.backgroundColor = .clear
+        holdMarker.isUserInteractionEnabled = false
+        holdMarker.isAccessibilityElement = true
+        holdMarker.accessibilityIdentifier = "chat.toolCallHoldValue"
+        holdMarker.accessibilityValue = "0"
+        view.addSubview(holdMarker)
+        uiTestToolCallHoldMarker = holdMarker
+        let inputBarMarker = UIView()
+        inputBarMarker.translatesAutoresizingMaskIntoConstraints = true
+        inputBarMarker.backgroundColor = .clear
+        inputBarMarker.isUserInteractionEnabled = false
+        inputBarMarker.isAccessibilityElement = true
+        inputBarMarker.accessibilityIdentifier = "chat.inputBarConstantValue"
+        inputBarMarker.accessibilityValue = "0"
+        view.addSubview(inputBarMarker)
+        uiTestInputBarConstantMarker = inputBarMarker
         let focusButton = UIButton(type: .custom)
         focusButton.translatesAutoresizingMaskIntoConstraints = false
         focusButton.alpha = 0.2
@@ -1489,6 +1528,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 overlapMarker.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
                 overlapMarker.accessibilityValue = "0"
             }
+            if let holdMarker = uiTestToolCallHoldMarker {
+                holdMarker.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+                holdMarker.accessibilityValue = "0"
+            }
+            if let inputBarMarker = uiTestInputBarConstantMarker {
+                inputBarMarker.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+                inputBarMarker.accessibilityValue = "0"
+            }
             return
         }
         let scale = max(1, view.traitCollection.displayScale)
@@ -1527,6 +1574,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 overlapMarker.frame = CGRect(x: 0, y: 0, width: 1, height: overlapHeight)
                 overlapMarker.accessibilityValue = String(format: "%.1f", overlap)
             }
+            if let holdMarker = uiTestToolCallHoldMarker {
+                holdMarker.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+                holdMarker.accessibilityValue = toolCallSheetHoldKeyboardOverlap ? "1" : "0"
+            }
+            if let inputBarMarker = uiTestInputBarConstantMarker {
+                inputBarMarker.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+                inputBarMarker.accessibilityValue = String(format: "%.1f", inputBarBottomConstraint.constant)
+            }
         updateUiTestJankMarkers()
 #endif
     }
@@ -1564,7 +1619,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func setupConstraints() {
-        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
+        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: 0)
         contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 0)
         contentStackMinHeightConstraint = contentStack.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.heightAnchor, constant: 0)
@@ -1817,8 +1872,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let applyUpdates = { [weak self] in
             guard let self else { return }
             self.view.layoutIfNeeded()
-            let measuredOverlap: CGFloat
-            let guideVisible: Bool
+            var measuredOverlap: CGFloat
+            var guideVisible: Bool
             #if DEBUG
             if let uiTestKeyboardOverlap = self.uiTestKeyboardOverlap {
                 measuredOverlap = uiTestKeyboardOverlap
@@ -1837,6 +1892,21 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             measuredOverlap = resolved.overlap
             guideVisible = resolved.isVisible
             #endif
+            if self.toolCallSheetHoldKeyboardOverlap {
+                if measuredOverlap > 1 && !self.toolCallSheetIsPresented {
+                    self.toolCallSheetHoldKeyboardOverlap = false
+                    self.toolCallSheetKeyboardOverlap = nil
+                    self.toolCallSheetPinnedInputBarConstant = nil
+                    self.toolCallSheetPinnedPillBottomY = nil
+                    self.toolCallSheetReleaseWorkItem?.cancel()
+                    self.toolCallSheetReleaseWorkItem = nil
+                } else if measuredOverlap <= 1 {
+                    let fallbackOverlap = abs(self.toolCallSheetPinnedInputBarConstant ?? self.inputBarBottomConstraint.constant)
+                    let lockedOverlap = self.toolCallSheetKeyboardOverlap ?? max(2, fallbackOverlap)
+                    measuredOverlap = lockedOverlap
+                    guideVisible = true
+                }
+            }
             let keyboardOverlap: CGFloat
             let shouldUseLockedOverlap = !animated
                 && guideVisible
@@ -1853,22 +1923,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             let wasKeyboardVisible = (previousKeyboardOverlap ?? 0) > 1
             let isOpeningKeyboard = keyboardVisible && !wasKeyboardVisible
             let isClosingKeyboard = !keyboardVisible && wasKeyboardVisible
-            let safeAreaAdjustment: CGFloat
-            #if DEBUG
-            if self.uiTestKeyboardOverlap != nil,
-               self.uiTestFakeKeyboardEnabled,
-               self.uiTestFakeKeyboardClosedOverlap == nil {
-                safeAreaAdjustment = max(0, self.view.safeAreaInsets.bottom)
-            } else {
-                safeAreaAdjustment = 0
-            }
-            #else
-            safeAreaAdjustment = 0
-            #endif
-            let inputBarOverlap = keyboardOverlap + safeAreaAdjustment
-            let newInputBarConstant = -inputBarOverlap
             let effectiveBarYOffset = keyboardVisible ? min(0, self.inputBarYOffset) : self.inputBarYOffset
-            let adjustedInputBarConstant = newInputBarConstant + effectiveBarYOffset
+            var adjustedInputBarConstant = effectiveBarYOffset
+            if self.toolCallSheetHoldKeyboardOverlap,
+               let pinnedConstant = self.toolCallSheetPinnedInputBarConstant,
+               adjustedInputBarConstant > pinnedConstant {
+                adjustedInputBarConstant = pinnedConstant
+            }
             let keyboardIsMovingDown = self.keyboardIsMovingDown(current: keyboardOverlap)
             let gestureIsDismissing = self.isDismissingKeyboardGesture()
             if !animated {
@@ -1972,6 +2033,19 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 }
             } else {
                 self.lockedPillBottomY = nil
+            }
+            if self.toolCallSheetHoldKeyboardOverlap, let pinnedBottom = self.toolCallSheetPinnedPillBottomY {
+                let maxBottomY = pinnedBottom + 0.5
+                if pillBottomY > maxBottomY {
+                    let delta = self.pixelAlign(maxBottomY - pillBottomY, scale: scale)
+                    if abs(delta) > 0.1 {
+                        self.inputBarBottomConstraint.constant += delta
+                        self.view.layoutIfNeeded()
+                        pillFrame = self.computedPillFrameInView()
+                        pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+                        pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
+                    }
+                }
             }
             let viewBottomY = self.pixelAlign(self.view.bounds.maxY, scale: scale)
             if pillBottomY > viewBottomY {
@@ -2411,6 +2485,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let viewMaxY = view.bounds.maxY
         let endTop = min(viewMaxY, endInView.minY)
         let willBeVisible = endTop < viewMaxY - 1
+        if toolCallSheetHoldKeyboardOverlap && !willBeVisible {
+            return
+        }
         let isInteractiveDismiss = isDismissingKeyboardGesture()
             || scrollView.isTracking
             || scrollView.isDecelerating
@@ -3667,6 +3744,83 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         #else
         return false
         #endif
+    }
+
+    @objc private func handleToolCallSheetWillPresent() {
+        toolCallSheetReleaseWorkItem?.cancel()
+        toolCallSheetReleaseWorkItem = nil
+        toolCallSheetIsPresented = true
+        let overlap = max(currentKeyboardOverlap(), lastKeyboardOverlap ?? 0)
+        let keyboardWasVisible = overlap > 1 || isKeyboardVisible
+        let inputBarIsRaised = inputBarBottomConstraint.constant < -1
+        let shouldHold = inputBarIsRaised && !keyboardWasVisible
+        if keyboardWasVisible {
+            dismissKeyboard()
+            #if DEBUG
+            if uiTestFakeKeyboardEnabled {
+                handleUiTestKeyboardSnapClosed()
+            }
+            #endif
+        }
+        if shouldHold {
+            view.layoutIfNeeded()
+            let scale = max(1, view.traitCollection.displayScale)
+            let pillFrame = computedPillFrameInView()
+            let baselineTop = lastAppliedPillTopY ?? pixelAlign(
+                inputBarVC.view.frame.minY + pillFrame.minY,
+                scale: scale
+            )
+            let baselineBottom = baselineTop + pillFrame.height
+            toolCallSheetPinnedPillBottomY = lockedPillBottomY ?? baselineBottom
+            toolCallSheetPinnedInputBarConstant = inputBarBottomConstraint.constant
+            let overlapCandidate = max(overlap, abs(inputBarBottomConstraint.constant))
+            toolCallSheetKeyboardOverlap = max(2, overlapCandidate)
+            toolCallSheetHoldKeyboardOverlap = true
+            shouldRestoreKeyboardAfterToolCallSheet = keyboardWasVisible
+            updateBottomInsetsForKeyboard(force: true)
+        } else {
+            toolCallSheetKeyboardOverlap = nil
+            toolCallSheetHoldKeyboardOverlap = false
+            toolCallSheetPinnedInputBarConstant = nil
+            toolCallSheetPinnedPillBottomY = nil
+            shouldRestoreKeyboardAfterToolCallSheet = keyboardWasVisible
+        }
+    }
+
+    @objc private func handleToolCallSheetDidDismiss() {
+        toolCallSheetIsPresented = false
+        guard shouldRestoreKeyboardAfterToolCallSheet else {
+            toolCallSheetHoldKeyboardOverlap = false
+            toolCallSheetKeyboardOverlap = nil
+            toolCallSheetPinnedInputBarConstant = nil
+            toolCallSheetPinnedPillBottomY = nil
+            return
+        }
+        shouldRestoreKeyboardAfterToolCallSheet = false
+        toolCallSheetReleaseWorkItem?.cancel()
+        let releaseWorkItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if self.toolCallSheetHoldKeyboardOverlap {
+                self.toolCallSheetHoldKeyboardOverlap = false
+                self.toolCallSheetKeyboardOverlap = nil
+                self.toolCallSheetPinnedInputBarConstant = nil
+                self.toolCallSheetPinnedPillBottomY = nil
+                self.updateBottomInsetsForKeyboard()
+            }
+        }
+        toolCallSheetReleaseWorkItem = releaseWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: releaseWorkItem)
+        DispatchQueue.main.async { [weak self] in
+            #if DEBUG
+            if let self, self.uiTestFakeKeyboardEnabled {
+                self.handleUiTestKeyboardSnapOpen()
+            } else {
+                self?.inputBarVC.setFocused(true)
+            }
+            #else
+            self?.inputBarVC.setFocused(true)
+            #endif
+        }
     }
 
     private func lastMessageFrameInView() -> CGRect {

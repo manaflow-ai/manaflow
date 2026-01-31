@@ -1,6 +1,11 @@
 import SwiftUI
 import UIKit
 
+extension Notification.Name {
+    static let toolCallSheetWillPresent = Notification.Name("cmux.toolCallSheetWillPresent")
+    static let toolCallSheetDidDismiss = Notification.Name("cmux.toolCallSheetDidDismiss")
+}
+
 struct ChatView: View {
     let conversation: ConvexConversation
     #if DEBUG
@@ -233,11 +238,15 @@ private struct AssistantMessageContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .toolCall(let toolCall):
                     Button {
+                        if selectedToolCall == nil {
+                            NotificationCenter.default.post(name: .toolCallSheetWillPresent, object: nil)
+                        }
                         selectedToolCall = toolCall
                     } label: {
                         ToolCallRow(toolCall: toolCall)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("chat.toolCall.\(toolCall.id)")
                 }
             }
         }
@@ -246,6 +255,11 @@ private struct AssistantMessageContentView: View {
         .sheet(item: $selectedToolCall) { toolCall in
             ToolCallDetailSheet(toolCall: toolCall)
                 .presentationDetents([.medium, .large])
+        }
+        .onChange(of: selectedToolCall) { oldValue, newValue in
+            if oldValue != nil, newValue == nil {
+                NotificationCenter.default.post(name: .toolCallSheetDidDismiss, object: nil)
+            }
         }
     }
 

@@ -277,6 +277,18 @@ enum UITestMockData {
             acpSeq: 129
         ),
     ]
+    private static let toolCallSheetConversationId = "ts_toolcall_sheet_long"
+    private static let toolCallSheetToolCallId = "toolcall_sheet_1"
+    private static let toolCallSheetToolCalls: [ConversationMessagesListByConversationReturnMessagesItemToolCallsItem] = [
+        ConversationMessagesListByConversationReturnMessagesItemToolCallsItem(
+            result: nil,
+            id: toolCallSheetToolCallId,
+            name: "List workspace",
+            status: .completed,
+            arguments: "{\"command\":\"ls\"}",
+            acpSeq: nil
+        ),
+    ]
 
     private static let morphConversationId = "ts7bx1k6fg8swft6edw4ykjg3s805hpj"
     private static let morphTranscript: [String] = [
@@ -399,6 +411,16 @@ enum UITestMockData {
             updatedAt: now
         )
 
+        let toolCallSheet = makeConversation(
+            id: toolCallSheetConversationId,
+            title: "Tool call sheet dismiss",
+            providerId: "claude",
+            previewText: "Tool call sheet mock conversation.",
+            teamId: teamId,
+            createdAt: earlier - 9_000,
+            updatedAt: now
+        )
+
         let claude = makeConversation(
             id: "uitest_conversation_claude",
             title: "Claude",
@@ -419,7 +441,7 @@ enum UITestMockData {
             updatedAt: earlier
         )
 
-        return [succession, morphSnapshot, tinyConversation, e2bSnapshot, claude, alex]
+        return [succession, morphSnapshot, tinyConversation, e2bSnapshot, toolCallSheet, claude, alex]
     }
 
     static func messages(for conversationId: String) -> [ConvexMessage] {
@@ -532,6 +554,41 @@ enum UITestMockData {
                     toolCalls: toolCalls
                 )
             }
+        }
+        if conversationId == toolCallSheetConversationId {
+            let baseTime = now - 45_000
+            let interval: Double = 900
+            let fillerCount = 18
+            var messages: [ConvexMessage] = []
+            messages.reserveCapacity(fillerCount + 1)
+            for index in 0..<fillerCount {
+                let isAssistant = index % 2 == 1
+                let role: ConversationMessagesListByConversationReturnMessagesItemRoleEnum =
+                    isAssistant ? .assistant : .user
+                let prefix = isAssistant ? "Assistant message" : "User message"
+                let text = "\(prefix) \(index + 1)\nLine one\nLine two"
+                messages.append(
+                    makeMessage(
+                        id: "\(conversationId)_msg_\(index + 1)",
+                        conversationId: conversationId,
+                        role: role,
+                        text: text,
+                        createdAt: baseTime + Double(index) * interval
+                    )
+                )
+            }
+            let toolCallText = "Tool call summary\nCheck complete\nNo errors found"
+            messages.append(
+                makeMessage(
+                    id: "\(conversationId)_assistant",
+                    conversationId: conversationId,
+                    role: .assistant,
+                    text: toolCallText,
+                    createdAt: baseTime + Double(fillerCount) * interval,
+                    toolCalls: toolCallSheetToolCalls
+                )
+            )
+            return messages
         }
         if let messageCount = messageCountOverride(), messageCount >= 1 {
             let startWithAssistant = startWithAssistant(messageCount: messageCount)

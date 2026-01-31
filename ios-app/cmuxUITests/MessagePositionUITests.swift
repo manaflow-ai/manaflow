@@ -7,12 +7,15 @@ final class MessagePositionUITests: XCTestCase {
     private let minExpandedPillHeight: CGFloat = 56
     private let frameStabilityTolerance: CGFloat = 0.5
     private let frameSampleInterval: TimeInterval = 0.016
+    private let quickReturnTimeout: TimeInterval = 0.6
     private let jankDownwardTolerance: CGFloat = 1.0
     private let topThresholdRatio: CGFloat = 0.75
     private let jankConversationId = "ts79xr7rr98pbr98rb6vssta75800802"
     private let tinyConversationId = "ts78emy26kmwvaj753cqxeb7ah807rd0"
     private let morphConversationId = "ts7bx1k6fg8swft6edw4ykjg3s805hpj"
     private let e2bConversationId = "ts76s01mxqf2wayhv2hcxx76cd80447d"
+    private let toolCallSheetConversationId = "ts_toolcall_sheet_long"
+    private let toolCallSheetToolCallId = "toolcall_sheet_1"
 
     override func setUp() {
         super.setUp()
@@ -712,6 +715,480 @@ final class MessagePositionUITests: XCTestCase {
             closedGap,
             40,
             "Expected auto-scroll to bottom for the e2b snapshot conversation: gap=\(closedGap)"
+        )
+    }
+
+    func testToolCallSheetDismissKeepsInputPinned() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = toolCallSheetConversationId
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        if ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil {
+            app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        }
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let scrollView = locateScrollView(app: app)
+        XCTAssertTrue(scrollView.waitForExistence(timeout: 6))
+        let fitsMarker = app.otherElements["chat.contentFitsValue"]
+        if fitsMarker.waitForExistence(timeout: 4) {
+            let fitsValue = readNumericValue(from: fitsMarker)
+            XCTAssertLessThan(
+                fitsValue,
+                0.5,
+                "Expected conversation to require scrolling (fits=\(fitsValue))"
+            )
+        }
+
+        let toolCallButton = app.buttons["chat.toolCall.\(toolCallSheetToolCallId)"]
+        XCTAssertTrue(toolCallButton.waitForExistence(timeout: 6))
+
+        let snapOpen = app.buttons["chat.fakeKeyboard.snapOpen"]
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        let usesFakeKeyboard = snapOpen.waitForExistence(timeout: 1)
+            && snapClosed.waitForExistence(timeout: 1)
+        if usesFakeKeyboard {
+            snapOpen.tap()
+        } else {
+            focusKeyboard(app: app)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+        let pill = waitForInputPill(app: app)
+        let baseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "tool call sheet baseline open"
+        )
+
+        if toolCallButton.isHittable {
+            toolCallButton.tap()
+        } else {
+            scrollView.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            toolCallButton.tap()
+        }
+
+        let toolTitle = app.staticTexts["Tool"]
+        XCTAssertTrue(toolTitle.waitForExistence(timeout: 4))
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        let dismissedPredicate = NSPredicate(format: "exists == false")
+        let dismissedExpectation = XCTNSPredicateExpectation(predicate: dismissedPredicate, object: toolTitle)
+        _ = XCTWaiter.wait(for: [dismissedExpectation], timeout: 4)
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: baseline,
+            context: "tool call sheet dismissed",
+            duration: 0.8
+        )
+    }
+
+    func testToolCallSheetKeepsKeyboardClosedWhenClosed() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = toolCallSheetConversationId
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        if ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil {
+            app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        }
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let overlapMarker = app.otherElements["chat.keyboardOverlapValue"]
+        XCTAssertTrue(overlapMarker.waitForExistence(timeout: 6))
+        let toolCallButton = app.buttons["chat.toolCall.\(toolCallSheetToolCallId)"]
+        XCTAssertTrue(toolCallButton.waitForExistence(timeout: 6))
+
+        let snapOpen = app.buttons["chat.fakeKeyboard.snapOpen"]
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        let usesFakeKeyboard = snapOpen.waitForExistence(timeout: 1)
+            && snapClosed.waitForExistence(timeout: 1)
+        if usesFakeKeyboard {
+            snapClosed.tap()
+        } else {
+            dismissKeyboard(app: app)
+        }
+        waitForScrollSettle()
+
+        let pill = waitForInputPill(app: app)
+        let closedBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "tool call keyboard closed"
+        )
+        let baselineOverlap = waitForStableNumericValue(
+            element: overlapMarker,
+            timeout: 4,
+            tolerance: 0.5,
+            stableSamples: 3
+        )
+        let baselinePillTop = waitForStableMinY(
+            element: pill,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+
+        let scrollView = locateScrollView(app: app)
+        if toolCallButton.isHittable {
+            toolCallButton.tap()
+        } else {
+            scrollView.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            toolCallButton.tap()
+        }
+
+        let toolTitle = app.staticTexts["Tool"]
+        XCTAssertTrue(toolTitle.waitForExistence(timeout: 4))
+        let openOverlap = waitForNumericValueNear(
+            element: overlapMarker,
+            target: baselineOverlap,
+            tolerance: 6,
+            timeout: 4
+        )
+        XCTAssertLessThanOrEqual(
+            abs(openOverlap - baselineOverlap),
+            6,
+            "Keyboard opened after tool call sheet presented: overlap=\(openOverlap) baseline=\(baselineOverlap)"
+        )
+        let openPillTop = waitForStableMinY(
+            element: pill,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+        XCTAssertLessThanOrEqual(
+            abs(openPillTop - baselinePillTop),
+            yTolerance,
+            "Input pill moved while keyboard should remain closed: baseline=\(baselinePillTop) open=\(openPillTop)"
+        )
+
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        let dismissedPredicate = NSPredicate(format: "exists == false")
+        let dismissedExpectation = XCTNSPredicateExpectation(predicate: dismissedPredicate, object: toolTitle)
+        _ = XCTWaiter.wait(for: [dismissedExpectation], timeout: 4)
+
+        let closedOverlap = waitForNumericValueNear(
+            element: overlapMarker,
+            target: baselineOverlap,
+            tolerance: 6,
+            timeout: 4
+        )
+        XCTAssertLessThanOrEqual(
+            abs(closedOverlap - baselineOverlap),
+            6,
+            "Keyboard opened after tool call sheet dismiss: overlap=\(closedOverlap) baseline=\(baselineOverlap)"
+        )
+        let closedPillTop = waitForStableMinY(
+            element: pill,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+        XCTAssertLessThanOrEqual(
+            abs(closedPillTop - baselinePillTop),
+            yTolerance,
+            "Input pill shifted after tool call sheet dismiss: baseline=\(baselinePillTop) closed=\(closedPillTop)"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "tool call sheet dismiss keyboard closed"
+        )
+    }
+
+    func testToolCallSheetRestoresKeyboardAfterDismiss() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = toolCallSheetConversationId
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        if ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil {
+            app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        }
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let overlapMarker = app.otherElements["chat.keyboardOverlapValue"]
+        XCTAssertTrue(overlapMarker.waitForExistence(timeout: 6))
+        let toolCallButton = app.buttons["chat.toolCall.\(toolCallSheetToolCallId)"]
+        XCTAssertTrue(toolCallButton.waitForExistence(timeout: 6))
+
+        let snapOpen = app.buttons["chat.fakeKeyboard.snapOpen"]
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        let usesFakeKeyboard = snapOpen.waitForExistence(timeout: 1)
+            && snapClosed.waitForExistence(timeout: 1)
+        if usesFakeKeyboard {
+            snapClosed.tap()
+        } else {
+            dismissKeyboard(app: app)
+        }
+        waitForScrollSettle()
+
+        let pill = waitForInputPill(app: app)
+        let closedBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "tool call keyboard closed baseline"
+        )
+        let baselineOverlap = waitForStableNumericValue(
+            element: overlapMarker,
+            timeout: 4,
+            tolerance: 0.5,
+            stableSamples: 3
+        )
+        let baselinePillTop = waitForStableMinY(
+            element: pill,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+
+        if usesFakeKeyboard {
+            snapOpen.tap()
+        } else {
+            focusKeyboard(app: app)
+        }
+        var openOverlap = waitForNumericValueAtLeast(
+            element: overlapMarker,
+            minimum: baselineOverlap + openOverlapMinDelta,
+            timeout: 6
+        )
+        if openOverlap < baselineOverlap + openOverlapMinDelta, snapOpen.exists {
+            snapOpen.tap()
+            openOverlap = waitForNumericValueAtLeast(
+                element: overlapMarker,
+                minimum: baselineOverlap + openOverlapMinDelta,
+                timeout: 4
+            )
+        }
+        XCTAssertGreaterThanOrEqual(
+            openOverlap,
+            baselineOverlap + openOverlapMinDelta,
+            "Keyboard did not open before tool call sheet: overlap=\(openOverlap) baseline=\(baselineOverlap)"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "tool call keyboard open baseline"
+        )
+
+        let scrollView = locateScrollView(app: app)
+        if toolCallButton.isHittable {
+            toolCallButton.tap()
+        } else {
+            scrollView.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            toolCallButton.tap()
+        }
+
+        let toolTitle = app.staticTexts["Tool"]
+        XCTAssertTrue(toolTitle.waitForExistence(timeout: 4))
+        let closedOverlap = waitForNumericValueNear(
+            element: overlapMarker,
+            target: baselineOverlap,
+            tolerance: 6,
+            timeout: 6
+        )
+        XCTAssertLessThanOrEqual(
+            abs(closedOverlap - baselineOverlap),
+            6,
+            "Keyboard did not close after tool call sheet opened: overlap=\(closedOverlap) baseline=\(baselineOverlap)"
+        )
+        let closedPillTop = waitForPillReturn(
+            element: pill,
+            baseline: baselinePillTop,
+            tolerance: yTolerance,
+            timeout: 6
+        )
+        XCTAssertLessThanOrEqual(
+            abs(closedPillTop - baselinePillTop),
+            yTolerance,
+            "Input pill did not return to bottom when keyboard closed: baseline=\(baselinePillTop) closed=\(closedPillTop)"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "tool call keyboard closed while sheet open"
+        )
+
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        let dismissedPredicate = NSPredicate(format: "exists == false")
+        let dismissedExpectation = XCTNSPredicateExpectation(predicate: dismissedPredicate, object: toolTitle)
+        _ = XCTWaiter.wait(for: [dismissedExpectation], timeout: 4)
+
+        let reopenedOverlap = waitForNumericValueAtLeast(
+            element: overlapMarker,
+            minimum: baselineOverlap + openOverlapMinDelta,
+            timeout: 8
+        )
+        XCTAssertGreaterThanOrEqual(
+            reopenedOverlap,
+            baselineOverlap + openOverlapMinDelta,
+            "Keyboard did not reopen after tool call sheet dismiss: overlap=\(reopenedOverlap) baseline=\(baselineOverlap)"
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "tool call keyboard restored after dismiss"
+        )
+    }
+
+    func testToolCallSheetClosesKeyboardReturnsInputQuickly() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = toolCallSheetConversationId
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        if ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil {
+            app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        }
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let overlapMarker = app.otherElements["chat.keyboardOverlapValue"]
+        XCTAssertTrue(overlapMarker.waitForExistence(timeout: 6))
+        let toolCallButton = app.buttons["chat.toolCall.\(toolCallSheetToolCallId)"]
+        XCTAssertTrue(toolCallButton.waitForExistence(timeout: 6))
+        let pill = waitForInputPill(app: app)
+        let scrollView = locateScrollView(app: app)
+
+        let snapOpen = app.buttons["chat.fakeKeyboard.snapOpen"]
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        let usesFakeKeyboard = snapOpen.waitForExistence(timeout: 1)
+            && snapClosed.waitForExistence(timeout: 1)
+
+        if usesFakeKeyboard {
+            snapClosed.tap()
+        } else {
+            dismissKeyboard(app: app)
+        }
+        waitForScrollSettle()
+
+        let baselineOverlap = waitForStableNumericValue(
+            element: overlapMarker,
+            timeout: 4,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+        let baselinePillTop = waitForStableMinY(
+            element: pill,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 2
+        )
+        let closedBaseline = captureInputPillBaseline(
+            app: app,
+            pill: pill,
+            context: "tool call quick return baseline"
+        )
+
+        if usesFakeKeyboard {
+            snapOpen.tap()
+        } else {
+            focusKeyboard(app: app)
+        }
+        _ = waitForNumericValueAtLeast(
+            element: overlapMarker,
+            minimum: baselineOverlap + openOverlapMinDelta,
+            timeout: 6
+        )
+
+        if toolCallButton.isHittable {
+            toolCallButton.tap()
+        } else {
+            scrollView.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            toolCallButton.tap()
+        }
+
+        let toolTitle = app.staticTexts["Tool"]
+        XCTAssertTrue(toolTitle.waitForExistence(timeout: 4))
+
+        let closedWhileSheet = waitForPillReturn(
+            element: pill,
+            baseline: baselinePillTop,
+            tolerance: yTolerance,
+            timeout: quickReturnTimeout
+        )
+        XCTAssertLessThanOrEqual(
+            abs(closedWhileSheet - baselinePillTop),
+            yTolerance,
+            "Input pill did not return to bottom quickly after tool call sheet closed the keyboard."
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "tool call sheet open keyboard closed",
+            duration: quickReturnTimeout
+        )
+        _ = waitForNumericValueNear(
+            element: overlapMarker,
+            target: baselineOverlap,
+            tolerance: 6,
+            timeout: 4
+        )
+
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        let dismissedPredicate = NSPredicate(format: "exists == false")
+        let dismissedExpectation = XCTNSPredicateExpectation(predicate: dismissedPredicate, object: toolTitle)
+        _ = XCTWaiter.wait(for: [dismissedExpectation], timeout: 4)
+
+        let reopenedOverlap = waitForNumericValueAtLeast(
+            element: overlapMarker,
+            minimum: baselineOverlap + openOverlapMinDelta,
+            timeout: 8
+        )
+        XCTAssertGreaterThanOrEqual(
+            reopenedOverlap,
+            baselineOverlap + openOverlapMinDelta,
+            "Keyboard did not reopen after tool call sheet dismiss: overlap=\(reopenedOverlap) baseline=\(baselineOverlap)"
+        )
+
+        if usesFakeKeyboard {
+            snapClosed.tap()
+        } else {
+            dismissKeyboard(app: app)
+        }
+
+        let closedAfterDismiss = waitForPillReturn(
+            element: pill,
+            baseline: baselinePillTop,
+            tolerance: yTolerance,
+            timeout: quickReturnTimeout
+        )
+        XCTAssertLessThanOrEqual(
+            abs(closedAfterDismiss - baselinePillTop),
+            yTolerance,
+            "Input pill did not return to bottom quickly after keyboard dismiss."
+        )
+        assertInputPillVisibleAndNotBelowBaseline(
+            app: app,
+            pill: pill,
+            baseline: closedBaseline,
+            context: "tool call sheet after keyboard dismiss",
+            duration: quickReturnTimeout
         )
     }
 
