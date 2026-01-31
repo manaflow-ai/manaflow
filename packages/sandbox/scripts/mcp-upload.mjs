@@ -52,50 +52,6 @@ function ensureFileNameExtension(fileName, contentType) {
   if (!extension) return fileName;
   return `${fileName}.${extension}`;
 }
-const EXTENSION_TO_CONTENT_TYPE = new Map([
-  ["png", "image/png"],
-  ["jpg", "image/jpeg"],
-  ["jpeg", "image/jpeg"],
-  ["gif", "image/gif"],
-  ["webp", "image/webp"],
-  ["svg", "image/svg+xml"],
-  ["mp4", "video/mp4"],
-  ["mov", "video/quicktime"],
-  ["webm", "video/webm"],
-  ["pdf", "application/pdf"],
-  ["txt", "text/plain"],
-  ["md", "text/markdown"],
-  ["json", "application/json"],
-]);
-
-const CONTENT_TYPE_TO_EXTENSION = new Map([
-  ["image/png", "png"],
-  ["image/jpeg", "jpg"],
-  ["image/gif", "gif"],
-  ["image/webp", "webp"],
-  ["image/svg+xml", "svg"],
-  ["video/mp4", "mp4"],
-  ["video/quicktime", "mov"],
-  ["video/webm", "webm"],
-  ["application/pdf", "pdf"],
-  ["text/plain", "txt"],
-  ["text/markdown", "md"],
-  ["application/json", "json"],
-]);
-
-function inferContentType(pathValue) {
-  const ext = extname(pathValue).toLowerCase().replace(/^\./, "");
-  if (!ext) return null;
-  return EXTENSION_TO_CONTENT_TYPE.get(ext) ?? null;
-}
-
-function ensureFileNameExtension(fileName, contentType) {
-  const existingExt = extname(fileName).toLowerCase();
-  if (existingExt) return fileName;
-  const extension = CONTENT_TYPE_TO_EXTENSION.get(contentType);
-  if (!extension) return fileName;
-  return `${fileName}.${extension}`;
-}
 
 const toolDefinition = {
   name: TOOL_NAME,

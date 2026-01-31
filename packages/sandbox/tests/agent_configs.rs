@@ -132,6 +132,25 @@ async fn test_agent_config_files_exist_in_sandbox() {
         resp_mcp.stderr
     );
 
+    let check_mcp_syntax = ExecRequest {
+        command: vec![
+            "node".into(),
+            "--check".into(),
+            "/usr/local/bin/mcp-upload".into(),
+        ],
+        workdir: None,
+        env: vec![],
+    };
+    let resp_mcp_syntax = service
+        .exec(summary.id.to_string(), check_mcp_syntax)
+        .await
+        .expect("Failed to exec MCP tool syntax check");
+    assert_eq!(
+        resp_mcp_syntax.exit_code, 0,
+        "mcp-upload should be parseable by Node: {}",
+        resp_mcp_syntax.stderr
+    );
+
     // Clean up
     service.delete(summary.id.to_string()).await.unwrap();
 }
