@@ -3,7 +3,7 @@
     {
       "publisher": "anthropic",
       "name": "claude-code",
-      "version": "2.1.25"
+      "version": "2.1.27"
     },
     {
       "publisher": "openai",
@@ -13,7 +13,7 @@
     {
       "publisher": "ms-vscode",
       "name": "vscode-typescript-next",
-      "version": "6.0.20260129"
+      "version": "6.0.20260130"
     },
     {
       "publisher": "ms-python",
@@ -28,11 +28,11 @@
   ],
   "packages": {
     "@openai/codex": "0.92.0",
-    "@anthropic-ai/claude-code": "2.1.25",
+    "@anthropic-ai/claude-code": "2.1.27",
     "@google/gemini-cli": "0.26.0",
-    "opencode-ai": "1.1.44",
+    "opencode-ai": "1.1.47",
     "codebuff": "1.0.603",
     "@devcontainers/cli": "0.82.0",
-    "@sourcegraph/amp": "0.0.1769747371-g55ea5f"
+    "@sourcegraph/amp": "0.0.1769817776-gbc1a35"
   }
 }
