@@ -2,12 +2,18 @@ import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import { JetBrains_Mono } from "next/font/google";
 import { Geist } from "next/font/google";
+import localFont from "next/font/local";
 
 import { stackServerApp } from "@/lib/utils/stack";
 import { StackProvider, StackTheme } from "@stackframe/stack";
 
 import clsx from "clsx";
 import "./globals.css";
+
+const articulat = localFont({
+  src: "../public/fonts/articulat-cf-normal.ttf",
+  variable: "--font-articulat",
+});
 
 export const metadata: Metadata = {
   title: "cmux - Manage AI coding agents in parallel — 10x your 10x engineers",
@@ -52,20 +58,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={clsx(
-        "dark",
-        jetBrainsMono.className,
         jetBrainsMono.variable,
-        geist.className,
         geist.variable,
+        articulat.variable,
       )}
     >
-      <body
-        className="antialiased bg-background text-foreground"
-        style={{
-          fontFamily:
-            '"JetBrains Mono","SFMono-Regular","Menlo","Consolas","ui-monospace","Monaco","Courier New",monospace',
-        }}
-      >
+      <body className="antialiased">
         <StackTheme>
           <StackProvider app={stackServerApp}>{children}</StackProvider>
         </StackTheme>

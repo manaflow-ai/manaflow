@@ -1,0 +1,27 @@
+---
+title: Git Integration
+description: 'Branches, diffs, and pull requests'
+---
+
+## Overview
+cmux works directly on GitHub repos. Each run uses its own branch and workspace.
+
+## Repos and branches
+- Select a GitHub repo and base branch when creating a task.
+- cmux creates a new branch for each run and records it on the run.
+- Use "Copy branch" in the Open With menu to copy the branch name.
+
+## Diffs
+- The Git Diff panel compares the run branch against the base branch.
+- The diff view supports heatmap review and screenshot sets (see Code Review).
+
+## Pull requests
+- Create PRs from runs; cmux tracks PR URL and state per run.
+- The Pull Request view embeds the PR and shows its current state.
+- From PR views you can merge or close PRs.
+
+## Auto PR from crown
+Enable "Auto-create pull request with the best diff" in Settings > Crown Evaluator to open a PR for the crowned run automatically.
+
+## GitHub access
+Connecting GitHub OAuth is required for private repos. Installing the GitHub App enables repo listing and PR operations (see Integrations > GitHub).

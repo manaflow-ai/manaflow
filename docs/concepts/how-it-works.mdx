@@ -1,0 +1,34 @@
+---
+title: How cmux Works
+description: 'How tasks, runs, and workspaces fit together'
+---
+
+# How cmux works
+
+cmux turns a task into one or more parallel agent runs. Each run gets its own branch and its own workspace.
+
+## Core objects
+- Task: prompt plus repo and base branch, or an environment. Optional description and images.
+- Run: a single agent instance for a task. Tracks status, branch, workspace, and PR metadata.
+- Workspace: VS Code and terminal for a run. Local (Docker) or cloud.
+- Environment: a reusable cloud workspace configuration with scripts, env vars, and snapshots.
+
+## Execution flow
+1. Create a task and choose a repo or environment.
+2. Select agents and optionally multiple instances per agent.
+3. cmux creates a run and branch for each instance.
+4. Each run starts a workspace and launches the agent CLI.
+5. Review diffs, screenshots, and PRs, then pick a winner if needed.
+
+## Isolation and review
+- Runs do not share files or processes.
+- Each run has a unique branch and worktree.
+- The UI lets you compare runs in Activity and Git Diff panels.
+
+## Local and cloud modes
+- Local mode runs workspaces in Docker on your machine.
+- Cloud mode runs in a cloud workspace and enables the browser preview.
+- The web app uses cloud workspaces only.
+
+## Live state
+The UI updates in real time as runs progress and as review data becomes available.

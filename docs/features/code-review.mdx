@@ -1,0 +1,34 @@
+---
+title: Code Review
+description: 'Heatmap diff review and screenshots'
+---
+
+## Overview
+cmux includes a heatmap diff viewer that highlights riskier lines and provides AI tooltip explanations. It is available for task run diffs and PR diffs.
+
+## Heatmap review
+- Toggle AI Review with the flame icon in the diff header.
+- Lines are colored by review score; higher scores appear hotter.
+- Hover a highlighted line to see the AI tooltip.
+
+## Models and language
+Heatmap models:
+- `anthropic-opus-4-5`
+- `anthropic`
+- `cmux-heatmap-2`
+- `cmux-heatmap-1`
+- `cmux-heatmap-0`
+
+Tooltip languages:
+- `en`, `zh-Hant`, `zh-Hans`, `ja`, `ko`, `es`, `fr`, `de`, `pt`, `ru`
+- `hi`, `bn`, `te`, `mr`, `ta`, `gu`, `kn`, `ml`, `pa`, `ar`
+- `vi`, `th`, `id`
+
+## Visibility and colors
+- Visibility threshold controls how aggressive highlighting is.
+- Line and token gradient colors are configurable.
+
+Settings are saved in Settings > Diff Heatmap Review and can also be adjusted in the diff view.
+
+## Screenshot sets
+For runs with preview jobs, the diff page shows the latest screenshot set with status (`completed`, `failed`, `skipped`) and whether UI changes were detected.

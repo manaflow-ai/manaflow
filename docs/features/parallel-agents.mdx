@@ -1,0 +1,26 @@
+---
+title: Parallel Agents
+description: 'Run multiple agent CLIs in a single task'
+---
+
+## Overview
+A task can run multiple agent instances at the same time. Each agent instance is a run with its own branch and workspace.
+
+## Selecting agents
+- Pick one or more agents when creating a task.
+- You can add multiple instances of the same agent; the picker allows up to 6 per agent.
+- Agent availability depends on provider credentials.
+
+## Isolation
+Each run is isolated:
+- Separate git branches and worktrees.
+- Separate VS Code, terminal, and processes.
+- No shared context between agents.
+
+## Monitoring
+Use the task tree and Activity panel to see run status (`pending`, `running`, `completed`, `failed`, `skipped`) and open each run's panels.
+
+## Crown evaluation
+After all root runs finish, cmux evaluates the completed runs and crowns a winner.
+- If only one run completes, it is crowned automatically.
+- If all runs fail or are skipped, crown evaluation ends with `error`.

@@ -1,0 +1,36 @@
+---
+title: API Keys
+description: 'Provider credentials for agent CLIs'
+---
+
+## Overview
+Add provider credentials in Settings > API Key Authentication. Keys are stored per team and injected into agent processes.
+
+## Recommended CLI tokens
+- `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
+- `CODEX_AUTH_JSON` as the full contents of `~/.codex/auth.json`.
+
+## Supported keys
+- `ANTHROPIC_API_KEY` (Claude, Opencode models that use Anthropic)
+- `CLAUDE_CODE_OAUTH_TOKEN` (Claude Code)
+- `OPENAI_API_KEY` (Codex, Opencode OpenAI models)
+- `CODEX_AUTH_JSON` (Codex CLI auth file contents)
+- `GEMINI_API_KEY` (Gemini CLI)
+- `OPENROUTER_API_KEY` (Opencode OpenRouter models, Qwen free tier)
+- `MODEL_STUDIO_API_KEY` (Qwen plus tier)
+- `AMP_API_KEY` (Amp)
+- `CURSOR_API_KEY` (Cursor)
+- `XAI_API_KEY` (Opencode Grok models)
+
+## Local credentials (optional)
+If the CLI is installed locally, cmux can read existing auth files instead of a key:
+- Claude: `~/.claude.json`, `~/.claude/.credentials.json`, or macOS keychain entries `Claude Code` / `Claude Code-credentials`.
+- Codex: `~/.codex/auth.json` and `~/.codex/config.toml`.
+- Gemini: `~/.gemini/settings.json` plus OAuth files in `~/.gemini`.
+- Amp: `~/.local/share/amp/secrets.json`.
+- Cursor: `~/.config/cursor/auth.json` or macOS keychain tokens, plus `~/.cursor/cli-config.json`.
+- Opencode: `~/.local/share/opencode/auth.json` (provider keys still required per model).
+- Qwen: uses `OPENROUTER_API_KEY` or `MODEL_STUDIO_API_KEY` mapped to `OPENAI_API_KEY` for the CLI.
+
+## Provider status
+Use Settings > Provider Status to see missing requirements before launching runs.

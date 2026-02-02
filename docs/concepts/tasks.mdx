@@ -1,0 +1,62 @@
+---
+title: Tasks
+description: 'Tasks, runs, statuses, and review flow'
+---
+
+## Task basics
+
+A task is the unit of work you give cmux. It includes:
+- Prompt text (stored in `task.text`).
+- Optional description and images.
+- A repo and base branch, or an environment.
+- One or more runs (one per agent instance).
+
+## Runs
+
+A run is a single agent instance for a task.
+- Each run has its own branch and workspace.
+- Run status is one of: `pending`, `running`, `completed`, `failed`, `skipped`.
+- Runs store PR metadata (`pullRequestUrl`, `pullRequests`, `pullRequestState`).
+- Runs store screenshot sets and optional AI claims for review.
+- Runs can be nested (parent and child runs) and are shown as a tree in the UI.
+
+## Completion and crown evaluation
+
+When all root runs reach a terminal state, the task is marked completed.
+- If at least one run completes, cmux evaluates runs and crowns a winner.
+- If only one run completes, it is crowned automatically.
+- If all runs fail or are skipped, crown evaluation is set to `error`.
+
+Crown evaluation status values:
+- `pending`, `in_progress`, `succeeded`, `error`.
+
+Crowned runs store `isCrowned` and `crownReason`.
+
+## PR and merge status
+
+Run PR state values:
+- `none`, `draft`, `open`, `merged`, `closed`, `unknown`.
+
+Task merge status values:
+- `none`, `pr_draft`, `pr_open`, `pr_approved`, `pr_changes_requested`, `pr_merged`, `pr_closed`.
+
+## Images
+
+You can attach images to a task. cmux stores them and injects file paths into the prompt so agents can open the images from the workspace.
+
+## Task management
+
+From the task list and task view you can:
+- Rename the task text.
+- Pin and unpin tasks.
+- Archive and unarchive tasks.
+- Archive individual runs.
+
+## Notifications
+
+cmux creates notifications for:
+- `run_completed`
+- `run_failed`
+- `run_needs_input`
+
+Notifications can be marked read or unread in the Notifications page.

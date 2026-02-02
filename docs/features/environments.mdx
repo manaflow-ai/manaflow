@@ -1,0 +1,34 @@
+---
+title: Environments
+description: 'Reusable cloud workspace templates'
+---
+
+## Overview
+Environments are reusable templates for cloud workspaces. They bundle repos, scripts, env vars, preview settings, and a snapshot so runs start from a known state.
+
+## What an environment contains
+- Name and optional description.
+- One or more GitHub repos.
+- Maintenance script (runs before the dev script).
+- Dev script (starts your dev server).
+- Environment variables.
+- Preview settings that control which services show preview links.
+- A snapshot version.
+
+## Create an environment
+1. Select repos (or choose manual setup for a bare VM).
+2. Pick a machine size.
+3. Configure scripts, env vars, and preview settings.
+4. In the workspace step, run the scripts in VS Code and use the browser panel to sign in to any required services.
+5. Save the environment to capture a snapshot.
+
+## Use an environment
+- Select the environment when creating a task.
+- Environment tasks run in cloud workspaces and do not require a base branch.
+- The environment's scripts and env vars are applied to each run.
+
+## Modify an environment
+From the environment detail page you can:
+- Launch a "Modify VM" workspace from the active snapshot.
+- Create a new snapshot version and activate it.
+- Edit scripts, preview settings, and the environment name.

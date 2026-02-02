@@ -1,0 +1,26 @@
+---
+title: GitHub
+description: 'Connect GitHub for repos and pull requests'
+---
+
+## Overview
+GitHub integration has two parts: GitHub OAuth (your user account) and the cmux GitHub App (repo access). OAuth is required for private repo cloning; the App powers repo listing and PR operations.
+
+## Connect GitHub
+- Go to Settings > Connected Accounts and connect GitHub.
+- In the desktop app the flow opens in your system browser; in web it redirects.
+
+## Install the GitHub App
+- From the repository picker, click "Install GitHub App" and choose the org or user.
+- The app installation determines which repos appear in the picker.
+
+## Repository selection
+- Pick repos from the list synced from the app installation.
+- You can also paste a GitHub URL or owner/repo for public repos.
+
+## Branches and PRs
+- Branch pickers and default branch detection use the GitHub API.
+- PR views and actions (open, merge, close) require the app installation.
+
+## Checks and deployments
+PR diff views show GitHub Actions, check runs, deployments, and commit status for the linked PR.

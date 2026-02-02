@@ -1,0 +1,127 @@
+---
+title: Agents
+description: 'Supported coding agent CLIs and requirements'
+---
+
+## Overview
+
+cmux launches vendor CLIs inside each run workspace. The agent name you pick is the exact model ID used by the CLI.
+
+## Supported agents
+
+### Claude Code (Anthropic)
+- claude/opus-4.5
+- claude/sonnet-4.5
+- claude/haiku-4.5
+
+### OpenAI Codex CLI
+- codex/gpt-5.2-codex-xhigh
+- codex/gpt-5.2-codex-high
+- codex/gpt-5.2-codex-medium
+- codex/gpt-5.2-codex-low
+- codex/gpt-5.2-codex
+- codex/gpt-5.1-codex-max-xhigh
+- codex/gpt-5.1-codex-max-high
+- codex/gpt-5.1-codex-max-medium
+- codex/gpt-5.1-codex-max-low
+- codex/gpt-5.1-codex-max
+- codex/gpt-5.1-codex-high
+- codex/gpt-5.1-codex
+- codex/gpt-5.1-codex-mini
+- codex/gpt-5.1
+- codex/gpt-5.2
+- codex/gpt-5.2-high
+- codex/gpt-5.2-medium
+- codex/gpt-5.2-low
+- codex/gpt-5-codex-high
+- codex/gpt-5-codex-medium
+- codex/gpt-5-codex-low
+- codex/gpt-5-codex-mini
+- codex/gpt-5-high
+- codex/gpt-5-medium
+- codex/gpt-5-low
+- codex/gpt-5-minimal
+- codex/o3
+- codex/o4-mini
+- codex/gpt-4.1
+
+### Amp (Sourcegraph)
+- amp
+- amp/gpt-5
+
+### Opencode
+- opencode/grok-code
+- opencode/grok-4-1-fast
+- opencode/grok-4-1-fast-non-reasoning
+- opencode/sonnet-4
+- opencode/opus-4
+- opencode/opus-4.1-20250805
+- opencode/kimi-k2
+- opencode/qwen3-coder
+- opencode/glm-4.5
+- opencode/o3-pro
+- opencode/gpt-5
+- opencode/gpt-5-mini
+- opencode/gpt-5-nano
+- opencode/gpt-oss-120b
+- opencode/gpt-oss-20b
+
+### Gemini CLI
+- gemini/3-pro-preview
+- gemini/2.5-flash
+- gemini/2.5-pro
+
+### Qwen Code CLI
+- qwen/qwen3-coder:free
+- qwen/qwen3-coder-plus
+
+### Cursor
+- cursor/opus-4.1
+- cursor/gpt-5
+- cursor/sonnet-4
+- cursor/sonnet-4-thinking
+
+## Credentials and local requirements
+
+cmux checks requirements before you start a run. Use Settings to add keys, and check Provider Status to see missing requirements.
+
+### Claude Code
+- Settings keys: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`.
+- If no key is set, cmux looks for `~/.claude.json` plus `~/.claude/.credentials.json` or macOS keychain entries named "Claude Code" or "Claude Code-credentials".
+
+### Codex CLI
+- Settings keys: `CODEX_AUTH_JSON` (preferred) or `OPENAI_API_KEY`.
+- `CODEX_AUTH_JSON` should be the full contents of `~/.codex/auth.json`.
+- Local checks require `~/.codex/auth.json` and `~/.codex/config.toml` to exist.
+
+### Gemini CLI
+- Requires `~/.gemini/settings.json`.
+- Auth via `GEMINI_API_KEY` or OAuth files in `~/.gemini` (`oauth_creds.json`, `google_accounts.json`, `google_account_id`).
+
+### Amp
+- Settings key: `AMP_API_KEY`.
+- Or local `~/.local/share/amp/secrets.json`.
+
+### Cursor
+- Settings key: `CURSOR_API_KEY`.
+- Or local `~/.config/cursor/auth.json` or macOS keychain tokens `cursor-access-token` and `cursor-refresh-token`.
+- Requires `~/.cursor/cli-config.json`.
+
+### Opencode
+- Requires local `~/.local/share/opencode/auth.json`.
+- Provider keys by model:
+  - `ANTHROPIC_API_KEY`: opencode/sonnet-4, opencode/opus-4, opencode/opus-4.1-20250805, opencode/qwen3-coder
+  - `OPENAI_API_KEY`: opencode/o3-pro, opencode/gpt-5, opencode/gpt-5-mini, opencode/gpt-5-nano
+  - `OPENROUTER_API_KEY`: opencode/kimi-k2, opencode/glm-4.5, opencode/gpt-oss-120b, opencode/gpt-oss-20b
+  - `XAI_API_KEY`: opencode/grok-4-1-fast, opencode/grok-4-1-fast-non-reasoning
+  - opencode/grok-code does not need a provider key but still requires the opencode auth file.
+
+### Qwen Code
+- `qwen/qwen3-coder:free` uses `OPENROUTER_API_KEY`.
+- `qwen/qwen3-coder-plus` uses `MODEL_STUDIO_API_KEY`.
+- Both keys are injected as `OPENAI_API_KEY` for the CLI.
+
+## Selecting agents
+- You can pick multiple agents for a single task.
+- You can add multiple instances of the same agent. The picker caps instances at 6 per agent.
+- If an agent is unavailable, the picker shows the missing requirement and prevents selection.

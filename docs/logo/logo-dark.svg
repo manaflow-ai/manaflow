@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 0 680 240" fill="none">
+  <defs>
+    <linearGradient id="arrowGradient" x1="64" y1="64" x2="453" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00D4FF"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Arrow with gradient -->
+  <g transform="translate(87.2, 62.7) scale(0.2)" filter="url(#glow)">
+    <path d="M64 64L453 333.5L64 603V483.222L273.462 333.5L64 183.778V64Z" fill="url(#arrowGradient)"/>
+  </g>
+
+  <!-- cmux text in white for dark mode -->
+  <text x="208" y="162" font-size="108" font-weight="700" font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, ui-monospace, Monaco, Courier New, monospace" letter-spacing="1.5px" fill="white">cmux</text>
+</svg>

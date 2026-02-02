@@ -1,0 +1,36 @@
+---
+title: VS Code Workspaces
+description: 'Edit each run in a full VS Code web workspace'
+---
+
+## Overview
+The Workspace panel embeds a VS Code web instance for every run. It opens the run's branch and updates in real time as the agent works. The web app uses cloud workspaces; the desktop app can also open local workspaces when Docker is available.
+
+## Open workspaces
+- From the task tree, select a run and open VS Code.
+- Use the "Open with" menu to launch VS Code (web) or a local editor when a worktree is available.
+
+## Open with options
+Available actions depend on what is installed:
+- VS Code (web)
+- VS Code (local)
+- Cursor
+- Windsurf
+- Finder
+- iTerm
+- Terminal
+- Ghostty
+- Alacritty
+- Xcode
+
+## Local workspaces
+Local runs use git worktrees on disk (default `~/cmux/...`). The Open With menu opens that worktree in local editors.
+
+## Editor settings sync (web mode)
+In Settings > Editor Settings Sync you can upload:
+- `settings.json`
+- `keybindings.json`
+- snippets
+- extension list
+
+These settings apply to cloud workspaces for VS Code, Cursor, and Windsurf.
