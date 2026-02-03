@@ -39,6 +39,8 @@ import {
 import { openaiProxy } from "./openai_http";
 import { codexOAuthRefresh } from "./codex_oauth_http";
 import { otelTracesProxy, otelMetricsStub, otelLogsStub } from "./otel_http";
+import { sendblueWebhook, sendblueHealth } from "./sms_http";
+import { spawn, message, trajectory } from "./spawn_http";
 
 const http = httpRouter();
 
@@ -217,6 +219,20 @@ http.route({
   handler: openaiProxy,
 });
 
+// OpenAI Responses API routes without /v1/ prefix (newer API format)
+// Codex CLI uses these paths when calling the Responses API
+http.route({
+  path: "/api/openai/responses",
+  method: "POST",
+  handler: openaiProxy,
+});
+
+http.route({
+  path: "/api/openai/responses/compact",
+  method: "POST",
+  handler: openaiProxy,
+});
+
 // Codex OAuth refresh proxy endpoint
 // Codex CLI can use CODEX_REFRESH_TOKEN_URL_OVERRIDE to point here
 http.route({
@@ -242,6 +258,40 @@ http.route({
   path: "/api/otel/v1/logs",
   method: "POST",
   handler: otelLogsStub,
+});
+
+// Sendblue SMS/iMessage webhook endpoints
+http.route({
+  path: "/api/sendblue/webhook",
+  method: "POST",
+  handler: sendblueWebhook,
+});
+
+http.route({
+  path: "/api/sendblue/health",
+  method: "GET",
+  handler: sendblueHealth,
+});
+
+// Spawn sandbox with initial prompt
+http.route({
+  path: "/api/spawn",
+  method: "POST",
+  handler: spawn,
+});
+
+// Send follow-up message to conversation
+http.route({
+  path: "/api/spawn/message",
+  method: "POST",
+  handler: message,
+});
+
+// Get conversation trajectory (messages)
+http.route({
+  path: "/api/spawn/trajectory",
+  method: "GET",
+  handler: trajectory,
 });
 
 export default http;

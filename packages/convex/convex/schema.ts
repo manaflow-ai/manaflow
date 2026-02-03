@@ -1197,6 +1197,24 @@ const convexSchema = defineSchema({
     .index("by_team_user", ["teamId", "userId"]) // Get unread runs for a user in a team
     .index("by_task_user", ["taskId", "userId"]), // Get unread runs for a task
 
+  // Device push tokens for APNs delivery
+  devicePushTokens: defineTable({
+    token: v.string(),
+    userId: v.string(),
+    platform: v.string(),
+    environment: v.union(v.literal("development"), v.literal("production")),
+    bundleId: v.string(),
+    deviceId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastSeenAt: v.number(),
+    invalidatedAt: v.optional(v.number()),
+    invalidatedReason: v.optional(v.string()),
+  })
+    .index("by_token", ["token"])
+    .index("by_user", ["userId"])
+    .index("by_user_env", ["userId", "environment"]),
+
   // Track Morph instance activity for cleanup cron decisions
   morphInstanceActivity: defineTable({
     instanceId: v.string(), // Morph instance ID (morphvm_xxx)
@@ -1476,6 +1494,35 @@ const convexSchema = defineSchema({
   })
     .index("by_user_team", ["userId", "teamId"]) // Primary lookup: user's tokens for a team
     .index("by_user", ["userId"]), // List all teams where user has Codex linked
+
+  // SMS messages table (separate from ACP conversationMessages)
+  smsMessages: defineTable({
+    content: v.string(),
+    fromNumber: v.string(),
+    toNumber: v.string(),
+    isOutbound: v.boolean(),
+    status: v.string(), // sent, delivered, read, failed, received
+    service: v.optional(v.string()), // iMessage or SMS
+    messageHandle: v.optional(v.string()), // Sendblue's unique ID for deduplication
+    dateSent: v.optional(v.string()),
+    errorCode: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    sendStyle: v.optional(v.string()), // iMessage effects
+    // Group chat (optional)
+    groupId: v.optional(v.string()),
+    participants: v.optional(v.array(v.string())),
+  })
+    .index("by_from_number", ["fromNumber"])
+    .index("by_to_number", ["toNumber"])
+    .index("by_message_handle", ["messageHandle"])
+    .index("by_group_id", ["groupId"]),
+
+  // SMS webhook logs for debugging
+  smsWebhookLogs: defineTable({
+    eventType: v.string(),
+    payload: v.string(),
+    processedAt: v.number(),
+  }).index("by_processed_at", ["processedAt"]),
 });
 
 export default convexSchema;
