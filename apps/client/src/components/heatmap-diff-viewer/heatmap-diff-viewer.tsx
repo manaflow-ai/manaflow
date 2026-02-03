@@ -36,6 +36,7 @@ import {
   FilePlus,
   FileText,
   Loader2,
+  Plus,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -102,6 +103,15 @@ export type HeatmapDiffViewerProps = {
   onCollapseChange?: (collapsed: boolean) => void;
   /** Custom class name for the container */
   className?: string;
+  // Comment support
+  /** Whether comment feature is enabled */
+  commentsEnabled?: boolean;
+  /** Comments on lines, keyed by `${side}:${lineNumber}` */
+  commentsByLine?: Map<string, { count: number; hasUnresolved: boolean }>;
+  /** Callback when add comment button is clicked */
+  onAddComment?: (lineNumber: number, side: "old" | "new") => void;
+  /** Callback when a line with comments is clicked */
+  onViewComments?: (lineNumber: number, side: "old" | "new") => void;
 };
 
 type DiffLineSide = "new" | "old";
@@ -533,11 +543,20 @@ export const HeatmapDiffViewer = memo(
       defaultCollapsed = false,
       onCollapseChange,
       className,
+      // Comment support
+      commentsEnabled = false,
+      commentsByLine,
+      onAddComment,
+      onViewComments,
     },
     ref
   ) {
   const { resolvedTheme } = useTheme();
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
+  const [hoveredLine, setHoveredLine] = useState<{
+    side: "old" | "new";
+    lineNumber: number;
+  } | null>(null);
 
   // Parse the diff
   const parsedDiff = useMemo<FileData | null>(() => {
@@ -703,7 +722,7 @@ export const HeatmapDiffViewer = memo(
     return renderTokenWithTooltip;
   }, [lineTooltips]);
 
-  // Gutter renderer with tooltips and +/- indicators
+  // Gutter renderer with tooltips, +/- indicators, and comment button
   const renderHeatmapGutter = useMemo<RenderGutter>(() => {
     const renderGutterWithIndicator: RenderGutter = ({
       change,
@@ -712,6 +731,10 @@ export const HeatmapDiffViewer = memo(
       wrapInAnchor,
     }) => {
       const lineNumberContent = renderDefault();
+      const lineNumber =
+        side === "new"
+          ? computeNewLineNumber(change)
+          : computeOldLineNumber(change);
 
       // Determine the change indicator based on change type
       const changeType = (change as { type?: string }).type;
@@ -738,8 +761,74 @@ export const HeatmapDiffViewer = memo(
         );
       }
 
+      // Comment button logic
+      let commentButton: ReactNode = null;
+      if (commentsEnabled && lineNumber > 0) {
+        const commentKey = `${side}:${lineNumber}`;
+        const lineComments = commentsByLine?.get(commentKey);
+        const hasComments = lineComments && lineComments.count > 0;
+        const isHovered =
+          hoveredLine?.side === side && hoveredLine?.lineNumber === lineNumber;
+
+        if (hasComments) {
+          // Show comment count badge
+          commentButton = (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewComments?.(lineNumber, side);
+              }}
+              className={cn(
+                "inline-flex items-center justify-center w-4 h-4 rounded-full mr-1",
+                "text-[10px] font-medium",
+                lineComments.hasUnresolved
+                  ? "bg-blue-500 text-white"
+                  : "bg-neutral-300 dark:bg-neutral-600 text-neutral-700 dark:text-neutral-200"
+              )}
+              title={`${lineComments.count} comment${lineComments.count !== 1 ? "s" : ""}`}
+            >
+              {lineComments.count}
+            </button>
+          );
+        } else if (isHovered) {
+          // Show add comment button on hover
+          commentButton = (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddComment?.(lineNumber, side);
+              }}
+              className="inline-flex items-center justify-center w-4 h-4 rounded mr-1 text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+              title="Add comment"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
+          );
+        } else {
+          // Placeholder for alignment
+          commentButton = (
+            <span className="inline-block w-4 mr-1" aria-hidden="true" />
+          );
+        }
+      }
+
       const content = (
-        <span className="inline-flex items-center">
+        <span
+          className="inline-flex items-center group"
+          onMouseEnter={() => {
+            if (commentsEnabled && lineNumber > 0) {
+              setHoveredLine({ side, lineNumber });
+            }
+          }}
+          onMouseLeave={() => {
+            if (commentsEnabled) {
+              setHoveredLine(null);
+            }
+          }}
+        >
+          {commentButton}
           {indicator}
           {lineNumberContent}
         </span>
@@ -757,10 +846,6 @@ export const HeatmapDiffViewer = memo(
         return wrapInAnchor(content);
       }
 
-      const lineNumber =
-        side === "new"
-          ? computeNewLineNumber(change)
-          : computeOldLineNumber(change);
       if (lineNumber <= 0) {
         return wrapInAnchor(content);
       }
@@ -787,7 +872,7 @@ export const HeatmapDiffViewer = memo(
     };
 
     return renderGutterWithIndicator;
-  }, [autoTooltipLine, lineTooltips]);
+  }, [autoTooltipLine, lineTooltips, commentsEnabled, commentsByLine, hoveredLine, onAddComment, onViewComments]);
 
   // Tokenize with syntax highlighting
   const tokens = useMemo<HunkTokens | null>(() => {

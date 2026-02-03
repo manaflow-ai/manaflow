@@ -24,6 +24,7 @@ import type * as crown_actions from "../crown/actions.js";
 import type * as crown_http from "../crown_http.js";
 import type * as devboxInstances from "../devboxInstances.js";
 import type * as devbox_http from "../devbox_http.js";
+import type * as diffComments from "../diffComments.js";
 import type * as environmentSnapshots from "../environmentSnapshots.js";
 import type * as environments from "../environments.js";
 import type * as github from "../github.js";
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   crown_http: typeof crown_http;
   devboxInstances: typeof devboxInstances;
   devbox_http: typeof devbox_http;
+  diffComments: typeof diffComments;
   environmentSnapshots: typeof environmentSnapshots;
   environments: typeof environments;
   github: typeof github;

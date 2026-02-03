@@ -1223,6 +1223,37 @@ const convexSchema = defineSchema({
     .index("by_devboxId", ["devboxId"])
     .index("by_providerInstanceId", ["providerInstanceId"]),
 
+  // Diff comments - inline comments on diff lines (GitHub/Graphite-style code review)
+  diffComments: defineTable({
+    taskRunId: v.id("taskRuns"), // The task run containing the diff
+    filePath: v.string(), // File path within the diff
+    lineNumber: v.number(), // Line number being commented on
+    side: v.union(v.literal("old"), v.literal("new")), // Which side of the diff (old=deleted, new=added)
+    content: v.string(), // Comment text
+    resolved: v.optional(v.boolean()), // Whether the comment thread is resolved
+    userId: v.string(), // Author user ID
+    teamId: v.string(),
+    profileImageUrl: v.optional(v.string()), // Author's profile image
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_task_run", ["taskRunId", "createdAt"]) // List all comments for a task run
+    .index("by_task_run_file", ["taskRunId", "filePath", "createdAt"]) // List comments for a specific file
+    .index("by_team_user", ["teamId", "userId"]), // List comments by a user
+
+  // Replies to diff comments
+  diffCommentReplies: defineTable({
+    diffCommentId: v.id("diffComments"), // Parent comment
+    content: v.string(), // Reply text
+    userId: v.string(), // Author user ID
+    teamId: v.string(),
+    profileImageUrl: v.optional(v.string()), // Author's profile image
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_comment", ["diffCommentId", "createdAt"]) // List replies for a comment
+    .index("by_team_user", ["teamId", "userId"]), // List replies by a user
+
 });
 
 export default convexSchema;
