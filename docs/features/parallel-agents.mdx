@@ -1,26 +1,37 @@
 ---
 title: Parallel Agents
-description: 'Run multiple agent CLIs in a single task'
+description: 'Run multiple agents on the same task'
 ---
 
-## Overview
-A task can run multiple agent instances at the same time. Each agent instance is a run with its own branch and workspace.
+## The idea
 
-## Selecting agents
-- Pick one or more agents when creating a task.
-- You can add multiple instances of the same agent; the picker allows up to 6 per agent.
-- Agent availability depends on provider credentials.
+Give the same task to Claude, Codex, and Gemini at the same time. Each one works independently on its own branch. Compare the results and ship the best one.
 
-## Isolation
-Each run is isolated:
-- Separate git branches and worktrees.
-- Separate VS Code, terminal, and processes.
-- No shared context between agents.
+## How to use it
 
-## Monitoring
-Use the task tree and Activity panel to see run status (`pending`, `running`, `completed`, `failed`, `skipped`) and open each run's panels.
+1. When creating a task, pick multiple agents from the dropdown
+2. You can even add multiple copies of the same agent (up to 6 each)
+3. Click Start—all agents begin working at once
 
-## Crown evaluation
-After all root runs finish, cmux evaluates the completed runs and crowns a winner.
-- If only one run completes, it is crowned automatically.
-- If all runs fail or are skipped, crown evaluation ends with `error`.
+<Tip>Running 3 copies of Claude Opus often gives you better results than running it once, since each attempt may take a different approach.</Tip>
+
+## Complete isolation
+
+Each agent runs in its own sandbox:
+- **Separate branches** — No merge conflicts between agents
+- **Separate workspaces** — Each gets its own VS Code and terminal
+- **No shared state** — Agents can't see what the others are doing
+
+## Watching progress
+
+The Activity panel shows all runs in a tree view. You'll see:
+- **Pending** — Waiting to start
+- **Running** — Agent is working
+- **Completed** — Done successfully
+- **Failed** — Something went wrong
+
+Click any run to open its workspace and see what the agent is doing.
+
+## Picking a winner
+
+When all agents finish, cmux automatically evaluates them and crowns the best one. You can also manually pick a different winner if you prefer a different approach.

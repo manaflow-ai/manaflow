@@ -3,60 +3,67 @@ title: Tasks
 description: 'Tasks, runs, statuses, and review flow'
 ---
 
-## Task basics
+## What's a task?
 
-A task is the unit of work you give cmux. It includes:
-- Prompt text (stored in `task.text`).
-- Optional description and images.
-- A repo and base branch, or an environment.
-- One or more runs (one per agent instance).
+A task is what you give cmux to work on. It's your prompt plus some context:
+
+| Part | What it is |
+|------|------------|
+| **Prompt** | What you want the agents to do |
+| **Images** | Screenshots or mockups (optional) |
+| **Repo + branch** | Where the agents should work |
+| **Runs** | One per agent you picked |
 
 ## Runs
 
-A run is a single agent instance for a task.
-- Each run has its own branch and workspace.
-- Run status is one of: `pending`, `running`, `completed`, `failed`, `skipped`.
-- Runs store PR metadata (`pullRequestUrl`, `pullRequests`, `pullRequestState`).
-- Runs store screenshot sets and optional AI claims for review.
-- Runs can be nested (parent and child runs) and are shown as a tree in the UI.
+Each agent gets its own run. A run is completely isolated—its own branch, its own workspace, its own process.
 
-## Completion and crown evaluation
+Run statuses:
+- **Pending** — Waiting to start
+- **Running** — Agent is working
+- **Completed** — Done successfully
+- **Failed** — Something went wrong
+- **Skipped** — Cancelled before starting
 
-When all root runs reach a terminal state, the task is marked completed.
-- If at least one run completes, cmux evaluates runs and crowns a winner.
-- If only one run completes, it is crowned automatically.
-- If all runs fail or are skipped, crown evaluation is set to `error`.
+<Tip>You can run the same agent multiple times on a single task. Each copy gets its own run.</Tip>
 
-Crown evaluation status values:
-- `pending`, `in_progress`, `succeeded`, `error`.
+## The crown
 
-Crowned runs store `isCrowned` and `crownReason`.
+When all agents finish, cmux picks a winner and gives it a crown. Here's how it works:
 
-## PR and merge status
+- If multiple agents complete, cmux evaluates them and crowns the best one
+- If only one agent completes, it wins automatically
+- If all agents fail, no crown is awarded
 
-Run PR state values:
-- `none`, `draft`, `open`, `merged`, `closed`, `unknown`.
+You can always override the crown and pick a different winner if you prefer a different approach.
 
-Task merge status values:
-- `none`, `pr_draft`, `pr_open`, `pr_approved`, `pr_changes_requested`, `pr_merged`, `pr_closed`.
+## Pull requests
+
+Runs can have pull requests attached:
+- **Draft** — PR is open as a draft
+- **Open** — PR is ready for review
+- **Merged** — PR was merged
+- **Closed** — PR was closed without merging
+
+Create a PR from any completed run, or enable auto-PR in settings to open one automatically for the crowned run.
 
 ## Images
 
-You can attach images to a task. cmux stores them and injects file paths into the prompt so agents can open the images from the workspace.
+Attach screenshots or mockups to your task. cmux saves them and makes them available to the agents in their workspaces—they can open the images just like any other file.
 
-## Task management
+## Managing tasks
 
-From the task list and task view you can:
-- Rename the task text.
-- Pin and unpin tasks.
-- Archive and unarchive tasks.
-- Archive individual runs.
+From the task list or task view:
+- **Rename** — Change the task prompt
+- **Pin** — Keep important tasks at the top
+- **Archive** — Hide completed tasks
+- **Archive runs** — Clean up individual runs you don't need
 
 ## Notifications
 
-cmux creates notifications for:
-- `run_completed`
-- `run_failed`
-- `run_needs_input`
+cmux notifies you when:
+- A run completes
+- A run fails
+- An agent needs input
 
-Notifications can be marked read or unread in the Notifications page.
+Check your notifications in the Notifications page.

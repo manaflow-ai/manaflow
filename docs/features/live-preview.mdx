@@ -1,20 +1,25 @@
 ---
 title: Live Preview
-description: 'Browser preview for cloud workspaces'
+description: 'Test your app while agents work'
 ---
 
-## Overview
-Live preview is available for cloud workspaces (web app and desktop app in cloud mode). It includes a full browser session and preview links for running services.
+## Browser preview
 
-## Browser panel
-Cloud runs expose a Browser panel backed by a remote browser session. Use it to interact with the app while the agent works.
+Cloud workspaces include a full browser panel. You can interact with your app while the agent is still working—no need to wait for it to finish.
+
+<Note>Live preview is only available for cloud workspaces (web app and desktop app in cloud mode).</Note>
 
 ## Preview links
-When a cloud workspace exposes running services, cmux shows preview links under the run and in the Open With menu. Open a preview link to load it in the Preview page.
+
+When your dev server is running, cmux shows preview links:
+- In the run tree under your run
+- In the Open With menu
+- Click any link to open it in the Preview page
 
 ## Custom preview URLs
-From the run tree, choose "Add preview URL" to add any URL. Each custom URL becomes its own preview tab and can be edited later.
 
-## Notes
-- Local Docker runs do not expose the Browser panel.
-- Preview links appear only while the service is running.
+Need to preview a specific route or external URL? Add custom preview URLs from the run tree. Each custom URL becomes its own tab that you can edit later.
+
+## Local workspaces
+
+Local Docker runs don't have the browser panel, but you can still access your dev server on localhost as usual.

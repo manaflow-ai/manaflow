@@ -1,36 +1,44 @@
 ---
 title: VS Code Workspaces
-description: 'Edit each run in a full VS Code web workspace'
+description: 'A full VS Code for every run'
 ---
 
-## Overview
-The Workspace panel embeds a VS Code web instance for every run. It opens the run's branch and updates in real time as the agent works. The web app uses cloud workspaces; the desktop app can also open local workspaces when Docker is available.
+## Real-time editing
 
-## Open workspaces
-- From the task tree, select a run and open VS Code.
-- Use the "Open with" menu to launch VS Code (web) or a local editor when a worktree is available.
+Every run gets its own VS Code web instance. Watch agents write code in real time, or jump in and make edits yourself.
+
+## Opening workspaces
+
+From the task tree:
+- Select a run to see its workspace
+- Use the "Open with" menu for more options
 
 ## Open with options
-Available actions depend on what is installed:
-- VS Code (web)
-- VS Code (local)
-- Cursor
-- Windsurf
-- Finder
-- iTerm
-- Terminal
-- Ghostty
-- Alacritty
-- Xcode
+
+Depending on what you have installed:
+
+| Editor | Type |
+|--------|------|
+| VS Code (web) | Browser |
+| VS Code (local) | Desktop |
+| Cursor | Desktop |
+| Windsurf | Desktop |
+| Finder | File manager |
+| iTerm / Terminal / Ghostty / Alacritty | Terminal |
+| Xcode | IDE |
+
+<Tip>Local editors open the worktree on disk. You can use your full local setup while cmux handles the branching.</Tip>
 
 ## Local workspaces
-Local runs use git worktrees on disk (default `~/cmux/...`). The Open With menu opens that worktree in local editors.
 
-## Editor settings sync (web mode)
-In Settings > Editor Settings Sync you can upload:
+Local runs use git worktrees at `~/cmux/...` by default. The Open With menu opens that folder in whatever editor you choose.
+
+## Editor settings sync
+
+Want your VS Code settings in cloud workspaces? Go to **Settings > Editor Settings Sync** and upload:
 - `settings.json`
 - `keybindings.json`
-- snippets
-- extension list
+- Snippets
+- Extension list
 
-These settings apply to cloud workspaces for VS Code, Cursor, and Windsurf.
+These settings apply to VS Code, Cursor, and Windsurf in cloud workspaces.

@@ -31,12 +31,12 @@ const points = [
 
 export default function Rethinking() {
   return (
-    <section className="py-32 bg-[#fafafa] dark:bg-[#0a0a0a] relative">
+    <section className="py-32 relative bg-neutral-100/80 dark:bg-black/80">
       <div className="relative z-10 max-w-7xl mx-auto px-6">
         {/* Section header */}
         <div className="text-left mb-16">
           <h2 className="text-3xl md:text-5xl mb-6 leading-tight text-neutral-900 dark:text-white tracking-tighter" style={{ fontWeight: 420 }}>
-            We are rethinking the <span className="text-purple-800 dark:text-purple-400">developer experience.</span>
+            We are rethinking the <span className="text-[#3B82F6]">developer experience.</span>
           </h2>
         </div>
 
@@ -50,7 +50,7 @@ export default function Rethinking() {
                   width="8"
                   height="20"
                   viewBox="0 0 12 20"
-                  className="text-neutral-300 dark:text-neutral-600 group-hover:text-purple-800 dark:group-hover:text-purple-400 transition-colors duration-300"
+                  className="text-neutral-600 group-hover:text-neutral-400 transition-colors duration-300"
                 >
                   <polygon
                     points="0,0 8,10 0,20 1.5,20 9.5,10 1.5,0"

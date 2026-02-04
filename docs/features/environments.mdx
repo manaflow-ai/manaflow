@@ -3,32 +3,43 @@ title: Environments
 description: 'Reusable cloud workspace templates'
 ---
 
-## Overview
-Environments are reusable templates for cloud workspaces. They bundle repos, scripts, env vars, preview settings, and a snapshot so runs start from a known state.
+## What's an environment?
 
-## What an environment contains
-- Name and optional description.
-- One or more GitHub repos.
-- Maintenance script (runs before the dev script).
-- Dev script (starts your dev server).
-- Environment variables.
-- Preview settings that control which services show preview links.
-- A snapshot version.
+An environment is a saved cloud workspace that you can reuse. Set it up once with your repos, scripts, and login sessions—then every task starts from that exact state.
 
-## Create an environment
-1. Select repos (or choose manual setup for a bare VM).
-2. Pick a machine size.
-3. Configure scripts, env vars, and preview settings.
-4. In the workspace step, run the scripts in VS Code and use the browser panel to sign in to any required services.
-5. Save the environment to capture a snapshot.
+## What's included
 
-## Use an environment
-- Select the environment when creating a task.
-- Environment tasks run in cloud workspaces and do not require a base branch.
-- The environment's scripts and env vars are applied to each run.
+| Part | What it does |
+|------|--------------|
+| **Repos** | GitHub repos to clone |
+| **Maintenance script** | Runs before the dev script (install deps, etc.) |
+| **Dev script** | Starts your dev server |
+| **Environment variables** | Secrets and config |
+| **Preview settings** | Which services get preview links |
+| **Snapshot** | Saved VM state with all of the above |
 
-## Modify an environment
-From the environment detail page you can:
-- Launch a "Modify VM" workspace from the active snapshot.
-- Create a new snapshot version and activate it.
-- Edit scripts, preview settings, and the environment name.
+## Creating an environment
+
+1. Pick your repos (or choose manual setup for a bare VM)
+2. Choose a machine size
+3. Set up scripts and env vars
+4. Run everything in VS Code and sign in to any services you need
+5. Save to capture a snapshot
+
+<Tip>The snapshot captures everything—running processes, logged-in sessions, installed packages. Runs start instantly from this state.</Tip>
+
+## Using an environment
+
+When creating a task, select your environment instead of a repo. That's it—cmux handles the rest.
+
+Environment tasks:
+- Run in cloud workspaces
+- Don't need a base branch
+- Use your saved scripts and env vars
+
+## Updating an environment
+
+From the environment page:
+- **Modify VM** — Launch a workspace from the current snapshot
+- **Create snapshot** — Save your changes as a new version
+- **Edit settings** — Change scripts, preview settings, or the name

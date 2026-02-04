@@ -1,34 +1,42 @@
 ---
 title: Code Review
-description: 'Heatmap diff review and screenshots'
+description: 'AI-powered diff review with heatmaps'
 ---
 
-## Overview
-cmux includes a heatmap diff viewer that highlights riskier lines and provides AI tooltip explanations. It is available for task run diffs and PR diffs.
-
 ## Heatmap review
-- Toggle AI Review with the flame icon in the diff header.
-- Lines are colored by review score; higher scores appear hotter.
-- Hover a highlighted line to see the AI tooltip.
 
-## Models and language
-Heatmap models:
-- `anthropic-opus-4-5`
+cmux includes an AI-powered diff viewer that highlights potentially risky changes. Toggle it on with the flame icon in the diff header.
+
+Here's what you get:
+- **Color-coded lines** — Hotter colors mean higher risk
+- **AI tooltips** — Hover over highlighted lines for explanations
+- **Adjustable sensitivity** — Control how aggressive the highlighting is
+
+<Tip>The heatmap is great for catching issues like missing error handling, security concerns, or logic bugs.</Tip>
+
+## Models
+
+Choose your heatmap model in settings:
+- `anthropic-opus-4-5` (best quality)
 - `anthropic`
 - `cmux-heatmap-2`
 - `cmux-heatmap-1`
 - `cmux-heatmap-0`
 
-Tooltip languages:
-- `en`, `zh-Hant`, `zh-Hans`, `ja`, `ko`, `es`, `fr`, `de`, `pt`, `ru`
-- `hi`, `bn`, `te`, `mr`, `ta`, `gu`, `kn`, `ml`, `pa`, `ar`
-- `vi`, `th`, `id`
+## Languages
 
-## Visibility and colors
-- Visibility threshold controls how aggressive highlighting is.
-- Line and token gradient colors are configurable.
+Tooltips support 20+ languages including English, Chinese (Traditional and Simplified), Japanese, Korean, Spanish, French, German, Portuguese, Russian, Hindi, Arabic, Vietnamese, Thai, and Indonesian.
 
-Settings are saved in Settings > Diff Heatmap Review and can also be adjusted in the diff view.
+## Customization
 
-## Screenshot sets
-For runs with preview jobs, the diff page shows the latest screenshot set with status (`completed`, `failed`, `skipped`) and whether UI changes were detected.
+Adjust these in **Settings > Diff Heatmap Review** or directly in the diff view:
+- **Visibility threshold** — How much highlighting to show
+- **Line colors** — Gradient colors for the heatmap
+- **Token colors** — Colors for inline highlighting
+
+## Screenshot comparisons
+
+For runs with preview jobs, the diff page shows before/after screenshots. You'll see:
+- Screenshot status (completed, failed, skipped)
+- Whether UI changes were detected
+- Side-by-side visual comparison

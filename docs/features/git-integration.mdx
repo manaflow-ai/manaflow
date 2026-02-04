@@ -3,25 +3,40 @@ title: Git Integration
 description: 'Branches, diffs, and pull requests'
 ---
 
-## Overview
-cmux works directly on GitHub repos. Each run uses its own branch and workspace.
+## How it works
 
-## Repos and branches
-- Select a GitHub repo and base branch when creating a task.
-- cmux creates a new branch for each run and records it on the run.
-- Use "Copy branch" in the Open With menu to copy the branch name.
+cmux works directly with your GitHub repos. When you start a task:
+
+1. You pick a repo and base branch
+2. cmux creates a new branch for each agent
+3. Each agent works on its own branch
+4. You review the diffs and pick a winner
+
+## Branches
+
+Each run gets its own branch, automatically named and tracked. Use "Copy branch" in the Open With menu if you need the branch name.
 
 ## Diffs
-- The Git Diff panel compares the run branch against the base branch.
-- The diff view supports heatmap review and screenshot sets (see Code Review).
+
+The Git Diff panel shows exactly what changed:
+- Compare any run's branch against the base branch
+- AI-powered heatmaps highlight risky changes
+- Screenshot comparisons for UI changes (when available)
 
 ## Pull requests
-- Create PRs from runs; cmux tracks PR URL and state per run.
-- The Pull Request view embeds the PR and shows its current state.
-- From PR views you can merge or close PRs.
 
-## Auto PR from crown
-Enable "Auto-create pull request with the best diff" in Settings > Crown Evaluator to open a PR for the crowned run automatically.
+Create PRs directly from cmux:
+- Open a PR from any completed run
+- Track PR status (draft, open, merged, closed)
+- Merge or close PRs without leaving cmux
+
+<Tip>Enable "Auto-create pull request with the best diff" in Settings to automatically open a PR for the crowned run.</Tip>
 
 ## GitHub access
-Connecting GitHub OAuth is required for private repos. Installing the GitHub App enables repo listing and PR operations (see Integrations > GitHub).
+
+To work with private repos, you'll need to:
+
+1. **Connect GitHub OAuth** — Go to Settings > Connected Accounts
+2. **Install the GitHub App** — Click "Install GitHub App" in the repo picker
+
+The OAuth connection lets you clone private repos. The GitHub App enables repo listing and PR operations.

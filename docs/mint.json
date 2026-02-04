@@ -6,16 +6,17 @@
     "light": "/logo/logo-light.svg"
   },
   "favicon": "/favicon.svg",
+  "css": "/styles.css",
   "colors": {
-    "primary": "#00D4FF",
-    "light": "#00D4FF",
-    "dark": "#7C3AED",
+    "primary": "#3B82F6",
+    "light": "#3B82F6",
+    "dark": "#3B82F6",
     "background": {
       "dark": "#0A0A0A"
     },
     "anchors": {
       "from": "#00D4FF",
-      "to": "#7C3AED"
+      "to": "#3B82F6"
     }
   },
   "modeToggle": {

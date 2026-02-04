@@ -54,33 +54,6 @@
   --landing-text: #fafafa;
 }
 
-/* System preference dark mode */
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 6%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 6%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 10%;
-    --secondary: 0 0% 15%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 64%;
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62% 30%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 15%;
-    --input: 0 0% 15%;
-    --ring: 0 0% 83%;
-
-    --landing-bg: #0a0a0a;
-    --landing-text: #fafafa;
-  }
-}
 
 @theme inline {
   --color-background: hsl(var(--background));
@@ -112,12 +85,12 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
 }
 
 body {
-  background: var(--landing-bg);
+  background: transparent;
   color: var(--landing-text);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-weight: 400;
@@ -126,6 +99,7 @@ body {
 /* Smooth scrolling */
 html {
   scroll-behavior: smooth;
+  background: var(--landing-bg);
 }
 
 /* Custom scrollbar - light mode */
@@ -147,20 +121,6 @@ html {
 }
 
 /* Custom scrollbar - dark mode */
-@media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-track {
-    background: #1a1a1a;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background: #404040;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: #525252;
-  }
-}
-
 .dark ::-webkit-scrollbar-track {
   background: #1a1a1a;
 }

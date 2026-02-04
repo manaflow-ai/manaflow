@@ -1,34 +1,45 @@
 ---
 title: How cmux Works
-description: 'How tasks, runs, and workspaces fit together'
+description: 'Tasks, runs, and workspaces explained'
 ---
 
-# How cmux works
+You give cmux a task. cmux spins up one workspace per agent, each on its own branch. The agents work in parallel, and you pick the best result.
 
-cmux turns a task into one or more parallel agent runs. Each run gets its own branch and its own workspace.
+## The basics
 
-## Core objects
-- Task: prompt plus repo and base branch, or an environment. Optional description and images.
-- Run: a single agent instance for a task. Tracks status, branch, workspace, and PR metadata.
-- Workspace: VS Code and terminal for a run. Local (Docker) or cloud.
-- Environment: a reusable cloud workspace configuration with scripts, env vars, and snapshots.
+| Concept | What it is |
+|---------|------------|
+| **Task** | Your prompt + the repo and branch (or environment) |
+| **Run** | One agent working on the task. Has its own branch, workspace, and status |
+| **Workspace** | The agent's VS Code + terminal. Can be local (Docker) or cloud |
+| **Environment** | A saved cloud setup you can reuse across tasks |
 
-## Execution flow
-1. Create a task and choose a repo or environment.
-2. Select agents and optionally multiple instances per agent.
-3. cmux creates a run and branch for each instance.
-4. Each run starts a workspace and launches the agent CLI.
-5. Review diffs, screenshots, and PRs, then pick a winner if needed.
+## How a task runs
 
-## Isolation and review
-- Runs do not share files or processes.
-- Each run has a unique branch and worktree.
-- The UI lets you compare runs in Activity and Git Diff panels.
+1. You describe what you want and pick a repo
+2. You choose which agents to run (and how many copies of each)
+3. cmux creates a branch and workspace for each agent
+4. Each agent starts working in its own isolated environment
+5. When they're done, you review the diffs and pick a winner (or let cmux pick)
 
-## Local and cloud modes
-- Local mode runs workspaces in Docker on your machine.
-- Cloud mode runs in a cloud workspace and enables the browser preview.
-- The web app uses cloud workspaces only.
+## Isolation
 
-## Live state
-The UI updates in real time as runs progress and as review data becomes available.
+Agents can't see each other. Each one gets:
+- Its own git branch
+- Its own file system
+- Its own terminal and processes
+
+This means you can safely run the same task against multiple agents without them interfering.
+
+## Local vs cloud
+
+| Mode | Where it runs | Preview URL | Requirements |
+|------|--------------|-------------|--------------|
+| **Local** | Docker on your machine | No | Desktop app + Docker |
+| **Cloud** | cmux cloud | Yes | None |
+
+The web app always uses cloud. The desktop app lets you choose.
+
+## Real-time updates
+
+Everything updates live—you can watch agents write code, see terminal output, and review diffs as they're created.

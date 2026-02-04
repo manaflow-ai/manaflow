@@ -49,6 +49,15 @@ const geist = Geist({
   variable: "--font-geist-sans",
 });
 
+const themeScript = `
+  (function() {
+    const stored = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const shouldBeDark = stored === 'dark' || (stored !== 'light' && prefersDark);
+    document.documentElement.classList.toggle('dark', shouldBeDark);
+  })();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -62,8 +71,12 @@ export default function RootLayout({
         geist.variable,
         articulat.variable,
       )}
+      suppressHydrationWarning
     >
-      <body className="antialiased">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className="antialiased bg-white dark:bg-black transition-colors">
         <StackTheme>
           <StackProvider app={stackServerApp}>{children}</StackProvider>
         </StackTheme>

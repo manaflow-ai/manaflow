@@ -1,55 +1,51 @@
 ---
 title: Workspaces
-description: 'Per-run VS Code environments and panels'
+description: 'Where agents do their work'
 ---
 
-## Overview
-Each run gets its own workspace. A workspace is the run's file system plus panels for VS Code, terminal, and an optional browser preview. Workspaces are isolated, so parallel runs do not share files or processes.
+## What's a workspace?
 
-## Workspace types
+Every run gets its own workspace—a complete development environment with VS Code, a terminal, and optionally a browser preview. Workspaces are isolated, so agents running in parallel never step on each other's toes.
 
-### Local (Docker)
-- Runs on your machine with Docker (desktop app only).
-- Uses git worktrees on disk.
-- Browser preview is not available.
+## Local vs cloud
 
-### Cloud
-- Runs in a cloud workspace.
-- Required for environments and for the browser preview.
-- Preview links appear for running services.
+| Mode | Where it runs | Browser preview | Requirements |
+|------|--------------|-----------------|--------------|
+| **Local** | Docker on your machine | No | Desktop app + Docker |
+| **Cloud** | cmux cloud | Yes | None |
 
-### Standalone workspaces
-cmux can create local or cloud workspaces that are not tied to an agent prompt. These show only the panels needed for that workspace type.
+<Note>The web app always uses cloud workspaces. The desktop app lets you choose.</Note>
+
+## Panels
+
+Workspaces have panels you can arrange however you like:
+
+- **Activity** — Timeline and run list
+- **Workspace** — VS Code editor
+- **Terminal** — Command line access
+- **Browser** — Live preview (cloud only)
+- **Git Diff** — Review changes
+
+Drag panels to rearrange them, close ones you don't need, or double-click to focus on one.
+
+## Layout options
+
+Pick a layout that works for you: single panel, four panels, two horizontal, two vertical, or various three-panel arrangements. cmux remembers your preference.
 
 ## Local workspace paths
-Local worktrees are stored at `~/cmux/<repo>/worktrees/<branch>` by default. You can change the base path in Settings > Worktree Location (use `~` for your home directory).
 
-## Panels and layout
-Available panels:
-- Activity (timeline and run list)
-- Workspace (VS Code)
-- Terminal
-- Browser (cloud only)
-- Git Diff (task runs only)
+Local workspaces live at `~/cmux/<repo>/worktrees/<branch>` by default. You can change this in **Settings > Worktree Location**.
 
-Layout options: `single-panel`, `four-panel`, `two-horizontal`, `two-vertical`, `three-left`, `three-right`, `three-top`, `three-bottom`. Layout and split sizes are saved in localStorage.
+## Linking local to cloud
 
-Panel controls:
-- Drag a panel header to swap panels.
-- Close a panel with the X button.
-- Double-click the header or use the expand icon to focus a panel.
+Working on a cloud run but want to use your local editor? Click "Open local workspace" to create a local copy of the branch. Enable auto-sync to keep it updated as the cloud agent works.
 
-Fixed layouts:
-- Local workspaces force `single-panel` (VS Code only).
-- Cloud workspaces force `two-horizontal` (VS Code + Browser) and hide Git Diff.
+## Container management (desktop app)
 
-## Linking a local workspace to a cloud run
-From a cloud run, use "Open local workspace" to create a local copy of the run's branch. Auto-sync keeps the local workspace updated from the cloud run; toggle it from the task header.
+Control how Docker containers are managed in **Settings > Container Management**:
 
-## Container lifecycle (desktop app)
-In Settings > Container Management you can control Docker cleanup:
-- Maximum running containers.
-- Review period after completion.
-- Stop immediately on completion.
-- Minimum containers to keep alive.
-- Automatic cleanup on or off.
+- Maximum running containers
+- How long to keep containers after completion
+- Whether to stop immediately on completion
+- Minimum containers to keep alive
+- Automatic cleanup on or off

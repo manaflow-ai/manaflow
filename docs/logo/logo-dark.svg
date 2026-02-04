@@ -1,20 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 0 680 240" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 48" fill="none" preserveAspectRatio="xMinYMid meet">
   <defs>
-    <linearGradient id="arrowGradient" x1="64" y1="64" x2="453" y2="64" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#00D4FF"/>
-      <stop offset="1" stop-color="#7C3AED"/>
+    <linearGradient id="cmuxGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00D4FF"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
     </linearGradient>
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="4" result="blur"/>
-      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-    </filter>
   </defs>
 
-  <!-- Arrow with gradient -->
-  <g transform="translate(87.2, 62.7) scale(0.2)" filter="url(#glow)">
-    <path d="M64 64L453 333.5L64 603V483.222L273.462 333.5L64 183.778V64Z" fill="url(#arrowGradient)"/>
-  </g>
+  <path d="M8 8L32 24L8 40V31L20 24L8 17V8Z" fill="url(#cmuxGradient)"/>
 
-  <!-- cmux text in white for dark mode -->
-  <text x="208" y="162" font-size="108" font-weight="700" font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, ui-monospace, Monaco, Courier New, monospace" letter-spacing="1.5px" fill="white">cmux</text>
+  <text x="44" y="32" font-size="28" font-weight="500" font-family="Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" fill="#ffffff">cmux</text>
 </svg>
