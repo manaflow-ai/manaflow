@@ -1,51 +1,62 @@
 ---
 title: Workspaces
-description: 'Where agents do their work'
+description: 'Local and cloud development environments'
 ---
 
 ## What's a workspace?
 
-Every run gets its own workspace—a complete development environment with VS Code, a terminal, and optionally a browser preview. Workspaces are isolated, so agents running in parallel never step on each other's toes.
+A workspace is where your agent does its work. It's a complete VS Code environment with:
 
-## Local vs cloud
+- Full editor with syntax highlighting and IntelliSense
+- Integrated terminal
+- Git integration
+- Browser preview (cloud only)
 
-| Mode | Where it runs | Browser preview | Requirements |
-|------|--------------|-----------------|--------------|
-| **Local** | Docker on your machine | No | Desktop app + Docker |
-| **Cloud** | cmux cloud | Yes | None |
+## Cloud workspaces
 
-<Note>The web app always uses cloud workspaces. The desktop app lets you choose.</Note>
+Cloud workspaces run on cmux servers. They're available in both the web app and desktop app.
 
-## Panels
+**What you get:**
+- Instant startup
+- Live preview URL for testing your app
+- No local resources used
+- Accessible from anywhere
 
-Workspaces have panels you can arrange however you like:
+## Local workspaces (desktop only)
 
-- **Activity** — Timeline and run list
-- **Workspace** — VS Code editor
-- **Terminal** — Command line access
-- **Browser** — Live preview (cloud only)
-- **Git Diff** — Review changes
+Local workspaces run on your machine using Docker. Only available in the desktop app.
 
-Drag panels to rearrange them, close ones you don't need, or double-click to focus on one.
+**What you get:**
+- Everything stays on your machine
+- Full control over the environment
+- Works offline
+- Uses your local compute
 
-## Layout options
+**Requirements:**
+- Docker running
+- Git installed
 
-Pick a layout that works for you: single panel, four panels, two horizontal, two vertical, or various three-panel arrangements. cmux remembers your preference.
+## Opening a workspace
 
-## Local workspace paths
+Click on any run to open its workspace. You'll see:
 
-Local workspaces live at `~/cmux/<repo>/worktrees/<branch>` by default. You can change this in **Settings > Worktree Location**.
+- **Editor** — The agent's VS Code session
+- **Terminal** — Live output from the agent
+- **Preview** — Your app running (cloud only)
 
-## Linking local to cloud
+## External editors
 
-Working on a cloud run but want to use your local editor? Click "Open local workspace" to create a local copy of the branch. Enable auto-sync to keep it updated as the cloud agent works.
+In the desktop app, you can open any workspace in your local editor:
 
-## Container management (desktop app)
+1. Click the external editor button in the workspace toolbar
+2. Choose VS Code, Cursor, or another supported editor
+3. The project opens locally with all changes synced
 
-Control how Docker containers are managed in **Settings > Container Management**:
+<Tip>This is great for debugging or making manual fixes while the agent is working.</Tip>
 
-- Maximum running containers
-- How long to keep containers after completion
-- Whether to stop immediately on completion
-- Minimum containers to keep alive
-- Automatic cleanup on or off
+## Workspace lifecycle
+
+1. **Created** — Workspace is provisioned when the run starts
+2. **Active** — Agent is working, you can watch in real time
+3. **Completed** — Run finished, workspace stays available for review
+4. **Cleaned up** — Workspace is removed after idle timeout or manual cleanup

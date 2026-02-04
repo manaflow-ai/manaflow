@@ -1,78 +1,11 @@
-/* Import Geist font to match main site */
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
+/* Custom styles for cmux docs */
+
+/* Override logo text rendering if needed */
+.logo-text {
+  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* Apply Geist font globally */
-:root {
-  --font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-}
-
-body, html {
-  font-family: var(--font-family) !important;
-}
-
-/* Topbar CTA button styling */
-.topbar-cta-button {
-  background-color: #3B82F6 !important;
-  color: #ffffff !important;
-  border-color: #3B82F6 !important;
-}
-
-.topbar-cta-button:hover {
-  background-color: #2563EB !important;
-  color: #ffffff !important;
-  border-color: #2563EB !important;
-}
-
-/* Topbar logo sizing */
-#navbar .nav-logo {
-  height: 28px !important;
-  width: auto !important;
-}
-
-/* Footer divider removal */
-footer,
-.footer,
-.mintlify-footer,
-[data-testid="footer"],
-[data-mintlify-footer] {
-  border-top: none !important;
-  box-shadow: none !important;
-}
-
-footer hr,
-.footer hr,
-.mintlify-footer hr,
-[data-testid="footer"] hr,
-[data-mintlify-footer] hr {
-  display: none !important;
+/* Ensure proper dark mode styling */
+:root[data-theme="dark"] {
+  --background: #0A0A0A;
 }
