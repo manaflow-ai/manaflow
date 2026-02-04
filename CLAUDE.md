@@ -55,6 +55,10 @@ Swift Convex types (iOS):
 - `bun run gen:swift-api-types` -> `ios-app/Sources/Generated/ConvexApiTypes.swift`
 - `bun run gen:swift-types` -> `ios-app/Sources/Generated/ConvexTables.swift`
 
+## SMS/iMessage (Sendblue)
+
+When working on SMS/iMessage/Sendblue files (`sms*.ts`, `sendblue.ts`), first read `packages/convex/docs/SMS.md` for architecture, testing flows, and debugging info.
+
 ## Sandboxes
 
 This project uses Morph sandboxes for running Claude Code/Codex/other coding CLIs inside.
@@ -73,21 +77,14 @@ Morph snapshots capture RAM state. So after snapshot, running processes will sti
 
 ### Snapshot Scripts
 
-There are TWO separate snapshot systems:
+Two separate systems:
 
-1. **ACP Sandbox snapshots** (for iOS app / ACP server):
-   - Location: `packages/sandbox/scripts/snapshot/snapshot.ts`
-   - Run: `cd packages/sandbox && bun run scripts/snapshot/snapshot.ts --provider morph`
-   - Updates: `packages/shared/src/sandbox-snapshots.json`
+| Script | Purpose | Run | Updates |
+|--------|---------|-----|---------|
+| `scripts/snapshot.py` | Web app workers (parallel tasks) | `uv run --env-file .env ./scripts/snapshot.py` | manifest in repo root |
+| `packages/sandbox/scripts/snapshot/snapshot.ts` | iOS app / ACP server | `cd packages/sandbox && bun run scripts/snapshot/snapshot.ts --provider morph` | `packages/shared/src/sandbox-snapshots.json` |
 
-2. **Main cmux worker snapshots** (for web app parallel tasks):
-   - Location: `./scripts/snapshot.py`
-   - Run: `uv run --env-file .env ./scripts/snapshot.py`
-   - Updates: Different manifest files
-
-After building a snapshot, you should always use the `say` command to notify the user to verify the changes that were made to the snapshot.
-After the say command, you should give the user a table with the snapshot preset and vnc/vscode/xterm urls.
-.env sometimes might not exist, but you can still run the script if `echo $MORPH_API_KEY` works.
+After building, use `say` to notify user, then show table with snapshot preset and vnc/vscode/xterm urls.
 
 # Frontend
 
@@ -129,3 +126,18 @@ Log files are overwritten on each run. Use `tail -f logs/<file>` to follow live 
 
 The cmux cli is written in Rust.
 If working on the cmux cli (dmux in development mode), first read packages/sandbox/AGENTS.md
+
+## manaflow-sandbox-agent
+
+Git dependency providing `/api/agents/*` routes with Codex thread pool. Defined in `packages/sandbox/Cargo.toml`.
+
+- **Local dev**: Override with `sandbox-agent = { path = "/path/to/sandbox-agent/server/packages/sandbox-agent" }`
+- **Update**: `cargo update -p sandbox-agent -p sandbox-agent-agent-management`
+- **Source**: `~/.cargo/git/checkouts/sandbox-agent-*/` or clone `github.com/manaflow-ai/sandbox-agent`
+
+## LLM API Proxies
+
+Sandboxes route LLM API calls through a proxy. **Use Convex proxy only** (`CONVEX_SITE_URL`), not the legacy Vercel proxy (cmux.sh).
+
+- **Convex (current)**: `packages/convex/convex/http.ts` at `CONVEX_SITE_URL`
+- **Vercel (legacy)**: `apps/www/app/api/anthropic/` - do not use
