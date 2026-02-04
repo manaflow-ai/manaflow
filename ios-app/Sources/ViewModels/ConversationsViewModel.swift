@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import UIKit
+import UserNotifications
 import ConvexMobile
 
 /// ViewModel for managing conversations list from Convex
@@ -411,7 +412,11 @@ class ConversationsViewModel: ObservableObject {
             return
         }
         lastBadgeCount = unreadCount
-        UIApplication.shared.applicationIconBadgeNumber = unreadCount
+        UNUserNotificationCenter.current().setBadgeCount(unreadCount) { error in
+            if let error {
+                NSLog("📱 ConversationsViewModel: Failed to set badge count: \(error)")
+            }
+        }
     }
 
     private func updateConversation(
