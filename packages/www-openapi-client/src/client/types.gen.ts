@@ -387,6 +387,34 @@ export type GithubBranchesResponse = {
     hasMore: boolean;
 };
 
+export type GithubCompareDiffEntry = {
+    filePath: string;
+    oldPath?: string;
+    status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied';
+    additions: number;
+    deletions: number;
+    isBinary: boolean;
+    contentOmitted?: boolean;
+    patch?: string;
+    oldContent?: string;
+    newContent?: string;
+};
+
+export type GithubCompareResponse = {
+    repoFullName: string;
+    base: {
+        ref: string;
+        sha: string;
+    };
+    head: {
+        ref: string;
+        sha: string;
+    };
+    diffs: Array<GithubCompareDiffEntry>;
+    totalFiles: number;
+    truncated: boolean;
+};
+
 export type ResumeTaskRunResponse = {
     resumed: true;
 };
@@ -1883,6 +1911,66 @@ export type GetApiIntegrationsGithubBranchesResponses = {
 };
 
 export type GetApiIntegrationsGithubBranchesResponse = GetApiIntegrationsGithubBranchesResponses[keyof GetApiIntegrationsGithubBranchesResponses];
+
+export type GetApiIntegrationsGithubCompareData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or UUID
+         */
+        team: string;
+        /**
+         * GitHub owner/org
+         */
+        owner: string;
+        /**
+         * GitHub repo name
+         */
+        repo: string;
+        /**
+         * Base branch/ref to compare from
+         */
+        base: string;
+        /**
+         * Head branch/ref to compare to
+         */
+        head: string;
+        /**
+         * If true, include file contents (default true)
+         */
+        includeContents?: boolean | null;
+        /**
+         * Skip fetching contents when file size exceeds this (default 1MB)
+         */
+        maxFileBytes?: number;
+        /**
+         * Max files to include (default 300)
+         */
+        maxFiles?: number;
+    };
+    url: '/api/integrations/github/compare';
+};
+
+export type GetApiIntegrationsGithubCompareErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not found
+     */
+    404: unknown;
+};
+
+export type GetApiIntegrationsGithubCompareResponses = {
+    /**
+     * OK
+     */
+    200: GithubCompareResponse;
+};
+
+export type GetApiIntegrationsGithubCompareResponse = GetApiIntegrationsGithubCompareResponses[keyof GetApiIntegrationsGithubCompareResponses];
 
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;
