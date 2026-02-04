@@ -1107,6 +1107,8 @@ function RunDiffPage() {
                       onControlsChange={setDiffControls}
                       isHeatmapActive={isAiReviewActive}
                       onToggleHeatmap={handleToggleAiReview}
+                      teamSlugOrId={teamSlugOrId}
+                      taskRunId={runId}
                     />
                   )
                 ) : (

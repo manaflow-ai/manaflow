@@ -1,5 +1,5 @@
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
-import { Flame, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Flame, MessageSquare, PanelLeftClose, PanelLeft } from "lucide-react";
 import type { editor } from "monaco-editor";
 import {
   memo,
@@ -16,11 +16,20 @@ import { loaderInitPromise } from "@/lib/monaco-environment";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+import type { Id } from "@cmux/convex/dataModel";
 
 import { FileDiffHeaderWithViewed } from "../file-diff-header-with-viewed";
 import { kitties } from "../kitties";
 import type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
 import { DiffSidebarFilter } from "./diff-sidebar-filter";
+import {
+  DiffCommentsProvider,
+  DiffCommentsSidebar,
+  useDiffCommentsOptional,
+  DiffCommentInput,
+  DiffCommentThread,
+  type DiffComment,
+} from "../diff-comments";
 
 void loaderInitPromise;
 
@@ -77,6 +86,10 @@ type DiffBlock =
 export type MonacoGitDiffViewerWithSidebarProps = GitDiffViewerProps & {
   isHeatmapActive?: boolean;
   onToggleHeatmap?: () => void;
+  // Comments support
+  teamSlugOrId?: string;
+  taskRunId?: Id<"taskRuns">;
+  currentUserId?: string;
 };
 
 // ============================================================================
@@ -921,6 +934,9 @@ interface MonacoFileDiffRowProps {
   diffOptions: editor.IDiffEditorConstructionOptions;
   classNames?: FileDiffRowClassNames;
   anchorId?: string;
+  currentUserId?: string;
+  commentsEnabled?: boolean;
+  onExpandFile?: () => void;
 }
 
 function MonacoFileDiffRow({
@@ -933,6 +949,9 @@ function MonacoFileDiffRow({
   diffOptions,
   classNames,
   anchorId,
+  currentUserId,
+  commentsEnabled,
+  onExpandFile,
 }: MonacoFileDiffRowProps) {
   const canRenderEditor =
     !file.isBinary &&
@@ -949,6 +968,61 @@ function MonacoFileDiffRow({
   const isExpandedRef = useRef(isExpanded);
   const rowContainerRef = useRef<HTMLDivElement | null>(null);
   const [isHeightSettled, setIsHeightSettled] = useState(false);
+
+  // Comments state
+  const commentsContext = useDiffCommentsOptional();
+  const [selectedLineForComment, setSelectedLineForComment] = useState<{
+    lineNumber: number;
+    side: "left" | "right";
+  } | null>(null);
+
+  // Get comments for this file
+  const fileComments = useMemo(() => {
+    if (!commentsContext || !commentsEnabled) return [];
+    return commentsContext.commentsByFile.get(file.filePath) ?? [];
+  }, [commentsContext, commentsEnabled, file.filePath]);
+
+  // Group comments by line number
+  const commentsByLine = useMemo(() => {
+    const map = new Map<string, DiffComment[]>();
+    for (const comment of fileComments) {
+      const key = `${comment.side}:${comment.lineNumber}`;
+      const existing = map.get(key) ?? [];
+      existing.push(comment);
+      map.set(key, existing);
+    }
+    return map;
+  }, [fileComments]);
+
+  const unresolvedCount = fileComments.filter((c) => !c.resolved).length;
+
+  // Handle adding a comment from header button
+  const handleAddCommentFromHeader = useCallback(() => {
+    if (!commentsContext || !commentsEnabled) return;
+
+    // Show a simple prompt for line number
+    const lineStr = window.prompt("Enter line number to comment on:", "1");
+    if (!lineStr) return;
+
+    const lineNumber = parseInt(lineStr, 10);
+    if (isNaN(lineNumber) || lineNumber < 1) {
+      window.alert("Please enter a valid line number");
+      return;
+    }
+
+    // Expand the file if collapsed
+    if (!isExpanded && onExpandFile) {
+      onExpandFile();
+    }
+
+    // Set the active comment position
+    setSelectedLineForComment({ lineNumber, side: "right" });
+    commentsContext.setActiveCommentPosition({
+      filePath: file.filePath,
+      lineNumber,
+      side: "right",
+    });
+  }, [commentsContext, commentsEnabled, isExpanded, onExpandFile, file.filePath]);
 
   useEffect(() => {
     setIsHeightSettled(false);
@@ -982,6 +1056,54 @@ function MonacoFileDiffRow({
     [editorMinHeight, handleHeightSettled]
   );
 
+  // Handle adding a comment when clicking on a line
+  const handleEditorClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!commentsEnabled || !commentsContext) return;
+
+      // Check if click is on a line number area (rough heuristic based on click position)
+      const target = e.target as HTMLElement;
+      const isLineNumber = target.closest(".line-numbers") !== null;
+      const isGutter = target.closest(".margin") !== null;
+
+      if (isLineNumber || isGutter) {
+        // Try to extract line number from the clicked element
+        const lineNumberText = target.textContent?.trim();
+        const lineNumber = lineNumberText ? parseInt(lineNumberText, 10) : NaN;
+
+        if (!isNaN(lineNumber) && lineNumber > 0) {
+          // Determine if it's the left or right side based on position
+          const rect = target.getBoundingClientRect();
+          const containerRect = rowContainerRef.current?.getBoundingClientRect();
+          if (containerRect) {
+            const relativeX = rect.left - containerRect.left;
+            const midpoint = containerRect.width / 2;
+            const side: "left" | "right" = relativeX < midpoint ? "left" : "right";
+
+            setSelectedLineForComment({ lineNumber, side });
+            commentsContext.setActiveCommentPosition({
+              filePath: file.filePath,
+              lineNumber,
+              side,
+            });
+          }
+        }
+      }
+    },
+    [commentsEnabled, commentsContext, file.filePath]
+  );
+
+  // Close comment input
+  const handleCloseCommentInput = useCallback(() => {
+    setSelectedLineForComment(null);
+    commentsContext?.setActiveCommentPosition(null);
+  }, [commentsContext]);
+
+  // Check if we're actively adding a comment to this file
+  const isAddingComment =
+    commentsContext?.activeCommentPosition?.filePath === file.filePath &&
+    selectedLineForComment !== null;
+
   return (
     <div
       id={anchorId}
@@ -1002,6 +1124,9 @@ function MonacoFileDiffRow({
         onToggle={onToggle}
         onToggleViewed={onToggleViewed}
         className={classNames?.button}
+        commentCount={commentsEnabled ? fileComments.length : undefined}
+        unresolvedCommentCount={commentsEnabled ? unresolvedCount : undefined}
+        onAddComment={commentsEnabled ? handleAddCommentFromHeader : undefined}
       />
 
       <div
@@ -1040,6 +1165,7 @@ function MonacoFileDiffRow({
           <div
             className="relative"
             style={isHeightSettled ? undefined : { minHeight: editorMinHeight }}
+            onClick={handleEditorClick}
           >
             <DiffEditor
               language={file.language}
@@ -1053,6 +1179,68 @@ function MonacoFileDiffRow({
             />
           </div>
         ) : null}
+
+        {/* Comment input (appears when adding a new comment) */}
+        {isAddingComment && selectedLineForComment && (
+          <div className="px-4 py-2 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/30">
+            <DiffCommentInput
+              filePath={file.filePath}
+              lineNumber={selectedLineForComment.lineNumber}
+              side={selectedLineForComment.side}
+              onClose={handleCloseCommentInput}
+            />
+          </div>
+        )}
+
+        {/* File comments section */}
+        {commentsEnabled && fileComments.length > 0 && isExpanded && (
+          <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/30 dark:bg-neutral-800/20">
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-3">
+                <MessageSquare className="w-4 h-4 text-neutral-400" />
+                <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                  Comments ({fileComments.length})
+                </span>
+                {unresolvedCount > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full">
+                    {unresolvedCount} unresolved
+                  </span>
+                )}
+              </div>
+              <div className="space-y-3">
+                {Array.from(commentsByLine.entries())
+                  .sort((a, b) => {
+                    const [keyA] = a;
+                    const [keyB] = b;
+                    const lineA = parseInt(keyA.split(":")[1] ?? "0", 10);
+                    const lineB = parseInt(keyB.split(":")[1] ?? "0", 10);
+                    return lineA - lineB;
+                  })
+                  .map(([key, comments]) => {
+                    const [side, lineStr] = key.split(":");
+                    const lineNumber = parseInt(lineStr ?? "0", 10);
+                    return (
+                      <div key={key} className="relative">
+                        <div className="text-[10px] text-neutral-400 mb-1 flex items-center gap-1">
+                          <span className="font-mono">Line {lineNumber}</span>
+                          <span className="text-neutral-300 dark:text-neutral-600">•</span>
+                          <span>{side === "left" ? "Original" : "Modified"}</span>
+                        </div>
+                        {comments.map((comment) => (
+                          <DiffCommentThread
+                            key={comment._id}
+                            comment={comment}
+                            currentUserId={currentUserId}
+                            compact
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1066,6 +1254,9 @@ const MemoMonacoFileDiffRow = memo(MonacoFileDiffRow, (prev, next) => {
     prev.isViewed === next.isViewed &&
     prev.editorTheme === next.editorTheme &&
     prev.anchorId === next.anchorId &&
+    prev.currentUserId === next.currentUserId &&
+    prev.commentsEnabled === next.commentsEnabled &&
+    prev.onExpandFile === next.onExpandFile &&
     a.filePath === b.filePath &&
     a.oldPath === b.oldPath &&
     a.status === b.status &&
@@ -1083,7 +1274,7 @@ const MemoMonacoFileDiffRow = memo(MonacoFileDiffRow, (prev, next) => {
 // Main Component
 // ============================================================================
 
-export function MonacoGitDiffViewerWithSidebar({
+function MonacoGitDiffViewerWithSidebarInner({
   diffs,
   isLoading,
   onControlsChange,
@@ -1091,7 +1282,9 @@ export function MonacoGitDiffViewerWithSidebar({
   onFileToggle,
   isHeatmapActive,
   onToggleHeatmap,
-}: MonacoGitDiffViewerWithSidebarProps) {
+  currentUserId,
+  commentsEnabled,
+}: MonacoGitDiffViewerWithSidebarProps & { commentsEnabled: boolean }) {
   const { theme } = useTheme();
 
   const kitty = useMemo(() => {
@@ -1100,6 +1293,14 @@ export function MonacoGitDiffViewerWithSidebar({
 
   // Sidebar collapsed state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Comments sidebar collapsed state
+  const [isCommentsSidebarCollapsed, setIsCommentsSidebarCollapsed] = useState(true);
+
+  // Get comments context if available
+  const commentsContext = useDiffCommentsOptional();
+  const totalComments = commentsContext?.comments.length ?? 0;
+  const unresolvedComments = commentsContext?.comments.filter((c) => !c.resolved).length ?? 0;
 
   // All files expanded by default
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
@@ -1130,7 +1331,7 @@ export function MonacoGitDiffViewerWithSidebar({
     }
   }, [diffs]);
 
-  // Keyboard shortcut: F to toggle sidebar
+  // Keyboard shortcuts: F to toggle files sidebar, C to toggle comments sidebar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if user is typing in an input/textarea
@@ -1145,10 +1346,14 @@ export function MonacoGitDiffViewerWithSidebar({
         e.preventDefault();
         setIsSidebarCollapsed((prev) => !prev);
       }
+      if ((e.key === "c" || e.key === "C") && commentsEnabled) {
+        e.preventDefault();
+        setIsCommentsSidebarCollapsed((prev) => !prev);
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [commentsEnabled]);
 
   const fileGroups: MonacoFileGroup[] = useMemo(
     () =>
@@ -1414,17 +1619,45 @@ export function MonacoGitDiffViewerWithSidebar({
           <span className="text-green-600 dark:text-green-400">+{totalAdditions}</span>
           <span className="text-red-600 dark:text-red-400">−{totalDeletions}</span>
         </div>
-        {onToggleHeatmap && (
-          <button
-            type="button"
-            onClick={onToggleHeatmap}
-            className="flex items-center gap-1.5 text-[11px] font-medium ml-auto text-neutral-500 dark:text-neutral-400"
-            title={isHeatmapActive ? "Switch to standard diff" : "Switch to heatmap diff"}
-          >
-            <Flame className="w-3 h-3" />
-            <span>Diff Heatmap</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 ml-auto">
+          {commentsEnabled && (
+            <button
+              type="button"
+              onClick={() => setIsCommentsSidebarCollapsed(!isCommentsSidebarCollapsed)}
+              className={cn(
+                "flex items-center gap-1.5 text-[11px] font-medium transition-colors",
+                isCommentsSidebarCollapsed
+                  ? "text-neutral-500 dark:text-neutral-400"
+                  : "text-blue-600 dark:text-blue-400"
+              )}
+              title={isCommentsSidebarCollapsed ? "Show comments (C)" : "Hide comments (C)"}
+            >
+              <MessageSquare className="w-3 h-3" />
+              <span>Comments</span>
+              {totalComments > 0 && (
+                <span className={cn(
+                  "px-1.5 py-0.5 text-[10px] font-medium rounded-full",
+                  unresolvedComments > 0
+                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                    : "bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400"
+                )}>
+                  {unresolvedComments > 0 ? unresolvedComments : totalComments}
+                </span>
+              )}
+            </button>
+          )}
+          {onToggleHeatmap && (
+            <button
+              type="button"
+              onClick={onToggleHeatmap}
+              className="flex items-center gap-1.5 text-[11px] font-medium text-neutral-500 dark:text-neutral-400"
+              title={isHeatmapActive ? "Switch to standard diff" : "Switch to heatmap diff"}
+            >
+              <Flame className="w-3 h-3" />
+              <span>Diff Heatmap</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content area */}
@@ -1439,6 +1672,7 @@ export function MonacoGitDiffViewerWithSidebar({
               onSelectFile={handleSelectFile}
               onToggleViewed={handleToggleViewed}
               className="sticky top-[var(--cmux-diff-header-offset,0px)] h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)]"
+              commentCounts={commentsEnabled ? commentsContext?.fileCommentCounts : undefined}
             />
           </div>
         )}
@@ -1458,6 +1692,13 @@ export function MonacoGitDiffViewerWithSidebar({
                 diffOptions={diffOptions}
                 classNames={classNames?.fileDiffRow}
                 anchorId={file.filePath}
+                currentUserId={currentUserId}
+                commentsEnabled={commentsEnabled}
+                onExpandFile={() => {
+                  if (!expandedFiles.has(file.filePath)) {
+                    toggleFile(file.filePath);
+                  }
+                }}
               />
             ))}
             <div className="px-3 py-6 text-center">
@@ -1472,7 +1713,54 @@ export function MonacoGitDiffViewerWithSidebar({
             </div>
           </div>
         </div>
+
+        {/* Comments sidebar */}
+        {commentsEnabled && !isCommentsSidebarCollapsed && (
+          <div className="flex-shrink-0 w-[320px] self-stretch border-l border-neutral-200/80 dark:border-neutral-800/70 bg-white dark:bg-neutral-900">
+            <DiffCommentsSidebar
+              currentUserId={currentUserId}
+              className="sticky top-[var(--cmux-diff-header-offset,0px)] h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)] overflow-y-auto"
+              onNavigateToComment={(comment) => {
+                // Navigate to the file and scroll to it
+                const element = document.getElementById(comment.filePath);
+                if (element) {
+                  element.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// Public component that wraps the inner component with DiffCommentsProvider
+export function MonacoGitDiffViewerWithSidebar(props: MonacoGitDiffViewerWithSidebarProps) {
+  const { teamSlugOrId, taskRunId, currentUserId, ...rest } = props;
+
+  // Only enable comments if we have both teamSlugOrId and taskRunId
+  const commentsEnabled = Boolean(teamSlugOrId && taskRunId);
+
+  if (commentsEnabled && teamSlugOrId && taskRunId) {
+    return (
+      <DiffCommentsProvider teamSlugOrId={teamSlugOrId} taskRunId={taskRunId}>
+        <MonacoGitDiffViewerWithSidebarInner
+          {...rest}
+          teamSlugOrId={teamSlugOrId}
+          taskRunId={taskRunId}
+          currentUserId={currentUserId}
+          commentsEnabled={commentsEnabled}
+        />
+      </DiffCommentsProvider>
+    );
+  }
+
+  return (
+    <MonacoGitDiffViewerWithSidebarInner
+      {...rest}
+      currentUserId={currentUserId}
+      commentsEnabled={false}
+    />
   );
 }
