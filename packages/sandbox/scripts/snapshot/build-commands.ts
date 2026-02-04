@@ -62,12 +62,17 @@ export function getProvisioningCommands(): BuildCommand[] {
       type: "run",
       args: [
         "DEBIAN_FRONTEND=noninteractive apt-get install -y " +
-          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh jq " +
+          "sudo curl git build-essential pkg-config libssl-dev ca-certificates unzip coreutils passwd zsh jq ripgrep fd-find fzf " +
           "tigervnc-standalone-server tigervnc-common xvfb x11-xserver-utils novnc dbus-x11 openbox xauth " +
           "libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libxrender1 libxtst6 libnss3 " +
           "libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 libpango-1.0-0 libcairo2 fonts-liberation",
       ],
       description: "Install base system packages (including passwd for useradd)",
+    },
+    {
+      type: "run",
+      args: ["ln -sf /usr/bin/fdfind /usr/local/bin/fd"],
+      description: "Create fd symlink (Debian installs fd as fdfind)",
     },
     {
       type: "run",
@@ -275,9 +280,10 @@ export function getProvisioningCommands(): BuildCommand[] {
           "chmod -R a+rX /root/.bun && " +
           "chmod -R a+rX /root/.cargo && " +
           "chmod -R a+rX /root/.local && " +
-          "mkdir -p /root/.claude /root/.codex && " +
+          "mkdir -p /root/.claude /root/.codex /root/.agent-browser && " +
           "chmod -R a+rwX /root/.claude && " +
-          "chmod -R a+rwX /root/.codex",
+          "chmod -R a+rwX /root/.codex && " +
+          "chmod -R a+rwX /root/.agent-browser",
       ],
       description: "Make /root tool directories accessible to all users",
     },
@@ -345,6 +351,7 @@ name = "cmux-proxy"
 env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false
+base_url = "http://127.0.0.1:39384/openai"
 CODEXEOF`,
       ],
       description: "Create Codex CLI config",
@@ -443,6 +450,7 @@ set -e
 # Ensure PATH includes all necessary tools
 export PATH="/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export BUN_INSTALL="/root/.bun"
+export AGENT_BROWSER_HOME="/root/.agent-browser"
 
 # Resolve runtime directories for root/non-root environments
 HOME_DIR="\${HOME:-/root}"
@@ -502,8 +510,15 @@ else
 fi
 
 # Start cmux-acp-server in the background
+# Always pass --prewarm - the server internally checks CMUX_SKIP_PREWARM to decide:
+# - If CMUX_SKIP_PREWARM is set (E2B): Sets up lazy prewarm triggered by configure()
+# - Otherwise (Morph/Docker): Immediate prewarm at startup
+# This is needed because E2B doesn't preserve process env vars through snapshot restore.
 if [ -x /usr/local/bin/cmux-acp-server ]; then
-  /usr/local/bin/cmux-acp-server &
+  if [ -n "\${CMUX_SKIP_PREWARM:-}" ]; then
+    echo "Using lazy prewarm (CMUX_SKIP_PREWARM is set, prewarm triggers after configure)"
+  fi
+  /usr/local/bin/cmux-acp-server --prewarm &
   SERVER_PID=$!
 else
   echo "ERROR: cmux-acp-server not installed" >&2
@@ -525,7 +540,7 @@ echo "Waiting for cmux-acp-server to be ready..."
 READY=0
 for i in {1..180}; do
   if curl -sf http://localhost:39384/health > /dev/null 2>&1; then
-    echo "cmux-acp-server is ready"
+    echo "cmux-acp-server health check passed"
     READY=1
     break
   fi
@@ -536,6 +551,17 @@ if [ "$READY" -ne 1 ]; then
   echo "ERROR: cmux-acp-server failed to start within 180 seconds"
   exit 1
 fi
+
+# Wait for prewarm to complete (max 120 seconds)
+# This ensures agent thread pools are warmed up for fast session creation
+echo "Waiting for prewarm to complete..."
+for i in {1..120}; do
+  if curl -sf http://localhost:39384/ready > /dev/null 2>&1; then
+    echo "cmux-acp-server prewarm complete"
+    break
+  fi
+  sleep 1
+done
 
 # Start VNC desktop now that ACP is ready
 if command -v vncserver >/dev/null 2>&1; then
@@ -581,6 +607,7 @@ exit 0
  * can capture running processes.
  */
 export function generateSystemdUnit(): string {
+  // --prewarm spawns Codex thread pool on startup for faster first session (~9ms vs ~600ms)
   return `[Unit]
 Description=cmux ACP server for sandbox integration
 After=network.target
@@ -588,7 +615,7 @@ After=network.target
 [Service]
 Type=simple
 Environment="PATH=/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/local/bin/cmux-acp-server
+ExecStart=/usr/local/bin/cmux-acp-server --prewarm
 Restart=always
 RestartSec=5
 KillMode=process

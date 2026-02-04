@@ -80,6 +80,11 @@ dialoguer = "0.11"
 sha2 = "0.10"
 jsonwebtoken = "9"
 regex = "1.12.2"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# sandbox-agent provides universal agent API with thread pool optimization
+sandbox-agent = { git = "https://github.com/manaflow-ai/sandbox-agent", branch = "perf/opencode-startup-optimization" }
+sandbox-agent-agent-management = { git = "https://github.com/manaflow-ai/sandbox-agent", branch = "perf/opencode-startup-optimization" }
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -90,6 +95,10 @@ tokio = { version = "1.41", features = ["macros", "rt", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tower = { version = "0.5", features = ["util"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+reqwest = { version = "0.12", features = ["json"] }
 
 [[bench]]
 name = "terminal_perf"

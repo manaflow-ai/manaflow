@@ -3,11 +3,16 @@
 //! Standalone ACP server for sandbox integration. Handles REST API requests
 //! from Convex and manages conversations with coding CLIs.
 //!
+//! Provides two sets of endpoints:
+//! - `/api/acp/*` - Existing ACP endpoints for claude-code-acp, codex-acp, etc.
+//! - `/api/agents/*` - sandbox-agent endpoints with Codex thread pool optimization
+//!
 //! SECURITY: This server has NO direct Convex access. It can only communicate
 //! back to Convex via the callback URL using the JWT provided at spawn time.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -19,14 +24,44 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+/// Global prewarm completion flag.
+/// Used by the /ready endpoint to indicate when agent servers are warmed up.
+static PREWARM_COMPLETE: AtomicBool = AtomicBool::new(false);
+
 use cmux_sandbox::acp_server::{
-    cmux_code_asset_proxy, cmux_code_proxy, configure, init_conversation, novnc_proxy, novnc_ws,
-    opencode_preflight, opencode_proxy, opencode_pty_ws, pty_capture_session, pty_create_session,
-    pty_delete_session, pty_get_session, pty_health, pty_input_session, pty_list_sessions,
-    pty_preflight, pty_resize_session, pty_session_ws, pty_update_session, receive_prompt,
-    send_rpc, stream_acp_events, stream_preflight, vnc_ws, ApiProxies,
-    CallbackClient, RestApiDoc, RestApiState,
+    build_llm_proxy_router, cmux_code_asset_proxy, cmux_code_proxy, configure, init_conversation,
+    novnc_proxy, novnc_ws, opencode_preflight, opencode_proxy, opencode_pty_ws,
+    pty_capture_session, pty_create_session, pty_delete_session, pty_get_session, pty_health,
+    pty_input_session, pty_list_sessions, pty_preflight, pty_resize_session, pty_session_ws,
+    pty_update_session, receive_prompt, send_rpc, set_integrated_llm_proxy, set_lazy_prewarm,
+    stream_acp_events, stream_preflight, vnc_ws, ApiProxies, CallbackClient, LazyPrewarm,
+    LlmProxyState, RestApiDoc, RestApiState,
 };
+
+// sandbox-agent provides universal agent API with thread pool optimization
+use sandbox_agent::router::{
+    build_router_with_state as build_agent_router, prewarm_agents, ApiDoc as AgentApiDoc,
+    AppState as AgentAppState, AuthConfig as AgentAuthConfig,
+};
+use sandbox_agent_agent_management::agents::AgentManager;
+
+/// Lazy prewarm handler for E2B sandboxes.
+/// Triggers prewarm after configure() sets env vars, since E2B doesn't preserve
+/// process env vars through snapshot restore.
+struct AgentPrewarmHandler {
+    state: Arc<AgentAppState>,
+}
+
+impl LazyPrewarm for AgentPrewarmHandler {
+    fn prewarm(&self) {
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            prewarm_agents(&state).await;
+            PREWARM_COMPLETE.store(true, Ordering::Relaxed);
+            info!("Lazy prewarm complete - /ready endpoint now returns 200");
+        });
+    }
+}
 
 async fn empty_204() -> StatusCode {
     StatusCode::NO_CONTENT
@@ -70,9 +105,8 @@ struct Args {
     #[arg(long, env = "ACP_USE_PROXY", default_value = "true")]
     use_proxy: bool,
 
-    /// API proxy URL (e.g., "https://cmux.sh/api") for production mode.
-    /// When set, per-conversation proxies forward to this URL with JWT authentication
-    /// instead of using local API keys. The proxy verifies the JWT and injects the real API key.
+    /// Initial API proxy URL (optional). Normally set via /api/acp/configure from Convex.
+    /// The outer proxy forwards requests with JWT authentication and injects the real API key.
     #[arg(long, env = "API_PROXY_URL")]
     api_proxy_url: Option<String>,
 
@@ -92,6 +126,16 @@ struct Args {
     /// Used for sandbox_ready callback and logging.
     #[arg(long, env = "SANDBOX_ID")]
     sandbox_id: Option<String>,
+
+    /// Prewarm agent servers (Codex, OpenCode) on startup for faster first session creation.
+    /// This spawns shared servers and pre-creates Codex threads in the background.
+    #[arg(long, env = "ACP_PREWARM")]
+    prewarm: bool,
+
+    /// Agent install directory for sandbox-agent.
+    /// Defaults to ~/.cmux/agents
+    #[arg(long, env = "AGENT_INSTALL_DIR")]
+    agent_install_dir: Option<PathBuf>,
 }
 
 /// Health check endpoint response.
@@ -117,6 +161,42 @@ async fn health() -> axum::Json<HealthResponse> {
     })
 }
 
+/// Ready check response (includes prewarm status).
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct ReadyResponse {
+    status: &'static str,
+    version: &'static str,
+    prewarm_complete: bool,
+}
+
+/// Ready check handler.
+/// Returns 200 OK only when both the server is healthy AND prewarm is complete.
+/// Use this endpoint for container/sandbox readiness checks to ensure
+/// agent thread pools are warmed up for fast session creation.
+#[utoipa::path(
+    get,
+    path = "/ready",
+    responses(
+        (status = 200, description = "Server is ready (prewarm complete)", body = ReadyResponse),
+        (status = 503, description = "Server is starting (prewarm in progress)", body = ReadyResponse)
+    ),
+    tag = "health"
+)]
+async fn ready() -> (StatusCode, axum::Json<ReadyResponse>) {
+    let prewarm_complete = PREWARM_COMPLETE.load(Ordering::Relaxed);
+    let response = ReadyResponse {
+        status: if prewarm_complete { "ok" } else { "warming" },
+        version: env!("CARGO_PKG_VERSION"),
+        prewarm_complete,
+    };
+    let status = if prewarm_complete {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (status, axum::Json(response))
+}
+
 /// OpenAPI documentation for the ACP server.
 #[derive(OpenApi)]
 #[openapi(
@@ -126,8 +206,8 @@ async fn health() -> axum::Json<HealthResponse> {
             Provides REST endpoints for Convex to control the sandbox and spawn coding agents.",
         version = "0.1.0"
     ),
-    paths(health),
-    components(schemas(HealthResponse)),
+    paths(health, ready),
+    components(schemas(HealthResponse, ReadyResponse)),
     tags(
         (name = "health", description = "Health check endpoints"),
         (name = "acp", description = "ACP sandbox control endpoints")
@@ -135,11 +215,14 @@ async fn health() -> axum::Json<HealthResponse> {
 )]
 struct ApiDoc;
 
-/// Merge OpenAPI documents.
+/// Merge OpenAPI documents from ACP server, REST API, and sandbox-agent.
 fn merged_openapi() -> utoipa::openapi::OpenApi {
     let mut api = ApiDoc::openapi();
     let rest_api = RestApiDoc::openapi();
     api.merge(rest_api);
+    // Include sandbox-agent API documentation under /api/agents
+    let agent_api = AgentApiDoc::openapi();
+    api.merge(agent_api);
     api
 }
 
@@ -170,6 +253,7 @@ async fn main() -> anyhow::Result<()> {
         api_proxy_url = ?args.api_proxy_url,
         callback_mode = callback_mode,
         sandbox_id = ?args.sandbox_id,
+        prewarm = args.prewarm,
         "Starting cmux-acp-server"
     );
 
@@ -192,12 +276,13 @@ async fn main() -> anyhow::Result<()> {
         };
 
     // Start API proxies if configured (for passing API keys securely to CLIs)
+    // Mode 1: Local proxy with actual API keys (for local dev)
     let _api_proxies = if args.use_proxy
         && (args.anthropic_api_key.is_some()
             || args.openai_api_key.is_some()
             || args.google_api_key.is_some())
     {
-        info!("Starting local API proxies...");
+        info!("Starting local API proxies (direct key mode)...");
         let proxies = ApiProxies::start(
             args.anthropic_api_key.clone(),
             args.openai_api_key.clone(),
@@ -220,6 +305,44 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Mode 2: Integrated LLM proxy for prewarm
+    // LLM proxy routes are mounted on the main server (port 39384) instead of a separate server.
+    // Prewarmed processes use http://127.0.0.1:39384/anthropic etc.
+    // The proxy starts without JWT or outer URL - waits for /api/acp/configure to provide both.
+    // The outer proxy URL is set dynamically via configure() from Convex (CONVEX_SITE_URL).
+
+    // Create LLM proxy state (will be mounted as routes on main server)
+    let llm_proxy_state = if args.prewarm {
+        info!("Setting up integrated LLM proxy (JWT and proxy URL will be set via /api/acp/configure)...");
+
+        // Create state with 60s timeout - gives time for configure() after spawn
+        let state = LlmProxyState::new(std::time::Duration::from_secs(60));
+
+        // Set environment variables for prewarmed processes to use the main server
+        let anthropic_url = format!("http://127.0.0.1:{}/anthropic", args.port);
+        let openai_url = format!("http://127.0.0.1:{}/openai", args.port);
+
+        std::env::set_var("ANTHROPIC_BASE_URL", &anthropic_url);
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-proxy-placeholder");
+        std::env::set_var("OPENAI_BASE_URL", &openai_url);
+        std::env::set_var("OPENAI_API_KEY", "sk-proxy-placeholder");
+
+        info!(
+            anthropic_url = %anthropic_url,
+            openai_url = %openai_url,
+            "Integrated LLM proxy configured - env vars set for prewarm"
+        );
+
+        // Store in global so configure() can set JWT later
+        if !set_integrated_llm_proxy(state.clone()) {
+            warn!("Integrated LLM proxy already initialized (should not happen)");
+        }
+
+        Some(state)
+    } else {
+        None
+    };
+
     // Create REST API state for ACP endpoints (Convex -> Sandbox communication)
     // SECURITY: RestApiState only has callback access, not direct Convex query/mutation access
     let mut rest_state = RestApiState::new().with_default_cwd(args.working_dir.clone());
@@ -227,6 +350,65 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref client) = callback_client {
         rest_state = rest_state.with_callback_client(client.clone());
         info!("REST API configured with callback client for Convex persistence");
+    }
+
+    // Create sandbox-agent state for /api/agents endpoints
+    // This provides the universal agent API with Codex thread pool optimization
+    let agent_install_dir = args.agent_install_dir.clone().unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".cmux")
+            .join("agents")
+    });
+    info!(agent_install_dir = %agent_install_dir.display(), "Agent install directory");
+
+    let agent_manager = match AgentManager::new(&agent_install_dir) {
+        Ok(m) => m,
+        Err(e) => {
+            error!(error = %e, "Failed to create agent manager");
+            return Err(anyhow::anyhow!("Failed to create agent manager: {}", e));
+        }
+    };
+
+    let agent_state = AgentAppState::new(AgentAuthConfig::disabled(), agent_manager);
+    let (agent_router, agent_state_ref) = build_agent_router(Arc::new(agent_state));
+
+    // Prewarm agent servers if enabled
+    // This spawns shared servers and pre-creates Codex threads for faster first session
+    //
+    // IMPORTANT: Skip prewarm for E2B sandboxes (CMUX_SKIP_PREWARM=1).
+    // E2B doesn't preserve process env vars through snapshot restore, so prewarmed processes
+    // would lose their OPENAI_BASE_URL pointing to the boot proxy. Instead, we set up lazy
+    // prewarm that triggers after configure() sets the correct env vars.
+    let skip_prewarm = std::env::var("CMUX_SKIP_PREWARM")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+
+    if args.prewarm && !skip_prewarm {
+        // Immediate prewarm (Morph, Docker - RAM snapshots preserve env vars)
+        info!("Prewarming agent servers (Codex thread pool)...");
+        let prewarm_state = agent_state_ref.clone();
+        tokio::spawn(async move {
+            prewarm_agents(&prewarm_state).await;
+            PREWARM_COMPLETE.store(true, Ordering::Relaxed);
+            info!("Prewarm complete - /ready endpoint now returns 200");
+        });
+    } else if args.prewarm && skip_prewarm {
+        // Lazy prewarm (E2B - env vars don't survive snapshot restore)
+        // Set up handler that will be triggered after configure() sets env vars
+        info!("Setting up lazy prewarm (CMUX_SKIP_PREWARM is set)");
+        let handler = Arc::new(AgentPrewarmHandler {
+            state: agent_state_ref.clone(),
+        });
+        if !set_lazy_prewarm(handler) {
+            warn!("Lazy prewarm handler already set (should not happen)");
+        }
+        // Mark PREWARM_COMPLETE so /ready returns 200 for template build.
+        // The actual prewarm will happen after configure() on sandbox spawn.
+        PREWARM_COMPLETE.store(true, Ordering::Relaxed);
+    } else {
+        // Prewarm not requested - mark as complete immediately
+        PREWARM_COMPLETE.store(true, Ordering::Relaxed);
     }
 
     // Build REST API router for ACP endpoints
@@ -237,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/healthz", get(health))
+        .route("/ready", get(ready))
         .route("/favicon.ico", get(empty_204))
         .route("/manifest.json", get(empty_204))
         .route("/api/acp/configure", post(configure))
@@ -306,7 +489,18 @@ async fn main() -> anyhow::Result<()> {
         // cmux-code static assets served at /oss-*
         .fallback(cmux_code_asset_proxy)
         .with_state(rest_state)
+        // Mount sandbox-agent routes under /api/agents
+        // Provides universal agent API with Codex thread pool optimization
+        .nest("/api/agents", agent_router)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));
+
+    // Mount LLM proxy routes if prewarm is enabled
+    // Routes: /anthropic/*, /openai/*, /v1/* - proxy to outer API with JWT
+    let app = if let Some(llm_state) = llm_proxy_state {
+        app.merge(build_llm_proxy_router(llm_state))
+    } else {
+        app
+    };
 
     // Bind and serve (IPv4 + best-effort IPv6)
     let addr_v4 = SocketAddr::from(([0, 0, 0, 0], args.port));

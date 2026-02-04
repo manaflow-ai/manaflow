@@ -589,6 +589,7 @@ env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 # CRITICAL: This must be inside the provider section to skip auth
 requires_openai_auth = false
+base_url = "http://127.0.0.1:39384/openai"
 EOF
 
         echo "Created /root/.codex/config.toml"
@@ -807,6 +808,7 @@ SERVICE
 
         # Create systemd unit file for cmux-acp-server
         # The server starts without config and waits for /api/acp/configure call
+        # --prewarm spawns Codex thread pool on startup for faster first session (~9ms vs ~600ms)
         cat > /etc/systemd/system/cmux-acp-server.service << 'SERVICE'
 [Unit]
 Description=cmux ACP server for sandbox integration
@@ -816,7 +818,7 @@ After=network.target
 Type=simple
 # Include paths for bun-installed CLIs, cargo, uv, and local bins
 Environment="PATH=/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/local/bin/cmux-acp-server
+ExecStart=/usr/local/bin/cmux-acp-server --prewarm
 Restart=always
 RestartSec=5
 KillMode=process

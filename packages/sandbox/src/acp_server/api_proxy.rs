@@ -5,8 +5,8 @@
 //! 1. Direct mode (local development):
 //!    CLI → Local Proxy (has API key) → api.anthropic.com
 //!
-//! 2. Outer proxy mode (production with Vercel):
-//!    CLI → Local Proxy (has JWT) → cmux.sh/api/proxy/anthropic (has API key) → api.anthropic.com
+//! 2. Outer proxy mode (production with Convex):
+//!    CLI → Local Proxy (has JWT) → CONVEX_SITE_URL/api/anthropic (has API key) → api.anthropic.com
 //!
 //! In outer proxy mode, the local proxy injects the conversation JWT, and the
 //! Vercel proxy verifies it and adds the real API key.
@@ -22,9 +22,73 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::OnceCell;
 use tracing::{debug, error, info, warn};
 
 use super::callback::CallbackClient;
+
+/// Global boot-time LLM proxy.
+/// Started at server boot (before prewarm) so prewarmed processes can use it.
+/// The JWT is set later via configure().
+static BOOT_API_PROXY: OnceCell<UnifiedApiProxy> = OnceCell::const_new();
+
+/// Global integrated LLM proxy state (for merged server mode).
+/// Set at server startup, JWT set via configure().
+static INTEGRATED_LLM_PROXY: OnceCell<LlmProxyState> = OnceCell::const_new();
+
+/// Set the integrated LLM proxy state (called from server main).
+pub fn set_integrated_llm_proxy(state: LlmProxyState) -> bool {
+    INTEGRATED_LLM_PROXY.set(state).is_ok()
+}
+
+/// Get the integrated LLM proxy state (called from configure).
+pub fn get_integrated_llm_proxy() -> Option<&'static LlmProxyState> {
+    INTEGRATED_LLM_PROXY.get()
+}
+
+/// Set the boot-time API proxy (called from server main).
+/// Returns true if set successfully, false if already set.
+pub fn set_boot_api_proxy(proxy: UnifiedApiProxy) -> bool {
+    BOOT_API_PROXY.set(proxy).is_ok()
+}
+
+/// Get the boot-time API proxy (called from configure).
+pub fn get_boot_api_proxy() -> Option<&'static UnifiedApiProxy> {
+    BOOT_API_PROXY.get()
+}
+
+/// Trait for lazy prewarm handlers.
+/// Implemented by the server binary with access to AgentAppState.
+pub trait LazyPrewarm: Send + Sync {
+    /// Trigger prewarm. Should spawn a background task.
+    fn prewarm(&self);
+}
+
+/// Global lazy prewarm handler.
+/// Used by E2B sandboxes where prewarm is skipped at boot and triggered after configure().
+static LAZY_PREWARM: OnceCell<Arc<dyn LazyPrewarm>> = OnceCell::const_new();
+
+/// Atomic flag to ensure prewarm only runs once.
+static LAZY_PREWARM_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set the lazy prewarm handler (called from server main).
+pub fn set_lazy_prewarm(handler: Arc<dyn LazyPrewarm>) -> bool {
+    LAZY_PREWARM.set(handler).is_ok()
+}
+
+/// Trigger lazy prewarm if configured and not already done.
+/// Called from configure() after env vars are set.
+pub fn trigger_lazy_prewarm() {
+    // Only run once
+    if LAZY_PREWARM_DONE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+
+    if let Some(handler) = LAZY_PREWARM.get() {
+        info!("Triggering lazy prewarm (env vars now configured)");
+        handler.prewarm();
+    }
+}
 
 /// API provider configuration.
 #[derive(Clone)]
@@ -400,6 +464,55 @@ impl JwtHolder {
     }
 }
 
+/// Holder for API proxy URL that can be set dynamically via configure().
+/// Similar to JwtHolder, waits for the URL to be set before allowing requests.
+#[derive(Clone)]
+pub struct ApiProxyUrlHolder {
+    url: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl ApiProxyUrlHolder {
+    /// Create a new holder, optionally with an initial URL.
+    pub fn new(initial_url: Option<String>) -> Self {
+        Self {
+            url: std::sync::Arc::new(tokio::sync::RwLock::new(initial_url)),
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    /// Set the URL, waking any waiters.
+    pub async fn set(&self, url: String) {
+        let mut guard = self.url.write().await;
+        *guard = Some(url);
+        self.notify.notify_waiters();
+    }
+
+    /// Get the URL, waiting up to timeout if not set.
+    pub async fn get_with_timeout(&self, timeout: std::time::Duration) -> Option<String> {
+        // Check if already set
+        {
+            let guard = self.url.read().await;
+            if let Some(ref url) = *guard {
+                return Some(url.clone());
+            }
+        }
+
+        // Wait for notification with timeout
+        let wait_result = tokio::time::timeout(timeout, self.notify.notified()).await;
+
+        // Check again after waiting
+        if wait_result.is_ok() {
+            let guard = self.url.read().await;
+            guard.clone()
+        } else {
+            // Timeout - check one more time
+            let guard = self.url.read().await;
+            guard.clone()
+        }
+    }
+}
+
 /// Configuration for error callbacks (set dynamically after proxy starts).
 #[derive(Clone)]
 pub struct ErrorCallbackConfig {
@@ -542,8 +655,8 @@ async fn outer_proxy_handler(
         }
     }
 
-    // Add JWT as Bearer token
-    request_builder = request_builder.header("Authorization", format!("Bearer {}", jwt));
+    // Add JWT as x-cmux-token header (expected by Convex proxy)
+    request_builder = request_builder.header("x-cmux-token", &jwt);
 
     // Get body bytes
     let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
@@ -749,8 +862,8 @@ async fn unified_proxy_handler(
             request_builder = request_builder.header(name.as_str(), value.as_str());
         }
 
-        // Add JWT as Bearer token
-        request_builder = request_builder.header("Authorization", format!("Bearer {}", jwt));
+        // Add JWT as x-cmux-token header (expected by Convex proxy)
+        request_builder = request_builder.header("x-cmux-token", &jwt);
 
         // Send request
         let response = match request_builder.body(body_bytes.clone()).send().await {
@@ -898,11 +1011,297 @@ pub struct UnifiedApiProxy {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
+/// Health check handler for the unified proxy (returns immediately, doesn't wait for JWT).
+async fn proxy_health_handler() -> impl IntoResponse {
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(Body::from(r#"{"status":"ok"}"#))
+        .unwrap()
+}
+
+/// Shared state for integrated LLM proxy routes (mounted on main server).
+#[derive(Clone)]
+pub struct LlmProxyState {
+    /// HTTP client for forwarding requests
+    client: Client,
+    /// Base URL of outer proxy (e.g., CONVEX_SITE_URL) - set dynamically via configure()
+    api_proxy_url_holder: ApiProxyUrlHolder,
+    /// JWT holder for dynamic JWT setting
+    jwt_holder: JwtHolder,
+    /// Timeout for waiting for JWT and proxy URL
+    jwt_timeout: std::time::Duration,
+    /// Error callback holder for reporting persistent errors
+    error_callback_holder: ErrorCallbackHolder,
+}
+
+impl LlmProxyState {
+    /// Create new LLM proxy state.
+    /// The api_proxy_url is None until set via configure().
+    /// Requests will wait until configure() is called.
+    pub fn new(jwt_timeout: std::time::Duration) -> Self {
+        Self {
+            client: Client::new(),
+            api_proxy_url_holder: ApiProxyUrlHolder::new(None),
+            jwt_holder: JwtHolder::new(None),
+            jwt_timeout,
+            error_callback_holder: ErrorCallbackHolder::new(),
+        }
+    }
+
+    /// Set the API proxy URL (called from configure).
+    pub async fn set_api_proxy_url(&self, url: String) {
+        self.api_proxy_url_holder.set(url).await;
+    }
+
+    /// Set the JWT for this proxy.
+    pub async fn set_jwt(&self, jwt: String) {
+        self.jwt_holder.set(jwt).await;
+    }
+
+    /// Set the error callback configuration.
+    pub async fn set_error_callback(&self, callback_url: String, sandbox_id: String) {
+        self.error_callback_holder
+            .set(ErrorCallbackConfig {
+                callback_url,
+                sandbox_id,
+            })
+            .await;
+    }
+
+    /// Get the outer proxy URL for a provider, waiting for it to be set.
+    async fn provider_outer_url(
+        &self,
+        provider: &str,
+        timeout: std::time::Duration,
+    ) -> Option<String> {
+        self.api_proxy_url_holder
+            .get_with_timeout(timeout)
+            .await
+            .map(|url| format!("{}/api/{}", url, provider))
+    }
+}
+
+/// Handler for /anthropic/* routes - proxies to outer Anthropic API.
+async fn anthropic_proxy_handler(
+    State(state): State<LlmProxyState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> impl IntoResponse {
+    llm_proxy_handler_inner(state, "anthropic", method, uri, headers, body).await
+}
+
+/// Handler for /openai/* routes - proxies to outer OpenAI API.
+async fn openai_proxy_handler(
+    State(state): State<LlmProxyState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> impl IntoResponse {
+    llm_proxy_handler_inner(state, "openai", method, uri, headers, body).await
+}
+
+/// Handler for /v1/* routes - proxies to outer OpenAI API (Codex compatibility).
+async fn openai_v1_proxy_handler(
+    State(state): State<LlmProxyState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> impl IntoResponse {
+    // Codex calls /v1/* directly, route to OpenAI
+    llm_proxy_handler_inner(state, "openai", method, uri, headers, body).await
+}
+
+/// Inner handler for LLM proxy routes.
+async fn llm_proxy_handler_inner(
+    state: LlmProxyState,
+    provider: &str,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> Response<Body> {
+    // Wait for JWT with timeout
+    let jwt = match state.jwt_holder.get_with_timeout(state.jwt_timeout).await {
+        Some(jwt) => jwt,
+        None => {
+            error!("JWT not set within timeout, rejecting LLM request");
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Body::from(
+                    "JWT not configured - call /api/acp/configure first",
+                ))
+                .unwrap();
+        }
+    };
+
+    // Wait for outer proxy URL with timeout
+    let outer_url = match state.provider_outer_url(provider, state.jwt_timeout).await {
+        Some(url) => url,
+        None => {
+            error!("API proxy URL not set within timeout, rejecting LLM request");
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Body::from(
+                    "API proxy URL not configured - call /api/acp/configure first",
+                ))
+                .unwrap();
+        }
+    };
+
+    // Build upstream URL
+    let path = uri.path();
+    // Strip provider prefix if present (e.g., /anthropic/v1/messages -> /v1/messages)
+    let api_path = path.strip_prefix(&format!("/{}", provider)).unwrap_or(path);
+    let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let upstream_url = format!("{}{}{}", outer_url, api_path, query);
+
+    debug!(
+        method = %method,
+        path = %path,
+        upstream = %upstream_url,
+        "Proxying LLM request"
+    );
+
+    // Get body bytes upfront (needed for retries)
+    let body_bytes: Bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!(error = %e, "Failed to read request body");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("Failed to read request body"))
+                .unwrap();
+        }
+    };
+
+    // Build headers once (for retries)
+    let upstream_headers = build_upstream_headers(&headers);
+
+    // Retry loop
+    let mut last_status: Option<StatusCode> = None;
+    let mut last_response_bytes: Option<Bytes> = None;
+    let mut last_response_headers: Option<reqwest::header::HeaderMap> = None;
+
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            let backoff = calculate_backoff(attempt - 1);
+            warn!(
+                attempt = attempt,
+                backoff_ms = backoff.as_millis(),
+                upstream = %upstream_url,
+                "Retrying LLM request after backoff"
+            );
+            tokio::time::sleep(backoff).await;
+        }
+
+        // Build request
+        let mut request_builder = state.client.request(method.clone(), &upstream_url);
+
+        // Add headers
+        for (name, value) in &upstream_headers {
+            request_builder = request_builder.header(name.as_str(), value.as_str());
+        }
+
+        // Add JWT as x-cmux-token header (expected by Convex proxy)
+        request_builder = request_builder.header("x-cmux-token", &jwt);
+
+        // Send request
+        let response = match request_builder.body(body_bytes.clone()).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                error!(
+                    error = %e,
+                    upstream = %upstream_url,
+                    attempt = attempt,
+                    "LLM proxy request failed"
+                );
+                if attempt < MAX_RETRIES {
+                    continue;
+                }
+                return Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(Body::from(format!("LLM proxy request failed: {}", e)))
+                    .unwrap();
+            }
+        };
+
+        let status = response.status();
+        let response_headers = response.headers().clone();
+
+        // Get response body
+        let response_bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!(error = %e, "Failed to read LLM response");
+                if attempt < MAX_RETRIES {
+                    continue;
+                }
+                return Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(Body::from("Failed to read LLM response"))
+                    .unwrap();
+            }
+        };
+
+        // Check if error is retryable
+        if is_retryable_status(status) && attempt < MAX_RETRIES {
+            warn!(
+                status = %status,
+                attempt = attempt,
+                "Retryable LLM error, will retry"
+            );
+            last_status = Some(status);
+            last_response_bytes = Some(response_bytes);
+            last_response_headers = Some(response_headers);
+            continue;
+        }
+
+        // Success or non-retryable error
+        last_status = Some(status);
+        last_response_bytes = Some(response_bytes);
+        last_response_headers = Some(response_headers);
+        break;
+    }
+
+    // Build final response
+    let status = last_status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let response_bytes = last_response_bytes.unwrap_or_default();
+    let response_headers = last_response_headers.unwrap_or_default();
+
+    let mut builder = Response::builder().status(status);
+    for (name, value) in response_headers.iter() {
+        let name_str = name.as_str().to_lowercase();
+        if name_str == "transfer-encoding" || name_str == "connection" {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+
+    builder.body(Body::from(response_bytes)).unwrap()
+}
+
+/// Build an Axum router for LLM proxy routes.
+/// Mount this on the main server to handle /anthropic/*, /openai/*, /v1/* routes.
+pub fn build_llm_proxy_router(state: LlmProxyState) -> Router {
+    Router::new()
+        .route("/anthropic/{*path}", any(anthropic_proxy_handler))
+        .route("/anthropic", any(anthropic_proxy_handler))
+        .route("/openai/{*path}", any(openai_proxy_handler))
+        .route("/openai", any(openai_proxy_handler))
+        .route("/v1/{*path}", any(openai_v1_proxy_handler))
+        .route("/v1", any(openai_v1_proxy_handler))
+        .with_state(state)
+}
+
 impl UnifiedApiProxy {
     /// Start a unified proxy that routes by path prefix.
     ///
     /// # Arguments
-    /// * `api_proxy_url` - Base URL of the outer API proxy (e.g., "https://cmux.sh")
+    /// * `api_proxy_url` - Base URL of the outer API proxy (e.g., CONVEX_SITE_URL)
     /// * `providers` - List of provider path prefixes to route (e.g., ["anthropic", "openai"])
     /// * `initial_jwt` - Optional initial JWT (can be set later via `set_jwt`)
     /// * `jwt_timeout` - How long to wait for JWT if not set when request arrives
@@ -949,6 +1348,8 @@ impl UnifiedApiProxy {
         };
 
         let app = Router::new()
+            // Health endpoint returns immediately without waiting for JWT
+            .route("/health", axum::routing::get(proxy_health_handler))
             .route("/{*path}", any(unified_proxy_handler))
             .route("/", any(unified_proxy_handler))
             .with_state(state);
@@ -1115,7 +1516,7 @@ impl ConversationApiProxies {
     /// Start per-conversation proxies that forward to outer proxy.
     ///
     /// # Arguments
-    /// * `api_proxy_url` - Base URL of the API proxy (e.g., "https://cmux.sh")
+    /// * `api_proxy_url` - Base URL of the API proxy (e.g., CONVEX_SITE_URL)
     /// * `initial_jwt` - Optional initial JWT (can be set later)
     /// * `jwt_timeout` - How long to wait for JWT if not set when request arrives
     pub async fn start(

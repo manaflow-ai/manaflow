@@ -177,8 +177,8 @@ fn test_sse_line_parsing() {
 
     let mut events = Vec::new();
     for line in lines {
-        if line.starts_with("data: ") {
-            let json_str = &line[6..]; // Skip "data: " prefix
+        if let Some(json_str) = line.strip_prefix("data: ") {
+            // Skip "data: " prefix
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) {
                 events.push(value["type"].as_str().unwrap_or("").to_string());
             }

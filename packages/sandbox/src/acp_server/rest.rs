@@ -158,38 +158,103 @@ impl RestApiState {
             let mut guard = self.sandbox_id.write().await;
             *guard = Some(sandbox_id.clone());
         }
-        // Start API proxies if proxy URL is provided
+        // Configure API proxy - either use integrated proxy, boot-time proxy, or start a new one
         if let Some(ref proxy_url) = api_proxy_url {
-            info!(api_proxy_url = %proxy_url, "Starting per-conversation API proxies");
-            let proxies = ConversationApiProxies::start(
-                proxy_url,
-                Some(sandbox_jwt),
-                std::time::Duration::from_secs(30),
-            )
-            .await
-            .map_err(|e| format!("Failed to start API proxies: {}", e))?;
+            // Check if there's an integrated LLM proxy on the main server (preferred)
+            if let Some(llm_proxy) = super::api_proxy::get_integrated_llm_proxy() {
+                info!(proxy_url = %proxy_url, "Using integrated LLM proxy, setting JWT and proxy URL...");
+                llm_proxy.set_api_proxy_url(proxy_url.clone()).await;
+                llm_proxy.set_jwt(sandbox_jwt.clone()).await;
+                llm_proxy
+                    .set_error_callback(callback_url.clone(), sandbox_id.clone())
+                    .await;
+                info!(proxy_url = %proxy_url, "Integrated LLM proxy configured");
 
-            // Set error callback configuration so the proxy can report persistent errors
-            proxies.set_error_callback(callback_url, sandbox_id).await;
-            info!("API proxy error callback configured");
+                // Trigger lazy prewarm now that JWT is configured.
+                super::api_proxy::trigger_lazy_prewarm();
+            } else if let Some(boot_proxy) = super::api_proxy::get_boot_api_proxy() {
+                // Fall back to separate boot-time proxy (legacy mode)
+                info!("Using boot-time LLM proxy (separate server), setting JWT...");
+                boot_proxy.set_jwt(sandbox_jwt.clone()).await;
+                boot_proxy
+                    .set_error_callback(callback_url.clone(), sandbox_id.clone())
+                    .await;
+                info!("Boot-time LLM proxy JWT and error callback configured");
 
-            if let Some(proxy) = proxies.anthropic() {
-                info!(base_url = %proxy.provider_url("anthropic"), "Anthropic proxy route configured");
-            }
-            if let Some(proxy) = proxies.openai() {
-                info!(base_url = %proxy.provider_url("openai"), "OpenAI proxy route configured");
+                // Re-set environment variables (they may not persist through E2B snapshot restore)
+                let anthropic_url = boot_proxy.provider_url("anthropic");
+                let openai_url = boot_proxy.provider_url("openai");
+                std::env::set_var("ANTHROPIC_BASE_URL", &anthropic_url);
+                std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-proxy-placeholder");
+                std::env::set_var("OPENAI_BASE_URL", &openai_url);
+                std::env::set_var("OPENAI_API_KEY", "sk-proxy-placeholder");
+                info!(
+                    anthropic_url = %anthropic_url,
+                    openai_url = %openai_url,
+                    "Re-set env vars for sandbox-agent (post-restore)"
+                );
 
-                // Update Codex config with the local proxy URL (without /openai path).
-                // Codex ignores the path portion of base_url, so we provide just host:port.
-                // The unified proxy will handle /v1/* as a fallback to OpenAI.
-                let local_proxy_url = proxy.base_url();
+                // Update Codex config with the boot proxy URL
+                let local_proxy_url = boot_proxy.base_url();
                 if let Err(e) = update_codex_config_base_url(&local_proxy_url).await {
                     warn!(error = %e, "Failed to update Codex config base_url (non-fatal)");
                 }
-            }
 
-            let mut guard = self.api_proxies.write().await;
-            *guard = Some(Arc::new(proxies));
+                // Trigger lazy prewarm now that env vars are correctly configured.
+                super::api_proxy::trigger_lazy_prewarm();
+            } else {
+                // No boot proxy - start a new one (non-prewarm case)
+                info!(api_proxy_url = %proxy_url, "Starting per-conversation API proxies");
+                let proxies = ConversationApiProxies::start(
+                    proxy_url,
+                    Some(sandbox_jwt),
+                    std::time::Duration::from_secs(30),
+                )
+                .await
+                .map_err(|e| format!("Failed to start API proxies: {}", e))?;
+
+                // Set error callback configuration so the proxy can report persistent errors
+                proxies
+                    .set_error_callback(callback_url.clone(), sandbox_id.clone())
+                    .await;
+                info!("API proxy error callback configured");
+
+                if let Some(proxy) = proxies.anthropic() {
+                    let anthropic_url = proxy.provider_url("anthropic");
+                    info!(base_url = %anthropic_url, "Anthropic proxy route configured");
+
+                    // Set environment variables for sandbox-agent and other tools to pick up
+                    // The proxy handles real authentication via JWT - we just need a placeholder key
+                    std::env::set_var("ANTHROPIC_BASE_URL", &anthropic_url);
+                    std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-proxy-placeholder");
+                    info!(
+                        "Set ANTHROPIC_BASE_URL and placeholder ANTHROPIC_API_KEY for sandbox-agent"
+                    );
+                }
+                if let Some(proxy) = proxies.openai() {
+                    let openai_url = proxy.provider_url("openai");
+                    info!(base_url = %openai_url, "OpenAI proxy route configured");
+
+                    // Set environment variables for sandbox-agent and other tools to pick up
+                    std::env::set_var("OPENAI_BASE_URL", &openai_url);
+                    std::env::set_var("OPENAI_API_KEY", "sk-proxy-placeholder");
+                    info!("Set OPENAI_BASE_URL and placeholder OPENAI_API_KEY for sandbox-agent");
+
+                    // Update Codex config with the local proxy URL (without /openai path).
+                    // Codex ignores the path portion of base_url, so we provide just host:port.
+                    // The unified proxy will handle /v1/* as a fallback to OpenAI.
+                    let local_proxy_url = proxy.base_url();
+                    if let Err(e) = update_codex_config_base_url(&local_proxy_url).await {
+                        warn!(error = %e, "Failed to update Codex config base_url (non-fatal)");
+                    }
+                }
+
+                let mut guard = self.api_proxies.write().await;
+                *guard = Some(Arc::new(proxies));
+
+                // Trigger lazy prewarm now that env vars are correctly configured.
+                super::api_proxy::trigger_lazy_prewarm();
+            }
         }
         if let Some(secret) = stream_secret {
             let mut guard = self.stream_secrets.write().await;
@@ -2812,7 +2877,9 @@ mod tests {
         assert_eq!(server["name"], BUILTIN_MCP_UPLOAD_ID);
         assert_eq!(server["command"], BUILTIN_MCP_UPLOAD_COMMAND);
         let env = server["env"].as_array().expect("env should be an array");
-        assert!(env.iter().any(|entry| entry["name"] == "CMUX_CONVERSATION_JWT"));
+        assert!(env
+            .iter()
+            .any(|entry| entry["name"] == "CMUX_CONVERSATION_JWT"));
     }
 
     #[test]
@@ -2872,7 +2939,9 @@ mod tests {
             ],
         );
         assert_eq!(servers[0]["name"], BUILTIN_MCP_UPLOAD_ID);
-        let env = servers[0]["env"].as_array().expect("env should be an array");
+        let env = servers[0]["env"]
+            .as_array()
+            .expect("env should be an array");
         let names = env
             .iter()
             .filter_map(|entry| entry["name"].as_str())
@@ -2880,7 +2949,10 @@ mod tests {
         assert!(names.contains(&"CMUX_CONVERSATION_JWT"));
         assert!(names.contains(&"CONVEX_SITE_URL"));
         assert_eq!(
-            names.iter().filter(|name| **name == "CMUX_CONVERSATION_JWT").count(),
+            names
+                .iter()
+                .filter(|name| **name == "CMUX_CONVERSATION_JWT")
+                .count(),
             1
         );
     }

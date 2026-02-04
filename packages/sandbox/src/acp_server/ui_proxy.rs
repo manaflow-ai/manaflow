@@ -3,8 +3,8 @@
 //! These endpoints live on the cmux-acp-server and expose local UI services
 //! via path-rewritten routes.
 
-use std::{env, net::SocketAddr, path::Path};
 use std::borrow::Cow;
+use std::{env, net::SocketAddr, path::Path};
 
 use axum::{
     body::{Body, Bytes},
@@ -18,8 +18,8 @@ use axum::{
 use tracing::{debug, error, warn};
 use url::{form_urlencoded, Url};
 
-use crate::vnc_proxy::proxy_vnc_websocket;
 use crate::acp_server::ws_util::try_set_ws_nodelay;
+use crate::vnc_proxy::proxy_vnc_websocket;
 
 const DEFAULT_CMUX_CODE_URL: &str = "http://127.0.0.1:39378";
 const DEFAULT_VNC_PORT: u16 = 5901;
@@ -71,7 +71,10 @@ fn first_header_value(value: &str) -> &str {
 }
 
 fn forwarded_host(headers: &HeaderMap) -> Option<&str> {
-    if let Some(value) = headers.get("x-forwarded-host").and_then(|v| v.to_str().ok()) {
+    if let Some(value) = headers
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+    {
         let host = first_header_value(value);
         if !host.is_empty() {
             return Some(host);
@@ -118,7 +121,11 @@ fn forwarded_proto(headers: &HeaderMap) -> String {
 }
 
 fn forwarded_proto_header(headers: &HeaderMap) -> Option<String> {
-    for header in ["x-forwarded-proto", "x-forwarded-protocol", "x-forwarded-scheme"] {
+    for header in [
+        "x-forwarded-proto",
+        "x-forwarded-protocol",
+        "x-forwarded-scheme",
+    ] {
         if let Some(value) = headers.get(header).and_then(|v| v.to_str().ok()) {
             let proto = first_header_value(value);
             if !proto.is_empty() {
@@ -231,8 +238,7 @@ fn rewrite_cmux_code_html(body: Bytes, rewrite: &HtmlRewrite) -> Bytes {
                     None => continue,
                 };
                 if html.contains(&encoded) {
-                    let encoded_origin =
-                        format!("{}%3A%2F%2F{}", rewrite.proto, host_variant);
+                    let encoded_origin = format!("{}%3A%2F%2F{}", rewrite.proto, host_variant);
                     html = html.replace(&encoded, &encoded_origin);
                 }
             }
@@ -241,26 +247,15 @@ fn rewrite_cmux_code_html(body: Bytes, rewrite: &HtmlRewrite) -> Bytes {
                 html = html.replace(&insecure_origin, &origin);
             }
             let insecure_origin_escaped = format!("http%3A%2F%2F{host_variant}");
-            let secure_origin_escaped =
-                format!("{}%3A%2F%2F{}", rewrite.proto, host_variant);
+            let secure_origin_escaped = format!("{}%3A%2F%2F{}", rewrite.proto, host_variant);
             if html.contains(&insecure_origin_escaped) {
                 html = html.replace(&insecure_origin_escaped, &secure_origin_escaped);
             }
         }
         html = replace_html_value(html, "\"remoteAuthority\":\"", "\"", host);
-        html = replace_html_value(
-            html,
-            "&quot;remoteAuthority&quot;:&quot;",
-            "&quot;",
-            host,
-        );
+        html = replace_html_value(html, "&quot;remoteAuthority&quot;:&quot;", "&quot;", host);
     }
-    html = replace_html_value(
-        html,
-        "\"serverBasePath\":\"",
-        "\"",
-        "/api/cmux-code",
-    );
+    html = replace_html_value(html, "\"serverBasePath\":\"", "\"", "/api/cmux-code");
     html = replace_html_value(
         html,
         "&quot;serverBasePath&quot;:&quot;",
@@ -268,7 +263,7 @@ fn rewrite_cmux_code_html(body: Bytes, rewrite: &HtmlRewrite) -> Bytes {
         "/api/cmux-code",
     );
     html = replace_html_value(html, "serverBasePath: \"", "\"", "/api/cmux-code");
-    html = replace_html_value(html, "serverBasePath:\"","\"", "/api/cmux-code");
+    html = replace_html_value(html, "serverBasePath:\"", "\"", "/api/cmux-code");
     Bytes::from(html)
 }
 
@@ -476,8 +471,7 @@ async fn proxy_http_request_with_rewrite(
         }
         Err(err) => {
             error!("Proxy request failed: {err}");
-            let mut response =
-                (StatusCode::BAD_GATEWAY, "Proxy request failed").into_response();
+            let mut response = (StatusCode::BAD_GATEWAY, "Proxy request failed").into_response();
             apply_cors(response.headers_mut());
             response
         }
@@ -626,7 +620,9 @@ async fn proxy_websocket_request(
                 }
             }
             Ok(TungsteniteMessage::Close(_)) => {
-                let _ = client_sink.send(axum::extract::ws::Message::Close(None)).await;
+                let _ = client_sink
+                    .send(axum::extract::ws::Message::Close(None))
+                    .await;
                 break;
             }
             Ok(TungsteniteMessage::Ping(data)) => {
@@ -725,14 +721,8 @@ pub async fn cmux_code_proxy(
         let path = path.to_string();
         let query = query.map(|value| value.to_string());
         return ws.on_upgrade(move |socket| async move {
-            if let Err(error) = proxy_websocket_request(
-                &base_url,
-                &path,
-                query.as_deref(),
-                &headers,
-                socket,
-            )
-            .await
+            if let Err(error) =
+                proxy_websocket_request(&base_url, &path, query.as_deref(), &headers, socket).await
             {
                 error!("cmux-code WebSocket proxy error: {error}");
             }
@@ -930,10 +920,7 @@ mod tests {
     fn novnc_preserve_other_params() {
         assert!(should_rewrite_novnc_path(Some("autoconnect=true")));
         let rewritten = rewrite_novnc_query(Some("autoconnect=true"));
-        assert_eq!(
-            rewritten,
-            "autoconnect=true&path=api%2Fnovnc%2Fws"
-        );
+        assert_eq!(rewritten, "autoconnect=true&path=api%2Fnovnc%2Fws");
     }
 
     #[test]
@@ -975,20 +962,24 @@ mod tests {
     #[test]
     fn websocket_origin_prefers_local_upstream_origin() {
         let mut headers = HeaderMap::new();
-        headers.insert("origin", HeaderValue::from_static("https://proxy.example.com"));
+        headers.insert(
+            "origin",
+            HeaderValue::from_static("https://proxy.example.com"),
+        );
         headers.insert("host", HeaderValue::from_static("proxy.example.com"));
-        let origin = websocket_origin("http://127.0.0.1:39378", &headers)
-            .expect("origin");
+        let origin = websocket_origin("http://127.0.0.1:39378", &headers).expect("origin");
         assert_eq!(origin, "http://127.0.0.1:39378");
     }
 
     #[test]
     fn websocket_origin_uses_request_origin_for_remote_upstream() {
         let mut headers = HeaderMap::new();
-        headers.insert("origin", HeaderValue::from_static("https://proxy.example.com"));
+        headers.insert(
+            "origin",
+            HeaderValue::from_static("https://proxy.example.com"),
+        );
         headers.insert("host", HeaderValue::from_static("proxy.example.com"));
-        let origin = websocket_origin("https://cmux-code.internal", &headers)
-            .expect("origin");
+        let origin = websocket_origin("https://cmux-code.internal", &headers).expect("origin");
         assert_eq!(origin, "https://proxy.example.com");
     }
 
@@ -999,9 +990,8 @@ mod tests {
             "sec-websocket-extensions",
             HeaderValue::from_static("permessage-deflate; client_max_window_bits"),
         );
-        let request =
-            build_ws_request("http://127.0.0.1:39378", "/oss-hash", None, &headers)
-                .expect("build ws request");
+        let request = build_ws_request("http://127.0.0.1:39378", "/oss-hash", None, &headers)
+            .expect("build ws request");
         assert!(
             request.headers().get("sec-websocket-extensions").is_none(),
             "Sec-WebSocket-Extensions should not be forwarded"
@@ -1025,5 +1015,4 @@ mod tests {
         let normalized = normalize_oss_path("/oss-hash/");
         assert_eq!(normalized, "/oss-hash/");
     }
-
 }

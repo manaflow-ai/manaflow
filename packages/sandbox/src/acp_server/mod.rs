@@ -22,7 +22,10 @@ mod ui_proxy;
 mod ws_util;
 
 pub use api_proxy::{
-    ApiProxies, ApiProxy, ConversationApiProxies, ConversationApiProxy, JwtHolder,
+    build_llm_proxy_router, get_boot_api_proxy, get_integrated_llm_proxy, set_boot_api_proxy,
+    set_integrated_llm_proxy, set_lazy_prewarm, trigger_lazy_prewarm, ApiProxies, ApiProxy,
+    ConversationApiProxies, ConversationApiProxy, JwtHolder, LazyPrewarm, LlmProxyState,
+    UnifiedApiProxy,
 };
 pub use callback::{
     CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
@@ -33,10 +36,10 @@ pub use pty_proxy::{
     pty_input_session, pty_list_sessions, pty_preflight, pty_resize_session, pty_session_ws,
     pty_update_session,
 };
-pub use ui_proxy::{cmux_code_asset_proxy, cmux_code_proxy, novnc_proxy, novnc_ws, vnc_ws};
 pub use rest::{
     configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
     RestApiDoc, RestApiState,
 };
 pub use spawner::{AcpProvider, CliSpawner, IsolationMode};
 pub use stream::{StreamEvent, StreamOffset, StreamReadResult, StreamStore};
+pub use ui_proxy::{cmux_code_asset_proxy, cmux_code_proxy, novnc_proxy, novnc_ws, vnc_ws};

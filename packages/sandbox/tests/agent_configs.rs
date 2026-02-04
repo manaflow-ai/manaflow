@@ -118,7 +118,11 @@ async fn test_agent_config_files_exist_in_sandbox() {
 
     // Check MCP upload tool exists for stdio MCP server
     let check_mcp = ExecRequest {
-        command: vec!["test".into(), "-x".into(), "/usr/local/bin/mcp-upload".into()],
+        command: vec![
+            "test".into(),
+            "-x".into(),
+            "/usr/local/bin/mcp-upload".into(),
+        ],
         workdir: None,
         env: vec![],
     };

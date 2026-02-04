@@ -54,6 +54,9 @@ function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> 
     }
   }
 
+  // TEMPORARILY DISABLED FOR TESTING - investigating root cause
+  // envVars["CMUX_SKIP_PREWARM"] = "1";
+
   // Set all environment variables
   if (Object.keys(envVars).length > 0) {
     template = template.setEnvs(envVars);
@@ -111,22 +114,28 @@ function commandsToTemplate(opts: TemplateOptions): ReturnType<typeof Template> 
 
   // If boot script is provided, we need to write it and set as start command
   if (bootScript) {
-    // Write boot script via a shell command (heredoc approach)
-    // E2B's setStartCmd expects a command, not a script file
-    // We'll create the boot script file and make it executable
-    template = template.runCmd(
-      `bash -c 'mkdir -p /etc/cmux && cat > /etc/cmux/boot.sh << '\\''BOOTEOF'\\''
-${bootScript}
-BOOTEOF
-chmod +x /etc/cmux/boot.sh'`,
-      { user: "root" }
-    );
+    const os = require("node:os");
+    const path = require("node:path");
+
+    // Write boot script to temp file and use copy() for reliable transfer
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2b-boot-"));
+    const bootScriptPath = path.join(tempDir, "boot.sh");
+    fs.writeFileSync(bootScriptPath, bootScript, { mode: 0o755 });
+
+    template = template.runCmd("mkdir -p /etc/cmux", { user: "root" });
+    template = template.copy(bootScriptPath, "/etc/cmux/boot.sh", {
+      forceUpload: true,
+      user: "root",
+    });
+    template = template.runCmd("chmod +x /etc/cmux/boot.sh", { user: "root" });
 
     // Set the start command to run the boot script
     // The second argument is the ready check command
+    // Use /ready instead of /health to wait for prewarm completion
+    // This ensures agent thread pools are warmed up for fast session creation
     template = template.setStartCmd(
       "/etc/cmux/boot.sh",
-      "/usr/bin/curl -sf http://localhost:39384/health"
+      "/usr/bin/curl -sf http://localhost:39384/ready"
     );
   }
 
