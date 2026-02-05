@@ -238,3 +238,203 @@ export const updateMessageStatus = internalMutation({
     });
   },
 });
+
+// ============= SMS Agent Inbox Queries/Mutations =============
+
+/**
+ * Get unread inbox entries for a phone number.
+ */
+export const getUnreadInbox = internalQuery({
+  args: {
+    phoneNumber: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    return await ctx.db
+      .query("smsAgentInbox")
+      .withIndex("by_phone_unread", (q) =>
+        q.eq("phoneNumber", args.phoneNumber).eq("isRead", false)
+      )
+      .order("desc")
+      .take(limit);
+  },
+});
+
+/**
+ * Get all inbox entries for a phone number (for list_conversations).
+ */
+export const getInboxForPhone = internalQuery({
+  args: {
+    phoneNumber: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    return await ctx.db
+      .query("smsAgentInbox")
+      .withIndex("by_phone", (q) => q.eq("phoneNumber", args.phoneNumber))
+      .order("desc")
+      .take(limit);
+  },
+});
+
+/**
+ * Mark inbox entries as read.
+ */
+export const markInboxRead = internalMutation({
+  args: {
+    phoneNumber: v.string(),
+    conversationIds: v.optional(v.array(v.id("conversations"))),
+  },
+  handler: async (ctx, args) => {
+    // If specific conversation IDs provided, mark only those
+    if (args.conversationIds && args.conversationIds.length > 0) {
+      for (const conversationId of args.conversationIds) {
+        const entries = await ctx.db
+          .query("smsAgentInbox")
+          .withIndex("by_conversation", (q) =>
+            q.eq("conversationId", conversationId)
+          )
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("phoneNumber"), args.phoneNumber),
+              q.eq(q.field("isRead"), false)
+            )
+          )
+          .collect();
+
+        for (const entry of entries) {
+          await ctx.db.patch(entry._id, { isRead: true });
+        }
+      }
+    } else {
+      // Mark all unread entries for this phone as read
+      const entries = await ctx.db
+        .query("smsAgentInbox")
+        .withIndex("by_phone_unread", (q) =>
+          q.eq("phoneNumber", args.phoneNumber).eq("isRead", false)
+        )
+        .collect();
+
+      for (const entry of entries) {
+        await ctx.db.patch(entry._id, { isRead: true });
+      }
+    }
+  },
+});
+
+/**
+ * Mark all inbox entries as read for a phone number.
+ * Used by triggerAgentWithNotification after the agent processes notifications.
+ */
+export const markAllInboxRead = internalMutation({
+  args: { phoneNumber: v.string() },
+  handler: async (ctx, args) => {
+    const unread = await ctx.db
+      .query("smsAgentInbox")
+      .withIndex("by_phone_unread", (q) =>
+        q.eq("phoneNumber", args.phoneNumber).eq("isRead", false)
+      )
+      .collect();
+
+    for (const entry of unread) {
+      await ctx.db.patch(entry._id, { isRead: true });
+    }
+  },
+});
+
+/**
+ * Add an inbox entry for a phone number.
+ */
+export const addInboxEntry = internalMutation({
+  args: {
+    phoneNumber: v.string(),
+    conversationId: v.id("conversations"),
+    type: v.union(
+      v.literal("started"),
+      v.literal("message"),
+      v.literal("completed"),
+      v.literal("error")
+    ),
+    summary: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("smsAgentInbox", {
+      phoneNumber: args.phoneNumber,
+      conversationId: args.conversationId,
+      type: args.type,
+      summary: args.summary,
+      isRead: false,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Get conversations for a phone number's user.
+ * Used by the list_conversations and search_conversations tools.
+ */
+export const getConversationsForPhone = internalQuery({
+  args: {
+    phoneNumber: v.string(),
+    userId: v.string(),
+    teamId: v.string(),
+    status: v.optional(
+      v.union(v.literal("active"), v.literal("completed"), v.literal("all"))
+    ),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    const status = args.status ?? "all";
+
+    let query = ctx.db
+      .query("conversations")
+      .withIndex("by_team_user_updated", (q) =>
+        q.eq("teamId", args.teamId).eq("userId", args.userId)
+      )
+      .order("desc");
+
+    if (status !== "all") {
+      query = query.filter((q) => q.eq(q.field("status"), status));
+    }
+
+    return await query.take(limit);
+  },
+});
+
+/**
+ * Search conversations by query string.
+ */
+export const searchConversations = internalQuery({
+  args: {
+    userId: v.string(),
+    teamId: v.string(),
+    query: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 10;
+    const queryLower = args.query.toLowerCase();
+
+    // Get all conversations for this user
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_team_user_updated", (q) =>
+        q.eq("teamId", args.teamId).eq("userId", args.userId)
+      )
+      .order("desc")
+      .take(100); // Limit to recent 100 for search
+
+    // Filter by query (matching title)
+    const matching = conversations.filter((conv) => {
+      if (conv.title && conv.title.toLowerCase().includes(queryLower)) {
+        return true;
+      }
+      return false;
+    });
+
+    return matching.slice(0, limit);
+  },
+});

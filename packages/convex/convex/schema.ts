@@ -1523,6 +1523,40 @@ const convexSchema = defineSchema({
     payload: v.string(),
     processedAt: v.number(),
   }).index("by_processed_at", ["processedAt"]),
+
+  // SMS Phone → User/Team Mapping
+  // Links phone numbers to users and their default teams for sandbox operations
+  smsPhoneUsers: defineTable({
+    phoneNumber: v.string(), // E.164 format (+1XXXXXXXXXX)
+    userId: v.string(), // Links to users.userId
+    defaultTeamId: v.string(), // Default team for new sandboxes
+    displayName: v.optional(v.string()),
+    notifyOnCompletion: v.boolean(), // Proactive SMS on task completion
+    isAnonymous: v.boolean(), // True if auto-created (not linked to real account)
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_phone", ["phoneNumber"])
+    .index("by_user", ["userId"]),
+
+  // SMS Agent Inbox - Notification/Update Tracking
+  // Stores notifications from sandbox conversations for the SMS agent to read
+  smsAgentInbox: defineTable({
+    phoneNumber: v.string(),
+    conversationId: v.id("conversations"),
+    type: v.union(
+      v.literal("started"), // Sandbox started
+      v.literal("message"), // New assistant message
+      v.literal("completed"), // Task completed
+      v.literal("error") // Task errored
+    ),
+    summary: v.string(), // Short summary for agent to read
+    isRead: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_phone_unread", ["phoneNumber", "isRead", "createdAt"])
+    .index("by_phone", ["phoneNumber", "createdAt"])
+    .index("by_conversation", ["conversationId"]),
 });
 
 export default convexSchema;

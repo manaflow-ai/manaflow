@@ -90,6 +90,7 @@ export const makeSendblueService = (config: SendblueConfig) =>
         toNumber: string;
         content: string;
         sendStyle?: string;
+        mediaUrl?: string;
       }): Effect.Effect<MessageResponse, SendblueError> =>
         pipe(
           Effect.tryPromise({
@@ -99,6 +100,7 @@ export const makeSendblueService = (config: SendblueConfig) =>
                 number: params.toNumber,
                 from_number: config.fromNumber,
                 send_style: params.sendStyle as SendStyle,
+                media_url: params.mediaUrl,
               }),
             catch: (error) =>
               new SendblueError("Failed to send message", undefined, error),
@@ -108,6 +110,7 @@ export const makeSendblueService = (config: SendblueConfig) =>
               to: params.toNumber,
               messageHandle: response.message_handle,
               status: response.status,
+              hasMedia: !!params.mediaUrl,
             })
           )
         ),

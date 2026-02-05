@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 // Content block validator
 const contentBlockValidator = v.object({
@@ -247,6 +248,14 @@ export const completeMessage = internalMutation({
           });
         }
       }
+
+      // Schedule SMS notification for conversation completion
+      // This checks if the user has an SMS phone linked and sends notifications
+      await ctx.scheduler.runAfter(0, internal.sms_notifications.onConversationComplete, {
+        conversationId: args.conversationId,
+        status: newStatus,
+        stopReason: args.stopReason,
+      });
     }
   },
 });

@@ -86,6 +86,8 @@ import type * as sendblue from "../sendblue.js";
 import type * as sms from "../sms.js";
 import type * as sms_http from "../sms_http.js";
 import type * as sms_llm from "../sms_llm.js";
+import type * as sms_notifications from "../sms_notifications.js";
+import type * as sms_phone_users from "../sms_phone_users.js";
 import type * as sms_queries from "../sms_queries.js";
 import type * as spawn_http from "../spawn_http.js";
 import type * as stack from "../stack.js";
@@ -192,6 +194,8 @@ declare const fullApi: ApiFromModules<{
   sms: typeof sms;
   sms_http: typeof sms_http;
   sms_llm: typeof sms_llm;
+  sms_notifications: typeof sms_notifications;
+  sms_phone_users: typeof sms_phone_users;
   sms_queries: typeof sms_queries;
   spawn_http: typeof spawn_http;
   stack: typeof stack;
