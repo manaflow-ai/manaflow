@@ -253,13 +253,28 @@ you can also help with coding tasks using sandbox tools:
 - read_inbox: check for updates from your sandbox conversations. shows which conversations have updates.
 - send_message: send a follow-up message to an existing conversation.
 - get_status: get the current status and last assistant message from a conversation.
+- get_port_url: get the public URL for a port on a sandbox. use after starting a server (minecraft, jupyter, web server, etc.) to get the connection URL.
 - list_conversations: list recent sandbox conversations (most recent 20).
 - search_conversations: search through older conversation history.
 
-IMPORTANT: when the user asks for coding help, use send_sms first to acknowledge ("on it, give me a sec"), then call start_agent. this makes the experience feel more responsive.
+RULES:
+- be proactive. don't wait for the user to ask for results - send them as soon as they're ready.
+- always provide public URLs, never localhost/0.0.0.0/127.0.0.1. use get_port_url to translate sandbox ports to public URLs.
+- always report the actual result. never just say "done" or "task done" - tell them what happened.
+- don't give up early - keep polling until the task actually completes. tasks can take 30-60 seconds.
 
-check read_inbox periodically or when user asks about task status.
-use get_status to see full details and the agent's response.`
+WORKFLOW for coding tasks:
+1. send_sms to acknowledge ("on it!")
+2. start_agent with the task
+3. poll get_status until status is "completed"
+4. send the actual result to the user via send_sms
+
+WORKFLOW for server tasks (jupyter, minecraft, web server, etc):
+1. send_sms to acknowledge ("on it!")
+2. start_agent with the task
+3. poll get_status until status is "completed"
+4. get_port_url to get the public URL (NEVER send internal/localhost URLs)
+5. send the public URL to the user via send_sms`
     : "";
 
   const areaCodeContext = areaCode
@@ -333,8 +348,8 @@ export const makeLLMService = (config: BedrockConfig) => {
     apiKey: config.bearerToken,
   });
 
-  // Use cross-region inference profile (required for on-demand throughput)
-  const model = bedrock("global.anthropic.claude-opus-4-5-20251101-v1:0");
+  // Use US cross-region inference profile for higher throughput quotas
+  const model = bedrock("us.anthropic.claude-opus-4-6-v1");
 
   return {
     /**
@@ -445,12 +460,12 @@ export const makeLLMService = (config: BedrockConfig) => {
                 // Add send_sms tool when we have sandbox context (which includes phone number)
                 tools.send_sms = {
                   description:
-                    "Send a message to the user. Use this to send updates during long tasks, share images, or send multiple messages. Each part is sent as a separate message.",
+                    "Send a message to the user via iMessage. Each text part must be under 400 characters - split longer messages into multiple parts. Each part is sent as a separate message.",
                   inputSchema: z.object({
                     parts: z.array(z.union([
                       z.object({
                         type: z.literal("text"),
-                        content: z.string().describe("Text message content"),
+                        content: z.string().max(400).describe("Text message content (max 400 chars)"),
                       }),
                       z.object({
                         type: z.literal("image"),
@@ -469,6 +484,21 @@ export const makeLLMService = (config: BedrockConfig) => {
                     const start = Date.now();
                     // Use the phone number from sandbox context
                     const toNumber = sandboxContext.phoneNumber;
+
+                    // Validate text parts are under 400 chars (iMessage limit)
+                    for (const part of parts) {
+                      if (part.type === "text" && part.content.length > 400) {
+                        const duration = Date.now() - start;
+                        const output = `error: text part is ${part.content.length} chars, max is 400. split into multiple shorter messages.`;
+                        toolCalls.push({
+                          tool: "send_sms",
+                          input: { parts: parts.map(p => p.type === "text" ? { type: "text", content: p.content.slice(0, 50) + "..." } : { type: "image", url: (p as { url: string }).url }) },
+                          output,
+                          durationMs: duration,
+                        });
+                        return output;
+                      }
+                    }
 
                     // Send each part as a separate message
                     const results: string[] = [];
@@ -717,6 +747,59 @@ export const makeLLMService = (config: BedrockConfig) => {
                     toolCalls.push({
                       tool: "search_conversations",
                       input: { query, limit },
+                      output,
+                      durationMs: duration,
+                    });
+
+                    return output;
+                  },
+                };
+
+                tools.get_port_url = {
+                  description: "Get the public URL for a port on a sandbox. Use this after starting a server (like Minecraft, Jupyter, web server) to get the URL for users to connect to.",
+                  inputSchema: z.object({
+                    conversationId: z.string().describe("The conversation ID of the sandbox"),
+                    port: z.number().describe("The port number to expose (e.g., 25565 for Minecraft, 8888 for Jupyter, 3000 for web server)"),
+                  }),
+                  execute: async (input: unknown) => {
+                    const { conversationId, port } = input as { conversationId: string; port: number };
+                    const start = Date.now();
+
+                    type SandboxInfoResult = {
+                      success: boolean;
+                      error?: string;
+                      provider?: string;
+                      instanceId?: string;
+                      sandboxUrl?: string;
+                    };
+
+                    const result = await sandboxContext.runQuery<SandboxInfoResult>(
+                      { name: "sms_queries.getSandboxInfo", args: { conversationId } },
+                      async () => {
+                        return { success: false, error: "Not implemented" };
+                      }
+                    );
+
+                    const duration = Date.now() - start;
+                    let output: string;
+
+                    if (!result.success) {
+                      output = `failed to get sandbox info: ${result.error || "unknown error"}`;
+                    } else if (result.provider === "e2b") {
+                      // E2B format: {port}-{instanceId}.e2b.app
+                      const host = `${port}-${result.instanceId}.e2b.app`;
+                      output = `port ${port} is available at:\n- TCP/raw: ${host}:${port}\n- HTTPS: https://${host}`;
+                    } else if (result.provider === "morph") {
+                      // Morph format: port-{port}-{instanceId}.http.cloud.morph.so
+                      const host = `port-${port}-${result.instanceId}.http.cloud.morph.so`;
+                      output = `port ${port} is available at:\n- HTTPS: https://${host}`;
+                    } else {
+                      output = `unsupported provider: ${result.provider}`;
+                    }
+
+                    toolCalls.push({
+                      tool: "get_port_url",
+                      input: { conversationId, port },
                       output,
                       durationMs: duration,
                     });

@@ -1,6 +1,6 @@
 # SMS/iMessage Integration
 
-SMS/iMessage chatbot using Convex + Sendblue + AWS Bedrock (Claude Opus 4.5).
+SMS/iMessage chatbot using Convex + Sendblue + AWS Bedrock (Claude Opus 4.6 via US cross-region inference).
 
 ## Architecture
 
