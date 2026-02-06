@@ -27,8 +27,9 @@ import {
   DiffCommentsSidebar,
   useDiffCommentsOptional,
   DiffCommentInput,
-  DiffCommentThread,
-  type DiffComment,
+  InlineCommentWidget,
+  AddCommentControl,
+  type DiffCommentSide,
 } from "../diff-comments";
 
 void loaderInitPromise;
@@ -982,33 +983,11 @@ function MonacoFileDiffRow({
     return commentsContext.commentsByFile.get(file.filePath) ?? [];
   }, [commentsContext, commentsEnabled, file.filePath]);
 
-  // Group comments by line number
-  const commentsByLine = useMemo(() => {
-    const map = new Map<string, DiffComment[]>();
-    for (const comment of fileComments) {
-      const key = `${comment.side}:${comment.lineNumber}`;
-      const existing = map.get(key) ?? [];
-      existing.push(comment);
-      map.set(key, existing);
-    }
-    return map;
-  }, [fileComments]);
-
   const unresolvedCount = fileComments.filter((c) => !c.resolved).length;
 
-  // Handle adding a comment from header button
-  const handleAddCommentFromHeader = useCallback(() => {
+  // Handle adding a comment
+  const handleAddComment = useCallback((lineNumber: number, side: DiffCommentSide) => {
     if (!commentsContext || !commentsEnabled) return;
-
-    // Show a simple prompt for line number
-    const lineStr = window.prompt("Enter line number to comment on:", "1");
-    if (!lineStr) return;
-
-    const lineNumber = parseInt(lineStr, 10);
-    if (isNaN(lineNumber) || lineNumber < 1) {
-      window.alert("Please enter a valid line number");
-      return;
-    }
 
     // Expand the file if collapsed
     if (!isExpanded && onExpandFile) {
@@ -1016,11 +995,11 @@ function MonacoFileDiffRow({
     }
 
     // Set the active comment position
-    setSelectedLineForComment({ lineNumber, side: "right" });
+    setSelectedLineForComment({ lineNumber, side });
     commentsContext.setActiveCommentPosition({
       filePath: file.filePath,
       lineNumber,
-      side: "right",
+      side,
     });
   }, [commentsContext, commentsEnabled, isExpanded, onExpandFile, file.filePath]);
 
@@ -1056,43 +1035,6 @@ function MonacoFileDiffRow({
     [editorMinHeight, handleHeightSettled]
   );
 
-  // Handle adding a comment when clicking on a line
-  const handleEditorClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!commentsEnabled || !commentsContext) return;
-
-      // Check if click is on a line number area (rough heuristic based on click position)
-      const target = e.target as HTMLElement;
-      const isLineNumber = target.closest(".line-numbers") !== null;
-      const isGutter = target.closest(".margin") !== null;
-
-      if (isLineNumber || isGutter) {
-        // Try to extract line number from the clicked element
-        const lineNumberText = target.textContent?.trim();
-        const lineNumber = lineNumberText ? parseInt(lineNumberText, 10) : NaN;
-
-        if (!isNaN(lineNumber) && lineNumber > 0) {
-          // Determine if it's the left or right side based on position
-          const rect = target.getBoundingClientRect();
-          const containerRect = rowContainerRef.current?.getBoundingClientRect();
-          if (containerRect) {
-            const relativeX = rect.left - containerRect.left;
-            const midpoint = containerRect.width / 2;
-            const side: "left" | "right" = relativeX < midpoint ? "left" : "right";
-
-            setSelectedLineForComment({ lineNumber, side });
-            commentsContext.setActiveCommentPosition({
-              filePath: file.filePath,
-              lineNumber,
-              side,
-            });
-          }
-        }
-      }
-    },
-    [commentsEnabled, commentsContext, file.filePath]
-  );
-
   // Close comment input
   const handleCloseCommentInput = useCallback(() => {
     setSelectedLineForComment(null);
@@ -1126,7 +1068,6 @@ function MonacoFileDiffRow({
         className={classNames?.button}
         commentCount={commentsEnabled ? fileComments.length : undefined}
         unresolvedCommentCount={commentsEnabled ? unresolvedCount : undefined}
-        onAddComment={commentsEnabled ? handleAddCommentFromHeader : undefined}
       />
 
       <div
@@ -1165,7 +1106,6 @@ function MonacoFileDiffRow({
           <div
             className="relative"
             style={isHeightSettled ? undefined : { minHeight: editorMinHeight }}
-            onClick={handleEditorClick}
           >
             <DiffEditor
               language={file.language}
@@ -1180,9 +1120,25 @@ function MonacoFileDiffRow({
           </div>
         ) : null}
 
+        {/* Add comment control bar (only when expanded and comments enabled) */}
+        {commentsEnabled && isExpanded && (
+          <div className="flex items-center justify-between px-3 py-1.5 border-t border-neutral-200/50 dark:border-neutral-800/50 bg-neutral-50/30 dark:bg-neutral-900/30">
+            <AddCommentControl
+              onAddComment={handleAddComment}
+            />
+          </div>
+        )}
+
         {/* Comment input (appears when adding a new comment) */}
         {isAddingComment && selectedLineForComment && (
-          <div className="px-4 py-2 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/30">
+          <div className="px-4 py-3 border-t border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/20">
+            <div className="text-xs font-mono text-neutral-500 dark:text-neutral-400 mb-2 flex items-center gap-1.5">
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Line {selectedLineForComment.lineNumber}</span>
+              <span className="text-neutral-400 dark:text-neutral-500">
+                ({selectedLineForComment.side === "left" ? "original" : "modified"})
+              </span>
+            </div>
             <DiffCommentInput
               filePath={file.filePath}
               lineNumber={selectedLineForComment.lineNumber}
@@ -1194,52 +1150,10 @@ function MonacoFileDiffRow({
 
         {/* File comments section */}
         {commentsEnabled && fileComments.length > 0 && isExpanded && (
-          <div className="border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/30 dark:bg-neutral-800/20">
-            <div className="px-4 py-3">
-              <div className="flex items-center gap-2 mb-3">
-                <MessageSquare className="w-4 h-4 text-neutral-400" />
-                <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                  Comments ({fileComments.length})
-                </span>
-                {unresolvedCount > 0 && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full">
-                    {unresolvedCount} unresolved
-                  </span>
-                )}
-              </div>
-              <div className="space-y-3">
-                {Array.from(commentsByLine.entries())
-                  .sort((a, b) => {
-                    const [keyA] = a;
-                    const [keyB] = b;
-                    const lineA = parseInt(keyA.split(":")[1] ?? "0", 10);
-                    const lineB = parseInt(keyB.split(":")[1] ?? "0", 10);
-                    return lineA - lineB;
-                  })
-                  .map(([key, comments]) => {
-                    const [side, lineStr] = key.split(":");
-                    const lineNumber = parseInt(lineStr ?? "0", 10);
-                    return (
-                      <div key={key} className="relative">
-                        <div className="text-[10px] text-neutral-400 mb-1 flex items-center gap-1">
-                          <span className="font-mono">Line {lineNumber}</span>
-                          <span className="text-neutral-300 dark:text-neutral-600">•</span>
-                          <span>{side === "left" ? "Original" : "Modified"}</span>
-                        </div>
-                        {comments.map((comment) => (
-                          <DiffCommentThread
-                            key={comment._id}
-                            comment={comment}
-                            currentUserId={currentUserId}
-                            compact
-                          />
-                        ))}
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-          </div>
+          <InlineCommentWidget
+            filePath={file.filePath}
+            currentUserId={currentUserId}
+          />
         )}
       </div>
     </div>

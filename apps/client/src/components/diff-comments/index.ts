@@ -10,3 +10,4 @@ export {
   AddCommentButton,
   DiffRowWithComments,
 } from "./diff-line-comments";
+export { InlineCommentWidget, AddCommentControl } from "./inline-comment-widget";
