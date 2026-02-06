@@ -1378,15 +1378,13 @@ export function MonacoGitDiffViewerWithSidebar({
             <span>Files</span>
           </div>
         </div>
-        <div className="px-3 pb-3">
+        <div className="grow flex flex-col items-center justify-center px-3 pb-3">
           <p className="text-xs text-neutral-500 dark:text-neutral-400 py-1">
             No diff detected
           </p>
-          <div className="grid place-content-center">
-            <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
-              {kitty}
-            </pre>
-          </div>
+          <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+            {kitty}
+          </pre>
         </div>
       </div>
     );
