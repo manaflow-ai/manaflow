@@ -29,6 +29,8 @@ export type GitDiffViewerWithHeatmapProps = {
   heatmapColors?: HeatmapColorSettings;
   /** Callback when controls become available */
   onControlsChange?: (controls: DiffViewerControls) => void;
+  /** Whether the diffs are currently loading */
+  isLoading?: boolean;
   /** Custom class names */
   classNames?: {
     container?: string;
@@ -131,6 +133,7 @@ export const GitDiffViewerWithHeatmap = memo(
     heatmapThreshold = 0,
     heatmapColors,
     onControlsChange,
+    isLoading,
     classNames,
   }: GitDiffViewerWithHeatmapProps) {
     const [collapsedState, setCollapsedState] = useState<FileCollapsedState>(
@@ -210,6 +213,31 @@ export const GitDiffViewerWithHeatmap = memo(
       });
     }, [diffs, heatmapByFile]);
 
+    // Loading state - show skeleton
+    if (isLoading) {
+      return (
+        <div className="flex flex-col gap-2 p-3.5">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 rounded-lg overflow-hidden"
+            >
+              <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-neutral-200 dark:border-neutral-800">
+                <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                <div className="h-4 w-48 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                <div className="ml-auto flex gap-2">
+                  <div className="h-4 w-8 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                  <div className="h-4 w-8 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                </div>
+              </div>
+              <div className="h-24 bg-neutral-50 dark:bg-neutral-900/50 animate-pulse" />
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Empty state - no diffs to display
     if (diffs.length === 0) {
       return (
         <div className="flex items-center justify-center h-full p-6">

@@ -168,6 +168,8 @@ type GitDiffHeatmapReviewViewerProps = {
   onControlsChange?: (controls: DiffViewerControls) => void;
   isHeatmapActive?: boolean;
   onToggleHeatmap?: () => void;
+  /** Whether the diffs are currently loading */
+  isLoading?: boolean;
 };
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:git-diff-viewer:file-tree-width";
@@ -940,6 +942,7 @@ export function GitDiffHeatmapReviewViewer({
   onControlsChange,
   isHeatmapActive,
   onToggleHeatmap,
+  isLoading,
 }: GitDiffHeatmapReviewViewerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const filterInputRef = useRef<HTMLInputElement | null>(null);
@@ -1900,6 +1903,62 @@ export function GitDiffHeatmapReviewViewer({
         (state) => state.status === "pending"
       ));
 
+  // Loading state - show skeleton
+  if (isLoading) {
+    return (
+      <div ref={rootRef} className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
+        {/* Header bar skeleton */}
+        <div className="shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-neutral-200/80 dark:border-neutral-800/70">
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+            <div className="w-10 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+            <div className="w-6 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+          </div>
+        </div>
+
+        {/* Content area */}
+        <div className="flex flex-1 min-h-0">
+          {/* Sidebar skeleton */}
+          <div className="w-[280px] h-full border-r border-neutral-200/80 dark:border-neutral-800/70">
+            <div className="p-2">
+              <div className="h-8 bg-neutral-100 dark:bg-neutral-800 rounded-md animate-pulse" />
+            </div>
+            <div className="space-y-0.5 px-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-2 px-2 py-1">
+                  <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                  <div className="h-4 bg-neutral-100 dark:bg-neutral-800 rounded flex-1 animate-pulse" />
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Content skeleton */}
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-col">
+              {[1, 2].map((i) => (
+                <div key={i} className="border-b border-neutral-200/80 dark:border-neutral-800/70">
+                  <div className="flex items-center gap-2 px-4 py-3">
+                    <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                    <div className="h-4 w-48 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                    <div className="ml-auto flex gap-2">
+                      <div className="h-4 w-8 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                      <div className="h-4 w-8 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="h-32 bg-neutral-50 dark:bg-neutral-900/50 animate-pulse" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Empty state - no diffs to display
   if (totalFileCount === 0) {
     return (
       <div ref={rootRef} className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">

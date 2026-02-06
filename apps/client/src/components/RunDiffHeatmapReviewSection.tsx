@@ -131,6 +131,9 @@ export function RunDiffHeatmapReviewSection(
   }
 
   const combinedDiffs = combinedDiffsRef.current;
+  const isLoading = queries.some(
+    (query) => query.isPending || query.isFetching,
+  );
 
   return (
     <GitDiffHeatmapReviewViewer
@@ -145,6 +148,7 @@ export function RunDiffHeatmapReviewSection(
       onControlsChange={onControlsChange}
       isHeatmapActive={isHeatmapActive}
       onToggleHeatmap={onToggleHeatmap}
+      isLoading={isLoading}
     />
   );
 }
