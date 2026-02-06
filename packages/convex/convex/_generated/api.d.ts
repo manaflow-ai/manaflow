@@ -28,7 +28,6 @@ import type * as devbox_v2_http from "../devbox_v2_http.js";
 import type * as diffComments from "../diffComments.js";
 import type * as e2bInstances from "../e2bInstances.js";
 import type * as e2b_actions from "../e2b_actions.js";
-import type * as e2b_http from "../e2b_http.js";
 import type * as environmentSnapshots from "../environmentSnapshots.js";
 import type * as environments from "../environments.js";
 import type * as github from "../github.js";
@@ -110,7 +109,6 @@ declare const fullApi: ApiFromModules<{
   diffComments: typeof diffComments;
   e2bInstances: typeof e2bInstances;
   e2b_actions: typeof e2b_actions;
-  e2b_http: typeof e2b_http;
   environmentSnapshots: typeof environmentSnapshots;
   environments: typeof environments;
   github: typeof github;
