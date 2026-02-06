@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
+import NodeWebSocket from 'ws';
 
 // =============================================================================
 // Types
@@ -7,6 +8,13 @@ import { randomUUID } from 'node:crypto';
 
 // Unique client ID for this VSCode instance
 const CLIENT_ID = randomUUID();
+
+const WS_READY_STATE = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+} as const;
 
 interface TerminalMetadata {
   /** Where to open the terminal: "editor" for Editor pane, "panel" for bottom Panel */
@@ -80,6 +88,145 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function hasAddEventListener(
+  value: unknown,
+): value is {
+  addEventListener: (type: string, listener: (event: unknown) => void) => void;
+} {
+  return isRecord(value) && typeof value.addEventListener === 'function';
+}
+
+function hasOn(
+  value: unknown,
+): value is {
+  on: (event: string, listener: (...args: unknown[]) => void) => void;
+} {
+  return isRecord(value) && typeof value.on === 'function';
+}
+
+function hasMessageData(value: unknown): value is { data: unknown } {
+  return isRecord(value) && 'data' in value;
+}
+
+function hasBinaryType(value: unknown): value is { binaryType: string } {
+  return isRecord(value) && typeof value.binaryType === 'string';
+}
+
+type WebSocketOpenHandler = () => void;
+type WebSocketCloseHandler = () => void;
+type WebSocketErrorHandler = (error: unknown) => void;
+type WebSocketMessageHandler = (data: unknown) => void;
+
+class CmuxWebSocket {
+  private readonly _ws: globalThis.WebSocket | NodeWebSocket;
+
+  constructor(url: string) {
+    const GlobalWebSocket = globalThis.WebSocket;
+    if (typeof GlobalWebSocket === 'function') {
+      this._ws = new GlobalWebSocket(url);
+    } else {
+      this._ws = new NodeWebSocket(url);
+    }
+
+    // Prefer ArrayBuffer over Blob/Buffer for consistent decoding.
+    try {
+      if (hasBinaryType(this._ws)) {
+        this._ws.binaryType = 'arraybuffer';
+      }
+    } catch (error) {
+      console.error('[cmux] Failed to set WebSocket binaryType:', error);
+    }
+  }
+
+  get readyState(): number {
+    return this._ws.readyState;
+  }
+
+  send(data: string): void {
+    this._ws.send(data);
+  }
+
+  close(code?: number, reason?: string): void {
+    // ws (node) and WHATWG WebSocket both accept (code?, reason?)
+    this._ws.close(code, reason);
+  }
+
+  onOpen(handler: WebSocketOpenHandler): void {
+    if (hasAddEventListener(this._ws)) {
+      this._ws.addEventListener('open', () => handler());
+      return;
+    }
+    if (hasOn(this._ws)) {
+      this._ws.on('open', () => handler());
+      return;
+    }
+    console.error('[cmux] WebSocket implementation has no open event API');
+  }
+
+  onMessage(handler: WebSocketMessageHandler): void {
+    if (hasAddEventListener(this._ws)) {
+      this._ws.addEventListener('message', (event: unknown) => {
+        if (hasMessageData(event)) {
+          handler(event.data);
+          return;
+        }
+        handler(event);
+      });
+      return;
+    }
+    if (hasOn(this._ws)) {
+      this._ws.on('message', (...args: unknown[]) => handler(args[0]));
+      return;
+    }
+    console.error('[cmux] WebSocket implementation has no message event API');
+  }
+
+  onError(handler: WebSocketErrorHandler): void {
+    if (hasAddEventListener(this._ws)) {
+      this._ws.addEventListener('error', (event: unknown) => handler(event));
+      return;
+    }
+    if (hasOn(this._ws)) {
+      this._ws.on('error', (...args: unknown[]) => handler(args[0]));
+      return;
+    }
+    console.error('[cmux] WebSocket implementation has no error event API');
+  }
+
+  onClose(handler: WebSocketCloseHandler): void {
+    if (hasAddEventListener(this._ws)) {
+      this._ws.addEventListener('close', () => handler());
+      return;
+    }
+    if (hasOn(this._ws)) {
+      this._ws.on('close', () => handler());
+      return;
+    }
+    console.error('[cmux] WebSocket implementation has no close event API');
+  }
+}
+
+async function decodeWebSocketData(data: unknown): Promise<string | null> {
+  if (typeof data === 'string') {
+    return data;
+  }
+
+  // Node ws binary frames (and sometimes undici) can arrive as ArrayBuffer/Uint8Array/Buffer.
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(data);
+  }
+
+  // In some environments binaryType defaults to "blob".
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return await data.text();
+  }
+
+  return null;
+}
+
 function isTerminalInfo(value: unknown): value is TerminalInfo {
   if (!isRecord(value)) return false;
   return (
@@ -115,7 +262,7 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   private readonly _onDidWrite = new vscode.EventEmitter<string>();
   private readonly _onDidClose = new vscode.EventEmitter<number | void>();
 
-  private _ws: WebSocket | null = null;
+  private _ws: CmuxWebSocket | null = null;
   private _isDisposed = false;
   private _initialDataSent = false;
   private _outputBuffer = '';
@@ -144,17 +291,24 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 
   private _connectWebSocket(): void {
     if (this._isDisposed) return;
-    if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
+    if (this._ws && (this._ws.readyState === WS_READY_STATE.OPEN || this._ws.readyState === WS_READY_STATE.CONNECTING)) {
       return;
     }
 
     const wsUrl = this.serverUrl.replace(/^http/, 'ws');
     const fullUrl = `${wsUrl}/sessions/${this.ptyId}/ws`;
     console.log(`[cmux] CmuxPseudoterminal connecting to: ${fullUrl}`);
-    const ws = new WebSocket(fullUrl);
+    let ws: CmuxWebSocket;
+    try {
+      ws = new CmuxWebSocket(fullUrl);
+    } catch (error) {
+      console.error('[cmux] Failed to create WebSocket:', error);
+      this._scheduleReconnect();
+      return;
+    }
     this._ws = ws;
 
-    ws.onopen = () => {
+    ws.onOpen(() => {
       if (this._ws !== ws) return;
       console.log(`[cmux] WebSocket connected for PTY ${this.ptyId}`);
 
@@ -179,64 +333,61 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
           rows: this._dimensions.rows,
         }));
       }
-    };
+    });
 
-    ws.onmessage = async (event) => {
+    ws.onMessage((data: unknown) => {
       if (this._ws !== ws) return;
       if (this._isDisposed) return;
 
-      try {
-        // Convert to string first
-        let text: string;
-        if (event.data instanceof Blob) {
-          text = await event.data.text();
-        } else if (event.data instanceof ArrayBuffer) {
-          text = new TextDecoder().decode(event.data);
-        } else if (typeof event.data === 'string') {
-          text = event.data;
-        } else {
-          console.error('[cmux] Unknown message type:', typeof event.data);
-          return;
-        }
-
-        // Control messages are prefixed with \x00 to distinguish from regular PTY output
-        if (text.startsWith('\x00')) {
-          try {
-            const jsonText = text.slice(1); // Remove the null byte prefix
-            const msg: PTYMessage = JSON.parse(jsonText);
-            if (msg.type === 'exit') {
-              const exitCode = msg.exit_code ?? msg.exitCode ?? 0;
-              console.log(`[cmux] PTY ${this.ptyId} received exit event, code: ${exitCode}`);
-              this._onDidClose.fire(exitCode);
-              this.dispose();
-              return;
-            } else if (msg.type === 'output' && msg.data) {
-              text = msg.data;
-            } else if (msg.type === 'error') {
-              console.error('[cmux] PTY error:', msg);
-              return;
-            }
-          } catch {
-            // Malformed control message, ignore
-            console.error('[cmux] Failed to parse control message');
+      void (async () => {
+        try {
+          // Convert to string first
+          const decoded = await decodeWebSocketData(data);
+          if (decoded === null) {
+            console.error('[cmux] Unknown message data type:', typeof data);
             return;
           }
-        }
 
-        // Write output to terminal
-        if (text) {
-          if (!this._initialDataSent) {
-            this._outputBuffer += text;
-          } else {
-            this._onDidWrite.fire(text);
+          let text = decoded;
+
+          // Control messages are prefixed with \x00 to distinguish from regular PTY output
+          if (text.startsWith('\x00')) {
+            try {
+              const jsonText = text.slice(1); // Remove the null byte prefix
+              const msg: PTYMessage = JSON.parse(jsonText);
+              if (msg.type === 'exit') {
+                const exitCode = msg.exit_code ?? msg.exitCode ?? 0;
+                console.log(`[cmux] PTY ${this.ptyId} received exit event, code: ${exitCode}`);
+                this._onDidClose.fire(exitCode);
+                this.dispose();
+                return;
+              } else if (msg.type === 'output' && msg.data) {
+                text = msg.data;
+              } else if (msg.type === 'error') {
+                console.error('[cmux] PTY error:', msg);
+                return;
+              }
+            } catch (error) {
+              console.error('[cmux] Failed to parse control message:', error);
+              return;
+            }
           }
-        }
-      } catch (e) {
-        console.error('[cmux] Failed to process PTY message:', e);
-      }
-    };
 
-    ws.onerror = (error) => {
+          // Write output to terminal
+          if (text) {
+            if (!this._initialDataSent) {
+              this._outputBuffer += text;
+            } else {
+              this._onDidWrite.fire(text);
+            }
+          }
+        } catch (e) {
+          console.error('[cmux] Failed to process PTY message:', e);
+        }
+      })();
+    });
+
+    ws.onError((error) => {
       if (this._ws !== ws) return;
       console.error('WebSocket error:', error);
       if (!this._initialDataSent) {
@@ -244,13 +395,13 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       } else {
         this._onDidWrite.fire('\r\nWebSocket connection error\r\n');
       }
-    };
+    });
 
-    ws.onclose = () => {
+    ws.onClose(() => {
       if (this._ws !== ws) return;
       if (this._isDisposed) return;
       this._scheduleReconnect();
-    };
+    });
   }
 
   private _writeStatusMessage(message: string): void {
@@ -295,7 +446,7 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
     if (initialDimensions) {
       this._dimensions = { cols: initialDimensions.columns, rows: initialDimensions.rows };
       this._previousDimensions = { ...this._dimensions };
-      if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      if (this._ws && this._ws.readyState === WS_READY_STATE.OPEN) {
         this._ws.send(JSON.stringify({
           type: 'resize',
           cols: initialDimensions.columns,
@@ -313,7 +464,7 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   }
 
   handleInput(data: string): void {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN && !this._isDisposed) {
+    if (this._ws && this._ws.readyState === WS_READY_STATE.OPEN && !this._isDisposed) {
       this._ws.send(JSON.stringify({ type: 'input', data }));
     }
   }
@@ -337,7 +488,7 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
     this._previousDimensions = { ...this._dimensions };
     this._dimensions = newDimensions;
 
-    if (this._ws && this._ws.readyState === WebSocket.OPEN && !this._isDisposed) {
+    if (this._ws && this._ws.readyState === WS_READY_STATE.OPEN && !this._isDisposed) {
       this._ws.send(JSON.stringify({
         type: 'resize',
         cols: dimensions.columns,
@@ -370,7 +521,7 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 // =============================================================================
 
 class PtyClient {
-  private _ws: WebSocket | null = null;
+  private _ws: CmuxWebSocket | null = null;
   private _eventHandlers = new Map<string, ((data: unknown) => void)[]>();
   private _connected = false;
   private _reconnectAttempts = 0;
@@ -384,7 +535,15 @@ class PtyClient {
       const wsUrl = this.serverUrl.replace(/^http/, 'ws');
       const fullUrl = `${wsUrl}/ws`;
       console.log('[cmux] PtyClient connecting to:', fullUrl);
-      this._ws = new WebSocket(fullUrl);
+      let ws: CmuxWebSocket;
+      try {
+        ws = new CmuxWebSocket(fullUrl);
+      } catch (error) {
+        console.error('[cmux] PtyClient failed to create WebSocket:', error);
+        reject(error);
+        return;
+      }
+      this._ws = ws;
 
       // Increased timeout to 20s for Docker containers where the PTY server
       // may take longer to start (especially during initial container boot)
@@ -395,39 +554,54 @@ class PtyClient {
         }
       }, 20000);
 
-      this._ws.onopen = () => {
+      ws.onOpen(() => {
+        if (this._ws !== ws) return;
         clearTimeout(timeout);
         this._connected = true;
         this._reconnectAttempts = 0;
         console.log('[cmux] PtyClient connected to event WebSocket');
         this._triggerEvent('connected', {});
         resolve();
-      };
+      });
 
-      this._ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          console.log('[cmux] PtyClient received message:', message.type, message);
-          this._triggerEvent(message.type, message);
-        } catch (err) {
-          console.error('[cmux] Failed to parse message:', err);
-        }
-      };
+      ws.onMessage((data: unknown) => {
+        if (this._ws !== ws) return;
+        void (async () => {
+          try {
+            const decoded = await decodeWebSocketData(data);
+            if (decoded === null) {
+              console.error('[cmux] PtyClient received non-text message');
+              return;
+            }
+            const message = JSON.parse(decoded) as { type?: unknown };
+            console.log('[cmux] PtyClient received message:', message.type, message);
+            if (typeof message.type !== 'string') {
+              console.error('[cmux] PtyClient received message without type:', message);
+              return;
+            }
+            this._triggerEvent(message.type, message);
+          } catch (err) {
+            console.error('[cmux] Failed to parse message:', err);
+          }
+        })();
+      });
 
-      this._ws.onclose = () => {
+      ws.onClose(() => {
+        if (this._ws !== ws) return;
         this._connected = false;
         console.log('PtyClient disconnected');
         this._triggerEvent('disconnected', {});
         this._tryReconnect();
-      };
+      });
 
-      this._ws.onerror = (err) => {
+      ws.onError((err) => {
+        if (this._ws !== ws) return;
         clearTimeout(timeout);
         console.error('PtyClient WebSocket error:', err);
         if (!this._connected) {
           reject(err);
         }
-      };
+      });
     });
   }
 
@@ -470,13 +644,13 @@ class PtyClient {
   }
 
   requestState(): void {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+    if (this._ws && this._ws.readyState === WS_READY_STATE.OPEN) {
       this._ws.send(JSON.stringify({ type: 'get_state' }));
     }
   }
 
   createPty(shell?: string, cwd?: string, name?: string): void {
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) {
+    if (!this._ws || this._ws.readyState !== WS_READY_STATE.OPEN) {
       console.error('Cannot create PTY: not connected');
       return;
     }
@@ -490,7 +664,7 @@ class PtyClient {
   }
 
   renamePty(ptyId: string, name: string): void {
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) {
+    if (!this._ws || this._ws.readyState !== WS_READY_STATE.OPEN) {
       console.error('Cannot rename PTY: not connected');
       return;
     }

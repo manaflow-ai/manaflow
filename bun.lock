@@ -525,6 +525,7 @@
       "version": "0.0.1",
       "dependencies": {
         "socket.io-client": "^4.6.1",
+        "ws": "^8.18.3",
       },
       "devDependencies": {
         "@cmux/shared": "workspace:*",
