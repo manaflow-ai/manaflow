@@ -70,6 +70,8 @@ import { codexOAuthRefresh } from "./codex_oauth_http";
 import { otelTracesProxy, otelMetricsStub, otelLogsStub } from "./otel_http";
 import { sendblueWebhook, sendblueHealth } from "./sms_http";
 import { spawn, message, trajectory } from "./spawn_http";
+import { acpCallback } from "./acp_http";
+import { acpStorageUploadUrl, acpStorageResolveUrl } from "./acp_storage_http";
 
 const http = httpRouter();
 
@@ -288,6 +290,26 @@ http.route({
   path: "/api/sendblue/health",
   method: "GET",
   handler: sendblueHealth,
+});
+
+// ACP callback endpoint for sandbox events (messages, tool calls, completion)
+http.route({
+  path: "/api/acp/callback",
+  method: "POST",
+  handler: acpCallback,
+});
+
+// ACP storage endpoints for file uploads from sandboxes
+http.route({
+  path: "/api/acp/storage/upload-url",
+  method: "POST",
+  handler: acpStorageUploadUrl,
+});
+
+http.route({
+  path: "/api/acp/storage/resolve-url",
+  method: "POST",
+  handler: acpStorageResolveUrl,
 });
 
 // Spawn sandbox with initial prompt

@@ -126,7 +126,8 @@ type McpServerConfig = {
   headers?: McpServerHeader[];
 };
 
-const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-5-20251101";
+const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-6";
+const DEFAULT_CODEX_MODEL_ID = "gpt-5.2-codex";
 const WARM_POOL_TEAM_ID = "__warm_pool__";
 const WARM_SANDBOX_TTL_MS = 5 * 60 * 1000;
 const MESSAGE_DELIVERY_MAX_ATTEMPTS = 6;
@@ -141,7 +142,10 @@ type NormalizedSandboxStatus =
 
 function resolveDefaultModelId(providerId: string): string | undefined {
   if (providerId === "claude") {
-    return DEFAULT_CLAUDE_MODEL_ID;
+    return env.ACP_DEFAULT_CLAUDE_MODEL_ID ?? DEFAULT_CLAUDE_MODEL_ID;
+  }
+  if (providerId === "codex") {
+    return env.ACP_DEFAULT_CODEX_MODEL_ID ?? DEFAULT_CODEX_MODEL_ID;
   }
   return undefined;
 }
@@ -945,16 +949,17 @@ export const startConversationEffect = (
               mcpServers,
               "auto_allow_always",
             );
-            yield* Effect.tryPromise(() =>
-              ensureConversationModel(
-                ctx,
-                sandboxUrlReady,
-                conversationId,
-                sandboxIdReady,
-                teamId,
-                resolveDefaultModelId(args.providerId),
-              ),
-            );
+	            yield* Effect.tryPromise(() =>
+	              ensureConversationModel(
+	                ctx,
+	                sandboxUrlReady,
+	                conversationId,
+	                sandboxIdReady,
+	                teamId,
+	                args.providerId,
+	                resolveDefaultModelId(args.providerId),
+	              ),
+	            );
             yield* Effect.tryPromise(() =>
               ctx.runMutation(internal.acp.markConversationInitialized, {
                 conversationId,
@@ -1368,32 +1373,34 @@ export const sendMessageEffect = (
           mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
-        yield* Effect.tryPromise(() =>
-          ensureConversationModel(
-            ctx,
-            sandboxUrlReady,
-            args.conversationId,
-            sandboxId,
-            conversation.teamId,
-            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
-          ),
-        );
+	        yield* Effect.tryPromise(() =>
+	          ensureConversationModel(
+	            ctx,
+	            sandboxUrlReady,
+	            args.conversationId,
+	            sandboxId,
+	            conversation.teamId,
+	            conversation.providerId,
+	            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+	          ),
+	        );
         yield* Effect.tryPromise(() =>
           ctx.runMutation(internal.acp.markConversationInitialized, {
             conversationId: args.conversationId,
           }),
         );
       } else {
-        yield* Effect.tryPromise(() =>
-          ensureConversationModel(
-            ctx,
-            sandboxUrlReady,
-            args.conversationId,
-            sandboxId,
-            conversation.teamId,
-            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
-          ),
-        );
+	        yield* Effect.tryPromise(() =>
+	          ensureConversationModel(
+	            ctx,
+	            sandboxUrlReady,
+	            args.conversationId,
+	            sandboxId,
+	            conversation.teamId,
+	            conversation.providerId,
+	            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+	          ),
+	        );
       }
 
       yield* Effect.tryPromise(() =>
@@ -1604,32 +1611,34 @@ export const retryMessageEffect = (
           mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
-        yield* Effect.tryPromise(() =>
-          ensureConversationModel(
-            ctx,
-            sandboxUrlReady,
-            args.conversationId,
-            sandboxId,
-            conversation.teamId,
-            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
-          ),
-        );
+	        yield* Effect.tryPromise(() =>
+	          ensureConversationModel(
+	            ctx,
+	            sandboxUrlReady,
+	            args.conversationId,
+	            sandboxId,
+	            conversation.teamId,
+	            conversation.providerId,
+	            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+	          ),
+	        );
         yield* Effect.tryPromise(() =>
           ctx.runMutation(internal.acp.markConversationInitialized, {
             conversationId: args.conversationId,
           }),
         );
       } else {
-        yield* Effect.tryPromise(() =>
-          ensureConversationModel(
-            ctx,
-            sandboxUrlReady,
-            args.conversationId,
-            sandboxId,
-            conversation.teamId,
-            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
-          ),
-        );
+	        yield* Effect.tryPromise(() =>
+	          ensureConversationModel(
+	            ctx,
+	            sandboxUrlReady,
+	            args.conversationId,
+	            sandboxId,
+	            conversation.teamId,
+	            conversation.providerId,
+	            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+	          ),
+	        );
       }
 
       yield* Effect.tryPromise(() =>
@@ -2499,32 +2508,34 @@ export const deliverMessageInternalEffect = (
           mcpServers,
           conversation.permissionMode ?? "auto_allow_always",
         );
-        yield* Effect.tryPromise(() =>
-          ensureConversationModel(
-            ctx,
-            sandboxUrlReady,
-            args.conversationId,
-            sandboxIdReady,
-            conversation.teamId,
-            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
-          ),
-        );
+	        yield* Effect.tryPromise(() =>
+	          ensureConversationModel(
+	            ctx,
+	            sandboxUrlReady,
+	            args.conversationId,
+	            sandboxIdReady,
+	            conversation.teamId,
+	            conversation.providerId,
+	            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+	          ),
+	        );
         yield* Effect.tryPromise(() =>
           ctx.runMutation(internal.acp.markConversationInitialized, {
             conversationId: args.conversationId,
           }),
         );
       } else {
-        yield* Effect.tryPromise(() =>
-          ensureConversationModel(
-            ctx,
-            sandboxUrlReady,
-            args.conversationId,
-            sandboxIdReady,
-            conversation.teamId,
-            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
-          ),
-        );
+	        yield* Effect.tryPromise(() =>
+	          ensureConversationModel(
+	            ctx,
+	            sandboxUrlReady,
+	            args.conversationId,
+	            sandboxIdReady,
+	            conversation.teamId,
+	            conversation.providerId,
+	            conversation.modelId ?? resolveDefaultModelId(conversation.providerId),
+	          ),
+	        );
       }
 
       yield* Effect.tryPromise(() =>
@@ -2939,8 +2950,14 @@ async function ensureConversationModel(
   conversationId: Id<"conversations">,
   sandboxId: Id<"acpSandboxes">,
   teamId: string,
+  providerId: string,
   modelId: string | undefined,
 ): Promise<void> {
+  // Only Claude Code currently supports session/set_model reliably.
+  // Codex sets its model via startup config flags, and some providers may reject this RPC.
+  if (providerId !== "claude") {
+    return;
+  }
   if (!modelId) {
     return;
   }

@@ -1,8 +1,13 @@
+"use node";
+
 import { Effect, pipe } from "effect";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, stepCountIs } from "ai";
 import { z } from "zod";
-import { getSendblueConfig, makeSendblueService } from "./sendblue";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
+import { toBedrockModelId } from "./bedrock_utils";
+
 
 // ============= Errors =============
 
@@ -56,6 +61,93 @@ export const getBedrockConfig = (): Effect.Effect<BedrockConfig, LLMConfigError>
       ),
   });
 
+export type OpenAIConfig = {
+  apiKey: string;
+  baseURL: string;
+  modelId: string;
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  promptCacheRetention: "in_memory" | "24h" | null;
+};
+
+function parseReasoningEffort(
+  value: string | undefined
+): OpenAIConfig["reasoningEffort"] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "" || normalized === "default" || normalized === "auto") {
+    return undefined;
+  }
+
+  switch (normalized) {
+    case "none":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return normalized;
+  }
+
+  throw new Error(
+    `Invalid SMS_OPENAI_REASONING_EFFORT: ${value}. Expected "none", "minimal", "low", "medium", "high", "xhigh", "auto", or "default".`
+  );
+}
+
+function parsePromptCacheRetention(
+  value: string | undefined
+): "in_memory" | "24h" | null {
+  if (value === undefined) {
+    // Default to in-memory caching to avoid relying on model-specific 24h support.
+    return "in_memory";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "" || normalized === "off" || normalized === "none") {
+    return null;
+  }
+  if (normalized === "in_memory") {
+    return "in_memory";
+  }
+  if (normalized === "24h") {
+    return "24h";
+  }
+  throw new Error(
+    `Invalid SMS_OPENAI_PROMPT_CACHE_RETENTION: ${value}. Expected "in_memory", "24h", "off", or "none".`
+  );
+}
+
+export const getOpenAIConfig = (): Effect.Effect<OpenAIConfig, LLMConfigError> =>
+  Effect.try({
+    try: () => {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        throw new Error("Missing OPENAI_API_KEY");
+      }
+
+      const modelId = process.env.SMS_OPENAI_MODEL_ID ?? "gpt-5.2";
+      const baseURL = process.env.SMS_OPENAI_BASE_URL ?? CLOUDFLARE_OPENAI_BASE_URL;
+
+      return {
+        apiKey,
+        baseURL,
+        modelId,
+        reasoningEffort: parseReasoningEffort(
+          process.env.SMS_OPENAI_REASONING_EFFORT
+        ),
+        promptCacheRetention: parsePromptCacheRetention(
+          process.env.SMS_OPENAI_PROMPT_CACHE_RETENTION
+        ),
+      };
+    },
+    catch: (error) =>
+      new LLMConfigError(
+        error instanceof Error ? error.message : "Invalid OpenAI configuration"
+      ),
+  });
+
 // ============= Types =============
 
 export type ChatMessage = {
@@ -75,6 +167,43 @@ export type AgentResult = {
   toolCalls: ToolCall[];
   totalSteps: number;
 };
+
+export type LLMService = {
+  generateResponse: (
+    messages: ChatMessage[],
+    isGroup?: boolean
+  ) => Effect.Effect<string, LLMError>;
+  generateAgentResponse: (
+    messages: ChatMessage[],
+    isGroup?: boolean,
+    maxToolRoundtrips?: number,
+    areaCode?: string | null,
+    sandboxContext?: SandboxToolContext | null,
+    notificationContext?: string | null
+  ) => Effect.Effect<AgentResult, LLMError>;
+};
+
+async function sha256Base64Url(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const base64 = Buffer.from(new Uint8Array(digest)).toString("base64");
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function buildOpenAIPromptCacheKey(options: {
+  systemPrompt: string;
+  modelId: string;
+  toolNames: string[];
+}): Promise<string> {
+  const payload = JSON.stringify({
+    v: 1,
+    systemPrompt: options.systemPrompt,
+    modelId: options.modelId,
+    toolNames: options.toolNames,
+  });
+  const hash = await sha256Base64Url(payload);
+  return `sms-${hash.slice(0, 40)}`;
+}
 
 // ============= Fake Bash Tool =============
 
@@ -223,13 +352,15 @@ keep responses concise (under 160 characters when possible, max 500).
 be conversational and friendly. don't use markdown formatting like *bold* or _italic_ - those render as literal characters in imessage. if you need emphasis, use unicode: 𝗯𝗼𝗹𝗱 or 𝘪𝘵𝘢𝘭𝘪𝘤.
 always type in lowercase. no capital letters ever. this is imessage, keep it casual.
 don't use emojis.
+avoid repetition: never send two consecutive messages that are identical or near-identical. if you're about to send a similar status/error update to your last assistant message, rephrase it and add one new detail or next step.
 messages from different people are prefixed with their last 4 digits like [1234]: message.
 pay attention to who is speaking and respond appropriately to the conversation.`
     : `you are a helpful assistant responding via imessage.
 keep responses concise (under 160 characters when possible, max 500).
 be conversational and friendly. don't use markdown formatting like *bold* or _italic_ - those render as literal characters in imessage. if you need emphasis, use unicode: 𝗯𝗼𝗹𝗱 or 𝘪𝘵𝘢𝘭𝘪𝘤.
 always type in lowercase. no capital letters ever. this is imessage, keep it casual.
-don't use emojis.`;
+don't use emojis.
+avoid repetition: never send two consecutive messages that are identical or near-identical. if you're about to send a similar status/error update to your last assistant message, rephrase it and add one new detail or next step.`;
 
   const bashToolsPrompt = `
 
@@ -249,16 +380,18 @@ use send_sms when you need to:
 - send updates during a long task
 
 you can also help with coding tasks using sandbox tools:
-- start_agent: start a new coding agent in a sandbox. use this when user wants help with coding/development tasks.
+- start_agent: start a new coding agent in a sandbox. provider can be claude or codex. if one fails (rate limit / provider down), retry with the other.
 - read_inbox: check for updates from your sandbox conversations. shows which conversations have updates.
 - send_message: send a follow-up message to an existing conversation.
 - get_status: get the current status and last assistant message from a conversation.
 - get_port_url: get the public URL for a port on a sandbox. use after starting a server (minecraft, jupyter, web server, etc.) to get the connection URL.
+- view_media: see an image or video that the user sent. when you see [image attached: <url>] in a message, always call this tool before responding so you can actually see the image. for videos, returns metadata.
 - list_conversations: list recent sandbox conversations (most recent 20).
 - search_conversations: search through older conversation history.
 
 RULES:
 - be proactive. don't wait for the user to ask for results - send them as soon as they're ready.
+- avoid spam. don't send duplicate status updates. if you need to retry or report an error again, change the wording and include one new detail (attempt number, provider used, next step).
 - always provide public URLs, never localhost/0.0.0.0/127.0.0.1. use get_port_url to translate sandbox ports to public URLs.
 - always report the actual result. never just say "done" or "task done" - tell them what happened.
 - don't give up early - keep polling until the task actually completes. tasks can take 30-60 seconds.
@@ -328,8 +461,10 @@ export type ConversationItem = {
 
 export type SandboxToolContext = {
   phoneNumber: string;
+  groupId?: string;
   userId: string;
   teamId: string;
+  sendReplySms: (content: string, mediaUrl?: string) => Promise<{ success: boolean }>;
   executeAction: <T>(
     action: { name: string; args: Record<string, unknown> },
     handler: () => Promise<T>
@@ -342,14 +477,119 @@ export type SandboxToolContext = {
 
 // ============= LLM Service =============
 
-export const makeLLMService = (config: BedrockConfig) => {
-  const bedrock = createAmazonBedrock({
-    region: config.region,
-    apiKey: config.bearerToken,
+type SmsLLMProvider = "bedrock" | "openai";
+type SmsLLMPreset = "opus_4_6" | "opus_4_5" | "gpt_5_2";
+
+function parseSmsLLMPreset(value: string | undefined): SmsLLMPreset | null {
+  if (value === undefined) return null;
+  const normalized = value.trim().toLowerCase();
+
+  if (
+    normalized === "" ||
+    normalized === "default" ||
+    normalized === "auto" ||
+    normalized === "none" ||
+    normalized === "off"
+  ) {
+    return null;
+  }
+
+  switch (normalized) {
+    case "opus_4_6":
+    case "opus-4-6":
+    case "opus4.6":
+      return "opus_4_6";
+    case "opus_4_5":
+    case "opus-4-5":
+    case "opus4.5":
+      return "opus_4_5";
+    case "gpt_5_2":
+    case "gpt-5.2":
+    case "gpt5.2":
+      return "gpt_5_2";
+  }
+
+  throw new Error(
+    `Invalid SMS_LLM_PRESET: ${value}. Expected "opus_4_6", "opus_4_5", or "gpt_5_2".`
+  );
+}
+
+function resolveBedrockSmsModelId(preset: Exclude<SmsLLMPreset, "gpt_5_2">): string {
+  if (preset === "opus_4_5") {
+    return toBedrockModelId("claude-opus-4-5");
+  }
+  return toBedrockModelId("claude-opus-4-6");
+}
+
+type LLMBackend =
+  | {
+      provider: "bedrock";
+      model: Parameters<typeof generateText>[0]["model"];
+      modelId: string;
+    }
+  | {
+      provider: "openai";
+      model: Parameters<typeof generateText>[0]["model"];
+      modelId: string;
+      reasoningEffort: OpenAIConfig["reasoningEffort"];
+      promptCacheRetention: OpenAIConfig["promptCacheRetention"];
+    };
+
+async function buildSystemOptions(
+  backend: LLMBackend,
+  systemPrompt: string,
+  toolNames: string[]
+): Promise<{
+  system: Parameters<typeof generateText>[0]["system"];
+  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"];
+}> {
+  if (backend.provider === "bedrock") {
+    return {
+      system: {
+        role: "system",
+        content: systemPrompt,
+        // Anthropic prompt caching (passed through Bedrock for Claude models).
+        providerOptions: {
+          anthropic: { cacheControl: { type: "ephemeral" } },
+        },
+      },
+    };
+  }
+
+  if (backend.promptCacheRetention === null) {
+    return {
+      system: systemPrompt,
+      providerOptions:
+        backend.reasoningEffort === undefined
+          ? undefined
+          : {
+              openai: {
+                reasoningEffort: backend.reasoningEffort,
+              },
+            },
+    };
+  }
+
+  const promptCacheKey = await buildOpenAIPromptCacheKey({
+    systemPrompt,
+    modelId: backend.modelId,
+    toolNames,
   });
 
-  // Use US cross-region inference profile for higher throughput quotas
-  const model = bedrock("us.anthropic.claude-opus-4-6-v1");
+  return {
+    system: systemPrompt,
+    providerOptions: {
+      openai: {
+        reasoningEffort: backend.reasoningEffort,
+        promptCacheKey,
+        promptCacheRetention: backend.promptCacheRetention,
+      },
+    },
+  };
+}
+
+const makeLLMServiceFromBackend = (backend: LLMBackend): LLMService => {
+  const model = backend.model;
 
   return {
     /**
@@ -362,25 +602,36 @@ export const makeLLMService = (config: BedrockConfig) => {
       Effect.tryPromise({
         try: async () => {
           const systemPrompt = isGroup ? GROUP_SYSTEM_PROMPT : SYSTEM_PROMPT;
-          const { text } = await generateText({
+          const { system, providerOptions } = await buildSystemOptions(
+            backend,
+            systemPrompt,
+            []
+          );
+          const textResult = await generateText({
             model,
             messages: messages.map((m) => ({
               role: m.role,
               content: m.content,
             })),
-            // Use Anthropic's prompt caching for the system prompt
-            system: {
-              role: "system",
-              content: systemPrompt,
-              providerOptions: {
-                anthropic: { cacheControl: { type: "ephemeral" } },
-              },
-            },
+            system,
+            providerOptions,
           });
-          return text;
+
+          if (backend.provider === "openai") {
+            console.log("[sms_llm] OpenAI token usage", {
+              modelId: backend.modelId,
+              promptCacheRetention: backend.promptCacheRetention,
+              inputTokens: textResult.usage.inputTokens,
+              cacheReadTokens: textResult.usage.inputTokenDetails.cacheReadTokens,
+              cacheWriteTokens: textResult.usage.inputTokenDetails.cacheWriteTokens,
+              outputTokens: textResult.usage.outputTokens,
+              totalTokens: textResult.usage.totalTokens,
+            });
+          }
+          return textResult.text;
         },
         catch: (error) => {
-          console.error("Bedrock API error details:", error);
+          console.error("LLM API error details:", error);
           return new LLMError("Failed to generate LLM response", error);
         },
       }),
@@ -403,6 +654,8 @@ export const makeLLMService = (config: BedrockConfig) => {
           maxToolRoundtrips,
           areaCode,
           hasSandboxTools: sandboxContext !== null,
+          llmProvider: backend.provider,
+          llmModelId: backend.modelId,
         }),
         Effect.flatMap(() =>
           Effect.tryPromise({
@@ -417,11 +670,7 @@ export const makeLLMService = (config: BedrockConfig) => {
               }
 
               // Build tools object
-              const tools: Record<string, {
-                description: string;
-                inputSchema: z.ZodType<unknown>;
-                execute: (input: unknown) => Promise<string>;
-              }> = {
+              const tools: Parameters<typeof generateText>[0]["tools"] & Record<string, unknown> = {
                 bash: {
                   description:
                     "Execute bash commands in a sandboxed environment. Available: echo, date, whoami, pwd, ls, cat, weather, calc, help",
@@ -482,9 +731,6 @@ export const makeLLMService = (config: BedrockConfig) => {
                       >;
                     };
                     const start = Date.now();
-                    // Use the phone number from sandbox context
-                    const toNumber = sandboxContext.phoneNumber;
-
                     // Validate text parts are under 400 chars (iMessage limit)
                     for (const part of parts) {
                       if (part.type === "text" && part.content.length > 400) {
@@ -500,34 +746,19 @@ export const makeLLMService = (config: BedrockConfig) => {
                       }
                     }
 
-                    // Send each part as a separate message
+                    // Send each part via context callback (handles group vs individual routing)
                     const results: string[] = [];
                     for (const part of parts) {
-                      const result = await Effect.runPromise(
-                        pipe(
-                          getSendblueConfig(),
-                          Effect.flatMap(makeSendblueService),
-                          Effect.flatMap((service) => {
-                            if (part.type === "text") {
-                              return service.sendMessage({
-                                toNumber,
-                                content: part.content,
-                              });
-                            } else {
-                              return service.sendMessage({
-                                toNumber,
-                                content: part.caption || "",
-                                mediaUrl: part.url,
-                              });
-                            }
-                          }),
-                          Effect.map(() => `${part.type} sent`),
-                          Effect.catchAll((error) =>
-                            Effect.succeed(`failed: ${error instanceof Error ? error.message : String(error)}`)
-                          )
-                        )
-                      );
-                      results.push(result);
+                      try {
+                        if (part.type === "text") {
+                          await sandboxContext.sendReplySms(part.content);
+                        } else {
+                          await sandboxContext.sendReplySms(part.caption || "", part.url);
+                        }
+                        results.push(`${part.type} sent`);
+                      } catch (error) {
+                        results.push(`failed: ${error instanceof Error ? error.message : String(error)}`);
+                      }
                     }
 
                     const duration = Date.now() - start;
@@ -543,28 +774,76 @@ export const makeLLMService = (config: BedrockConfig) => {
                   },
                 };
 
+                const startAgentInputSchema = z.object({
+                  task: z.string().describe("The task/prompt to give to the agent"),
+                  provider: z.enum(["claude", "codex"]).optional().describe("Agent type. If omitted, defaults to claude (or SMS_SANDBOX_AGENT_DEFAULT_PROVIDER) and falls back to the other provider on failure."),
+                });
+
                 tools.start_agent = {
-                  description: "Start a new coding agent in a sandbox. Use this when user wants help with coding tasks.",
-                  inputSchema: z.object({
-                    task: z.string().describe("The task/prompt to give to the agent"),
-                    provider: z.enum(["claude", "codex"]).optional().describe("Agent type, defaults to claude"),
-                  }),
+                  description:
+                    "Start a new coding agent in a sandbox. Use this when user wants help with coding tasks. Provider can be claude or codex.",
+                  inputSchema: startAgentInputSchema,
                   execute: async (input: unknown) => {
-                    const { task, provider } = input as { task: string; provider?: "claude" | "codex" };
+                    const { task, provider } = startAgentInputSchema.parse(input);
                     const start = Date.now();
 
-                    const result = await sandboxContext.executeAction<StartAgentResult>(
-                      { name: "sms.startAgentConversation", args: { task, provider } },
-                      async () => {
-                        // This will be replaced by actual action call in the handler
-                        return { success: false, error: "Not implemented" };
+                    const attemptProviders: Array<"claude" | "codex"> = (() => {
+                      if (provider) return [provider];
+                      try {
+                        const preferred = parseSandboxAgentDefaultProvider(
+                          process.env.SMS_SANDBOX_AGENT_DEFAULT_PROVIDER
+                        );
+                        return preferred === "claude"
+                          ? ["claude", "codex"]
+                          : ["codex", "claude"];
+                      } catch (error) {
+                        console.error(
+                          "Invalid SMS_SANDBOX_AGENT_DEFAULT_PROVIDER, defaulting to claude:",
+                          error
+                        );
+                        return ["claude", "codex"];
                       }
-                    );
+                    })();
+
+                    const attemptSummaries: string[] = [];
+                    let started: { provider: "claude" | "codex"; conversationId: string } | null = null;
+
+                    for (const attemptProvider of attemptProviders) {
+                      try {
+                        const result = await sandboxContext.executeAction<StartAgentResult>(
+                          {
+                            name: "sms.startAgentConversation",
+                            args: { task, provider: attemptProvider },
+                          },
+                          async () => {
+                            // This will be replaced by actual action call in the handler
+                            return { success: false, error: "Not implemented" };
+                          }
+                        );
+
+                        if (result.success && result.conversationId) {
+                          started = {
+                            provider: attemptProvider,
+                            conversationId: result.conversationId,
+                          };
+                          break;
+                        }
+
+                        attemptSummaries.push(
+                          `${attemptProvider}: ${result.error || "unknown error"}`
+                        );
+                      } catch (error) {
+                        console.error("start_agent failed:", error);
+                        attemptSummaries.push(
+                          `${attemptProvider}: ${error instanceof Error ? error.message : String(error)}`
+                        );
+                      }
+                    }
 
                     const duration = Date.now() - start;
-                    const output = result.success && result.conversationId
-                      ? `started agent! conversation id: ${result.conversationId}`
-                      : `failed to start agent: ${result.error || "unknown error"}`;
+                    const output = started
+                      ? `started agent! conversation id: ${started.conversationId} (provider: ${started.provider})`
+                      : `failed to start agent. tried ${attemptSummaries.join("; ") || "no providers"}`;
 
                     toolCalls.push({
                       tool: "start_agent",
@@ -807,30 +1086,153 @@ export const makeLLMService = (config: BedrockConfig) => {
                     return output;
                   },
                 };
+
+                tools.view_media = {
+                  description:
+                    "View an image or video that was attached to a message. Returns the actual image so you can see it. Use when you see [image attached: <url>] in a message.",
+                  inputSchema: z.object({
+                    url: z.string().url().describe("The media URL from the [image attached: <url>] annotation"),
+                  }),
+                  execute: async (input: unknown) => {
+                    const parsed = z.object({ url: z.string().url() }).safeParse(input);
+                    if (!parsed.success) {
+                      const output = `invalid input: ${parsed.error.message}`;
+                      toolCalls.push({
+                        tool: "view_media",
+                        input,
+                        output,
+                        durationMs: 0,
+                      });
+                      return output;
+                    }
+
+                    const { url } = parsed.data;
+                    const start = Date.now();
+
+                    try {
+                      const response = await fetch(url);
+                      if (!response.ok) {
+                        const output = `error fetching media: ${response.status} ${response.statusText}`;
+                        toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      const contentTypeHeader =
+                        response.headers.get("content-type") ||
+                        "application/octet-stream";
+                      const mediaType = contentTypeHeader
+                        .split(";")[0]
+                        .trim()
+                        .toLowerCase();
+
+                      if (mediaType.startsWith("video/")) {
+                        const contentLength = response.headers.get("content-length");
+                        const output = `video (${mediaType}, ${contentLength ? Math.round(Number(contentLength) / 1024) + "KB" : "unknown size"}). url: ${url}`;
+                        toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      if (!mediaType.startsWith("image/")) {
+                        const output = `unsupported media type (${mediaType}). url: ${url}`;
+                        toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      const supportedImageTypes = new Set([
+                        "image/jpeg",
+                        "image/png",
+                        "image/gif",
+                        "image/webp",
+                      ]);
+                      if (!supportedImageTypes.has(mediaType)) {
+                        const output = `unsupported image type (${mediaType}). please resend as jpg/png/gif/webp. url: ${url}`;
+                        toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      const maxBytes = 5 * 1024 * 1024; // 5MB
+                      const contentLengthHeader = response.headers.get("content-length");
+                      const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+
+                      if (contentLength !== null && Number.isFinite(contentLength) && contentLength > maxBytes) {
+                        const output = `image too large (${Math.round(contentLength / 1024)}KB). url: ${url}`;
+                        toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      // Image — read bytes, convert to base64
+                      const arrayBuffer = await response.arrayBuffer();
+                      if (arrayBuffer.byteLength > maxBytes) {
+                        const output = `image too large (${Math.round(arrayBuffer.byteLength / 1024)}KB). url: ${url}`;
+                        toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      const base64 = Buffer.from(arrayBuffer).toString("base64");
+                      const duration = Date.now() - start;
+                      toolCalls.push({
+                        tool: "view_media",
+                        input: { url },
+                        output: `[image ${mediaType} ${Math.round(arrayBuffer.byteLength / 1024)}KB]`,
+                        durationMs: duration,
+                      });
+
+                      return { type: "image" as const, data: base64, mediaType };
+                    } catch (error) {
+                      console.error("view_media failed:", error);
+                      const duration = Date.now() - start;
+                      const output = `error fetching media: ${error instanceof Error ? error.message : String(error)}`;
+                      toolCalls.push({ tool: "view_media", input: { url }, output, durationMs: duration });
+                      return output;
+                    }
+                  },
+                  toModelOutput({ output }: { output: string | { type: "image"; data: string; mediaType: string } }) {
+                    if (typeof output === "string") {
+                      return { type: "content" as const, value: [{ type: "text" as const, text: output }] };
+                    }
+                    return {
+                      type: "content" as const,
+                      value: [{ type: "media" as const, data: output.data, mediaType: output.mediaType }],
+                    };
+                  },
+                };
               }
 
-              const { text, steps } = await generateText({
+              const toolNames = Object.keys(tools).sort();
+              const { system, providerOptions } = await buildSystemOptions(
+                backend,
+                systemPrompt,
+                toolNames
+              );
+
+              const textResult = await generateText({
                 model,
                 messages: messages.map((m) => ({
                   role: m.role,
                   content: m.content,
                 })),
-                // Use Anthropic's prompt caching for the system prompt
-                system: {
-                  role: "system",
-                  content: systemPrompt,
-                  providerOptions: {
-                    anthropic: { cacheControl: { type: "ephemeral" } },
-                  },
-                },
+                system,
+                providerOptions,
                 tools,
                 stopWhen: stepCountIs(maxToolRoundtrips),
               });
 
+              if (backend.provider === "openai") {
+                console.log("[sms_llm] OpenAI token usage (agent)", {
+                  modelId: backend.modelId,
+                  promptCacheRetention: backend.promptCacheRetention,
+                  inputTokens: textResult.usage.inputTokens,
+                  cacheReadTokens: textResult.usage.inputTokenDetails.cacheReadTokens,
+                  cacheWriteTokens: textResult.usage.inputTokenDetails.cacheWriteTokens,
+                  outputTokens: textResult.usage.outputTokens,
+                  totalTokens: textResult.usage.totalTokens,
+                });
+              }
+
               return {
-                text,
+                text: textResult.text,
                 toolCalls,
-                totalSteps: steps.length,
+                totalSteps: textResult.steps.length,
               };
             },
             catch: (error) => {
@@ -849,3 +1251,113 @@ export const makeLLMService = (config: BedrockConfig) => {
       ),
   };
 };
+
+export const makeLLMService = (config: BedrockConfig): LLMService => {
+  const bedrock = createAmazonBedrock({
+    region: config.region,
+    apiKey: config.bearerToken,
+  });
+
+  // Use US cross-region inference profile for higher throughput quotas.
+  // Default: Opus 4.6 (can be overridden by SMS_LLM_PRESET).
+  const modelId = resolveBedrockSmsModelId("opus_4_6");
+  const model = bedrock(modelId);
+
+  return makeLLMServiceFromBackend({ provider: "bedrock", model, modelId });
+};
+
+export const makeOpenAILLMService = (config: OpenAIConfig): LLMService => {
+  const openai = createOpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
+  });
+
+  const model = openai(config.modelId);
+
+  return makeLLMServiceFromBackend({
+    provider: "openai",
+    model,
+    modelId: config.modelId,
+    reasoningEffort: config.reasoningEffort,
+    promptCacheRetention: config.promptCacheRetention,
+  });
+};
+
+function parseSandboxAgentDefaultProvider(
+  value: string | undefined
+): "claude" | "codex" {
+  if (value === undefined) return "claude";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "" || normalized === "claude") return "claude";
+  if (normalized === "codex") return "codex";
+  throw new Error(
+    `Invalid SMS_SANDBOX_AGENT_DEFAULT_PROVIDER: ${value}. Expected "claude" or "codex".`
+  );
+}
+
+function parseSmsLLMProvider(value: string | undefined): SmsLLMProvider {
+  if (value === undefined) return "bedrock";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "" || normalized === "bedrock") return "bedrock";
+  if (normalized === "openai") return "openai";
+  throw new Error(
+    `Invalid SMS_LLM_PROVIDER: ${value}. Expected "bedrock" or "openai".`
+  );
+}
+
+/**
+ * Provider/model switch flag for SMS agent:
+ * - SMS_LLM_PRESET=opus_4_6|opus_4_5|gpt_5_2 (optional; overrides SMS_LLM_PROVIDER + model selection)
+ * - SMS_LLM_PROVIDER=openai|bedrock (default: bedrock)
+ * - SMS_OPENAI_MODEL_ID=gpt-5.2 (default: gpt-5.2)
+ * - SMS_OPENAI_REASONING_EFFORT=none|minimal|low|medium|high|xhigh|auto|default (default: auto)
+ * - SMS_OPENAI_PROMPT_CACHE_RETENTION=in_memory|24h|off|none (default: in_memory)
+ * - SMS_SANDBOX_AGENT_DEFAULT_PROVIDER=claude|codex (default: claude)
+ */
+export const getSmsLLMService = (): Effect.Effect<LLMService, LLMConfigError> =>
+  pipe(
+    Effect.try({
+      try: () => ({
+        preset: parseSmsLLMPreset(process.env.SMS_LLM_PRESET),
+        provider: parseSmsLLMProvider(process.env.SMS_LLM_PROVIDER),
+      }),
+      catch: (error) =>
+        new LLMConfigError(
+          error instanceof Error ? error.message : "Invalid SMS LLM provider"
+        ),
+    }),
+    Effect.flatMap(({ preset, provider }) => {
+      if (preset === "gpt_5_2" || (preset === null && provider === "openai")) {
+        return pipe(
+          getOpenAIConfig(),
+          Effect.map((config) =>
+            makeOpenAILLMService({
+              ...config,
+              modelId: preset === "gpt_5_2" ? "gpt-5.2" : config.modelId,
+            })
+          )
+        );
+      }
+
+      const bedrockModelId =
+        preset === "opus_4_5" || preset === "opus_4_6"
+          ? resolveBedrockSmsModelId(preset)
+          : resolveBedrockSmsModelId("opus_4_6");
+
+      return pipe(
+        getBedrockConfig(),
+        Effect.map((config) => {
+          const bedrock = createAmazonBedrock({
+            region: config.region,
+            apiKey: config.bearerToken,
+          });
+          const model = bedrock(bedrockModelId);
+          return makeLLMServiceFromBackend({
+            provider: "bedrock",
+            model,
+            modelId: bedrockModelId,
+          });
+        })
+      );
+    })
+  );

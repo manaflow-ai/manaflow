@@ -115,6 +115,22 @@ export const makeSendblueService = (config: SendblueConfig) =>
           )
         ),
 
+      getMessageStatus: (params: { handle: string }): Effect.Effect<MessageResponse, SendblueError> =>
+        pipe(
+          Effect.tryPromise({
+            try: () => client.messages.getStatus({ handle: params.handle }),
+            catch: (error) =>
+              new SendblueError("Failed to get message status", undefined, error),
+          }),
+          Effect.tap((response: MessageResponse) =>
+            Effect.logDebug("Message status fetched", {
+              handle: params.handle,
+              status: response.status,
+              hasMedia: !!response.media_url,
+            })
+          )
+        ),
+
       sendTypingIndicator: (params: { toNumber: string }): Effect.Effect<unknown, SendblueError> =>
         pipe(
           Effect.tryPromise({
@@ -165,7 +181,7 @@ export const makeSendblueService = (config: SendblueConfig) =>
           })
         ),
 
-      sendGroupMessage: (params: { groupId: string; content: string }): Effect.Effect<MessageResponse, SendblueError> =>
+      sendGroupMessage: (params: { groupId: string; content: string; mediaUrl?: string }): Effect.Effect<MessageResponse, SendblueError> =>
         pipe(
           Effect.tryPromise({
             try: () =>
@@ -173,6 +189,7 @@ export const makeSendblueService = (config: SendblueConfig) =>
                 content: params.content,
                 from_number: config.fromNumber,
                 group_id: params.groupId,
+                media_url: params.mediaUrl,
               }),
             catch: (error) =>
               new SendblueError("Failed to send group message", undefined, error),

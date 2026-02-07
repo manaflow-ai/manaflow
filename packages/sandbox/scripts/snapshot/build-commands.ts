@@ -344,6 +344,7 @@ export function getProvisioningCommands(): BuildCommand[] {
 # Codex CLI configuration for cmux sandbox
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+model = "gpt-5.2-codex"
 model_provider = "cmux-proxy"
 
 [model_providers.cmux-proxy]

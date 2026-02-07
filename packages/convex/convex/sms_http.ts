@@ -67,6 +67,7 @@ export const sendblueWebhook = httpAction(async (ctx, request) => {
                 dateSent: payload.date_sent ?? undefined,
                 errorCode: payload.error_code ?? undefined,
                 errorMessage: payload.error_message ?? undefined,
+                mediaUrl: payload.media_url || undefined,
                 // Group chat fields
                 groupId: payload.group_id || undefined,
                 participants: payload.participants ?? undefined,
@@ -76,22 +77,25 @@ export const sendblueWebhook = httpAction(async (ctx, request) => {
         ),
 
         // Handle inbound message (send LLM reply)
-        Effect.flatMap((messageId) =>
-          pipe(
-            Effect.if(
-              !payload.is_outbound && !!payload.content && !!payload.from_number,
-              {
-                onTrue: () =>
-                  Effect.tryPromise({
-                    try: () =>
-                      ctx.runAction(internal.sms.handleInboundMessage, {
-                        fromNumber: payload.from_number,
-                        content: payload.content,
-                        groupId: payload.group_id || undefined,
-                        participants: payload.participants ?? undefined,
-                      }),
-                    catch: () =>
-                      new WebhookValidationError("Failed to handle inbound message"),
+          Effect.flatMap((messageId) =>
+            pipe(
+              Effect.if(
+              !payload.is_outbound && !!payload.from_number,
+                {
+                  onTrue: () =>
+                    Effect.tryPromise({
+                      try: () =>
+                        ctx.runAction(internal.sms.handleInboundMessage, {
+                          fromNumber: payload.from_number,
+                          content: payload.content || "",
+                          messageId,
+                          messageHandle: payload.message_handle ?? undefined,
+                          mediaUrl: payload.media_url || undefined,
+                          groupId: payload.group_id || undefined,
+                          participants: payload.participants ?? undefined,
+                        }),
+                      catch: () =>
+                        new WebhookValidationError("Failed to handle inbound message"),
                   }),
                 onFalse: () => Effect.void,
               }

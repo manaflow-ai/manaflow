@@ -13,8 +13,7 @@ import {
   runEffect,
 } from "./sendblue";
 import {
-  getBedrockConfig,
-  makeLLMService,
+  getSmsLLMService,
   LLMError,
   LLMConfigError,
   type ChatMessage,
@@ -29,6 +28,7 @@ export const sendMessage = internalAction({
     content: v.string(),
     toNumber: v.string(),
     sendStyle: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{
     success: boolean;
@@ -47,60 +47,75 @@ export const sendMessage = internalAction({
           Effect.flatMap((service) =>
             pipe(
               // Store message first
-              Effect.tryPromise({
-                try: () =>
-                  ctx.runMutation(internal.sms_queries.storeOutboundMessage, {
-                    content: args.content,
-                    toNumber: args.toNumber,
-                    fromNumber: config.fromNumber,
-                    sendStyle: args.sendStyle,
-                  }),
-                catch: () => new SendblueError("Failed to store message"),
-              }),
+              pipe(
+                Effect.tryPromise({
+                  try: () =>
+                    ctx.runMutation(internal.sms_queries.storeOutboundMessage, {
+                      content: args.content,
+                      toNumber: args.toNumber,
+                      fromNumber: config.fromNumber,
+                      sendStyle: args.sendStyle,
+                      mediaUrl: args.mediaUrl,
+                    }),
+                  catch: () => new SendblueError("Failed to store message"),
+                }),
 
-              // Send via Sendblue
-              Effect.flatMap((messageId) =>
-                pipe(
-                  service.sendMessage({
-                    toNumber: args.toNumber,
-                    content: args.content,
-                    sendStyle: args.sendStyle,
-                  }),
+                // Send via Sendblue
+                Effect.flatMap((messageId) =>
+                  pipe(
+                    service.sendMessage({
+                      toNumber: args.toNumber,
+                      content: args.content,
+                      sendStyle: args.sendStyle,
+                      mediaUrl: args.mediaUrl,
+                    }),
 
-                  // Update message with result
-                  Effect.flatMap((response) =>
-                    pipe(
-                      Effect.tryPromise({
-                        try: () =>
-                          ctx.runMutation(internal.sms_queries.updateMessageStatus, {
-                            messageId,
-                            status: response.status || "sent",
-                            messageHandle: response.message_handle,
-                          }),
-                        catch: () => new SendblueError("Failed to update message status"),
-                      }),
-                      Effect.map(() => ({
-                        success: true,
-                        messageId: messageId as string,
-                        messageHandle: response.message_handle,
-                        status: response.status,
-                      }))
-                    )
-                  ),
+                    // Update message with result
+                    Effect.flatMap((response) =>
+                      pipe(
+                        Effect.tryPromise({
+                          try: () =>
+                            ctx.runMutation(
+                              internal.sms_queries.updateMessageStatus,
+                              {
+                                messageId,
+                                status: response.status || "sent",
+                                messageHandle: response.message_handle,
+                              }
+                            ),
+                          catch: () =>
+                            new SendblueError("Failed to update message status"),
+                        }),
+                        Effect.map(() => ({
+                          success: true,
+                          messageId: messageId as string,
+                          messageHandle: response.message_handle,
+                          status: response.status,
+                        }))
+                      )
+                    ),
 
-                  // Handle send failure
-                  Effect.catchAll((error) =>
-                    pipe(
-                      Effect.tryPromise({
-                        try: () =>
-                          ctx.runMutation(internal.sms_queries.updateMessageStatus, {
-                            messageId,
-                            status: "failed",
-                            errorMessage: error instanceof SendblueError ? error.message : "Unknown error",
-                          }),
-                        catch: () => new SendblueError("Failed to update error status"),
-                      }),
-                      Effect.flatMap(() => Effect.fail(error))
+                    // Handle send failure
+                    Effect.catchAll((error) =>
+                      pipe(
+                        Effect.tryPromise({
+                          try: () =>
+                            ctx.runMutation(
+                              internal.sms_queries.updateMessageStatus,
+                              {
+                                messageId,
+                                status: "failed",
+                                errorMessage:
+                                  error instanceof SendblueError
+                                    ? error.message
+                                    : "Unknown error",
+                              }
+                            ),
+                          catch: () =>
+                            new SendblueError("Failed to update error status"),
+                        }),
+                        Effect.flatMap(() => Effect.fail(error))
+                      )
                     )
                   )
                 )
@@ -174,6 +189,7 @@ export const sendGroupMessage = internalAction({
   args: {
     content: v.string(),
     groupId: v.string(),
+    mediaUrl: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{
     success: boolean;
@@ -189,58 +205,76 @@ export const sendGroupMessage = internalAction({
           Effect.flatMap((service) =>
             pipe(
               // Store message first
-              Effect.tryPromise({
-                try: () =>
-                  ctx.runMutation(internal.sms_queries.storeOutboundGroupMessage, {
-                    content: args.content,
-                    groupId: args.groupId,
-                    fromNumber: config.fromNumber,
-                  }),
-                catch: () => new SendblueError("Failed to store group message"),
-              }),
+              pipe(
+                Effect.tryPromise({
+                  try: () =>
+                    ctx.runMutation(
+                      internal.sms_queries.storeOutboundGroupMessage,
+                      {
+                        content: args.content,
+                        groupId: args.groupId,
+                        fromNumber: config.fromNumber,
+                        mediaUrl: args.mediaUrl,
+                      }
+                    ),
+                  catch: () => new SendblueError("Failed to store group message"),
+                }),
 
-              // Send via Sendblue
-              Effect.flatMap((messageId) =>
-                pipe(
-                  service.sendGroupMessage({
-                    groupId: args.groupId,
-                    content: args.content,
-                  }),
+                // Send via Sendblue
+                Effect.flatMap((messageId) =>
+                  pipe(
+                    service.sendGroupMessage({
+                      groupId: args.groupId,
+                      content: args.content,
+                      mediaUrl: args.mediaUrl,
+                    }),
 
-                  // Update message with result
-                  Effect.flatMap((response) =>
-                    pipe(
-                      Effect.tryPromise({
-                        try: () =>
-                          ctx.runMutation(internal.sms_queries.updateMessageStatus, {
-                            messageId,
-                            status: response.status || "sent",
-                            messageHandle: response.message_handle,
-                          }),
-                        catch: () => new SendblueError("Failed to update message status"),
-                      }),
-                      Effect.map(() => ({
-                        success: true,
-                        messageId: messageId as string,
-                        messageHandle: response.message_handle,
-                        status: response.status,
-                      }))
-                    )
-                  ),
+                    // Update message with result
+                    Effect.flatMap((response) =>
+                      pipe(
+                        Effect.tryPromise({
+                          try: () =>
+                            ctx.runMutation(
+                              internal.sms_queries.updateMessageStatus,
+                              {
+                                messageId,
+                                status: response.status || "sent",
+                                messageHandle: response.message_handle,
+                              }
+                            ),
+                          catch: () =>
+                            new SendblueError("Failed to update message status"),
+                        }),
+                        Effect.map(() => ({
+                          success: true,
+                          messageId: messageId as string,
+                          messageHandle: response.message_handle,
+                          status: response.status,
+                        }))
+                      )
+                    ),
 
-                  // Handle send failure
-                  Effect.catchAll((error) =>
-                    pipe(
-                      Effect.tryPromise({
-                        try: () =>
-                          ctx.runMutation(internal.sms_queries.updateMessageStatus, {
-                            messageId,
-                            status: "failed",
-                            errorMessage: error instanceof SendblueError ? error.message : "Unknown error",
-                          }),
-                        catch: () => new SendblueError("Failed to update error status"),
-                      }),
-                      Effect.flatMap(() => Effect.fail(error))
+                    // Handle send failure
+                    Effect.catchAll((error) =>
+                      pipe(
+                        Effect.tryPromise({
+                          try: () =>
+                            ctx.runMutation(
+                              internal.sms_queries.updateMessageStatus,
+                              {
+                                messageId,
+                                status: "failed",
+                                errorMessage:
+                                  error instanceof SendblueError
+                                    ? error.message
+                                    : "Unknown error",
+                              }
+                            ),
+                          catch: () =>
+                            new SendblueError("Failed to update error status"),
+                        }),
+                        Effect.flatMap(() => Effect.fail(error))
+                      )
                     )
                   )
                 )
@@ -257,6 +291,17 @@ export const sendGroupMessage = internalAction({
     return runEffect(program);
   },
 });
+
+// Strip markdown formatting that renders as literal characters in iMessage
+const stripMarkdown = (text: string): string =>
+  text
+    .replace(/\*\*(.+?)\*\*/g, "$1")  // **bold**
+    .replace(/\*(.+?)\*/g, "$1")      // *italic*
+    .replace(/__(.+?)__/g, "$1")      // __bold__
+    .replace(/_(.+?)_/g, "$1")        // _italic_
+    .replace(/`([^`]+)`/g, "$1")      // `code`
+    .replace(/^#{1,6}\s+/gm, "")      // # headings
+    .replace(/^[-*+]\s+/gm, "- ");    // normalize list markers
 
 // Extract area code from phone number (US format)
 const extractAreaCode = (phoneNumber: string): string | null => {
@@ -275,6 +320,9 @@ export const handleInboundMessage = internalAction({
   args: {
     fromNumber: v.string(),
     content: v.string(),
+    messageId: v.optional(v.id("smsMessages")),
+    messageHandle: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
     groupId: v.optional(v.string()),
     participants: v.optional(v.array(v.string())),
   },
@@ -287,6 +335,9 @@ export const handleInboundMessage = internalAction({
       Effect.logInfo("Processing inbound message", {
         from: args.fromNumber,
         contentLength: args.content.length,
+        hasMediaUrl: !!(args.mediaUrl && args.mediaUrl.trim().length > 0),
+        messageHandle: args.messageHandle,
+        messageId: args.messageId,
         isGroup,
         groupId: args.groupId,
         areaCode,
@@ -340,6 +391,59 @@ export const handleInboundMessage = internalAction({
                 )
               ),
 
+          // Resolve media URL (if missing) before building conversation history so the LLM can see attachments.
+          // Sendblue webhooks sometimes deliver media asynchronously and/or omit the final URL.
+          Effect.flatMap(() => {
+            const providedMediaUrl =
+              args.mediaUrl && args.mediaUrl.trim().length > 0
+                ? args.mediaUrl.trim()
+                : undefined;
+
+            const messageHandle = args.messageHandle;
+            if (providedMediaUrl || !messageHandle) {
+              return Effect.void;
+            }
+
+            return pipe(
+              getSendblueConfig(),
+              Effect.flatMap((config) =>
+                pipe(
+                  makeSendblueService(config),
+                  Effect.flatMap((service) =>
+                    service.getMessageStatus({ handle: messageHandle })
+                  )
+                )
+              ),
+              Effect.map((status) => {
+                const resolved = status.media_url;
+                return typeof resolved === "string" && resolved.trim().length > 0
+                  ? resolved.trim()
+                  : undefined;
+              }),
+              Effect.flatMap((resolvedMediaUrl) => {
+                const messageId = args.messageId;
+                if (!resolvedMediaUrl || !messageId) {
+                  return Effect.void;
+                }
+                return Effect.tryPromise({
+                  try: () =>
+                    ctx.runMutation(internal.sms_queries.updateMessageMediaUrl, {
+                      messageId,
+                      mediaUrl: resolvedMediaUrl,
+                    }),
+                  catch: (error) =>
+                    new SendblueError("Failed to store message media url", undefined, error),
+                });
+              }),
+              Effect.catchAll((error) =>
+                Effect.logWarning("Failed to resolve message media url", {
+                  messageHandle,
+                  error: error instanceof SendblueError ? error.message : String(error),
+                })
+              )
+            );
+          }),
+
           // Fetch conversation history
           Effect.flatMap(() =>
             Effect.tryPromise({
@@ -356,14 +460,30 @@ export const handleInboundMessage = internalAction({
           // Generate LLM response via agent loop with sandbox tools
           Effect.flatMap((history: ChatMessage[]) =>
             pipe(
-              getBedrockConfig(),
-              Effect.map((config) => makeLLMService(config)),
+              getSmsLLMService(),
               Effect.flatMap((llmService) => {
                 // Create sandbox tool context for the LLM
                 const sandboxContext: SandboxToolContext = {
                   phoneNumber: args.fromNumber,
+                  groupId: args.groupId,
                   userId: phoneUser.userId,
                   teamId: phoneUser.defaultTeamId,
+                  sendReplySms: async (content, mediaUrl) => {
+                    if (args.groupId) {
+                      await ctx.runAction(internal.sms.sendGroupMessage, {
+                        content,
+                        groupId: args.groupId,
+                        mediaUrl,
+                      });
+                    } else {
+                      await ctx.runAction(internal.sms.sendMessage, {
+                        content,
+                        toNumber: args.fromNumber,
+                        mediaUrl,
+                      });
+                    }
+                    return { success: true };
+                  },
                   executeAction: async <T>(
                     action: { name: string; args: Record<string, unknown> },
                     _handler: () => Promise<T>
@@ -435,6 +555,12 @@ export const handleInboundMessage = internalAction({
                       });
                       return result as T;
                     }
+                    if (query.name === "sms_queries.getSandboxInfo") {
+                      const result = await ctx.runQuery(internal.sms_queries.getSandboxInfo, {
+                        conversationId: query.args.conversationId as Id<"conversations">,
+                      });
+                      return result as T;
+                    }
                     throw new Error(`Unknown query: ${query.name}`);
                   },
                 };
@@ -442,7 +568,7 @@ export const handleInboundMessage = internalAction({
                 return llmService.generateAgentResponse(
                   history,
                   isGroup,
-                  10, // Increase max tool roundtrips for sandbox operations
+                  20, // Increase max tool roundtrips for sandbox operations (sandboxes can take 30s+)
                   areaCode,
                   sandboxContext
                 );
@@ -468,7 +594,10 @@ export const handleInboundMessage = internalAction({
                 }
                 if (error instanceof LLMError) {
                   return pipe(
-                    Effect.logWarning("Bedrock API failure", { error: error.message }),
+                    Effect.logWarning("LLM API failure", {
+                      error: error.message,
+                      cause: error.cause instanceof Error ? error.cause.message : error.cause,
+                    }),
                     Effect.flatMap(() => Effect.succeed(FALLBACK_MESSAGE))
                   );
                 }
@@ -480,22 +609,26 @@ export const handleInboundMessage = internalAction({
             )
           ),
 
-          // Send LLM response
-          Effect.flatMap((responseText: string) =>
-            Effect.tryPromise({
+          // Send LLM response (skip if empty - agent already sent via send_sms tool)
+          Effect.flatMap((responseText: string) => {
+            if (!responseText.trim()) {
+              return Effect.logInfo("Agent response text empty (likely sent via send_sms tool), skipping final message");
+            }
+            const cleaned = stripMarkdown(responseText);
+            return Effect.tryPromise({
               try: () =>
                 isGroup
                   ? ctx.runAction(internal.sms.sendGroupMessage, {
-                      content: responseText,
+                      content: cleaned,
                       groupId: args.groupId!,
                     })
                   : ctx.runAction(internal.sms.sendMessage, {
-                      content: responseText,
+                      content: cleaned,
                       toNumber: args.fromNumber,
                     }),
               catch: (error) => new SendblueError("Failed to send LLM response", undefined, error),
-            })
-          ),
+            });
+          }),
 
           Effect.tap(() =>
             Effect.logInfo("LLM response sent", { to: isGroup ? args.groupId : args.fromNumber })
@@ -1092,24 +1225,43 @@ function buildNotificationContext(notifications: NotificationEntry[]): string {
   const primary = notifications[0];
   const others = notifications.slice(1);
 
-  let context = `[SYSTEM NOTIFICATION - respond to user via send_sms]
+  // Check if this looks like a server task
+  const serverKeywords = ["server", "jupyter", "notebook", "port", "minecraft", "web server", "http"];
+  const looksLikeServerTask = serverKeywords.some(kw =>
+    (primary.title || "").toLowerCase().includes(kw) ||
+    (primary.lastMessage || "").toLowerCase().includes(kw) ||
+    (primary.summary || "").toLowerCase().includes(kw)
+  );
+
+  let context = `[SYSTEM NOTIFICATION]
+
+CRITICAL: you MUST use the send_sms tool to respond. regular text responses are NOT delivered to the user. only send_sms reaches them.
 
 your sandbox task just finished:
+- conversationId: "${primary.conversationId}"
 - task: "${primary.title || "coding task"}"
 - status: ${primary.type}
 - result: ${primary.lastMessage || "completed"}
 `;
 
-  if (others.length > 0) {
+  if (looksLikeServerTask) {
     context += `
-other pending notifications (${others.length}):
-${others.map((n) => `- ${n.title || "task"}: ${n.type}`).join("\n")}
+this is a server task. you MUST:
+1. call get_port_url(conversationId="${primary.conversationId}", port=<port from result>) to get the public URL
+2. call send_sms to send the URL to the user
+`;
+  } else {
+    context += `
+summarize the result and send it via send_sms. be brief and casual - this is imessage.
 `;
   }
 
-  context += `
-respond naturally to the user about this. use send_sms to send your message.
-keep it brief and casual - this is imessage.`;
+  if (others.length > 0) {
+    context += `
+other pending notifications (${others.length}):
+${others.map((n) => `- ${n.conversationId}: ${n.title || "task"}: ${n.type}`).join("\n")}
+`;
+  }
 
   return context;
 }
@@ -1232,16 +1384,31 @@ export const triggerAgentWithNotification = internalAction({
               }),
 
               // Run agent with notification context
-              Effect.flatMap((history) =>
-                pipe(
-                  getBedrockConfig(),
-                  Effect.map((config) => makeLLMService(config)),
+              Effect.flatMap((history) => {
+                // Bedrock requires the conversation to end with a user message.
+                // If the last message is from the assistant (e.g. "on it!"),
+                // append a synthetic user message to trigger the notification response.
+                const lastMsg = history[history.length - 1];
+                if (lastMsg && lastMsg.role === "assistant") {
+                  history = [...history, { role: "user" as const, content: "[task completed - check notifications]" }];
+                }
+
+                return pipe(
+                  getSmsLLMService(),
                   Effect.flatMap((llmService) => {
                     // Create sandbox tool context for the LLM
                     const sandboxContext: SandboxToolContext = {
                       phoneNumber: args.phoneNumber,
                       userId: phoneUser.userId,
                       teamId: phoneUser.defaultTeamId,
+                      sendReplySms: async (content, mediaUrl) => {
+                        await ctx.runAction(internal.sms.sendMessage, {
+                          content,
+                          toNumber: args.phoneNumber,
+                          mediaUrl,
+                        });
+                        return { success: true };
+                      },
                       executeAction: async <T>(
                         action: { name: string; args: Record<string, unknown> },
                         _handler: () => Promise<T>
@@ -1347,6 +1514,15 @@ export const triggerAgentWithNotification = internalAction({
                           );
                           return result as T;
                         }
+                        if (query.name === "sms_queries.getSandboxInfo") {
+                          const result = await ctx.runQuery(
+                            internal.sms_queries.getSandboxInfo,
+                            {
+                              conversationId: query.args.conversationId as Id<"conversations">,
+                            }
+                          );
+                          return result as T;
+                        }
                         throw new Error(`Unknown query: ${query.name}`);
                       },
                     };
@@ -1354,7 +1530,7 @@ export const triggerAgentWithNotification = internalAction({
                     return llmService.generateAgentResponse(
                       history,
                       false, // isGroup
-                      5, // maxRoundtrips
+                      10, // maxRoundtrips - needs enough for get_port_url + send_sms
                       extractAreaCode(args.phoneNumber),
                       sandboxContext,
                       notificationContext // Pass the notification context
@@ -1394,11 +1570,22 @@ export const triggerAgentWithNotification = internalAction({
                       (t) => t.tool === "send_sms"
                     );
                     if (!sentSms && notifications.length > 0) {
-                      // Agent didn't send a message, send a simple fallback
-                      const fallbackMessage =
-                        notifications[0].type === "completed"
-                          ? `${notifications[0].title || "task"} done 👍`
-                          : `${notifications[0].title || "task"}: ${notifications[0].type}`;
+                      // Agent didn't send a message - build a useful fallback from the sandbox result
+                      const n = notifications[0];
+                      const title = n.title || "task";
+                      const lastMsg = n.lastMessage;
+                      let fallbackMessage: string;
+                      if (n.type === "completed" && lastMsg) {
+                        const clean = stripMarkdown(lastMsg);
+                        const truncated = clean.length > 400
+                          ? clean.slice(0, 400) + "..."
+                          : clean;
+                        fallbackMessage = `${title} finished:\n${truncated}`;
+                      } else if (n.type === "completed") {
+                        fallbackMessage = `${title} finished`;
+                      } else {
+                        fallbackMessage = `${title}: ${n.type}`;
+                      }
 
                       return pipe(
                         Effect.logInfo("Agent didn't send SMS, using fallback"),
@@ -1436,8 +1623,8 @@ export const triggerAgentWithNotification = internalAction({
                     }
                     return Effect.logWarning("Unknown LLM error", { error });
                   })
-                )
-              )
+                );
+              }),
             );
           })
         );

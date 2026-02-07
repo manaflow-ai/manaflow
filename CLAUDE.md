@@ -58,6 +58,9 @@ Swift Convex types (iOS):
 ## SMS/iMessage (Sendblue)
 
 When working on SMS/iMessage/Sendblue files (`sms*.ts`, `sendblue.ts`), first read `packages/convex/docs/SMS.md` for architecture, testing flows, and debugging info.
+Do not post-process or rewrite LLM output text in code (e.g. "humanizing" or rephrasing responses). If the bot is too repetitive, change the system prompt instead (see `packages/convex/convex/sms_llm.ts`).
+Avoid sending identical repeated messages on retries or failures. If you need to retry, rephrase and add one new concrete detail or next step.
+If a sandbox run fails due to provider/model errors, suggest switching between Claude and Codex (and tell the user what would change) instead of looping retries.
 
 ## Sandboxes
 

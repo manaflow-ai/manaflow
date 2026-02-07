@@ -21,6 +21,8 @@ export const env = createEnv({
     // ACP (Agent Client Protocol) settings
     ACP_CALLBACK_SECRET: z.string().min(1).optional(),
     CONVEX_SITE_URL: z.string().min(1).optional(),
+    ACP_DEFAULT_CODEX_MODEL_ID: z.string().min(1).optional(),
+    ACP_DEFAULT_CLAUDE_MODEL_ID: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     VERTEX_PRIVATE_KEY: z.string().min(1).optional(),

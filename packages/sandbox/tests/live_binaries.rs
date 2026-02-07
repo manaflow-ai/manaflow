@@ -45,7 +45,7 @@ async fn test_global_binaries_in_sandbox() {
         command: vec![
             "codex-acp".into(),
             "-c".into(),
-            "model=\"gpt-5.1-codex-max\"".into(),
+            "model=\"gpt-5.2-codex\"".into(),
         ],
         workdir: None,
         env: vec![],

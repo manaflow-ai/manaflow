@@ -40,7 +40,7 @@ impl AcpProvider {
     pub fn command(&self) -> &'static str {
         match self {
             AcpProvider::Codex => {
-                "/usr/bin/stdbuf -i0 -o0 -e0 /usr/local/bin/codex-acp -c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\" -c model=\"gpt-5.1-codex-max\""
+                "/usr/bin/stdbuf -i0 -o0 -e0 /usr/local/bin/codex-acp -c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\" -c model=\"gpt-5.2-codex\""
             }
             AcpProvider::Opencode => "/usr/bin/stdbuf -i0 -o0 -e0 opencode acp",
             AcpProvider::Claude => "/usr/bin/stdbuf -i0 -o0 -e0 claude-code-acp",

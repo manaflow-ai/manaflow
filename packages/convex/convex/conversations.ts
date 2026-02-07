@@ -167,7 +167,9 @@ export const create = authMutation({
       sessionId: args.sessionId,
       providerId: args.providerId,
       modelId:
-        args.providerId === "claude" ? "claude-opus-4-5-20251101" : undefined,
+        args.providerId === "claude"
+          ? env.ACP_DEFAULT_CLAUDE_MODEL_ID ?? "claude-opus-4-6"
+          : undefined,
       cwd: args.cwd,
       permissionMode: "auto_allow_always",
       status: "active",
@@ -638,7 +640,9 @@ export const createInternal = internalMutation({
       sessionId: args.sessionId,
       providerId: args.providerId,
       modelId:
-        args.providerId === "claude" ? "claude-opus-4-5-20251101" : undefined,
+        args.providerId === "claude"
+          ? env.ACP_DEFAULT_CLAUDE_MODEL_ID ?? "claude-opus-4-6"
+          : undefined,
       cwd: args.cwd,
       permissionMode: args.permissionMode ?? "auto_allow_always",
       status: "active",

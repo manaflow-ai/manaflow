@@ -83,19 +83,25 @@ export const getConversationHistory = internalQuery({
 
     // Map to ChatMessage format
     // For group chats, prefix user messages with sender's last 4 digits
+    // Annotate media URLs so the agent can see them and call view_media
     return sortedMessages.map((msg) => {
+      let text = msg.content || "";
+      if (msg.mediaUrl) {
+        text += text ? `\n[image attached: ${msg.mediaUrl}]` : `[image attached: ${msg.mediaUrl}]`;
+      }
+
       if (msg.isOutbound) {
-        return { role: "assistant" as const, content: msg.content };
+        return { role: "assistant" as const, content: text };
       }
       // For inbound messages in groups, include sender identity
       if (args.groupId) {
         const senderShort = msg.fromNumber.slice(-4);
         return {
           role: "user" as const,
-          content: `[${senderShort}]: ${msg.content}`,
+          content: `[${senderShort}]: ${text}`,
         };
       }
-      return { role: "user" as const, content: msg.content };
+      return { role: "user" as const, content: text };
     });
   },
 });
@@ -141,6 +147,7 @@ export const processWebhookMessage = internalMutation({
     dateSent: v.optional(v.string()),
     errorCode: v.optional(v.number()),
     errorMessage: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
     // Group chat fields
     groupId: v.optional(v.string()),
     participants: v.optional(v.array(v.string())),
@@ -178,6 +185,7 @@ export const processWebhookMessage = internalMutation({
       dateSent: args.dateSent,
       errorCode: args.errorCode,
       errorMessage: args.errorMessage,
+      mediaUrl: args.mediaUrl,
       groupId: args.groupId,
       participants: args.participants,
     });
@@ -190,6 +198,7 @@ export const storeOutboundMessage = internalMutation({
     toNumber: v.string(),
     fromNumber: v.string(),
     sendStyle: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("smsMessages", {
@@ -199,6 +208,7 @@ export const storeOutboundMessage = internalMutation({
       isOutbound: true,
       status: "pending",
       sendStyle: args.sendStyle,
+      mediaUrl: args.mediaUrl,
     });
   },
 });
@@ -208,6 +218,7 @@ export const storeOutboundGroupMessage = internalMutation({
     content: v.string(),
     groupId: v.string(),
     fromNumber: v.string(),
+    mediaUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("smsMessages", {
@@ -217,6 +228,7 @@ export const storeOutboundGroupMessage = internalMutation({
       isOutbound: true,
       status: "pending",
       groupId: args.groupId,
+      mediaUrl: args.mediaUrl,
     });
   },
 });
@@ -235,6 +247,18 @@ export const updateMessageStatus = internalMutation({
       messageHandle: args.messageHandle,
       errorCode: args.errorCode,
       errorMessage: args.errorMessage,
+    });
+  },
+});
+
+export const updateMessageMediaUrl = internalMutation({
+  args: {
+    messageId: v.id("smsMessages"),
+    mediaUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.messageId, {
+      mediaUrl: args.mediaUrl,
     });
   },
 });
@@ -436,5 +460,38 @@ export const searchConversations = internalQuery({
     });
 
     return matching.slice(0, limit);
+  },
+});
+
+/**
+ * Get sandbox info for a conversation.
+ * Returns the sandbox URL and instance ID for constructing port URLs.
+ */
+export const getSandboxInfo = internalQuery({
+  args: {
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) {
+      return { success: false, error: "Conversation not found" };
+    }
+
+    if (!conversation.acpSandboxId) {
+      return { success: false, error: "Conversation has no sandbox" };
+    }
+
+    const sandbox = await ctx.db.get(conversation.acpSandboxId);
+    if (!sandbox) {
+      return { success: false, error: "Sandbox not found" };
+    }
+
+    return {
+      success: true,
+      provider: sandbox.provider,
+      instanceId: sandbox.instanceId,
+      sandboxUrl: sandbox.sandboxUrl,
+      status: sandbox.status,
+    };
   },
 });

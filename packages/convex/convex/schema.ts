@@ -1541,6 +1541,7 @@ const convexSchema = defineSchema({
     errorCode: v.optional(v.number()),
     errorMessage: v.optional(v.string()),
     sendStyle: v.optional(v.string()), // iMessage effects
+    mediaUrl: v.optional(v.string()), // Attached image/video URL from Sendblue
     // Group chat (optional)
     groupId: v.optional(v.string()),
     participants: v.optional(v.array(v.string())),

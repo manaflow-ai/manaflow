@@ -462,15 +462,32 @@ export const appendRawEvents = internalMutation({
       try {
         const parsed = JSON.parse(event.raw);
         if (parsed.jsonrpc === "2.0" && parsed.error) {
-          hasError = true;
           const errData = parsed.error.data;
-          errorMessage =
-            errData?.message || parsed.error.message || "Unknown error";
-          console.error("[acp.callback] JSON-RPC error detected", {
-            conversationId: args.conversationId,
-            code: parsed.error.code,
-            message: errorMessage,
-          });
+          const msg = errData?.message || parsed.error.message || "Unknown error";
+          const isNonFatalInitRpcResponse =
+            typeof parsed.id === "string" &&
+            (parsed.id.startsWith("cmux-set-model-") ||
+              parsed.id.startsWith("set_mode_"));
+
+          // session/set_model is best-effort. Some providers reject it; don't
+          // mark the whole conversation as failed just because model selection
+          // wasn't applied.
+          // session/set_mode is also best-effort for some providers.
+          if (isNonFatalInitRpcResponse) {
+            console.warn("[acp.callback] Non-fatal JSON-RPC error (init rpc)", {
+              conversationId: args.conversationId,
+              code: parsed.error.code,
+              message: msg,
+            });
+          } else {
+            hasError = true;
+            errorMessage = msg;
+            console.error("[acp.callback] JSON-RPC error detected", {
+              conversationId: args.conversationId,
+              code: parsed.error.code,
+              message: errorMessage,
+            });
+          }
         }
       } catch {
         // Not JSON or malformed - ignore
