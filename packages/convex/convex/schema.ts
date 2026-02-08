@@ -1215,7 +1215,13 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("daytona")), // Provider name (extensible for future providers)
+    // Note: "modal" is a legacy alias for E2B stored in older devboxInfo rows.
+    provider: v.union(
+      v.literal("morph"),
+      v.literal("e2b"),
+      v.literal("daytona"),
+      v.literal("modal")
+    ), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),

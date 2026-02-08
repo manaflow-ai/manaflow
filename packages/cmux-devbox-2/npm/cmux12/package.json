@@ -1,0 +1,22 @@
+{
+  "name": "cmux12",
+  "version": "0.7.18-dev.0",
+  "private": true,
+  "description": "Dev test build of the cmux CLI (alias binary cmux12)",
+  "bin": {
+    "cmux12": "bin/cmux12"
+  },
+  "files": [
+    "bin"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}
+

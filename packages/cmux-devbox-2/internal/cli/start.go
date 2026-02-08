@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +32,25 @@ var (
 	startFlagBranch   string
 	startFlagDocker   bool
 )
+
+func waitForWorkerReady(workerURL string, maxWait time.Duration) error {
+	healthURL := strings.TrimRight(workerURL, "/") + "/health"
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("worker did not become reachable at %s within %s", healthURL, maxWait)
+}
 
 // isGitURL checks if the string looks like a git URL
 func isGitURL(s string) bool {
@@ -200,10 +221,35 @@ Examples:
 			inst, err := client.GetInstance(teamSlug, resp.DevboxID)
 			if err == nil && inst.WorkerURL != "" {
 				fmt.Printf("Syncing %s to sandbox...\n", syncPath)
-				if err := runRsyncOverWebSocket(inst.WorkerURL, token, syncPath, "/home/user/workspace"); err != nil {
-					fmt.Printf("Warning: failed to sync files: %v\n", err)
-				} else {
-					fmt.Println("✓ Files synced")
+				if resolvedProvider == api.ProviderDaytona {
+					// Even after services are started, Daytona's external preview proxy may take
+					// a bit to begin routing traffic to the sandbox ports. Wait until the worker
+					// is reachable before starting rsync to avoid flaky "connection closed" errors.
+					if err := waitForWorkerReady(inst.WorkerURL, 90*time.Second); err != nil {
+						fmt.Printf("Warning: worker not reachable yet: %v\n", err)
+					}
+				}
+
+				// Daytona sandboxes can take a bit longer for the worker SSH bridge to be
+				// ready. Retry briefly so `cmux start ./dir` is reliable across providers.
+				maxAttempts := 1
+				if resolvedProvider == api.ProviderDaytona {
+					maxAttempts = 12
+				}
+
+				var syncErr error
+				for attempt := 1; attempt <= maxAttempts; attempt++ {
+					syncErr = runRsyncOverWebSocket(inst.WorkerURL, token, syncPath, "/home/user/workspace")
+					if syncErr == nil {
+						fmt.Println("✓ Files synced")
+						break
+					}
+					if attempt < maxAttempts {
+						time.Sleep(time.Duration(attempt) * 2 * time.Second)
+					}
+				}
+				if syncErr != nil {
+					fmt.Printf("Warning: failed to sync files: %v\n", syncErr)
 				}
 			}
 		}

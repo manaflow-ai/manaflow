@@ -2,6 +2,28 @@
 # Start all services for the cmux E2B sandbox
 # Services: cmux-code (VSCode), Chrome CDP, VNC, noVNC, worker daemon (Go)
 
+set -euo pipefail
+
+LOCKDIR="/tmp/cmux-start-services.lockdir"
+PIDFILE="${LOCKDIR}/pid"
+
+if mkdir "$LOCKDIR" 2>/dev/null; then
+  echo $$ > "$PIDFILE"
+else
+  existing_pid=""
+  if [ -f "$PIDFILE" ]; then
+    existing_pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  fi
+  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+    echo "[cmux-e2b] start-services already running (pid: $existing_pid)"
+    exit 0
+  fi
+  echo "[cmux-e2b] start-services lock stale; taking over"
+  rm -rf "$LOCKDIR" 2>/dev/null || true
+  mkdir -p "$LOCKDIR"
+  echo $$ > "$PIDFILE"
+fi
+
 echo "[cmux-e2b] Starting services..."
 
 # Always generate a fresh auth token on startup (security: each instance gets unique token)

@@ -8,7 +8,6 @@
  */
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import type { FunctionReference } from "convex/server";
 
 const DAYTONA_API_BASE_URL = "https://app.daytona.io/api";
 
@@ -33,6 +32,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getProxyBaseDomain(): string {
   // Defaults to production proxy domain.
   return process.env.CMUX_PROXY_DOMAIN ?? "cmux.sh";
@@ -49,12 +52,7 @@ function buildCmuxProxyUrl(port: number, providerSandboxId: string): string {
   return `${scheme}://port-${port}-daytona-${providerSandboxId}.${baseDomain}`;
 }
 
-// Preview codes internal API reference
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const previewCodesApi = (internal as any).daytonaPreviewCodes as {
-  getOrCreate: FunctionReference<"mutation", "internal">;
-  getByCode: FunctionReference<"query", "internal">;
-};
+const previewCodesApi = internal.daytonaPreviewCodes;
 
 /**
  * Build URL with authentication token from Daytona preview-url response.
@@ -253,21 +251,8 @@ async function daytonaFetch(
   }
 }
 
-// Type-safe references to daytonaInstances functions
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const daytonaApi = (api as any).daytonaInstances as {
-  create: FunctionReference<"mutation", "public">;
-  list: FunctionReference<"query", "public">;
-  getById: FunctionReference<"query", "public">;
-  updateStatus: FunctionReference<"mutation", "public">;
-  recordAccess: FunctionReference<"mutation", "public">;
-  remove: FunctionReference<"mutation", "public">;
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const daytonaInternalApi = (internal as any).daytonaInstances as {
-  getInfo: FunctionReference<"query", "internal">;
-};
+const daytonaApi = api.daytonaInstances;
+const daytonaInternalApi = internal.daytonaInstances;
 
 /**
  * Get the provider sandbox ID for a Daytona ID
@@ -276,20 +261,32 @@ async function getProviderSandboxId(
   ctx: ActionCtx,
   daytonaId: string
 ): Promise<string | null> {
-  const info = (await ctx.runQuery(daytonaInternalApi.getInfo, {
+  const info = await ctx.runQuery(daytonaInternalApi.getInfo, {
     daytonaId,
-  })) as { providerSandboxId: string } | null;
+  });
   return info?.providerSandboxId ?? null;
 }
 
 /**
  * Map Daytona sandbox state to our standard status
  */
-function mapDaytonaState(state: string): string {
+type DaytonaInstanceStatus =
+  | "running"
+  | "paused"
+  | "stopped"
+  | "archived"
+  | "starting"
+  | "stopping"
+  | "error"
+  | "unknown";
+
+function mapDaytonaState(state: string): DaytonaInstanceStatus {
   switch (state.toLowerCase()) {
     case "running":
     case "started":
       return "running";
+    case "paused":
+      return "paused";
     case "stopped":
       return "stopped";
     case "archived":
@@ -888,6 +885,15 @@ async function handleStopInstance(
 
     if (!daytonaResponse.ok) {
       const errorText = await daytonaResponse.text();
+      const msg = errorText.toLowerCase();
+      // Idempotency: stopping an already stopped sandbox returns 400 in Daytona.
+      // Treat this as success so `cmux stop` is reliable.
+      const alreadyStopped =
+        daytonaResponse.status === 400 && msg.includes("not started");
+      const notFound = daytonaResponse.status === 404;
+      if (alreadyStopped || notFound) {
+        // Continue as if the stop succeeded.
+      } else {
       console.error("[daytona.stop] Daytona API error:", {
         status: daytonaResponse.status,
         body: errorText.slice(0, 500),
@@ -896,6 +902,7 @@ async function handleStopInstance(
         { code: 502, message: "Failed to stop sandbox" },
         502
       );
+      }
     }
 
     // Update status in Convex
@@ -932,20 +939,53 @@ async function handleDeleteInstance(
 
     const providerSandboxId = await getProviderSandboxId(ctx, id);
     if (providerSandboxId) {
-      // Delete via Daytona API
-      const daytonaResponse = await daytonaFetch(
-        `/sandbox/${providerSandboxId}`,
-        {
-          method: "DELETE",
-        }
-      );
+      // Daytona can return errors like "Sandbox state change in progress" right
+      // after a stop request. Retry briefly so `cmux stop && cmux delete` is reliable.
+      const maxAttempts = 12;
+      let deleted = false;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const daytonaResponse = await daytonaFetch(
+          `/sandbox/${providerSandboxId}`,
+          {
+            method: "DELETE",
+          }
+        );
 
-      if (!daytonaResponse.ok && daytonaResponse.status !== 404) {
+        if (daytonaResponse.ok || daytonaResponse.status === 404) {
+          deleted = true;
+          break;
+        }
+
         const errorText = await daytonaResponse.text();
+        const msg = errorText.toLowerCase();
+        const retryable =
+          daytonaResponse.status === 400 &&
+          msg.includes("state change in progress");
+
+        if (retryable && attempt < maxAttempts-1) {
+          const delayMs = Math.min(1000 * (attempt + 1), 5000);
+          console.warn(
+            "[daytona.delete] Delete retryable error, retrying...",
+            {
+              attempt: attempt + 1,
+              maxAttempts,
+              delayMs,
+              status: daytonaResponse.status,
+              body: errorText.slice(0, 200),
+            }
+          );
+          await sleep(delayMs);
+          continue;
+        }
+
         console.error("[daytona.delete] Daytona API error:", {
           status: daytonaResponse.status,
           body: errorText.slice(0, 500),
         });
+        return jsonResponse({ code: 502, message: "Failed to delete sandbox" }, 502);
+      }
+
+      if (!deleted) {
         return jsonResponse(
           { code: 502, message: "Failed to delete sandbox" },
           502

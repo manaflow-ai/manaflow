@@ -15,11 +15,13 @@ var (
 	Commit    = "unknown"
 	BuildTime = "unknown"
 	Mode      = "dev" // "dev" or "prod"
+	Provider  = ""    // default provider override ("e2b" or "daytona"); empty = e2b
 )
 
 func main() {
 	cli.SetVersionInfo(Version, Commit, BuildTime)
 	cli.SetBuildMode(Mode)
+	cli.SetDefaultProvider(Provider)
 	auth.SetBuildMode(Mode)
 	version.SetCurrentVersion(Version)
 

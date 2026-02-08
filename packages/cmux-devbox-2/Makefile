@@ -41,6 +41,16 @@ build-dev:
 install-dev: build-dev
 	cp bin/cmux /usr/local/bin/cmux
 
+build-dev-daytona:
+	@echo "Building for development with Daytona default (Mode=dev, Provider=daytona)..."
+	@echo "  Dev defaults: localhost:9779, famous-camel-162.convex.site"
+	go build -ldflags "-X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME) -X main.Mode=dev -X main.Provider=daytona" \
+		-o bin/cmux ./cmd/cmux
+	@echo "Dev build complete (Daytona default): bin/cmux"
+
+install-dev-daytona: build-dev-daytona
+	cp bin/cmux /usr/local/bin/cmux33
+
 # =============================================================================
 # Production builds
 # =============================================================================

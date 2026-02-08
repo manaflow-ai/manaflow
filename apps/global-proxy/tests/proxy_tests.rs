@@ -1105,6 +1105,16 @@ async fn port_39380_strips_secure_cookie_for_http_clients() {
         "expected Secure attribute to be stripped, got: {}",
         cookie
     );
+    assert!(
+        !cookie.to_ascii_lowercase().contains("samesite=none"),
+        "expected SameSite=None to be downgraded when stripping Secure, got: {}",
+        cookie
+    );
+    assert!(
+        cookie.to_ascii_lowercase().contains("samesite=lax"),
+        "expected SameSite=Lax after downgrade, got: {}",
+        cookie
+    );
 
     let https_response = proxy
         .request(
@@ -1123,6 +1133,11 @@ async fn port_39380_strips_secure_cookie_for_http_clients() {
     assert!(
         https_cookie.to_ascii_lowercase().contains("secure"),
         "expected Secure attribute to remain when x-forwarded-proto=https, got: {}",
+        https_cookie
+    );
+    assert!(
+        https_cookie.to_ascii_lowercase().contains("samesite=none"),
+        "expected SameSite=None to remain for HTTPS clients, got: {}",
         https_cookie
     );
 

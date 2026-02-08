@@ -54,7 +54,13 @@ export const list = authQuery({
 
       const devboxIdsByProvider = new Set(
         devboxInfos
-          .filter((info) => info.provider === args.provider)
+          // Legacy compatibility: treat "modal" as an alias of "e2b".
+          .filter((info) => {
+            if (args.provider === "e2b" && info.provider === "modal") {
+              return true;
+            }
+            return info.provider === args.provider;
+          })
           .map((info) => info.devboxId)
       );
 
@@ -178,8 +184,11 @@ export const getByProviderInstanceId = authQuery({
     }
 
     // Verify provider matches if specified
-    if (args.provider && info.provider !== args.provider) {
-      return null;
+    if (args.provider) {
+      const matches =
+        info.provider === args.provider ||
+        (args.provider === "e2b" && info.provider === "modal");
+      if (!matches) return null;
     }
 
     const instance = await ctx.db

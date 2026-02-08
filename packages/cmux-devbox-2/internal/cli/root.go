@@ -25,6 +25,7 @@ var versionCheckDone chan struct{}
 var versionCheckResult *version.CheckResult
 
 var resolvedProvider api.Provider = api.ProviderE2B
+var defaultProvider string // set via ldflags at build time
 
 var rootCmd = &cobra.Command{
 	Use:   "cmux",
@@ -51,11 +52,23 @@ Quick start:
 		if providerRaw == "" {
 			providerRaw = os.Getenv("CMUX_DEVBOX_PROVIDER")
 		}
+		if providerRaw == "" {
+			providerRaw = defaultProvider
+		}
 		provider, err := api.ParseProvider(providerRaw)
 		if err != nil {
 			return fmt.Errorf("invalid provider: %w", err)
 		}
 		resolvedProvider = provider
+		if resolvedProvider == api.ProviderDaytona &&
+			buildMode == "dev" &&
+			os.Getenv("CMUX_DAYTONA_PROXY_ORIGIN") == "" &&
+			os.Getenv("CMUX_DAYTONA_PROXY_DOMAIN") == "" &&
+			os.Getenv("CMUX_DAYTONA_PROXY_SCHEME") == "" {
+			// Dev convenience: production wildcard certs for *.cmux.sh may not be configured
+			// in all environments. Default Daytona preview URLs to the local global-proxy.
+			_ = os.Setenv("CMUX_DAYTONA_PROXY_ORIGIN", "http://cmux.localhost:8080")
+		}
 
 		// Start version check in background for long-running commands
 		cmdName := cmd.Name()
@@ -164,6 +177,10 @@ func SetVersionInfo(version, commit, buildTime string) {
 
 func SetBuildMode(mode string) {
 	buildMode = mode
+}
+
+func SetDefaultProvider(provider string) {
+	defaultProvider = provider
 }
 
 func getTeamSlug() (string, error) {

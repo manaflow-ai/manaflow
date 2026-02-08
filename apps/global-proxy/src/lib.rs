@@ -240,6 +240,12 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                     (false, None)
                 };
 
+                let vscode_rewrite = if route.port == 39_378 {
+                    build_vscode_rewrite(&req)
+                } else {
+                    None
+                };
+
                 // VNC uses a cookie-based session; when this proxy is served over plain HTTP
                 // (e.g. local dev), Secure cookies won't be sent by browsers. Strip Secure so
                 // VNC can work over http://*.localhost.
@@ -258,6 +264,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         port_header: None,
                         frame_ancestors,
                         daytona_skip_preview_warning: is_daytona,
+                        vscode_rewrite,
                     },
                 )
                 .await;
@@ -268,6 +275,11 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                 }
 
                 let is_vscode_route = route.port == 39_378;
+                let vscode_rewrite = if is_vscode_route {
+                    build_vscode_rewrite(&req)
+                } else {
+                    None
+                };
 
                 if *req.method() == Method::OPTIONS {
                     if is_vscode_route {
@@ -303,6 +315,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
                         daytona_skip_preview_warning: false,
+                        vscode_rewrite,
                     },
                 )
                 .await;
@@ -336,6 +349,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                         port_header: Some(route.port.to_string()),
                         frame_ancestors: None,
                         daytona_skip_preview_warning: false,
+                        vscode_rewrite: None,
                     },
                 )
                 .await;
@@ -372,6 +386,7 @@ struct ProxyBehavior {
     port_header: Option<String>,
     frame_ancestors: Option<&'static str>,
     daytona_skip_preview_warning: bool,
+    vscode_rewrite: Option<VscodeRewrite>,
 }
 
 fn request_is_https(req: &Request<Body>) -> bool {
@@ -379,6 +394,61 @@ fn request_is_https(req: &Request<Body>) -> bool {
         .get("x-forwarded-proto")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
+}
+
+#[derive(Clone)]
+struct VscodeRewrite {
+    external_authority: String,
+    external_origin: String,
+}
+
+fn build_vscode_rewrite(req: &Request<Body>) -> Option<VscodeRewrite> {
+    let is_https = request_is_https(req);
+    let scheme = if is_https { "https" } else { "http" };
+
+    let authority = extract_authority(req)?;
+    let authority = ensure_authority_has_port(&authority, is_https);
+
+    Some(VscodeRewrite {
+        external_origin: format!("{}://{}", scheme, authority),
+        external_authority: authority,
+    })
+}
+
+fn extract_authority(req: &Request<Body>) -> Option<String> {
+    let headers = req.headers();
+    let raw = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(header::HOST))?
+        .to_str()
+        .ok()?;
+    let first = raw.split(',').next()?.trim();
+    if first.is_empty() {
+        None
+    } else {
+        Some(first.to_string())
+    }
+}
+
+fn ensure_authority_has_port(authority: &str, is_https: bool) -> String {
+    if authority_has_port(authority) {
+        return authority.to_string();
+    }
+    let port = if is_https { 443 } else { 80 };
+    format!("{}:{}", authority, port)
+}
+
+fn authority_has_port(authority: &str) -> bool {
+    if authority.starts_with('[') {
+        if let Some((_, port)) = authority.rsplit_once("]:") {
+            return port.chars().all(|c| c.is_ascii_digit());
+        }
+        return false;
+    }
+    if let Some((_, port)) = authority.rsplit_once(':') {
+        return port.chars().all(|c| c.is_ascii_digit());
+    }
+    false
 }
 
 async fn forward_request(
@@ -912,7 +982,7 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                             );
                         }
                     };
-                match rewrite_html(decoded, behavior.skip_service_worker) {
+                match rewrite_html(decoded, HtmlRewriteOptions::from_behavior(&behavior)) {
                     Ok(body) => {
                         let mut builder = Response::builder().status(status).version(version);
                         let mut new_headers =
@@ -1066,7 +1136,20 @@ fn strip_secure_cookie_attributes(headers: &mut HeaderMap) {
         let stripped = cookie
             .split(';')
             .map(|part| part.trim())
-            .filter(|part| !part.eq_ignore_ascii_case("secure"))
+            // Browsers reject SameSite=None cookies unless Secure is set. When we strip Secure for
+            // local HTTP development, downgrade SameSite=None to Lax so the cookie is accepted.
+            .filter_map(|part| {
+                if part.eq_ignore_ascii_case("secure") {
+                    return None;
+                }
+                if let Some((key, value)) = part.split_once('=')
+                    && key.trim().eq_ignore_ascii_case("samesite")
+                    && value.trim().eq_ignore_ascii_case("none")
+                {
+                    return Some("SameSite=Lax");
+                }
+                Some(part)
+            })
             .collect::<Vec<_>>()
             .join("; ");
 
@@ -1122,18 +1205,36 @@ fn strip_cors_headers(headers: &mut HeaderMap) {
 
 fn rewrite_html(
     bytes: Bytes,
-    skip_service_worker: bool,
+    options: HtmlRewriteOptions,
 ) -> Result<Vec<u8>, lol_html::errors::RewritingError> {
     let mut output = Vec::with_capacity(bytes.len());
+    let vscode_rewrite = options.vscode_rewrite.clone();
 
     let mut rewriter = HtmlRewriter::new(
         Settings {
             element_content_handlers: vec![
                 element!("head", move |el| {
                     el.prepend(HEAD_SCRIPT, ContentType::Html);
-                    if !skip_service_worker {
+                    if !options.skip_service_worker {
                         el.prepend(SERVICE_WORKER_SCRIPT, ContentType::Html);
                     }
+                    Ok(())
+                }),
+                element!("meta#vscode-workbench-web-configuration", move |el| {
+                    let Some(rewrite) = vscode_rewrite.as_ref() else {
+                        return Ok(());
+                    };
+                    let Some(raw_settings) = el.get_attribute("data-settings") else {
+                        return Ok(());
+                    };
+
+                    let Some(new_settings) =
+                        rewrite_vscode_workbench_config(&raw_settings, rewrite)
+                    else {
+                        return Ok(());
+                    };
+
+                    el.set_attribute("data-settings", &new_settings)?;
                     Ok(())
                 }),
                 element!("meta", |el| {
@@ -1153,6 +1254,110 @@ fn rewrite_html(
     rewriter.write(&bytes)?;
     rewriter.end()?;
     Ok(output)
+}
+
+#[derive(Clone)]
+struct HtmlRewriteOptions {
+    skip_service_worker: bool,
+    vscode_rewrite: Option<VscodeRewrite>,
+}
+
+impl HtmlRewriteOptions {
+    fn from_behavior(behavior: &ProxyBehavior) -> Self {
+        Self {
+            skip_service_worker: behavior.skip_service_worker,
+            vscode_rewrite: behavior.vscode_rewrite.clone(),
+        }
+    }
+}
+
+fn decode_html_entities(input: &str) -> String {
+    // We only need a small subset for the VSCode meta tag `data-settings`.
+    input
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+}
+
+fn rewrite_vscode_workbench_config(raw: &str, rewrite: &VscodeRewrite) -> Option<String> {
+    let parsed = serde_json::from_str::<Value>(raw)
+        .or_else(|_| serde_json::from_str::<Value>(&decode_html_entities(raw)))
+        .ok()?;
+
+    let mut settings = parsed;
+    let old_authority = settings
+        .get("remoteAuthority")
+        .and_then(|value| value.as_str())
+        .map(|s| s.to_string())?;
+
+    let new_authority = rewrite.external_authority.as_str();
+    let old_origin_http = format!("http://{}", old_authority);
+    let old_origin_https = format!("https://{}", old_authority);
+    let new_origin = rewrite.external_origin.as_str();
+
+    if let Some(remote_auth) = settings.get_mut("remoteAuthority") {
+        *remote_auth = Value::String(new_authority.to_string());
+    }
+
+    replace_json_strings(
+        &mut settings,
+        &old_authority,
+        new_authority,
+        &old_origin_http,
+        &old_origin_https,
+        new_origin,
+    );
+
+    serde_json::to_string(&settings).ok()
+}
+
+fn replace_json_strings(
+    value: &mut Value,
+    old_authority: &str,
+    new_authority: &str,
+    old_origin_http: &str,
+    old_origin_https: &str,
+    new_origin: &str,
+) {
+    match value {
+        Value::String(s) => {
+            if s.contains(old_origin_http) {
+                *s = s.replace(old_origin_http, new_origin);
+            }
+            if s.contains(old_origin_https) {
+                *s = s.replace(old_origin_https, new_origin);
+            }
+            if s.contains(old_authority) {
+                *s = s.replace(old_authority, new_authority);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_json_strings(
+                    item,
+                    old_authority,
+                    new_authority,
+                    old_origin_http,
+                    old_origin_https,
+                    new_origin,
+                );
+            }
+        }
+        Value::Object(map) => {
+            for (_, v) in map.iter_mut() {
+                replace_json_strings(
+                    v,
+                    old_authority,
+                    new_authority,
+                    old_origin_http,
+                    old_origin_https,
+                    new_origin,
+                );
+            }
+        }
+        _ => {}
+    }
 }
 
 fn parse_route(subdomain: String) -> Route {

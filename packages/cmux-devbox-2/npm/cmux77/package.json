@@ -1,0 +1,22 @@
+{
+  "name": "cmux77",
+  "version": "0.7.18-dev.77",
+  "private": true,
+  "description": "Dev test build of the cmux CLI (alias binary cmux77)",
+  "bin": {
+    "cmux77": "bin/cmux77"
+  },
+  "files": [
+    "bin"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}
+
