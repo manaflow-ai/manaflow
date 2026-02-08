@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { ChatMessage } from "./sms_llm";
 
 // ============= Internal Queries =============
@@ -263,6 +264,62 @@ export const updateMessageMediaUrl = internalMutation({
   },
 });
 
+// ============= SMS Generated Images Registry =============
+
+export const storeGeneratedImage = internalMutation({
+  args: {
+    phoneNumber: v.string(),
+    storageId: v.id("_storage"),
+    url: v.string(),
+    prompt: v.string(),
+    sourceImageUrl: v.optional(v.string()),
+    model: v.string(),
+    mimeType: v.string(),
+    sizeBytes: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("smsGeneratedImages", {
+      phoneNumber: args.phoneNumber,
+      storageId: args.storageId,
+      url: args.url,
+      prompt: args.prompt,
+      sourceImageUrl: args.sourceImageUrl,
+      model: args.model,
+      mimeType: args.mimeType,
+      sizeBytes: args.sizeBytes,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const getGeneratedImages = internalQuery({
+  args: {
+    phoneNumber: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    return await ctx.db
+      .query("smsGeneratedImages")
+      .withIndex("by_phone", (q) => q.eq("phoneNumber", args.phoneNumber))
+      .order("desc")
+      .take(limit);
+  },
+});
+
+export const getGeneratedImageById = internalQuery({
+  args: {
+    imageId: v.id("smsGeneratedImages"),
+  },
+  handler: async (ctx, args) => {
+    const image = await ctx.db.get(args.imageId);
+    if (!image) return null;
+    // Refresh the signed URL
+    const freshUrl = await ctx.storage.getUrl(image.storageId);
+    return { ...image, url: freshUrl ?? image.url };
+  },
+});
+
 // ============= SMS Agent Inbox Queries/Mutations =============
 
 /**
@@ -382,6 +439,7 @@ export const addInboxEntry = internalMutation({
       v.literal("error")
     ),
     summary: v.string(),
+    groupId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("smsAgentInbox", {
@@ -389,9 +447,30 @@ export const addInboxEntry = internalMutation({
       conversationId: args.conversationId,
       type: args.type,
       summary: args.summary,
+      groupId: args.groupId,
       isRead: false,
       createdAt: Date.now(),
     });
+  },
+});
+
+/**
+ * Get the groupId from the "started" inbox entry for a conversation.
+ * Used by sms_notifications to route notifications back to the originating group chat.
+ */
+export const getInboxGroupId = internalQuery({
+  args: {
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const entry = await ctx.db
+      .query("smsAgentInbox")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId)
+      )
+      .filter((q) => q.eq(q.field("type"), "started"))
+      .first();
+    return entry?.groupId;
   },
 });
 
@@ -493,5 +572,83 @@ export const getSandboxInfo = internalQuery({
       sandboxUrl: sandbox.sandboxUrl,
       status: sandbox.status,
     };
+  },
+});
+
+// ============= Group Participants Query =============
+
+/**
+ * Get participants from the most recent message in a group.
+ * Used to populate the send_dm tool with available recipients.
+ */
+export const getGroupParticipants = internalQuery({
+  args: { groupId: v.string() },
+  handler: async (ctx, args): Promise<string[]> => {
+    const msg = await ctx.db
+      .query("smsMessages")
+      .withIndex("by_group_id", (q) => q.eq("groupId", args.groupId))
+      .order("desc")
+      .first();
+    return msg?.participants ?? [];
+  },
+});
+
+// ============= Debounce State Queries/Mutations =============
+
+/**
+ * Get the debounce state for a conversation key.
+ */
+export const getDebounceState = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("smsDebounceState")
+      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .first();
+  },
+});
+
+/**
+ * Schedule inbound message processing with debouncing.
+ * Each inbound message upserts a debounce timestamp and schedules a delayed handler.
+ * Only the handler matching the latest timestamp will actually process messages.
+ */
+export const scheduleInboundProcessing = internalMutation({
+  args: {
+    fromNumber: v.string(),
+    content: v.string(),
+    messageId: v.optional(v.id("smsMessages")),
+    messageHandle: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
+    groupId: v.optional(v.string()),
+    participants: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const DEBOUNCE_MS = 2000;
+    const key = args.groupId || args.fromNumber;
+    const now = Date.now();
+
+    // Upsert debounce state
+    const existing = await ctx.db
+      .query("smsDebounceState")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { lastScheduledAt: now });
+    } else {
+      await ctx.db.insert("smsDebounceState", { key, lastScheduledAt: now });
+    }
+
+    // Schedule the batch processor
+    await ctx.scheduler.runAfter(DEBOUNCE_MS, internal.sms.processInboundBatch, {
+      fromNumber: args.fromNumber,
+      content: args.content,
+      messageId: args.messageId,
+      messageHandle: args.messageHandle,
+      mediaUrl: args.mediaUrl,
+      groupId: args.groupId,
+      participants: args.participants,
+      scheduledAt: now,
+    });
   },
 });

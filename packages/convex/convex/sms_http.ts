@@ -76,7 +76,7 @@ export const sendblueWebhook = httpAction(async (ctx, request) => {
           })
         ),
 
-        // Handle inbound message (send LLM reply)
+        // Schedule inbound message processing (debounced)
           Effect.flatMap((messageId) =>
             pipe(
               Effect.if(
@@ -85,7 +85,7 @@ export const sendblueWebhook = httpAction(async (ctx, request) => {
                   onTrue: () =>
                     Effect.tryPromise({
                       try: () =>
-                        ctx.runAction(internal.sms.handleInboundMessage, {
+                        ctx.runMutation(internal.sms_queries.scheduleInboundProcessing, {
                           fromNumber: payload.from_number,
                           content: payload.content || "",
                           messageId,
@@ -95,7 +95,7 @@ export const sendblueWebhook = httpAction(async (ctx, request) => {
                           participants: payload.participants ?? undefined,
                         }),
                       catch: () =>
-                        new WebhookValidationError("Failed to handle inbound message"),
+                        new WebhookValidationError("Failed to schedule inbound processing"),
                   }),
                 onFalse: () => Effect.void,
               }

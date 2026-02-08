@@ -1585,12 +1585,28 @@ const convexSchema = defineSchema({
       v.literal("error") // Task errored
     ),
     summary: v.string(), // Short summary for agent to read
+    groupId: v.optional(v.string()), // Group chat ID if started from a group
     isRead: v.boolean(),
     createdAt: v.number(),
   })
     .index("by_phone_unread", ["phoneNumber", "isRead", "createdAt"])
     .index("by_phone", ["phoneNumber", "createdAt"])
     .index("by_conversation", ["conversationId"]),
+
+  // SMS Generated Images - Registry for Nano Banana (Gemini) generated/edited images
+  smsGeneratedImages: defineTable({
+    phoneNumber: v.string(), // Who requested it
+    storageId: v.id("_storage"), // Convex file storage reference
+    url: v.string(), // Public URL (from Convex storage)
+    prompt: v.string(), // Generation/edit prompt
+    sourceImageUrl: v.optional(v.string()), // Input image URL (for edits)
+    model: v.string(), // gemini-2.5-flash-image or gemini-3-pro-image-preview
+    mimeType: v.string(), // image/png, image/jpeg, etc.
+    sizeBytes: v.number(), // File size in bytes
+    createdAt: v.number(),
+  })
+    .index("by_phone", ["phoneNumber", "createdAt"])
+    .index("by_storage_id", ["storageId"]),
 
   // User-owned devbox instances (standalone sandboxes not tied to task runs)
   devboxInstances: defineTable({
@@ -1628,6 +1644,13 @@ const convexSchema = defineSchema({
   })
     .index("by_devboxId", ["devboxId"])
     .index("by_providerInstanceId", ["providerInstanceId"]),
+
+  // SMS inbound message debounce state
+  // Prevents multiple LLM calls for rapid-fire messages by tracking the latest scheduled handler
+  smsDebounceState: defineTable({
+    key: v.string(), // groupId or phoneNumber (1:1)
+    lastScheduledAt: v.number(), // Timestamp of the most recently scheduled handler
+  }).index("by_key", ["key"]),
 
   // E2B instance activity tracking (for managing instance lifecycle)
   e2bInstanceActivity: defineTable({

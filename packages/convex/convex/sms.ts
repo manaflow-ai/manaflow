@@ -316,6 +316,39 @@ const extractAreaCode = (phoneNumber: string): string | null => {
   return null;
 };
 
+export const processInboundBatch = internalAction({
+  args: {
+    fromNumber: v.string(),
+    content: v.string(),
+    messageId: v.optional(v.id("smsMessages")),
+    messageHandle: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
+    groupId: v.optional(v.string()),
+    participants: v.optional(v.array(v.string())),
+    scheduledAt: v.number(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    // Check if we're still the latest scheduled handler
+    const key = args.groupId || args.fromNumber;
+    const state = await ctx.runQuery(internal.sms_queries.getDebounceState, { key });
+    if (state && state.lastScheduledAt > args.scheduledAt) {
+      // A newer message arrived - bail, that handler will process everything
+      return;
+    }
+
+    // We're the latest - run the actual message handling
+    await ctx.runAction(internal.sms.handleInboundMessage, {
+      fromNumber: args.fromNumber,
+      content: args.content,
+      messageId: args.messageId,
+      messageHandle: args.messageHandle,
+      mediaUrl: args.mediaUrl,
+      groupId: args.groupId,
+      participants: args.participants,
+    });
+  },
+});
+
 export const handleInboundMessage = internalAction({
   args: {
     fromNumber: v.string(),
@@ -468,6 +501,7 @@ export const handleInboundMessage = internalAction({
                   groupId: args.groupId,
                   userId: phoneUser.userId,
                   teamId: phoneUser.defaultTeamId,
+                  participants: args.participants,
                   sendReplySms: async (content, mediaUrl) => {
                     if (args.groupId) {
                       await ctx.runAction(internal.sms.sendGroupMessage, {
@@ -484,6 +518,28 @@ export const handleInboundMessage = internalAction({
                     }
                     return { success: true };
                   },
+                  sendDirectMessage: async (toNumber, content, mediaUrl) => {
+                    await ctx.runAction(internal.sms.sendMessage, { content, toNumber, mediaUrl });
+                    return { success: true };
+                  },
+                  storeImage: async (params) => {
+                    const buffer = Buffer.from(params.base64Data, "base64");
+                    const blob = new Blob([buffer], { type: params.mimeType });
+                    const storageId = await ctx.storage.store(blob);
+                    const url = await ctx.storage.getUrl(storageId);
+                    if (!url) throw new Error("Failed to get storage URL");
+                    const imageId = await ctx.runMutation(internal.sms_queries.storeGeneratedImage, {
+                      phoneNumber: args.fromNumber,
+                      storageId,
+                      url,
+                      prompt: params.prompt,
+                      sourceImageUrl: params.sourceImageUrl,
+                      model: params.model,
+                      mimeType: params.mimeType,
+                      sizeBytes: buffer.byteLength,
+                    });
+                    return { imageId: imageId as string, url };
+                  },
                   executeAction: async <T>(
                     action: { name: string; args: Record<string, unknown> },
                     _handler: () => Promise<T>
@@ -496,6 +552,7 @@ export const handleInboundMessage = internalAction({
                         teamId: phoneUser.defaultTeamId,
                         task: action.args.task as string,
                         providerId: action.args.provider as "claude" | "codex" | undefined,
+                        groupId: args.groupId,
                       });
                       return result as T;
                     }
@@ -783,6 +840,7 @@ export const startAgentConversation = internalAction({
     providerId: v.optional(
       v.union(v.literal("claude"), v.literal("codex"), v.literal("gemini"), v.literal("opencode"))
     ),
+    groupId: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -881,6 +939,7 @@ export const startAgentConversation = internalAction({
                 conversationId,
                 type: "started",
                 summary: `Started: ${args.task.slice(0, 50)}${args.task.length > 50 ? "..." : ""}`,
+                groupId: args.groupId,
               });
               return conversationId;
             },
@@ -1142,6 +1201,7 @@ export const sendProactiveNotification = internalAction({
     phoneNumber: v.string(),
     conversationId: v.id("conversations"),
     summary: v.string(),
+    groupId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
     const program = pipe(
@@ -1162,13 +1222,18 @@ export const sendProactiveNotification = internalAction({
                 catch: () => new SendblueError("Failed to store proactive message"),
               }),
 
-              // Send via Sendblue
+              // Send via Sendblue (route to group if groupId present)
               Effect.flatMap((messageId) =>
                 pipe(
-                  service.sendMessage({
-                    toNumber: args.phoneNumber,
-                    content: args.summary,
-                  }),
+                  args.groupId
+                    ? service.sendGroupMessage({
+                        groupId: args.groupId,
+                        content: args.summary,
+                      })
+                    : service.sendMessage({
+                        toNumber: args.phoneNumber,
+                        content: args.summary,
+                      }),
 
                   // Update message with result
                   Effect.flatMap((response) =>
@@ -1275,6 +1340,7 @@ export const triggerAgentWithNotification = internalAction({
   args: {
     phoneNumber: v.string(),
     conversationId: v.id("conversations"),
+    groupId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<void> => {
     const program = pipe(
@@ -1368,13 +1434,23 @@ export const triggerAgentWithNotification = internalAction({
             const notificationContext = buildNotificationContext(notifications);
 
             return pipe(
-              // Get SMS conversation history
+              // Get SMS conversation history + group participants
               Effect.tryPromise({
-                try: () =>
-                  ctx.runQuery(internal.sms_queries.getConversationHistory, {
-                    phoneNumber: args.phoneNumber,
-                    limit: 20,
-                  }),
+                try: async () => {
+                  const [history, participants] = await Promise.all([
+                    ctx.runQuery(internal.sms_queries.getConversationHistory, {
+                      phoneNumber: args.phoneNumber,
+                      groupId: args.groupId,
+                      limit: 20,
+                    }),
+                    args.groupId
+                      ? ctx.runQuery(internal.sms_queries.getGroupParticipants, {
+                          groupId: args.groupId,
+                        })
+                      : Promise.resolve([]),
+                  ]);
+                  return { history, participants };
+                },
                 catch: (error) =>
                   new SendblueError(
                     "Failed to get conversation history",
@@ -1384,10 +1460,11 @@ export const triggerAgentWithNotification = internalAction({
               }),
 
               // Run agent with notification context
-              Effect.flatMap((history) => {
+              Effect.flatMap(({ history: rawHistory, participants }) => {
                 // Bedrock requires the conversation to end with a user message.
                 // If the last message is from the assistant (e.g. "on it!"),
                 // append a synthetic user message to trigger the notification response.
+                let history = rawHistory;
                 const lastMsg = history[history.length - 1];
                 if (lastMsg && lastMsg.role === "assistant") {
                   history = [...history, { role: "user" as const, content: "[task completed - check notifications]" }];
@@ -1399,15 +1476,47 @@ export const triggerAgentWithNotification = internalAction({
                     // Create sandbox tool context for the LLM
                     const sandboxContext: SandboxToolContext = {
                       phoneNumber: args.phoneNumber,
+                      groupId: args.groupId,
                       userId: phoneUser.userId,
                       teamId: phoneUser.defaultTeamId,
+                      participants: participants.length > 0 ? participants : undefined,
                       sendReplySms: async (content, mediaUrl) => {
-                        await ctx.runAction(internal.sms.sendMessage, {
-                          content,
-                          toNumber: args.phoneNumber,
-                          mediaUrl,
-                        });
+                        if (args.groupId) {
+                          await ctx.runAction(internal.sms.sendGroupMessage, {
+                            content,
+                            groupId: args.groupId,
+                            mediaUrl,
+                          });
+                        } else {
+                          await ctx.runAction(internal.sms.sendMessage, {
+                            content,
+                            toNumber: args.phoneNumber,
+                            mediaUrl,
+                          });
+                        }
                         return { success: true };
+                      },
+                      sendDirectMessage: async (toNumber, content, mediaUrl) => {
+                        await ctx.runAction(internal.sms.sendMessage, { content, toNumber, mediaUrl });
+                        return { success: true };
+                      },
+                      storeImage: async (params) => {
+                        const buffer = Buffer.from(params.base64Data, "base64");
+                        const blob = new Blob([buffer], { type: params.mimeType });
+                        const storageId = await ctx.storage.store(blob);
+                        const url = await ctx.storage.getUrl(storageId);
+                        if (!url) throw new Error("Failed to get storage URL");
+                        const imageId = await ctx.runMutation(internal.sms_queries.storeGeneratedImage, {
+                          phoneNumber: args.phoneNumber,
+                          storageId,
+                          url,
+                          prompt: params.prompt,
+                          sourceImageUrl: params.sourceImageUrl,
+                          model: params.model,
+                          mimeType: params.mimeType,
+                          sizeBytes: buffer.byteLength,
+                        });
+                        return { imageId: imageId as string, url };
                       },
                       executeAction: async <T>(
                         action: { name: string; args: Record<string, unknown> },
@@ -1426,6 +1535,7 @@ export const triggerAgentWithNotification = internalAction({
                                 | "claude"
                                 | "codex"
                                 | undefined,
+                              groupId: args.groupId,
                             }
                           );
                           return result as T;
@@ -1529,7 +1639,7 @@ export const triggerAgentWithNotification = internalAction({
 
                     return llmService.generateAgentResponse(
                       history,
-                      false, // isGroup
+                      !!args.groupId, // isGroup
                       10, // maxRoundtrips - needs enough for get_port_url + send_sms
                       extractAreaCode(args.phoneNumber),
                       sandboxContext,
@@ -1596,6 +1706,7 @@ export const triggerAgentWithNotification = internalAction({
                                 phoneNumber: args.phoneNumber,
                                 conversationId: args.conversationId,
                                 summary: fallbackMessage,
+                                groupId: args.groupId,
                               }),
                             catch: (error) =>
                               new SendblueError(

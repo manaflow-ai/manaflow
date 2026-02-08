@@ -7,6 +7,8 @@ import { generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { toBedrockModelId } from "./bedrock_utils";
+// @ts-expect-error no type declarations for heic-convert
+import heicConvert from "heic-convert";
 
 
 // ============= Errors =============
@@ -354,7 +356,8 @@ always type in lowercase. no capital letters ever. this is imessage, keep it cas
 don't use emojis.
 avoid repetition: never send two consecutive messages that are identical or near-identical. if you're about to send a similar status/error update to your last assistant message, rephrase it and add one new detail or next step.
 messages from different people are prefixed with their last 4 digits like [1234]: message.
-pay attention to who is speaking and respond appropriately to the conversation.`
+pay attention to who is speaking and respond appropriately to the conversation.
+you can use the send_dm tool to send a private DM to a specific person in the group. use their last 4 digits (e.g. "0749") or full number.`
     : `you are a helpful assistant responding via imessage.
 keep responses concise (under 160 characters when possible, max 500).
 be conversational and friendly. don't use markdown formatting like *bold* or _italic_ - those render as literal characters in imessage. if you need emphasis, use unicode: 𝗯𝗼𝗹𝗱 or 𝘪𝘵𝘢𝘭𝘪𝘤.
@@ -386,8 +389,15 @@ you can also help with coding tasks using sandbox tools:
 - get_status: get the current status and last assistant message from a conversation.
 - get_port_url: get the public URL for a port on a sandbox. use after starting a server (minecraft, jupyter, web server, etc.) to get the connection URL.
 - view_media: see an image or video that the user sent. when you see [image attached: <url>] in a message, always call this tool before responding so you can actually see the image. for videos, returns metadata.
+- edit_image: generate or edit images using google gemini (nano banana). automatically collects recent images from the chat as context. just describe what you want — no need to pass image URLs. supports multi-image input (up to 3 for fast, 14 for pro). model can be "fast" (default, cheap) or "pro" (4K quality).
 - list_conversations: list recent sandbox conversations (most recent 20).
 - search_conversations: search through older conversation history.
+
+WORKFLOW for image generation/editing:
+1. FIRST call send_sms to acknowledge (e.g. "on it!" or "generating...") so the user knows you're working
+2. call edit_image with just a prompt — it automatically picks up recent images from the chat. no need to pass image urls.
+3. get back an image id + url
+4. call send_sms with { type: "image", url: "<the url>" } to send it to the user
 
 RULES:
 - be proactive. don't wait for the user to ask for results - send them as soon as they're ready.
@@ -464,7 +474,16 @@ export type SandboxToolContext = {
   groupId?: string;
   userId: string;
   teamId: string;
+  participants?: string[]; // Phone numbers of group participants
   sendReplySms: (content: string, mediaUrl?: string) => Promise<{ success: boolean }>;
+  sendDirectMessage: (toNumber: string, content: string, mediaUrl?: string) => Promise<{ success: boolean }>;
+  storeImage: (params: {
+    base64Data: string;
+    mimeType: string;
+    prompt: string;
+    sourceImageUrl?: string;
+    model: string;
+  }) => Promise<{ imageId: string; url: string }>;
   executeAction: <T>(
     action: { name: string; args: Record<string, unknown> },
     handler: () => Promise<T>
@@ -773,6 +792,61 @@ const makeLLMServiceFromBackend = (backend: LLMBackend): LLMService => {
                     return output;
                   },
                 };
+
+                // send_dm: send a private DM to a specific person in the group
+                if (sandboxContext.groupId && sandboxContext.participants && sandboxContext.participants.length > 0) {
+                  tools.send_dm = {
+                    description:
+                      "Send a private DM to a specific person in the group chat. Use their last 4 digits (e.g. \"0749\") or full phone number.",
+                    inputSchema: z.object({
+                      recipient: z.string().describe("Last 4 digits of their phone number (e.g. \"0749\") or full number"),
+                      content: z.string().max(400).describe("Message content (max 400 chars)"),
+                      mediaUrl: z.string().url().optional().describe("Optional image URL to attach"),
+                    }),
+                    execute: async (input: unknown) => {
+                      const { recipient, content, mediaUrl } = input as {
+                        recipient: string;
+                        content: string;
+                        mediaUrl?: string;
+                      };
+                      const start = Date.now();
+
+                      // Resolve recipient from participants by matching last 4 digits
+                      const participants = sandboxContext.participants ?? [];
+                      let fullNumber: string | undefined;
+
+                      if (recipient.startsWith("+") && recipient.length >= 10) {
+                        // Full number provided
+                        fullNumber = recipient;
+                      } else {
+                        // Match last 4 digits
+                        const match = participants.find((p) => p.endsWith(recipient));
+                        if (match) {
+                          fullNumber = match;
+                        }
+                      }
+
+                      const duration = Date.now() - start;
+
+                      if (!fullNumber) {
+                        const output = `couldn't find participant matching "${recipient}". known participants: ${participants.map((p) => p.slice(-4)).join(", ")}`;
+                        toolCalls.push({ tool: "send_dm", input: { recipient, content }, output, durationMs: duration });
+                        return output;
+                      }
+
+                      try {
+                        await sandboxContext.sendDirectMessage(fullNumber, content, mediaUrl);
+                        const output = `dm sent to ${fullNumber.slice(-4)}`;
+                        toolCalls.push({ tool: "send_dm", input: { recipient, content }, output, durationMs: Date.now() - start });
+                        return output;
+                      } catch (error) {
+                        const output = `failed to send dm: ${error instanceof Error ? error.message : String(error)}`;
+                        toolCalls.push({ tool: "send_dm", input: { recipient, content }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+                    },
+                  };
+                }
 
                 const startAgentInputSchema = z.object({
                   task: z.string().describe("The task/prompt to give to the agent"),
@@ -1194,6 +1268,206 @@ const makeLLMServiceFromBackend = (backend: LLMBackend): LLMService => {
                       type: "content" as const,
                       value: [{ type: "media" as const, data: output.data, mediaType: output.mediaType }],
                     };
+                  },
+                };
+
+                // Nano Banana (Gemini) image generation/editing tool
+                // Automatically collects recent images from chat history for context
+                tools.edit_image = {
+                  description:
+                    "Generate or edit images using Google Gemini (Nano Banana). Automatically includes recent images from the chat as context — no need to pass image URLs. Just describe what you want.",
+                  inputSchema: z.object({
+                    prompt: z.string().describe("Image generation/editing prompt (e.g., 'make it watercolor', 'combine these photos', 'a sunset over mountains')"),
+                    model: z.enum(["fast", "pro"]).optional().describe("'fast' = gemini-2.5-flash-image (~$0.04, max 3 images), 'pro' = gemini-3-pro-image-preview (4K, max 14 images). Default: fast"),
+                  }),
+                  execute: async (input: unknown) => {
+                    const { prompt, model } = input as {
+                      prompt: string;
+                      model?: "fast" | "pro";
+                    };
+                    const start = Date.now();
+
+                    try {
+                      const apiKey = process.env.GOOGLE_AI_API_KEY;
+                      if (!apiKey) {
+                        const output = "error: GOOGLE_AI_API_KEY not configured";
+                        toolCalls.push({ tool: "edit_image", input: { prompt, model }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      const modelId = model === "pro"
+                        ? "gemini-3-pro-image-preview"
+                        : "gemini-2.5-flash-image";
+                      const maxImages = model === "pro" ? 14 : 3;
+
+                      // Extract image URLs from recent chat history (last 10 messages)
+                      const recentMessages = messages.slice(-10);
+                      const imageUrlPattern = /\[image attached: (https?:\/\/[^\]]+)\]/g;
+                      const imageUrls: string[] = [];
+                      for (const msg of recentMessages) {
+                        for (const match of msg.content.matchAll(imageUrlPattern)) {
+                          imageUrls.push(match[1]);
+                        }
+                      }
+
+                      // Build Gemini request parts with interleaved chat context + images
+                      const parts: Array<Record<string, unknown>> = [];
+                      let fetchedCount = 0;
+                      const skippedFormats: string[] = [];
+
+                      // Add chat context if there are images (helps Gemini understand the conversation)
+                      if (imageUrls.length > 0) {
+                        const contextLines: string[] = [];
+                        for (const msg of recentMessages) {
+                          // Strip image annotations from text for cleaner context
+                          const cleanText = msg.content.replace(/\[image attached: [^\]]+\]/g, "[image]").trim();
+                          if (cleanText) {
+                            contextLines.push(`${msg.role}: ${cleanText}`);
+                          }
+                        }
+                        if (contextLines.length > 0) {
+                          parts.push({ text: `Chat context:\n${contextLines.join("\n")}\n\nRequest: ${prompt}` });
+                        } else {
+                          parts.push({ text: prompt });
+                        }
+
+                        // Fetch and add images (up to model limit)
+                        // Gemini supports: image/jpeg, image/png, image/webp, image/gif
+                        // Skip: SVG, BMP, TIFF, etc. Convert: HEIC/HEIF → JPEG
+                        const SUPPORTED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+                        const urlsToFetch = imageUrls.slice(-maxImages);
+                        for (const url of urlsToFetch) {
+                          try {
+                            const imageResponse = await fetch(url);
+                            if (!imageResponse.ok) continue;
+                            let contentType = (imageResponse.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+                            let arrayBuffer = await imageResponse.arrayBuffer();
+
+                            // Detect format from URL extension if content-type is generic
+                            const urlLower = url.toLowerCase();
+                            if (contentType === "application/octet-stream" || contentType === "binary/octet-stream") {
+                              if (urlLower.includes(".heic")) contentType = "image/heic";
+                              else if (urlLower.includes(".heif")) contentType = "image/heif";
+                              else if (urlLower.includes(".svg")) contentType = "image/svg+xml";
+                            }
+
+                            // Skip unsupported vector/non-raster formats
+                            if (contentType.includes("svg") || urlLower.includes(".svg")) {
+                              skippedFormats.push("svg");
+                              continue;
+                            }
+
+                            // Convert HEIC/HEIF to JPEG
+                            if (contentType === "image/heic" || contentType === "image/heif" || urlLower.includes(".heic") || urlLower.includes(".heif")) {
+                              const jpegBuffer = Buffer.from(await heicConvert({
+                                buffer: Buffer.from(arrayBuffer),
+                                format: "JPEG",
+                                quality: 0.9,
+                              }) as ArrayBuffer);
+                              arrayBuffer = jpegBuffer.buffer.slice(
+                                jpegBuffer.byteOffset,
+                                jpegBuffer.byteOffset + jpegBuffer.byteLength
+                              ) as ArrayBuffer;
+                              contentType = "image/jpeg";
+                            }
+
+                            // Skip any remaining unsupported formats
+                            if (!SUPPORTED_MIME_TYPES.has(contentType)) {
+                              skippedFormats.push(contentType);
+                              continue;
+                            }
+
+                            const base64 = Buffer.from(arrayBuffer).toString("base64");
+                            parts.push({ inline_data: { mime_type: contentType, data: base64 } });
+                            fetchedCount++;
+                          } catch (fetchError) {
+                            console.error("Failed to fetch/convert image:", url, fetchError);
+                          }
+                        }
+
+                        if (fetchedCount === 0) {
+                          // All image fetches failed, just use the prompt
+                          parts.length = 0;
+                          parts.push({ text: prompt });
+                        }
+                      } else {
+                        // No images in chat — pure text-to-image
+                        parts.push({ text: prompt });
+                      }
+
+                      // Call Gemini API
+                      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+                      const geminiResponse = await fetch(geminiUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          contents: [{ parts }],
+                          generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+                        }),
+                      });
+
+                      if (!geminiResponse.ok) {
+                        const errorText = await geminiResponse.text();
+                        console.error("Gemini API error:", geminiResponse.status, errorText);
+                        const output = `gemini api error (${geminiResponse.status}): ${errorText.slice(0, 200)}`;
+                        toolCalls.push({ tool: "edit_image", input: { prompt, model }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      const geminiResult = await geminiResponse.json() as {
+                        candidates?: Array<{
+                          content?: {
+                            parts?: Array<{
+                              text?: string;
+                              inlineData?: { mimeType: string; data: string };
+                            }>;
+                          };
+                        }>;
+                      };
+
+                      // Extract image from response
+                      const candidate = geminiResult.candidates?.[0];
+                      const imagePart = candidate?.content?.parts?.find(
+                        (p) => p.inlineData?.mimeType?.startsWith("image/")
+                      );
+
+                      if (!imagePart?.inlineData) {
+                        const textPart = candidate?.content?.parts?.find((p) => p.text);
+                        const output = textPart?.text
+                          ? `gemini couldn't generate image: ${textPart.text.slice(0, 200)}`
+                          : "error: no image in gemini response";
+                        toolCalls.push({ tool: "edit_image", input: { prompt, model }, output, durationMs: Date.now() - start });
+                        return output;
+                      }
+
+                      // Store image via callback → Convex storage + registry
+                      const stored = await sandboxContext.storeImage({
+                        base64Data: imagePart.inlineData.data,
+                        mimeType: imagePart.inlineData.mimeType,
+                        prompt,
+                        sourceImageUrl: imageUrls.length > 0 ? imageUrls[imageUrls.length - 1] : undefined,
+                        model: modelId,
+                      });
+
+                      const duration = Date.now() - start;
+                      const skippedNote = skippedFormats.length > 0 ? ` (skipped ${skippedFormats.join(", ")} - unsupported format)` : "";
+                      const output = `image generated! id: ${stored.imageId}, url: ${stored.url}` +
+                        (fetchedCount > 0 ? ` (used ${fetchedCount} chat image${fetchedCount > 1 ? "s" : ""} as input)` : " (text-to-image)") +
+                        skippedNote;
+                      toolCalls.push({
+                        tool: "edit_image",
+                        input: { prompt, model, chatImages: fetchedCount, skipped: skippedFormats },
+                        output: `[image ${imagePart.inlineData.mimeType} stored as ${stored.imageId}]`,
+                        durationMs: duration,
+                      });
+
+                      return output;
+                    } catch (error) {
+                      console.error("edit_image failed:", error);
+                      const output = `error: ${error instanceof Error ? error.message : String(error)}`;
+                      toolCalls.push({ tool: "edit_image", input: { prompt, model }, output, durationMs: Date.now() - start });
+                      return output;
+                    }
                   },
                 };
               }
