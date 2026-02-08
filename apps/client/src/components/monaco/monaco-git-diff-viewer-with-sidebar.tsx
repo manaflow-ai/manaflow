@@ -1,5 +1,5 @@
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
-import { Flame, MessageSquare, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Flame, MessageSquare, PanelLeftClose, PanelLeft, X } from "lucide-react";
 import type { editor } from "monaco-editor";
 import {
   memo,
@@ -10,8 +10,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 import { useTheme } from "@/components/theme/use-theme";
+import { Markdown } from "@/components/Markdown";
 import { loaderInitPromise } from "@/lib/monaco-environment";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
@@ -20,7 +22,7 @@ import type { Id } from "@cmux/convex/dataModel";
 
 import { FileDiffHeaderWithViewed } from "../file-diff-header-with-viewed";
 import { kitties } from "../kitties";
-import type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
+import type { DiffLineComment, DiffLineCommentSide, GitDiffViewerProps } from "../codemirror-git-diff-viewer";
 import { DiffSidebarFilter } from "./diff-sidebar-filter";
 import {
   DiffCommentsProvider,
@@ -31,6 +33,7 @@ import {
   AddCommentControl,
   type DiffCommentSide,
 } from "../diff-comments";
+import { formatDistanceToNow } from "date-fns";
 
 void loaderInitPromise;
 
@@ -919,6 +922,14 @@ function createDiffEditorMount({
 // Sub-components
 // ============================================================================
 
+type ReviewInlineZoneHandle = {
+  zoneId: string;
+  zone: editor.IViewZone;
+  domNode: HTMLDivElement;
+  root: Root;
+  resizeObserver: ResizeObserver;
+};
+
 type FileDiffRowClassNames = GitDiffViewerProps["classNames"] extends {
   fileDiffRow?: infer T;
 }
@@ -938,6 +949,161 @@ interface MonacoFileDiffRowProps {
   currentUserId?: string;
   commentsEnabled?: boolean;
   onExpandFile?: () => void;
+  fileLineComments: DiffLineComment[];
+  onAddLineComment?: GitDiffViewerProps["onAddLineComment"];
+}
+
+function formatRelativeTime(ts?: number): string | null {
+  if (typeof ts !== "number") return null;
+  return formatDistanceToNow(new Date(ts), { addSuffix: true });
+}
+
+function sideLabel(side: DiffLineCommentSide): string {
+  return side === "left" ? "Original" : "Modified";
+}
+
+function LineCommentInput({
+  filePath,
+  lineNumber,
+  side,
+  onClose,
+  onSubmit,
+}: {
+  filePath: string;
+  lineNumber: number;
+  side: DiffLineCommentSide;
+  onClose: () => void;
+  onSubmit: (body: string) => Promise<void>;
+}) {
+  const [content, setContent] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    const next = content.trim();
+    if (!next || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onSubmit(next);
+      setContent("");
+      onClose();
+    } catch (error) {
+      console.error("[monaco-git-diff-viewer-with-sidebar] Failed to add line comment:", error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [content, isSubmitting, onClose, onSubmit]);
+
+  return (
+    <div className="border border-blue-300 dark:border-blue-700 rounded-lg bg-white dark:bg-neutral-900 shadow-lg overflow-hidden">
+      <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between bg-blue-50/50 dark:bg-blue-900/20">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            Add comment
+          </span>
+          <span className="text-[10px] text-neutral-400 truncate">
+            {filePath} • Line {lineNumber} • {sideLabel(side)}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded"
+          aria-label="Close comment input"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="p-3">
+        <textarea
+          ref={textareaRef}
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="Write a comment... (Cmd+Enter to add)"
+          className="w-full px-3 py-2 text-[13px] bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 dark:focus:border-blue-600"
+          rows={3}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void handleSubmit();
+            }
+            if (e.key === "Escape") {
+              onClose();
+            }
+          }}
+        />
+        <div className="flex items-center gap-2 justify-end mt-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-md transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={!content.trim() || isSubmitting}
+            className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isSubmitting ? "Adding..." : "Add comment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LineCommentThread({ comment }: { comment: DiffLineComment }) {
+  const authorLabel =
+    comment.author?.login ??
+    (comment.kind === "draft" ? "Draft" : "Unknown");
+  const timestampLabel = formatRelativeTime(comment.createdAt);
+
+  return (
+    <div
+      className={cn(
+        "border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 overflow-hidden shadow-sm",
+        comment.kind === "draft" &&
+          "border-blue-200 dark:border-blue-900/40 bg-blue-50/20 dark:bg-blue-900/10"
+      )}
+    >
+      <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center gap-2 bg-neutral-50/50 dark:bg-neutral-800/30">
+        <div className="flex-1 min-w-0">
+          <span className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            {authorLabel}
+          </span>
+          {timestampLabel ? (
+            <span className="text-[10px] text-neutral-400 ml-2">
+              {timestampLabel}
+            </span>
+          ) : null}
+        </div>
+        {comment.kind === "draft" ? (
+          <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-full">
+            Draft
+          </span>
+        ) : null}
+        {comment.url ? (
+          <a
+            href={comment.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[10px] text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 underline underline-offset-2"
+          >
+            View
+          </a>
+      ) : null}
+      </div>
+      <div className="px-3 py-2">
+        <Markdown content={comment.body} />
+      </div>
+    </div>
+  );
 }
 
 function MonacoFileDiffRow({
@@ -953,6 +1119,8 @@ function MonacoFileDiffRow({
   currentUserId,
   commentsEnabled,
   onExpandFile,
+  fileLineComments,
+  onAddLineComment,
 }: MonacoFileDiffRowProps) {
   const canRenderEditor =
     !file.isBinary &&
@@ -969,6 +1137,23 @@ function MonacoFileDiffRow({
   const isExpandedRef = useRef(isExpanded);
   const rowContainerRef = useRef<HTMLDivElement | null>(null);
   const [isHeightSettled, setIsHeightSettled] = useState(false);
+  const originalEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const modifiedEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const originalReviewDecorationsRef =
+    useRef<editor.IEditorDecorationsCollection | null>(null);
+  const modifiedReviewDecorationsRef =
+    useRef<editor.IEditorDecorationsCollection | null>(null);
+  const originalReviewThreadZonesRef = useRef<Map<number, ReviewInlineZoneHandle>>(
+    new Map(),
+  );
+  const modifiedReviewThreadZonesRef = useRef<Map<number, ReviewInlineZoneHandle>>(
+    new Map(),
+  );
+  const reviewInputZoneRef = useRef<{
+    side: DiffLineCommentSide;
+    lineNumber: number;
+    handle: ReviewInlineZoneHandle;
+  } | null>(null);
 
   // Comments state
   const commentsContext = useDiffCommentsOptional();
@@ -976,6 +1161,13 @@ function MonacoFileDiffRow({
     lineNumber: number;
     side: "left" | "right";
   } | null>(null);
+
+  const reviewCommentsEnabled = Boolean(onAddLineComment);
+  const [selectedLineForReviewComment, setSelectedLineForReviewComment] =
+    useState<{
+      lineNumber: number;
+      side: DiffLineCommentSide;
+    } | null>(null);
 
   // Get comments for this file
   const fileComments = useMemo(() => {
@@ -1008,6 +1200,16 @@ function MonacoFileDiffRow({
   }, [file.filePath, editorMinHeight]);
 
   useEffect(() => {
+    if (isExpanded) return;
+    setSelectedLineForReviewComment(null);
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (reviewCommentsEnabled) return;
+    setSelectedLineForReviewComment(null);
+  }, [reviewCommentsEnabled]);
+
+  useEffect(() => {
     isExpandedRef.current = isExpanded;
     diffControlsRef.current?.updateCollapsedState(!isExpanded);
   }, [isExpanded]);
@@ -1025,10 +1227,20 @@ function MonacoFileDiffRow({
       createDiffEditorMount({
         editorMinHeight,
         getVisibilityTarget: () => rowContainerRef.current,
-        onReady: ({ controls }) => {
+        onReady: ({ diffEditor, controls }) => {
           diffControlsRef.current = controls;
           controls.updateTargetMinHeight(editorMinHeight);
           controls.updateCollapsedState(!isExpandedRef.current);
+
+          const originalEditor = diffEditor.getOriginalEditor();
+          const modifiedEditor = diffEditor.getModifiedEditor();
+          originalEditorRef.current = originalEditor;
+          modifiedEditorRef.current = modifiedEditor;
+
+          originalReviewDecorationsRef.current =
+            originalEditor.createDecorationsCollection();
+          modifiedReviewDecorationsRef.current =
+            modifiedEditor.createDecorationsCollection();
         },
         onHeightSettled: handleHeightSettled,
       }),
@@ -1041,10 +1253,438 @@ function MonacoFileDiffRow({
     commentsContext?.setActiveCommentPosition(null);
   }, [commentsContext]);
 
+  const handleCloseReviewCommentInput = useCallback(() => {
+    setSelectedLineForReviewComment(null);
+  }, []);
+
   // Check if we're actively adding a comment to this file
   const isAddingComment =
     commentsContext?.activeCommentPosition?.filePath === file.filePath &&
     selectedLineForComment !== null;
+
+  const handleEditorClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!reviewCommentsEnabled) return;
+      if (!isExpanded) return;
+
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      const lineNumberEl = target.closest(".line-numbers");
+      if (!lineNumberEl) {
+        return;
+      }
+
+      const lineText = lineNumberEl.textContent?.trim();
+      const lineNumber = lineText ? parseInt(lineText, 10) : NaN;
+      if (!Number.isFinite(lineNumber) || lineNumber < 1) {
+        return;
+      }
+
+      const rect = lineNumberEl.getBoundingClientRect();
+      const containerRect = rowContainerRef.current?.getBoundingClientRect();
+      if (!containerRect) return;
+      const relativeX = rect.left - containerRect.left;
+      const midpoint = containerRect.width / 2;
+      const side: DiffLineCommentSide = relativeX < midpoint ? "left" : "right";
+      setSelectedLineForReviewComment((prev) => {
+        if (prev && prev.lineNumber === lineNumber && prev.side === side) {
+          return null;
+        }
+        return { lineNumber, side };
+      });
+    },
+    [isExpanded, reviewCommentsEnabled],
+  );
+
+  const handleSubmitLineComment = useCallback(
+    async (body: string) => {
+      if (!onAddLineComment) return;
+      if (!selectedLineForReviewComment) return;
+      await onAddLineComment({
+        filePath: file.filePath,
+        lineNumber: selectedLineForReviewComment.lineNumber,
+        side: selectedLineForReviewComment.side,
+        body,
+      });
+    },
+    [file.filePath, onAddLineComment, selectedLineForReviewComment],
+  );
+
+  const disposeReviewZoneHandle = useCallback(
+    (
+      codeEditor: editor.IStandaloneCodeEditor,
+      handle: ReviewInlineZoneHandle,
+    ) => {
+      try {
+        handle.resizeObserver.disconnect();
+      } catch (error) {
+        console.error("[monaco-git-diff-viewer-with-sidebar] Failed to disconnect resize observer:", error);
+      }
+
+      try {
+        codeEditor.changeViewZones((accessor) => {
+          accessor.removeZone(handle.zoneId);
+        });
+      } catch (error) {
+        console.error("[monaco-git-diff-viewer-with-sidebar] Failed to remove view zone:", error);
+      }
+
+      try {
+        handle.root.unmount();
+      } catch (error) {
+        console.error("[monaco-git-diff-viewer-with-sidebar] Failed to unmount review zone root:", error);
+      }
+    },
+    [],
+  );
+
+  const clearReviewUi = useCallback(() => {
+    const originalEditor = originalEditorRef.current;
+    const modifiedEditor = modifiedEditorRef.current;
+
+    if (originalEditor) {
+      for (const handle of originalReviewThreadZonesRef.current.values()) {
+        disposeReviewZoneHandle(originalEditor, handle);
+      }
+    }
+    if (modifiedEditor) {
+      for (const handle of modifiedReviewThreadZonesRef.current.values()) {
+        disposeReviewZoneHandle(modifiedEditor, handle);
+      }
+    }
+
+    originalReviewThreadZonesRef.current.clear();
+    modifiedReviewThreadZonesRef.current.clear();
+
+    const input = reviewInputZoneRef.current;
+    if (input) {
+      const editorForInput =
+        input.side === "left" ? originalEditor : modifiedEditor;
+      if (editorForInput) {
+        disposeReviewZoneHandle(editorForInput, input.handle);
+      }
+      reviewInputZoneRef.current = null;
+    }
+
+    originalReviewDecorationsRef.current?.clear();
+    modifiedReviewDecorationsRef.current?.clear();
+  }, [disposeReviewZoneHandle]);
+
+  useEffect(() => {
+    return () => {
+      clearReviewUi();
+    };
+  }, [clearReviewUi]);
+
+  useEffect(() => {
+    const originalEditor = originalEditorRef.current;
+    const modifiedEditor = modifiedEditorRef.current;
+
+    if (!originalEditor || !modifiedEditor) {
+      return;
+    }
+
+    if (!isExpanded) {
+      clearReviewUi();
+      return;
+    }
+
+    const isValidLine = (
+      codeEditor: editor.IStandaloneCodeEditor,
+      lineNumber: number,
+    ) => {
+      const model = codeEditor.getModel();
+      if (!model) return false;
+      if (!Number.isFinite(lineNumber) || lineNumber < 1) return false;
+      return lineNumber <= model.getLineCount();
+    };
+
+    const createZone = (args: {
+      codeEditor: editor.IStandaloneCodeEditor;
+      afterLineNumber: number;
+      render: (root: Root) => void;
+    }): ReviewInlineZoneHandle => {
+      const { codeEditor, afterLineNumber, render } = args;
+
+      const domNode = document.createElement("div");
+      domNode.className = "cmux-monaco-review-zone";
+
+      const root = createRoot(domNode);
+      render(root);
+
+      const zone: editor.IViewZone = {
+        afterLineNumber,
+        heightInPx: 120,
+        domNode,
+        suppressMouseDown: true,
+      };
+
+      let zoneId = "";
+      codeEditor.changeViewZones((accessor) => {
+        zoneId = accessor.addZone(zone);
+      });
+
+      const updateHeight = () => {
+        const height = Math.ceil(domNode.getBoundingClientRect().height);
+        if (!Number.isFinite(height) || height <= 0) return;
+        if (zone.heightInPx === height) return;
+        codeEditor.changeViewZones((accessor) => {
+          zone.heightInPx = height;
+          accessor.layoutZone(zoneId);
+        });
+      };
+
+      const resizeObserver = new ResizeObserver(() => {
+        updateHeight();
+      });
+      resizeObserver.observe(domNode);
+      requestAnimationFrame(updateHeight);
+
+      return { zoneId, zone, domNode, root, resizeObserver };
+    };
+
+    const renderThreadGroup = (args: {
+      root: Root;
+      lineNumber: number;
+      side: DiffLineCommentSide;
+      comments: DiffLineComment[];
+    }) => {
+      args.root.render(
+        <div className="px-3 py-2">
+          <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mb-2 font-mono select-none">
+            Line {args.lineNumber} ({args.side === "left" ? "original" : "modified"})
+          </div>
+          <div className="space-y-2">
+            {args.comments.map((comment) => (
+              <LineCommentThread key={comment.id} comment={comment} />
+            ))}
+          </div>
+        </div>,
+      );
+    };
+
+    const syncThreadZonesForSide = (args: {
+      codeEditor: editor.IStandaloneCodeEditor;
+      side: DiffLineCommentSide;
+      zones: Map<number, ReviewInlineZoneHandle>;
+      groups: Map<number, DiffLineComment[]>;
+    }) => {
+      const { codeEditor, side, zones, groups } = args;
+
+      // Remove zones that are no longer needed
+      for (const [lineNumber, handle] of zones.entries()) {
+        if (!groups.has(lineNumber)) {
+          disposeReviewZoneHandle(codeEditor, handle);
+          zones.delete(lineNumber);
+        }
+      }
+
+      // Add / update zones
+      for (const [lineNumber, comments] of groups.entries()) {
+        if (!isValidLine(codeEditor, lineNumber)) {
+          continue;
+        }
+
+        const existing = zones.get(lineNumber);
+        if (existing) {
+          renderThreadGroup({ root: existing.root, lineNumber, side, comments });
+          requestAnimationFrame(() => {
+            const height = Math.ceil(existing.domNode.getBoundingClientRect().height);
+            if (!Number.isFinite(height) || height <= 0) return;
+            if (existing.zone.heightInPx === height) return;
+            codeEditor.changeViewZones((accessor) => {
+              existing.zone.heightInPx = height;
+              accessor.layoutZone(existing.zoneId);
+            });
+          });
+          continue;
+        }
+
+        const handle = createZone({
+          codeEditor,
+          afterLineNumber: lineNumber,
+          render: (root) => renderThreadGroup({ root, lineNumber, side, comments }),
+        });
+        zones.set(lineNumber, handle);
+      }
+    };
+
+    const groupCommentsBySideLine = () => {
+      const originalGroups = new Map<number, DiffLineComment[]>();
+      const modifiedGroups = new Map<number, DiffLineComment[]>();
+      for (const comment of fileLineComments) {
+        const groups = comment.side === "left" ? originalGroups : modifiedGroups;
+        const existing = groups.get(comment.lineNumber) ?? [];
+        existing.push(comment);
+        groups.set(comment.lineNumber, existing);
+      }
+
+      for (const comments of originalGroups.values()) {
+        comments.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+      }
+      for (const comments of modifiedGroups.values()) {
+        comments.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+      }
+
+      return { originalGroups, modifiedGroups };
+    };
+
+    const { originalGroups, modifiedGroups } = groupCommentsBySideLine();
+    syncThreadZonesForSide({
+      codeEditor: originalEditor,
+      side: "left",
+      zones: originalReviewThreadZonesRef.current,
+      groups: originalGroups,
+    });
+    syncThreadZonesForSide({
+      codeEditor: modifiedEditor,
+      side: "right",
+      zones: modifiedReviewThreadZonesRef.current,
+      groups: modifiedGroups,
+    });
+
+    const shouldShowInput = reviewCommentsEnabled && selectedLineForReviewComment;
+    const existingInput = reviewInputZoneRef.current;
+
+    if (!shouldShowInput) {
+      if (existingInput) {
+        const editorForInput =
+          existingInput.side === "left" ? originalEditor : modifiedEditor;
+        disposeReviewZoneHandle(editorForInput, existingInput.handle);
+        reviewInputZoneRef.current = null;
+      }
+    } else if (selectedLineForReviewComment) {
+      const desiredSide = selectedLineForReviewComment.side;
+      const desiredLine = selectedLineForReviewComment.lineNumber;
+
+      if (
+        existingInput &&
+        existingInput.side === desiredSide &&
+        existingInput.lineNumber === desiredLine
+      ) {
+        existingInput.handle.root.render(
+          <div className="px-3 py-2">
+            <LineCommentInput
+              filePath={file.filePath}
+              lineNumber={desiredLine}
+              side={desiredSide}
+              onClose={handleCloseReviewCommentInput}
+              onSubmit={handleSubmitLineComment}
+            />
+          </div>,
+        );
+      } else {
+        if (existingInput) {
+          const editorForInput =
+            existingInput.side === "left" ? originalEditor : modifiedEditor;
+          disposeReviewZoneHandle(editorForInput, existingInput.handle);
+          reviewInputZoneRef.current = null;
+        }
+
+        const editorForInput =
+          desiredSide === "left" ? originalEditor : modifiedEditor;
+        if (isValidLine(editorForInput, desiredLine)) {
+          const handle = createZone({
+            codeEditor: editorForInput,
+            afterLineNumber: desiredLine,
+            render: (root) => {
+              root.render(
+                <div className="px-3 py-2">
+                  <LineCommentInput
+                    filePath={file.filePath}
+                    lineNumber={desiredLine}
+                    side={desiredSide}
+                    onClose={handleCloseReviewCommentInput}
+                    onSubmit={handleSubmitLineComment}
+                  />
+                </div>,
+              );
+            },
+          });
+          reviewInputZoneRef.current = {
+            side: desiredSide,
+            lineNumber: desiredLine,
+            handle,
+          };
+        }
+      }
+    }
+
+    const applyDecorations = (args: {
+      codeEditor: editor.IStandaloneCodeEditor;
+      collection: editor.IEditorDecorationsCollection | null;
+      commentLines: Iterable<number>;
+      selectedLine: number | null;
+    }) => {
+      if (!args.collection) return;
+      const selected = args.selectedLine;
+      const unique = new Set<number>();
+      for (const line of args.commentLines) {
+        unique.add(line);
+      }
+      if (typeof selected === "number") {
+        unique.add(selected);
+      }
+
+      const decorations: editor.IModelDeltaDecoration[] = [];
+      for (const lineNumber of Array.from(unique.values()).sort((a, b) => a - b)) {
+        if (!isValidLine(args.codeEditor, lineNumber)) {
+          continue;
+        }
+
+        const isSelected = selected === lineNumber;
+        decorations.push({
+          range: {
+            startLineNumber: lineNumber,
+            startColumn: 1,
+            endLineNumber: lineNumber,
+            endColumn: 1,
+          },
+          options: {
+            isWholeLine: true,
+            className: isSelected
+              ? "cmux-monaco-review-line-selected"
+              : "cmux-monaco-review-line",
+          },
+        });
+      }
+
+      args.collection.set(decorations);
+    };
+
+    const selectedOriginalLine =
+      selectedLineForReviewComment?.side === "left"
+        ? selectedLineForReviewComment.lineNumber
+        : null;
+    const selectedModifiedLine =
+      selectedLineForReviewComment?.side === "right"
+        ? selectedLineForReviewComment.lineNumber
+        : null;
+
+    applyDecorations({
+      codeEditor: originalEditor,
+      collection: originalReviewDecorationsRef.current,
+      commentLines: originalGroups.keys(),
+      selectedLine: selectedOriginalLine,
+    });
+    applyDecorations({
+      codeEditor: modifiedEditor,
+      collection: modifiedReviewDecorationsRef.current,
+      commentLines: modifiedGroups.keys(),
+      selectedLine: selectedModifiedLine,
+    });
+  }, [
+    clearReviewUi,
+    disposeReviewZoneHandle,
+    file.filePath,
+    fileLineComments,
+    handleCloseReviewCommentInput,
+    handleSubmitLineComment,
+    isExpanded,
+    reviewCommentsEnabled,
+    selectedLineForReviewComment,
+  ]);
 
   return (
     <div
@@ -1106,6 +1746,7 @@ function MonacoFileDiffRow({
           <div
             className="relative"
             style={isHeightSettled ? undefined : { minHeight: editorMinHeight }}
+            onClick={handleEditorClick}
           >
             <DiffEditor
               language={file.language}
@@ -1171,6 +1812,8 @@ const MemoMonacoFileDiffRow = memo(MonacoFileDiffRow, (prev, next) => {
     prev.currentUserId === next.currentUserId &&
     prev.commentsEnabled === next.commentsEnabled &&
     prev.onExpandFile === next.onExpandFile &&
+    prev.fileLineComments === next.fileLineComments &&
+    prev.onAddLineComment === next.onAddLineComment &&
     a.filePath === b.filePath &&
     a.oldPath === b.oldPath &&
     a.status === b.status &&
@@ -1194,6 +1837,8 @@ function MonacoGitDiffViewerWithSidebarInner({
   onControlsChange,
   classNames,
   onFileToggle,
+  lineComments,
+  onAddLineComment,
   isHeatmapActive,
   onToggleHeatmap,
   currentUserId,
@@ -1431,6 +2076,24 @@ function MonacoGitDiffViewerWithSidebarInner({
 
   use(loaderInitPromise);
 
+  const lineCommentsByFile = useMemo(() => {
+    const map = new Map<string, DiffLineComment[]>();
+    for (const comment of lineComments ?? []) {
+      const existing = map.get(comment.filePath) ?? [];
+      existing.push(comment);
+      map.set(comment.filePath, existing);
+    }
+    for (const [, comments] of map) {
+      comments.sort((a, b) => {
+        if (a.lineNumber !== b.lineNumber) return a.lineNumber - b.lineNumber;
+        const timeA = a.createdAt ?? 0;
+        const timeB = b.createdAt ?? 0;
+        return timeA - timeB;
+      });
+    }
+    return map;
+  }, [lineComments]);
+
   // Loading state - show skeleton
   if (isLoading) {
     return (
@@ -1611,6 +2274,8 @@ function MonacoGitDiffViewerWithSidebarInner({
                     toggleFile(file.filePath);
                   }
                 }}
+                fileLineComments={lineCommentsByFile.get(file.filePath) ?? []}
+                onAddLineComment={onAddLineComment}
               />
             ))}
             <div className="px-3 py-6 text-center">
