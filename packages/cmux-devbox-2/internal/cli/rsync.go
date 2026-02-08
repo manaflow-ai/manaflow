@@ -692,12 +692,6 @@ var defaultExcludes = []string{
 	".eggs",
 
 	// === Secrets and credentials (security) ===
-	".env",
-	".env.local",
-	".env.development",
-	".env.production",
-	".env.test",
-	".envrc",
 	".npmrc",     // May contain auth tokens
 	".yarnrc",    // May contain auth tokens
 	".yarnrc.yml",
