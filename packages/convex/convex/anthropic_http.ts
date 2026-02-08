@@ -352,8 +352,6 @@ function hasUserApiKey(key: string | null): boolean {
   return key !== null && key !== hardCodedApiKey && isAnthropicApiKey(key);
 }
 
-const TEMPORARY_DISABLE_AUTH = true;
-
 /**
  * HTTP action to proxy Anthropic API requests.
  * Routes to:
@@ -398,7 +396,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
     });
   };
 
-  if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
+  if (!workerAuth) {
     console.error("[anthropic-proxy] Auth error: Missing or invalid token");
     trackEvent("unknown", false, 401, { errorType: "unauthorized" });
     await drainPosthogEvents();
