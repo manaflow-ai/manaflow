@@ -16,12 +16,11 @@ import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
-  configureGithubAccess,
-  configureGitIdentity,
   fetchGitIdentityInputs,
 } from "./sandboxes/git";
 import type { HydrateRepoConfig } from "./sandboxes/hydration";
 import { hydrateWorkspace } from "./sandboxes/hydration";
+import { singleQuote, maskSensitive } from "./sandboxes/shell";
 import { resolveTeamAndSnapshot } from "./sandboxes/snapshot";
 import {
   allocateScriptIdentifiers,
@@ -62,6 +61,61 @@ async function waitForVSCodeReady(
   }
 
   return false;
+}
+
+/**
+ * Builds a single bash script that combines environment variable loading,
+ * GitHub authentication (with retries), and git identity configuration.
+ * Running these as one instance.exec() call eliminates multiple network round-trips.
+ */
+function buildCombinedSetupScript(options: {
+  encodedEnvVars: string | null;
+  githubAccessToken: string;
+  gitIdentity: { name: string; email: string } | null;
+}): string {
+  const parts: string[] = [];
+
+  // Part 1: Environment variables (non-fatal)
+  if (options.encodedEnvVars) {
+    parts.push(
+      `# Apply environment variables`,
+      `${envctlLoadCommand(options.encodedEnvVars)} || echo "[SETUP] envctl load failed (non-fatal)"`,
+    );
+  }
+
+  // Part 2: GitHub authentication with retries (fatal)
+  // Retry delays: 1s, 2s, 4s, 5s (matches previous JS exponential backoff)
+  parts.push(
+    `# GitHub authentication with retries`,
+    `CMUX_GH_DONE=0`,
+    `for CMUX_GH_ATTEMPT in 1 2 3 4 5; do`,
+    `  if printf %s ${singleQuote(options.githubAccessToken)} | gh auth login --with-token 2>&1 && gh auth setup-git 2>&1; then`,
+    `    CMUX_GH_DONE=1`,
+    `    break`,
+    `  fi`,
+    `  if [ $CMUX_GH_ATTEMPT -eq 5 ]; then`,
+    `    echo "[SETUP] GitHub auth failed after 5 attempts" >&2`,
+    `    exit 1`,
+    `  fi`,
+    `  CMUX_GH_DELAY=$((1 << (CMUX_GH_ATTEMPT - 1)))`,
+    `  [ $CMUX_GH_DELAY -gt 5 ] && CMUX_GH_DELAY=5`,
+    `  echo "[SETUP] GitHub auth attempt $CMUX_GH_ATTEMPT failed, retrying in $CMUX_GH_DELAY seconds..."`,
+    `  sleep $CMUX_GH_DELAY`,
+    `done`,
+  );
+
+  // Part 3: Git identity (non-fatal)
+  if (options.gitIdentity) {
+    parts.push(
+      `# Configure git identity`,
+      `git config --global user.name ${singleQuote(options.gitIdentity.name)} 2>/dev/null || true`,
+      `git config --global user.email ${singleQuote(options.gitIdentity.email)} 2>/dev/null || true`,
+      `git config --global init.defaultBranch main 2>/dev/null || true`,
+      `git config --global push.autoSetupRemote true 2>/dev/null || true`,
+    );
+  }
+
+  return parts.join("\n");
 }
 
 /**
@@ -363,6 +417,24 @@ sandboxesRouter.openapi(
       // Parse repo URL once if provided
       const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
 
+      // Build repo config early to validate URL and fail fast
+      let repoConfig: HydrateRepoConfig | undefined;
+      if (body.repoUrl) {
+        if (!parsedRepoUrl) {
+          return c.text("Unsupported repo URL; expected GitHub URL", 400);
+        }
+        repoConfig = {
+          owner: parsedRepoUrl.owner,
+          name: parsedRepoUrl.repo,
+          repoFull: parsedRepoUrl.fullName,
+          cloneUrl: parsedRepoUrl.gitUrl,
+          maskedCloneUrl: parsedRepoUrl.gitUrl,
+          depth: Math.max(1, Math.floor(body.depth ?? 1)),
+          baseBranch: body.branch || "main",
+          newBranch: body.newBranch ?? "",
+        };
+      }
+
       // Load workspace config if we're in cloud mode with a repository (not an environment)
       let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
       if (parsedRepoUrl && !body.environmentId) {
@@ -402,13 +474,20 @@ sandboxesRouter.openapi(
           ? allocateScriptIdentifiers()
           : null;
 
-      const gitIdentityPromise = githubAccessTokenPromise.then(
-        ({ githubAccessToken }) => {
-          if (!githubAccessToken) {
-            throw new Error("GitHub access token not found");
-          }
-          return fetchGitIdentityInputs(convex, githubAccessToken);
-        },
+      // Fail fast: check GitHub credentials before starting expensive VM
+      const { githubAccessToken, githubAccessTokenError } =
+        await githubAccessTokenPromise;
+      if (githubAccessTokenError) {
+        console.error(
+          `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
+        );
+        return c.text("Failed to resolve GitHub credentials", 401);
+      }
+
+      // Start git identity fetch in parallel with VM boot
+      const gitIdentityPromise = fetchGitIdentityInputs(
+        convex,
+        githubAccessToken,
       );
 
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
@@ -428,161 +507,149 @@ sandboxesRouter.openapi(
         await instance.setWakeOn(true, true);
       })();
 
-      // SDK bug: instances.start() returns empty httpServices array
-      // Re-fetch instance to get the actual networking data
-      const refreshedInstance =
-        instance.networking.httpServices.length === 0
-          ? await client.instances.get({ instanceId: instance.id })
-          : instance;
+      // --- PARALLEL TRACKS: Frontend URLs + Sandbox Setup ---
+      // Track A and Track B run concurrently to minimize total startup time.
+      // Track A handles networking/UI concerns (re-fetch, VSCode polling, URL persistence).
+      // Track B handles sandbox configuration (env vars, auth, git identity, hydration)
+      // in a single instance.exec() call to eliminate multiple network round-trips.
 
-      const exposed = refreshedInstance.networking.httpServices;
-      const vscodeService = exposed.find((s) => s.port === 39378);
-      const workerService = exposed.find((s) => s.port === 39377);
-      if (!vscodeService || !workerService) {
-        await instance.stop().catch(() => { });
-        return c.text("VSCode or worker service not found", 500);
-      }
+      // Track A: Get networking URLs and make VSCode available to frontend
+      const trackA = (async () => {
+        // SDK bug: instances.start() returns empty httpServices array
+        // Re-fetch instance to get the actual networking data
+        const refreshedInstance =
+          instance.networking.httpServices.length === 0
+            ? await client.instances.get({ instanceId: instance.id })
+            : instance;
 
-      // Wait for VSCode server to be ready before persisting URL
-      // This prevents "upstream connect error" when the frontend loads the iframe
-      // before the OpenVSCode server is actually listening
-      const vscodeReady = await waitForVSCodeReady(vscodeService.url);
-      if (!vscodeReady) {
-        console.warn(
-          `[sandboxes.start] VSCode server did not become ready within timeout for ${instance.id}, proceeding anyway`,
-        );
-      } else {
+        const exposed = refreshedInstance.networking.httpServices;
+        const vscodeService = exposed.find((s) => s.port === 39378);
+        const workerService = exposed.find((s) => s.port === 39377);
+        if (!vscodeService || !workerService) {
+          await instance.stop().catch(() => {});
+          throw new Error("VSCode or worker service not found");
+        }
+
+        // Poll for VSCode readiness and persist URLs to Convex in parallel
+        const persistPromise = body.taskRunId
+          ? convex
+              .mutation(api.taskRuns.updateVSCodeInstance, {
+                teamSlugOrId: body.teamSlugOrId,
+                id: body.taskRunId as Id<"taskRuns">,
+                vscode: {
+                  provider: "morph",
+                  containerName: instance.id,
+                  status: "starting",
+                  url: vscodeService.url,
+                  workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+                  startedAt: Date.now(),
+                },
+              })
+              .then(() => true)
+              .catch((error: unknown) => {
+                console.error(
+                  "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
+                  error,
+                );
+                return false;
+              })
+          : Promise.resolve(false);
+
+        const [vscodeReady, vscodePersisted] = await Promise.all([
+          waitForVSCodeReady(vscodeService.url),
+          persistPromise,
+        ]);
+
+        if (!vscodeReady) {
+          console.warn(
+            `[sandboxes.start] VSCode server did not become ready within timeout for ${instance.id}, proceeding anyway`,
+          );
+        } else {
+          console.log(
+            `[sandboxes.start] VSCode server ready for ${instance.id}`,
+          );
+        }
+
+        return { vscodeService, workerService, vscodePersisted };
+      })();
+
+      // Track B: Configure sandbox and hydrate workspace (single exec round-trip)
+      const trackB = (async () => {
+        // Gather async inputs in parallel
+        const [gitIdentityResult, environmentEnvVarsContent] =
+          await Promise.all([
+            gitIdentityPromise
+              .then(([who, gh]) => selectGitIdentity(who, gh))
+              .catch((error: unknown) => {
+                console.log(
+                  `[sandboxes.start] Failed to fetch git identity; continuing...`,
+                  error,
+                );
+                return null;
+              }),
+            environmentEnvVarsPromise,
+          ]);
+
+        // Build env vars content
+        let envVarsToApply =
+          environmentEnvVarsContent ||
+          workspaceConfig?.envVarsContent ||
+          "";
+        if (body.taskRunId) {
+          envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
+        }
+        if (body.taskRunJwt) {
+          envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+        }
+
+        const encodedEnvVars =
+          envVarsToApply.trim().length > 0
+            ? encodeEnvContentForEnvctl(envVarsToApply)
+            : null;
+
+        // Single instance.exec() call: env vars + GitHub auth + git identity
+        const combinedScript = buildCombinedSetupScript({
+          encodedEnvVars,
+          githubAccessToken,
+          gitIdentity: gitIdentityResult,
+        });
+
         console.log(
-          `[sandboxes.start] VSCode server ready for ${instance.id}`,
+          `[sandboxes.start] Running combined setup for ${instance.id}`,
         );
-      }
-
-      // Persist VSCode URLs to Convex once the server is ready
-      // Status is "starting" to indicate hydration is still in progress
-      let vscodePersisted = false;
-      if (body.taskRunId) {
-        try {
-          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
-            teamSlugOrId: body.teamSlugOrId,
-            id: body.taskRunId as Id<"taskRuns">,
-            vscode: {
-              provider: "morph",
-              containerName: instance.id,
-              status: "starting",
-              url: vscodeService.url,
-              workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
-              startedAt: Date.now(),
-            },
-          });
-          vscodePersisted = true;
-          console.log(
-            `[sandboxes.start] Persisted VSCode info for ${body.taskRunId}`,
-          );
-        } catch (error) {
-          console.error(
-            "[sandboxes.start] Failed to persist VSCode info (non-fatal):",
-            error,
-          );
-        }
-      }
-
-      // Get environment variables from the environment if configured
-      const environmentEnvVarsContent = await environmentEnvVarsPromise;
-
-      // Prepare environment variables including task JWT if present
-      // Workspace env vars take precedence if no environment is configured
-      let envVarsToApply = environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
-
-      // Add CMUX task-related env vars if present
-      if (body.taskRunId) {
-        envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
-      }
-      if (body.taskRunJwt) {
-        envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
-      }
-
-      // Apply all environment variables if any
-      if (envVarsToApply.trim().length > 0) {
-        try {
-          const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
-          const loadRes = await instance.exec(envctlLoadCommand(encodedEnv));
-          if (loadRes.exit_code === 0) {
-            console.log(
-              `[sandboxes.start] Applied environment variables via envctl`,
-              {
-                hasEnvironmentVars: Boolean(environmentEnvVarsContent),
-                hasWorkspaceVars: Boolean(workspaceConfig?.envVarsContent),
-                hasTaskRunId: Boolean(body.taskRunId),
-                hasTaskRunJwt: Boolean(body.taskRunJwt),
-              },
-            );
-          } else {
-            console.error(
-              `[sandboxes.start] Env var bootstrap failed exit=${loadRes.exit_code} stderr=${(loadRes.stderr || "").slice(0, 200)}`,
-            );
-          }
-        } catch (error) {
-          console.error(
-            "[sandboxes.start] Failed to apply environment variables",
-            error,
-          );
-        }
-      }
-
-      const configureGitIdentityTask = gitIdentityPromise
-        .then(([who, gh]) => {
-          const { name, email } = selectGitIdentity(who, gh);
-          return configureGitIdentity(instance, { name, email });
-        })
-        .catch((error) => {
-          console.log(
-            `[sandboxes.start] Failed to configure git identity; continuing...`,
-            error,
-          );
-        });
-
-      const { githubAccessToken, githubAccessTokenError } =
-        await githubAccessTokenPromise;
-      if (githubAccessTokenError) {
-        console.error(
-          `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
+        const setupRes = await instance.exec(
+          `bash -lc ${singleQuote(combinedScript)}`,
         );
-        return c.text("Failed to resolve GitHub credentials", 401);
-      }
 
-      // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
-      await configureGithubAccess(instance, githubAccessToken);
-
-      let repoConfig: HydrateRepoConfig | undefined;
-      if (body.repoUrl) {
-        console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
-        if (!parsedRepoUrl) {
-          return c.text("Unsupported repo URL; expected GitHub URL", 400);
+        if (setupRes.exit_code !== 0) {
+          const maskedOutput = maskSensitive(
+            setupRes.stderr || setupRes.stdout || "",
+          );
+          console.error(
+            `[sandboxes.start] Combined setup failed: exit=${setupRes.exit_code} output=${maskedOutput.slice(0, 500)}`,
+          );
+          throw new Error(
+            `Sandbox setup failed with exit code ${setupRes.exit_code}`,
+          );
         }
-        console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
-        repoConfig = {
-          owner: parsedRepoUrl.owner,
-          name: parsedRepoUrl.repo,
-          repoFull: parsedRepoUrl.fullName,
-          cloneUrl: parsedRepoUrl.gitUrl,
-          maskedCloneUrl: parsedRepoUrl.gitUrl,
-          depth: Math.max(1, Math.floor(body.depth ?? 1)),
-          baseBranch: body.branch || "main",
-          newBranch: body.newBranch ?? "",
-        };
-      }
+        console.log(
+          `[sandboxes.start] Combined setup completed for ${instance.id}`,
+        );
 
-      try {
-        await hydrateWorkspace({
-          instance,
-          repo: repoConfig,
-        });
-      } catch (error) {
-        console.error(`[sandboxes.start] Hydration failed:`, error);
-        await instance.stop().catch(() => { });
-        return c.text("Failed to hydrate sandbox", 500);
-      }
+        // Hydrate workspace (needs GitHub auth from combined setup)
+        try {
+          await hydrateWorkspace({ instance, repo: repoConfig });
+        } catch (error) {
+          console.error(`[sandboxes.start] Hydration failed:`, error);
+          await instance.stop().catch(() => {});
+          throw error;
+        }
+      })();
+
+      // Wait for both tracks to complete
+      const [{ vscodeService, workerService, vscodePersisted }] =
+        await Promise.all([trackA, trackB]);
 
       // Update status to "running" after hydration completes
       if (body.taskRunId && vscodePersisted) {
@@ -592,7 +659,7 @@ sandboxesRouter.openapi(
             id: body.taskRunId as Id<"taskRuns">,
             status: "running",
           })
-          .catch((error) => {
+          .catch((error: unknown) => {
             console.error(
               "[sandboxes.start] Failed to update VSCode status to running:",
               error,
@@ -600,6 +667,7 @@ sandboxesRouter.openapi(
           });
       }
 
+      // Fire-and-forget maintenance/dev scripts
       if (maintenanceScript || devScript) {
         (async () => {
           await runMaintenanceAndDevScripts({
@@ -618,8 +686,6 @@ sandboxesRouter.openapi(
           );
         });
       }
-
-      await configureGitIdentityTask;
 
       return c.json({
         instanceId: instance.id,
