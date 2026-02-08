@@ -11,7 +11,7 @@ import (
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List E2B sandboxes",
+	Short:   "List sandboxes",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -49,7 +49,7 @@ var listCmd = &cobra.Command{
 
 var templatesCmd = &cobra.Command{
 	Use:   "templates",
-	Short: "List available E2B templates",
+	Short: "List available templates",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {

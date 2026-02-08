@@ -43,7 +43,7 @@ func isGitURL(s string) bool {
 var startCmd = &cobra.Command{
 	Use:     "start [path-or-git-url]",
 	Aliases: []string{"create", "new"},
-	Short:   "Create a new E2B sandbox",
+	Short:   "Create a new sandbox",
 	Long: `Create a new sandbox and optionally sync files or clone a git repo.
 
 Examples:
@@ -254,7 +254,7 @@ Examples:
 
 func init() {
 	startCmd.Flags().StringVarP(&startFlagName, "name", "n", "", "Name for the sandbox")
-	startCmd.Flags().StringVarP(&startFlagTemplate, "template", "T", "", "E2B template ID (overrides --docker)")
+	startCmd.Flags().StringVarP(&startFlagTemplate, "template", "T", "", "Template ID (overrides --docker)")
 	startCmd.Flags().BoolVarP(&startFlagOpen, "open", "o", false, "Open VSCode after creation")
 	startCmd.Flags().StringVar(&startFlagGit, "git", "", "Git repository URL to clone (or user/repo shorthand)")
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")

@@ -27,10 +27,11 @@ var rootCmd = &cobra.Command{
 
 Quick start:
   cmux login                      # Authenticate (or: cmux auth login)
-  cmux start ./my-project         # Create sandbox, sync directory → returns ID
+  cmux start ./my-project         # Create sandbox, upload directory → returns ID
   cmux code <id>                  # Open VS Code
   cmux pty <id>                   # Open terminal session
-  cmux sync <id> ./my-project     # Sync files via rsync (incremental)
+  cmux upload <id> ./my-project   # Upload files to sandbox
+  cmux download <id> ./output     # Download files from sandbox
   cmux computer screenshot <id>   # Take browser screenshot
   cmux stop <id>                  # Stop sandbox
   cmux delete <id>                # Delete sandbox
@@ -106,11 +107,9 @@ func init() {
 	// Exec command
 	rootCmd.AddCommand(execCmd)
 
-	// Sync command (uses rsync over WebSocket SSH)
-	rootCmd.AddCommand(syncCmd)
-
-	// Upload command (single file upload)
+	// File transfer commands
 	rootCmd.AddCommand(uploadCmd)
+	rootCmd.AddCommand(downloadCmd)
 
 	// PTY commands (terminal session)
 	rootCmd.AddCommand(ptyCmd)

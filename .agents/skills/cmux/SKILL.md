@@ -17,10 +17,10 @@ npm install -g cmux
 
 ```bash
 cmux login                      # Authenticate (opens browser)
-cmux start ./my-project         # Create sandbox, upload directory → returns ID
+cmux start ./my-project         # Create sandbox, sync directory → returns ID
 cmux code <id>                  # Open VS Code
 cmux pty <id>                   # Open terminal session
-cmux upload <id> ./my-project   # Upload files/directories to sandbox
+cmux upload <id> ./my-project   # Upload local files to sandbox
 cmux download <id> ./output     # Download files from sandbox
 cmux computer screenshot <id>   # Take browser screenshot
 cmux stop <id>                  # Stop sandbox
@@ -41,10 +41,8 @@ cmux whoami              # Show current user and team
 ### Sandbox Lifecycle
 
 ```bash
-cmux start [path]        # Create sandbox, optionally upload directory
-cmux start -o [path]     # Create and open VS Code immediately
-cmux start --docker      # Create sandbox with Docker support
-cmux start --git user/repo  # Clone a git repo into sandbox
+cmux start [path]        # Create sandbox, optionally sync directory
+cmux start -i [path]     # Create and open VS Code immediately
 cmux ls                  # List all sandboxes
 cmux status <id>         # Show sandbox details and URLs
 cmux stop <id>           # Stop sandbox
@@ -65,29 +63,20 @@ cmux pty <id>            # Interactive terminal session
 
 ```bash
 cmux pty <id>                  # Interactive terminal session (use this to run commands)
-cmux exec <id> <command>       # Execute a one-off command
+cmux ssh <id>                  # SSH into sandbox
 ```
 
-> **Important:** Prefer `cmux pty` for interactive work. Use `cmux exec` only for quick one-off commands.
+> **Important:** Do NOT use `cmux exec`. Always use `cmux pty` or `cmux ssh` to run commands in the sandbox.
 
 ### File Transfer
 
-Upload and download files or directories between local machine and sandbox.
+One-time file transfers between local machine and sandbox.
 
 ```bash
-# Upload (local → sandbox)
-cmux upload <id>                            # Upload current dir to /home/user/workspace
-cmux upload <id> ./my-project               # Upload directory to workspace
-cmux upload <id> ./config.json              # Upload single file to workspace
-cmux upload <id> . -r /home/user/app        # Upload to specific remote path
-cmux upload <id> . --watch                  # Watch and re-upload on changes
-cmux upload <id> . --delete                 # Delete remote files not present locally
-cmux upload <id> . -e "*.log"              # Exclude patterns
-
-# Download (sandbox → local)
-cmux download <id>                          # Download workspace to current dir
-cmux download <id> ./output                 # Download workspace to ./output
-cmux download <id> . -r /home/user/app      # Download from specific remote path
+cmux upload <id> <local-path>                     # Upload local files to sandbox
+cmux upload <id> <local-path> --remote-path /root/code  # Upload to specific remote path
+cmux download <id> <local-path>                   # Download files from sandbox to local
+cmux download <id> <local-path> --remote-path /root/code  # Download from specific remote path
 ```
 
 ### Browser Automation (cmux computer)
@@ -140,7 +129,7 @@ Sandbox IDs look like `cmux_abc12345`. Use the full ID when running commands. Ge
 ### Create and develop in a sandbox
 
 ```bash
-cmux start ./my-project        # Creates sandbox, uploads files
+cmux start ./my-project        # Creates sandbox, syncs files
 cmux code cmux_abc123          # Open VS Code
 cmux pty cmux_abc123           # Open terminal to run commands (e.g. npm install && npm run dev)
 ```
@@ -149,7 +138,6 @@ cmux pty cmux_abc123           # Open terminal to run commands (e.g. npm install
 
 ```bash
 cmux upload cmux_abc123 ./my-project     # Push local files to sandbox
-# ... do work in sandbox ...
 cmux download cmux_abc123 ./output       # Pull files from sandbox to local
 ```
 

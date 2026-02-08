@@ -52,7 +52,7 @@ var extendCmd = &cobra.Command{
 	Use:     "extend <id>",
 	Aliases: []string{"ttl"},
 	Short:   "Extend sandbox timeout",
-	Long:    "Extend the sandbox timeout. E2B sandboxes don't have pause/resume - they auto-stop after timeout.",
+	Long:    "Extend the sandbox timeout. Sandboxes auto-stop after their timeout expires.",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
@@ -72,22 +72,22 @@ var extendCmd = &cobra.Command{
 // These are no-ops for E2B (included for CLI compatibility)
 var pauseCmd = &cobra.Command{
 	Use:    "pause <id>",
-	Short:  "Extend sandbox timeout (E2B doesn't support true pause)",
+	Short:  "Extend sandbox timeout (pause not supported)",
 	Args:   cobra.ExactArgs(1),
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Note: E2B doesn't support pause. Use 'extend' to keep sandbox running longer.")
+		fmt.Println("Note: Pause is not supported. Use 'extend' to keep sandbox running longer.")
 		return extendCmd.RunE(cmd, args)
 	},
 }
 
 var resumeCmd = &cobra.Command{
 	Use:    "resume <id>",
-	Short:  "No-op for E2B (sandboxes don't pause)",
+	Short:  "No-op (sandboxes don't pause)",
 	Args:   cobra.ExactArgs(1),
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Note: E2B sandboxes don't pause. If stopped, create a new one.")
+		fmt.Println("Note: Sandboxes don't pause. If stopped, create a new one.")
 		return nil
 	},
 }

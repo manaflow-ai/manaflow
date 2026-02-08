@@ -8,6 +8,8 @@ export const CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY =
  * AWS Bedrock model IDs for Claude models.
  * Used by code review heatmap feature.
  */
+export const ANTHROPIC_MODEL_OPUS_46 =
+  "global.anthropic.claude-opus-4-6-v1";
 export const ANTHROPIC_MODEL_OPUS_45 =
   "global.anthropic.claude-opus-4-5-20251101-v1:0";
 export const ANTHROPIC_MODEL_HAIKU_45 =

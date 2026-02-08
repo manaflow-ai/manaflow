@@ -1,6 +1,6 @@
 {
   "name": "cmux-win32-x64",
-  "version": "0.7.13",
+  "version": "0.7.17",
   "description": "cmux binary for Windows x64",
   "os": ["win32"],
   "cpu": ["x64"],

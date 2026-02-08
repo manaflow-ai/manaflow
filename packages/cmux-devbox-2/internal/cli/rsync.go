@@ -411,6 +411,165 @@ func runRsyncSingleFileWithBridge(wsURL, token, localFile, remotePath string) (*
 	return stats, nil
 }
 
+// runRsyncDownload downloads files from remote sandbox to local using rsync over WebSocket SSH
+func runRsyncDownload(workerURL, token, remotePath, localPath string) error {
+	// Check for rsync
+	if _, err := exec.LookPath("rsync"); err != nil {
+		return fmt.Errorf("rsync not found. Install with: brew install rsync (macOS) or apt install rsync (Linux)")
+	}
+
+	// Convert HTTP URL to WebSocket URL
+	wsURL := strings.Replace(workerURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = wsURL + "/ssh?token=" + url.QueryEscape(token)
+
+	startTime := time.Now()
+
+	curlPath := getCurlWithWebSocket()
+	var stats *rsyncStats
+	var err error
+
+	if curlPath != "" {
+		stats, err = runRsyncDownloadWithCurl(curlPath, wsURL, remotePath, localPath)
+	} else {
+		stats, err = runRsyncDownloadWithBridge(wsURL, token, remotePath, localPath)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	elapsed := time.Since(startTime)
+	if stats != nil && stats.bytes > 0 {
+		speedMBps := float64(stats.bytes) / elapsed.Seconds() / 1024 / 1024
+		fmt.Printf("✓ Downloaded %d files (%.1f MB) in %.1fs (%.1f MB/s)\n",
+			stats.files, float64(stats.bytes)/1024/1024, elapsed.Seconds(), speedMBps)
+	} else {
+		fmt.Println("✓ Download complete")
+	}
+
+	return nil
+}
+
+// runRsyncDownloadWithCurl uses curl as SSH ProxyCommand for download (remote → local)
+func runRsyncDownloadWithCurl(curlPath, wsURL, remotePath, localPath string) (*rsyncStats, error) {
+	rsyncArgs := buildRsyncDownloadArgs()
+
+	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
+	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand=%q", proxyCmd)
+	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
+
+	// Remote as source, local as destination
+	remoteSpec := fmt.Sprintf("user@e2b-sandbox:%s/", remotePath)
+	localDest := localPath
+	if !strings.HasSuffix(localDest, "/") {
+		localDest += "/"
+	}
+	rsyncArgs = append(rsyncArgs, remoteSpec, localDest)
+
+	return execRsync(rsyncArgs)
+}
+
+// runRsyncDownloadWithBridge uses Go WebSocket bridge for download (remote → local)
+func runRsyncDownloadWithBridge(wsURL, token, remotePath, localPath string) (*rsyncStats, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local listener: %w", err)
+	}
+	defer listener.Close()
+
+	localPort := listener.Addr().(*net.TCPAddr).Port
+
+	connCh := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		connCh <- conn
+	}()
+
+	rsyncArgs := buildRsyncDownloadArgs()
+
+	sshCmd, scriptPath, err := buildSSHCommand(localPort)
+	if err != nil {
+		return nil, err
+	}
+	if scriptPath != "" {
+		defer os.Remove(scriptPath)
+	}
+
+	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
+
+	// Remote as source (token as username), local as destination
+	remoteSpec := fmt.Sprintf("%s@127.0.0.1:%s/", token, remotePath)
+	localDest := localPath
+	if !strings.HasSuffix(localDest, "/") {
+		localDest += "/"
+	}
+	rsyncArgs = append(rsyncArgs, remoteSpec, localDest)
+
+	rsyncExec := exec.Command("rsync", rsyncArgs...)
+
+	var stdout, stderr bytes.Buffer
+	rsyncExec.Stdout = &stdout
+	rsyncExec.Stderr = &stderr
+
+	if err := rsyncExec.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start rsync: %w", err)
+	}
+
+	var conn net.Conn
+	select {
+	case conn = <-connCh:
+	case err := <-errCh:
+		rsyncExec.Process.Kill()
+		return nil, fmt.Errorf("failed to accept connection: %w", err)
+	case <-time.After(30 * time.Second):
+		rsyncExec.Process.Kill()
+		rsyncExec.Wait()
+		return nil, fmt.Errorf("timeout waiting for rsync connection: %s", stderr.String())
+	}
+
+	proxyDone := make(chan error, 1)
+	go func() {
+		err := bridgeToWebSocket(conn, wsURL)
+		proxyDone <- err
+	}()
+
+	rsyncErr := rsyncExec.Wait()
+	conn.Close()
+	<-proxyDone
+
+	stats := parseRsyncStats(stdout.String())
+
+	if rsyncErr != nil {
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "Warning: Permanently added") && stats != nil && stats.files > 0 {
+			return stats, nil
+		}
+		if len(stderrStr) > 0 {
+			return nil, fmt.Errorf("rsync failed: %s", stderrStr)
+		}
+		return nil, fmt.Errorf("rsync failed: %w", rsyncErr)
+	}
+
+	return stats, nil
+}
+
+// buildRsyncDownloadArgs builds rsync arguments for download (minimal excludes)
+func buildRsyncDownloadArgs() []string {
+	return []string{
+		"-az",
+		"--stats",
+		"--no-owner",
+		"--no-group",
+	}
+}
+
 // buildRsyncArgsSingleFile builds rsync arguments for single file transfer
 func buildRsyncArgsSingleFile(localFile, remotePath string) []string {
 	rsyncArgs := []string{
