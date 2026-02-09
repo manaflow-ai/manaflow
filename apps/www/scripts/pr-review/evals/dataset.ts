@@ -44,7 +44,7 @@ export const EVAL_DATASET: EvalDataset = {
       tags: ["typescript", "react", "baseline"],
       metadata: {
         owner: "manaflow-ai",
-        repo: "cmux",
+        repo: "manaflow",
         number: 728,
         language: "typescript",
         filesChanged: 0, // Will be populated by fetch

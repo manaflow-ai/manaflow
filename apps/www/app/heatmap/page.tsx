@@ -109,7 +109,7 @@ export default function HeatmapPage() {
               className="break-all text-black underline"
             >
               https://github.com/manaflow-ai/
-              <span className="bg-blue-200 px-1">cmux</span>
+              <span className="bg-blue-200 px-1">manaflow</span>
             </a>
           </div>
         </div>

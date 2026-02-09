@@ -1228,7 +1228,7 @@ function MockGitHubPRBrowser() {
                   rel="noopener noreferrer"
                   className="text-[#2f81f7] font-semibold hover:underline cursor-pointer"
                 >
-                  cmux
+                  manaflow
                 </a>
               </div>
             </div>
