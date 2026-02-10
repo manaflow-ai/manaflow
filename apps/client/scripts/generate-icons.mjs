@@ -35,7 +35,7 @@ async function fileExists(p) {
 async function findLargestPng(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const pngs = entries
-    .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".png"))
+    .filter((e) => e.isFile() && e.name.toLowerCase().endsWith("_dark.png"))
     .map((e) => path.join(dir, e.name));
   if (pngs.length === 0) throw new Error(`No PNG files found in ${dir}`);
 
@@ -88,7 +88,7 @@ async function main() {
 
   // Linux PNG: prefer the 512x512 image from the iconset if available, otherwise fall back to largest.
   if (!(await fileExists(pngPath))) {
-    const preferred512 = path.join(assetsIconsetDir, "icon_512x512.png");
+    const preferred512 = path.join(assetsIconsetDir, "icon_512x512_dark.png");
     const srcForPng = (await fileExists(preferred512)) ? preferred512 : srcPng;
     const pngBuf = await fs.readFile(srcForPng);
     await fs.writeFile(pngPath, pngBuf);
