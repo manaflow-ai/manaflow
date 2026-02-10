@@ -92,7 +92,7 @@ export default function CloudRouterPage() {
             </svg>
             <span className="text-lg">cloudrouter</span>
           </span>
-          <nav className="flex gap-4 text-neutral-500 dark:text-neutral-400">
+          <nav className="flex items-center gap-4 text-neutral-500 dark:text-neutral-400">
             <a href="#install" className="transition hover:text-neutral-900 dark:hover:text-white">
               Install
             </a>
@@ -100,18 +100,10 @@ export default function CloudRouterPage() {
               Features
             </a>
             <a
-              href="https://github.com/manaflow-ai/cloudrouter"
+              href="https://github.com/manaflow-ai/manaflow/tree/main/packages/cloudrouter"
               target="_blank"
               rel="noopener noreferrer"
-              className="transition hover:text-neutral-900 dark:hover:text-white"
-            >
-              GitHub
-            </a>
-            <a
-              href="https://github.com/manaflow-ai/manaflow"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition hover:text-neutral-900 dark:hover:text-white"
+              className="flex items-center transition hover:text-neutral-900 dark:hover:text-white"
               aria-label="manaflow on GitHub"
             >
               <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true">
