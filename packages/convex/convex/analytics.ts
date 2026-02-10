@@ -36,40 +36,50 @@ export const getDashboardStats = authQuery({
 
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
-    // Fetch tasks for this user/team
-    const allTasks = await ctx.db
+    // Fetch tasks created in the past 7 days (filter by date at index level)
+    const recentTasksRaw = await ctx.db
       .query("tasks")
-      .withIndex("by_team_user", (idx) =>
-        idx.eq("teamId", teamId).eq("userId", userId),
+      .withIndex("by_team_user_created", (idx) =>
+        idx
+          .eq("teamId", teamId)
+          .eq("userId", userId)
+          .gte("createdAt", sevenDaysAgo),
       )
       .collect();
 
-    // Tasks created in the past 7 days (exclude workspaces and previews)
-    const recentTasks = allTasks.filter(
-      (t) =>
-        (t.createdAt ?? t._creationTime) >= sevenDaysAgo &&
-        !t.isCloudWorkspace &&
-        !t.isLocalWorkspace &&
-        !t.isPreview,
+    // Exclude workspaces and previews in memory
+    const recentTasks = recentTasksRaw.filter(
+      (t) => !t.isCloudWorkspace && !t.isLocalWorkspace && !t.isPreview,
     );
 
-    // Tasks merged in the past 7 days
-    const mergedTasks = allTasks.filter(
-      (t) =>
-        t.mergeStatus === "pr_merged" &&
-        (t.updatedAt ?? t._creationTime) >= sevenDaysAgo,
+    // Fetch tasks updated in the past 7 days, then filter to merged
+    const recentlyUpdatedTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_updated", (idx) =>
+        idx
+          .eq("teamId", teamId)
+          .eq("userId", userId)
+          .gte("updatedAt", sevenDaysAgo),
+      )
+      .collect();
+
+    const mergedTasks = recentlyUpdatedTasks.filter(
+      (t) => t.mergeStatus === "pr_merged",
     );
 
-    // Fetch task runs for this user/team
-    const allRuns = await ctx.db
+    // Fetch task runs created in the past 7 days (filter by date at index level)
+    const recentRuns = await ctx.db
       .query("taskRuns")
-      .withIndex("by_team_user", (idx) =>
-        idx.eq("teamId", teamId).eq("userId", userId),
+      .withIndex("by_team_user_created", (idx) =>
+        idx
+          .eq("teamId", teamId)
+          .eq("userId", userId)
+          .gte("createdAt", sevenDaysAgo),
       )
       .collect();
 
-    // Completed runs in the past 7 days
-    const completedRuns = allRuns.filter(
+    // Filter to completed runs in memory
+    const completedRuns = recentRuns.filter(
       (r) =>
         r.status === "completed" &&
         (r.completedAt ?? r.updatedAt) >= sevenDaysAgo,
