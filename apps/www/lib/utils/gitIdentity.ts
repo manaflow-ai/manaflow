@@ -14,14 +14,14 @@ function sanitizeNameForEmailBase(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return base || "cmux";
+  return base || "manaflow";
 }
 
 export function selectGitIdentity(
   who: ConvexUserMinimal | null | undefined,
   gh: GithubUserMinimal | null | undefined
 ): { name: string; email: string } {
-  const name = (who?.displayName || gh?.login || "cmux").trim();
+  const name = (who?.displayName || gh?.login || "manaflow").trim();
 
   // Prefer GitHub noreply first; then fall back to Convex primary, then GitHub primary, then sanitized-name noreply
   let email = (gh?.derivedNoreply || "").trim();
