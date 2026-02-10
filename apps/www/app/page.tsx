@@ -245,7 +245,7 @@ export default async function LandingPage() {
               </div>
               {latestVersion ? (
                 <p className="text-xs text-neutral-400">
-                  Latest release: {latestVersion}. Need another build? Visit the{" "}
+                  Latest release: Manaflow {latestVersion}. Need another build? Visit the{" "}
                   <a
                     href="https://github.com/manaflow-ai/manaflow/releases"
                     target="_blank"
