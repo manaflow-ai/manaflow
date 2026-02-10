@@ -99,6 +99,9 @@ export default function CloudRouterPage() {
             <a href="#features" className="transition hover:text-neutral-900 dark:hover:text-white">
               Features
             </a>
+            <a href="/cloudrouter/blog" className="transition hover:text-neutral-900 dark:hover:text-white">
+              Blog
+            </a>
             <a
               href="https://github.com/manaflow-ai/cloudrouter"
               target="_blank"
@@ -209,23 +212,6 @@ export default function CloudRouterPage() {
 
         <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
 
-        {/* Features */}
-        <section id="features" className="mb-8 scroll-mt-8">
-          <h2 className="mb-6 text-lg font-semibold">Features</h2>
-          <div className="grid gap-6 sm:grid-cols-2">
-            {features.map((feature) => (
-              <div key={feature.title}>
-                <h3 className="mb-1 text-sm font-semibold">{feature.title}</h3>
-                <p className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                  {feature.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
-
         {/* File transfer */}
         <section className="mb-8 scroll-mt-8">
           <h2 className="mb-4 text-lg font-semibold">File transfer</h2>
@@ -263,6 +249,23 @@ export default function CloudRouterPage() {
               "cloudrouter delete cr_abc123",
             ].join("\n")}
           </CodeBlock>
+        </section>
+
+        <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
+
+        {/* Features */}
+        <section id="features" className="mb-8 scroll-mt-8">
+          <h2 className="mb-6 text-lg font-semibold">Features</h2>
+          <div className="grid gap-6 sm:grid-cols-2">
+            {features.map((feature) => (
+              <div key={feature.title}>
+                <h3 className="mb-1 text-sm font-semibold">{feature.title}</h3>
+                <p className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+                  {feature.description}
+                </p>
+              </div>
+            ))}
+          </div>
         </section>
 
         <hr className="mb-12 border-neutral-200 dark:border-neutral-800" />
