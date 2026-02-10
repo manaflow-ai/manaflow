@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Source_Serif_4 } from "next/font/google";
+import Link from "next/link";
 import { CopyButton } from "./copy-button";
 
 
@@ -99,9 +100,9 @@ export default function CloudRouterPage() {
             <a href="#features" className="transition hover:text-neutral-900 dark:hover:text-white">
               Features
             </a>
-            <a href="/cloudrouter/blog" className="transition hover:text-neutral-900 dark:hover:text-white">
+            <Link href="/cloudrouter/blog" className="transition hover:text-neutral-900 dark:hover:text-white">
               Blog
-            </a>
+            </Link>
             <a
               href="https://github.com/manaflow-ai/cloudrouter"
               target="_blank"
