@@ -61,6 +61,13 @@ func (c *Client) doRequest(method, path string, body interface{}) ([]byte, error
 	}
 
 	if resp.StatusCode >= 400 {
+		// Try to extract a human-readable message from JSON error responses
+		var apiErr struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Message != "" {
+			return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, apiErr.Message)
+		}
 		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
 	}
 
