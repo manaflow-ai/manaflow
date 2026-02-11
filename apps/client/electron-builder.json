@@ -1,6 +1,6 @@
 {
   "appId": "com.cmux.app",
-  "productName": "cmux",
+  "productName": "Manaflow",
   "directories": {
     "output": "dist-electron",
     "buildResources": "build"

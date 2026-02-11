@@ -698,7 +698,7 @@ function createWindow(): void {
 
   // Use only the icon from cmux-logos iconset.
   const iconPng = resolveResourcePath(
-    "cmux-logos/cmux.iconset/icon_512x512.png"
+    "cmux-logos/cmux.iconset/icon_512x512_dark.png"
   );
   if (process.platform !== "darwin") {
     windowOptions.icon = iconPng;
@@ -949,11 +949,11 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Ensure macOS menu and About panel use "cmux" instead of package.json name
+  // Ensure macOS menu and About panel use "Manaflow" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("cmux");
-      app.setAboutPanelOptions({ applicationName: "cmux" });
+      app.setName("Manaflow");
+      app.setAboutPanelOptions({ applicationName: "Manaflow" });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -1013,7 +1013,7 @@ app.whenReady().then(async () => {
   // Set Dock icon from iconset on macOS.
   if (process.platform === "darwin") {
     const iconPng = resolveResourcePath(
-      "cmux-logos/cmux.iconset/icon_512x512.png"
+      "cmux-logos/cmux.iconset/icon_512x512_dark.png"
     );
     const img = nativeImage.createFromPath(iconPng);
     if (!img.isEmpty()) app.dock?.setIcon(img);

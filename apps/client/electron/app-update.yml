@@ -2,4 +2,4 @@ provider: github
 owner: manaflow-ai
 repo: cmux
 releaseType: release
-updaterCacheDirName: cmux-updater
+updaterCacheDirName: manaflow-updater

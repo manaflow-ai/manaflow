@@ -1,8 +1,8 @@
 {
   "name": "@cmux/client",
   "version": "1.0.264",
-  "description": "cmux client application",
-  "author": "cmux",
+  "description": "Manaflow client application",
+  "author": "manaflow",
   "type": "module",
   "private": true,
   "repository": {

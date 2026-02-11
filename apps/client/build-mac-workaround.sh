@@ -82,7 +82,7 @@ bunx electron-vite build -c electron.vite.config.ts
 
 # Create a temporary directory for packaging
 TEMP_DIR=$(mktemp -d)
-APP_NAME="${CMUX_APP_NAME:-cmux}"
+APP_NAME="${CMUX_APP_NAME:-Manaflow}"
 APP_DIR="$TEMP_DIR/$APP_NAME.app"
 APP_VERSION=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (!pkg.version) { process.exit(1); } process.stdout.write(String(pkg.version));")
 if [ -z "$APP_VERSION" ]; then
@@ -180,8 +180,8 @@ cp "$APP_UPDATE_SRC" "$RESOURCES_DIR/app-update.yml"
 
 if [ -f "$BUILD_ICON_ICNS" ]; then
   echo "Installing app icon..."
-  cp "$BUILD_ICON_ICNS" "$RESOURCES_DIR/Cmux.icns"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Cmux" "$APP_DIR/Contents/Info.plist"
+  cp "$BUILD_ICON_ICNS" "$RESOURCES_DIR/Manaflow.icns"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Manaflow" "$APP_DIR/Contents/Info.plist"
 else
   echo "WARNING: build/icon.icns not found after generation; app icon may remain default" >&2
 fi
