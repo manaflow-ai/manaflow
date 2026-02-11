@@ -68,12 +68,18 @@ const app = new OpenAPIHono({
   },
 }).basePath("/api");
 
-// Debug middleware
-app.use("*", async (c, next) => {
-  console.log("Request path:", c.req.path);
-  console.log("Request url:", c.req.url);
-  return next();
-});
+const ENABLE_HONO_REQUEST_DEBUG_LOGS =
+  process.env.NODE_ENV !== "production" &&
+  process.env.CMUX_HONO_DEBUG_LOGS === "1";
+
+if (ENABLE_HONO_REQUEST_DEBUG_LOGS) {
+  // Debug middleware (opt-in)
+  app.use("*", async (c, next) => {
+    console.log("Request path:", c.req.path);
+    console.log("Request url:", c.req.url);
+    return next();
+  });
+}
 
 // Middleware
 app.use("*", logger());

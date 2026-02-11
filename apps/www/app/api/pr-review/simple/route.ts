@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { stackServerApp } from "@/lib/utils/stack";
@@ -12,6 +13,18 @@ import { trackHeatmapReviewRequested } from "@/lib/analytics/track-heatmap-revie
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function parseTimeoutMsFromEnv(envVar: string, defaultMs: number): number {
+  const raw = process.env[envVar];
+  if (!raw) {
+    return defaultMs;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return defaultMs;
+  }
+  return parsed;
+}
 
 function parseRepoFullName(repoFullName: string | null): {
   owner: string;
@@ -42,6 +55,10 @@ function parsePrNumber(raw: string | null): number | null {
 }
 
 export async function GET(request: NextRequest) {
+  const requestId = randomUUID();
+  const vercelId = request.headers.get("x-vercel-id");
+  const startTime = Date.now();
+
   try {
     const { searchParams } = request.nextUrl;
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
@@ -97,6 +114,7 @@ export async function GET(request: NextRequest) {
       searchParams.get(HEATMAP_MODEL_QUERY_KEY) ?? "default";
 
     console.info("[simple-review][api] Request params", {
+      requestId,
       prIdentifier,
       tooltipLanguage,
       rawLangParam: searchParams.get("lang"),
@@ -117,9 +135,38 @@ export async function GET(request: NextRequest) {
     const encoder = new TextEncoder();
     const abortController = new AbortController();
 
+    const hardTimeoutMs = parseTimeoutMsFromEnv(
+      "CMUX_PR_REVIEW_HARD_TIMEOUT_MS",
+      120_000,
+    );
+    const hardTimeoutSignal = AbortSignal.timeout(hardTimeoutMs);
+    const combinedSignal = AbortSignal.any([
+      abortController.signal,
+      hardTimeoutSignal,
+    ]);
+
+    let clientAbortAtMs: number | null = null;
+    const onRequestAbort = () => {
+      clientAbortAtMs = Date.now() - startTime;
+      abortController.abort(new Error("Client disconnected"));
+    };
+
+    if (request.signal.aborted) {
+      clientAbortAtMs = 0;
+      abortController.abort(new Error("Client disconnected"));
+    } else {
+      request.signal.addEventListener("abort", onRequestAbort, { once: true });
+    }
+
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         let isClosed = false;
+        let firstByteAtMs: number | null = null;
+        let eventsEmitted = 0;
+        let bytesEnqueued = 0;
+        let fileCompleteSuccess = 0;
+        let fileCompleteSkipped = 0;
+        let fileCompleteError = 0;
 
         const enqueue = (payload: unknown) => {
           // Silently skip if controller is already closed (happens when client disconnects)
@@ -127,12 +174,18 @@ export async function GET(request: NextRequest) {
             return;
           }
           try {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
-            );
+            const text = `data: ${JSON.stringify(payload)}\n\n`;
+            const encoded = encoder.encode(text);
+            if (firstByteAtMs === null) {
+              firstByteAtMs = Date.now() - startTime;
+            }
+            eventsEmitted += 1;
+            bytesEnqueued += encoded.byteLength;
+            controller.enqueue(encoded);
           } catch {
             // Mark as closed if enqueue fails
             isClosed = true;
+            abortController.abort(new Error("Stream enqueue failed"));
           }
         };
 
@@ -144,7 +197,7 @@ export async function GET(request: NextRequest) {
             githubToken: normalizedGithubToken,
             modelConfig,
             tooltipLanguage,
-            signal: abortController.signal,
+            signal: combinedSignal,
             onEvent: async (event) => {
               switch (event.type) {
                 case "file":
@@ -168,6 +221,13 @@ export async function GET(request: NextRequest) {
                   });
                   break;
                 case "file-complete":
+                  if (event.status === "success") {
+                    fileCompleteSuccess += 1;
+                  } else if (event.status === "skipped") {
+                    fileCompleteSkipped += 1;
+                  } else if (event.status === "error") {
+                    fileCompleteError += 1;
+                  }
                   enqueue({
                     type: "file-complete",
                     filePath: event.filePath,
@@ -241,10 +301,40 @@ export async function GET(request: NextRequest) {
           enqueue({ type: "error", message });
           isClosed = true;
           controller.close();
+        } finally {
+          request.signal.removeEventListener("abort", onRequestAbort);
+
+          const durationMs = Date.now() - startTime;
+          console.info("[simple-review][metrics]", {
+            requestId,
+            vercelId,
+            durationMs,
+            firstByteAtMs,
+            clientAbortAtMs,
+            requestAborted: request.signal.aborted,
+            localAborted: abortController.signal.aborted,
+            hardTimeoutMs,
+            hardTimeoutTriggered:
+              combinedSignal.aborted &&
+              !abortController.signal.aborted &&
+              !request.signal.aborted,
+            eventsEmitted,
+            bytesEnqueued,
+            fileCompleteSuccess,
+            fileCompleteSkipped,
+            fileCompleteError,
+            prIdentifier,
+            repo: repoFullNameStr,
+            pullNumber: prNumber,
+            modelQueryValue,
+            tooltipLanguage,
+          });
         }
       },
-      cancel() {
-        abortController.abort();
+      cancel(reason) {
+        abortController.abort(
+          reason instanceof Error ? reason : new Error("Stream canceled")
+        );
       },
     });
 
@@ -253,6 +343,7 @@ export async function GET(request: NextRequest) {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-store",
         Connection: "keep-alive",
+        "x-cmux-request-id": requestId,
       },
     });
   } catch (error) {
@@ -262,6 +353,17 @@ export async function GET(request: NextRequest) {
       message,
       error,
     });
-    return NextResponse.json({ error: message }, { status: 500 });
+    const durationMs = Date.now() - startTime;
+    console.info("[simple-review][metrics]", {
+      requestId,
+      vercelId,
+      durationMs,
+      requestAborted: request.signal.aborted,
+      error: message,
+    });
+    return NextResponse.json(
+      { error: message },
+      { status: 500, headers: { "x-cmux-request-id": requestId } },
+    );
   }
 }
