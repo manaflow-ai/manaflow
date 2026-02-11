@@ -454,6 +454,23 @@ export const updateStatusInternal = internalMutation({
 });
 
 /**
+ * Count running (non-stopped) devbox instances for a user across all teams.
+ */
+export const countRunningByUser = internalQuery({
+  args: {
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const instances = await ctx.db
+      .query("devboxInstances")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    return instances.filter((i) => i.status !== "stopped").length;
+  },
+});
+
+/**
  * Delete a devbox instance by ID.
  */
 export const remove = authMutation({

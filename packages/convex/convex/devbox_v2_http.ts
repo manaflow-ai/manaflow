@@ -80,6 +80,7 @@ const devboxApi = (api as any).devboxInstances as {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const devboxInternalApi = (internal as any).devboxInstances as {
   getInfo: FunctionReference<"query", "internal">;
+  countRunningByUser: FunctionReference<"query", "internal">;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -199,6 +200,23 @@ export const createInstance = httpAction(async (ctx, req) => {
   }
 
   const provider: SandboxProvider = body.provider ?? "e2b";
+
+  // Enforce per-user running sandbox limit
+  const MAX_RUNNING_SANDBOXES = 10;
+  const runningCount = (await ctx.runQuery(
+    devboxInternalApi.countRunningByUser,
+    { userId: identity!.subject }
+  )) as number;
+
+  if (runningCount >= MAX_RUNNING_SANDBOXES) {
+    return jsonResponse(
+      {
+        code: 429,
+        message: `You have reached the maximum of ${MAX_RUNNING_SANDBOXES} running sandboxes. Please stop or clean up existing sandboxes, or contact founders@manaflow.ai for more concurrency.`,
+      },
+      429
+    );
+  }
 
   try {
     if (provider === "modal") {
