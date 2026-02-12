@@ -29,7 +29,7 @@ const STEPS: Step[] = [
       [{ text: "│", color: "#d4d4d4" }],
       [
         { text: "◇  Source: ", color: "#d4d4d4" },
-        { text: "https://github.com/manaflow-ai/cloudrouter.git", color: "#38bdf8" },
+        { text: "https://github.com/manaflow-ai/manaflow.git", color: "#38bdf8" },
       ],
       [{ text: "│", color: "#d4d4d4" }],
       [

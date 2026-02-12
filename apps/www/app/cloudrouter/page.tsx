@@ -79,7 +79,7 @@ export default function CloudRouterPage() {
         <footer className="flex flex-col items-center gap-4 text-center text-xs text-neutral-400 dark:text-neutral-500">
           <div className="flex gap-4">
             <a
-              href="https://github.com/manaflow-ai/cloudrouter"
+              href="https://github.com/manaflow-ai/manaflow"
               target="_blank"
               rel="noopener noreferrer"
               className="transition hover:text-neutral-900 dark:hover:text-white"

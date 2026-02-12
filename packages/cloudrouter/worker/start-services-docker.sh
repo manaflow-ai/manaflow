@@ -79,6 +79,18 @@ echo "[cmux-e2b] Starting cmux-code on port 39378 (token-protected)..."
 # CDP will be available on port 9222 once VNC desktop is up
 echo "[cmux-e2b] Chrome CDP will be available on port 9222 (started via VNC)"
 
+# Create agent-browser wrapper that auto-connects to Chrome CDP on first use
+cat > /usr/local/bin/ab << 'WRAPPER_EOF'
+#!/bin/bash
+# Auto-connect to Chrome CDP if not already connected
+if [ ! -S "$HOME/.agent-browser/default.sock" ] || ! agent-browser get url >/dev/null 2>&1; then
+  mkdir -p "$HOME/.agent-browser"
+  agent-browser connect 9222 >/dev/null 2>&1
+fi
+exec agent-browser "$@"
+WRAPPER_EOF
+chmod +x /usr/local/bin/ab
+
 # Start JupyterLab on port 8888 (token-protected, same auth token)
 echo "[cmux-e2b] Starting JupyterLab on port 8888..."
 jupyter lab --ip=0.0.0.0 --port=8888 --no-browser \

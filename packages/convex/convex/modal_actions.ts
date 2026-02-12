@@ -9,7 +9,7 @@ import {
 } from "@cmux/shared/modal-templates";
 import { ModalClient, type ModalInstance } from "@cmux/modal-client";
 
-const MODAL_SNAPSHOT_IMAGE_ID = "im-oFT8A193wId9GMCThyNsac";
+const MODAL_SNAPSHOT_IMAGE_ID = "im-WjlWgd7XETGXXz02cmGEZV";
 
 /**
  * Get Modal client with credentials from env
@@ -140,7 +140,18 @@ nohup jupyter lab \\
   --ServerApp.root_dir=/home/user/workspace \\
   --no-browser > /tmp/jupyter.log 2>&1 &
 
-sleep 2
+# Create agent-browser wrapper that auto-connects to Chrome CDP on first use
+cat > /usr/local/bin/ab << 'WRAPPER_EOF'
+#!/bin/bash
+# Auto-connect to Chrome CDP if not already connected
+if [ ! -S "$HOME/.agent-browser/default.sock" ] || ! agent-browser get url >/dev/null 2>&1; then
+  mkdir -p "$HOME/.agent-browser"
+  agent-browser connect 9222 >/dev/null 2>&1
+fi
+exec agent-browser "$@"
+WRAPPER_EOF
+chmod +x /usr/local/bin/ab
+
 echo "STARTUP_COMPLETE"
 `;
 }

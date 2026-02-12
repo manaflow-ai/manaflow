@@ -1,6 +1,6 @@
 {
   "name": "@manaflow-ai/cloudrouter-darwin-x64",
-  "version": "0.9.16",
+  "version": "0.9.17",
   "description": "cloudrouter binary for macOS x64",
   "os": ["darwin"],
   "cpu": ["x64"],

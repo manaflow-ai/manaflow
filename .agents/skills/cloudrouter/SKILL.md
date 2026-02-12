@@ -158,7 +158,8 @@ Multi-GPU: append `:N` to the GPU type, e.g. `--gpu H100:2` for 2x H100.
 cloudrouter ls                  # List all sandboxes
 cloudrouter status <id>         # Show sandbox details and URLs
 cloudrouter stop <id>           # Stop sandbox (can restart later)
-cloudrouter extend <id>         # Extend sandbox timeout
+cloudrouter extend <id>         # Extend sandbox timeout (default: +1 hour)
+cloudrouter extend <id> --seconds 7200  # Extend by 2 hours
 cloudrouter delete <id>         # Delete sandbox permanently
 cloudrouter templates           # List available templates
 ```
@@ -322,6 +323,8 @@ cloudrouter computer screenshot cr_abc123 # Visual capture
 1. **Only touch sandboxes you created in this session.** Never stop or delete sandboxes you didn't create or don't recognize. If you see unknown sandboxes in `cloudrouter ls`, leave them alone — they may belong to the user or another workflow.
 
 2. **Extend before cleanup.** Before stopping or deleting a sandbox you created, consider whether the user might want to inspect it. If you built something the user should see (a running app, a trained model, browser automation results, etc.), **extend the sandbox** with `cloudrouter extend <id>` so the user has time to check it out. Share the relevant URL (VS Code, VNC, etc.) so they can access it.
+   - Use `--seconds <N>` to set a custom duration (default is 3600 = 1 hour). **Do NOT use `--timeout`** — that flag does not exist.
+   - Example: `cloudrouter extend cr_abc123 --seconds 1800` extends by 30 minutes.
 
 3. **Stop, don't delete, by default.** Prefer `cloudrouter stop <id>` over `cloudrouter delete <id>` unless the sandbox is clearly disposable (e.g., a quick test that produced no artifacts). Stopped sandboxes can be restarted; deleted ones are gone forever.
 
@@ -335,7 +338,8 @@ cloudrouter computer screenshot cr_abc123 # Visual capture
 
 ```bash
 cloudrouter ls                  # Check running sandboxes and count
-cloudrouter extend cr_abc123    # Extend sandbox so user can inspect it
+cloudrouter extend cr_abc123                # Extend by 1 hour (default)
+cloudrouter extend cr_abc123 --seconds 3600 # Extend by custom duration
 # ... share URLs, let user verify ...
 cloudrouter stop cr_abc123      # Stop when done (can restart later)
 cloudrouter delete cr_abc123    # Delete only if clearly disposable

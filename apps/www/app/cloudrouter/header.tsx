@@ -17,7 +17,7 @@ export function CloudrouterHeader() {
         <span className="text-lg">cloudrouter</span>
       </span>
       <a
-        href="https://github.com/manaflow-ai/cloudrouter"
+        href="https://github.com/manaflow-ai/manaflow"
         target="_blank"
         rel="noopener noreferrer"
         className="text-neutral-500 transition hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"

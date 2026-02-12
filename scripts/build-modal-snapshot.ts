@@ -59,7 +59,11 @@ apt-get install -y -qq \\
   xfce4 xfce4-terminal dbus-x11 \\
   novnc python3-websockify \\
   fonts-liberation fonts-dejavu \\
+  npm \\
   > /dev/null 2>&1
+
+# Install agent-browser (Vercel's browser automation CLI)
+npm install -g agent-browser > /dev/null 2>&1
 
 # Install Google Chrome
 curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb
