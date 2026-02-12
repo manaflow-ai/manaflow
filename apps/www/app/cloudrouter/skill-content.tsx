@@ -1,4 +1,5 @@
 import { codeToHtml } from "shiki";
+import { CLOUDROUTER_SKILL_CONTENT_CLASS } from "./code-block-styles";
 import { CopyButton } from "./copy-button";
 
 const SKILL_URL =
@@ -48,7 +49,7 @@ export async function SkillContent() {
     <div className="min-w-0">
       <div className="relative min-w-0">
         <div
-          className="max-h-[600px] overflow-y-auto overflow-x-auto rounded-lg border border-neutral-200 text-sm leading-relaxed dark:border-neutral-800 [&_pre]:!m-0 [&_pre]:!rounded-lg [&_pre]:!p-4 [&_pre]:!pr-12"
+          className={CLOUDROUTER_SKILL_CONTENT_CLASS}
           dangerouslySetInnerHTML={{ __html: html }}
         />
         <div className="absolute right-3 top-4">

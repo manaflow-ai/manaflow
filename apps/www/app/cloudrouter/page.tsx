@@ -66,10 +66,10 @@ const features = [
 export default function CloudRouterPage() {
   return (
     <div
-      className={`flex min-h-screen flex-col items-center bg-white px-4 py-12 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-16 ${sourceSerif.className}`}
+      className={`flex min-h-screen flex-col items-center overflow-x-hidden bg-white px-4 py-12 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 sm:px-6 sm:py-16 ${sourceSerif.className}`}
     >
       <style dangerouslySetInnerHTML={{ __html: `.dark .shiki, .dark .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }` }} />
-      <div className="w-full max-w-3xl">
+      <div className="w-full min-w-0 max-w-3xl">
         <CloudrouterHeader />
 
         {/* Hero */}

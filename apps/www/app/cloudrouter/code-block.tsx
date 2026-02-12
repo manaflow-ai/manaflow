@@ -1,4 +1,5 @@
 import { codeToHtml } from "shiki";
+import { CLOUDROUTER_CODE_BLOCK_CLASS } from "./code-block-styles";
 import { CopyButton } from "./copy-button";
 
 export async function CodeBlock({
@@ -20,7 +21,7 @@ export async function CodeBlock({
   return (
     <div className="relative min-w-0">
       <div
-        className="overflow-x-auto rounded-lg border border-neutral-200 text-sm leading-relaxed dark:border-neutral-800 [&_pre]:!m-0 [&_pre]:!rounded-lg [&_pre]:!p-4 [&_pre]:!pr-12"
+        className={CLOUDROUTER_CODE_BLOCK_CLASS}
         dangerouslySetInnerHTML={{ __html: html }}
       />
       <div className="absolute right-3 top-4">
