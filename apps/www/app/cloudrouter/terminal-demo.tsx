@@ -375,8 +375,8 @@ export function TerminalDemo() {
   const [isRunning, setIsRunning] = useState(false);
 
   const { scrollRef, contentRef } = useStickToBottom({
-    resize: "smooth",
-    initial: "smooth",
+    resize: "instant",
+    initial: "instant",
   });
   const abortRef = useRef<AbortController | null>(null);
   const lineCounterRef = useRef(0);
