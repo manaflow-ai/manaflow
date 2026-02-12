@@ -263,5 +263,9 @@ function renderToken(token: Token, i: number): React.ReactNode {
 }
 
 export function SkillContent() {
-  return <>{tokens.map((token, i) => renderToken(token, i))}</>;
+  return (
+    <div className="min-w-0">
+      {tokens.map((token, i) => renderToken(token, i))}
+    </div>
+  );
 }
