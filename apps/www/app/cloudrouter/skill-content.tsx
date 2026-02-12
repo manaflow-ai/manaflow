@@ -1,16 +1,16 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { marked } from "marked";
 import type { Token, Tokens } from "marked";
 import { CodeBlock } from "./code-block";
 
-const skillPath = resolve(
-  process.cwd(),
-  "../../packages/cloudrouter/npm/cloudrouter/.agents/skills/cloudrouter/SKILL.md",
-);
-const raw = readFileSync(skillPath, "utf-8");
-const content = raw.replace(/^---[\s\S]*?---\n/, "");
-const tokens = marked.lexer(content);
+const SKILL_URL =
+  "https://raw.githubusercontent.com/manaflow-ai/cloudrouter/main/skills/cloudrouter/SKILL.md";
+
+async function fetchSkillTokens() {
+  const res = await fetch(SKILL_URL, { next: { revalidate: 60 } });
+  const raw = await res.text();
+  const content = raw.replace(/^---[\s\S]*?---\n/, "");
+  return marked.lexer(content);
+}
 
 function renderInlineTokens(inlineTokens: Token[]): React.ReactNode[] {
   return inlineTokens.map((token, i) => {
@@ -262,7 +262,8 @@ function renderToken(token: Token, i: number): React.ReactNode {
   }
 }
 
-export function SkillContent() {
+export async function SkillContent() {
+  const tokens = await fetchSkillTokens();
   return (
     <div className="min-w-0">
       {tokens.map((token, i) => renderToken(token, i))}
