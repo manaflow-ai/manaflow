@@ -7,7 +7,9 @@
       "cpu-features",
       "@octokit/request",
       "@cmux/e2b-client",
-      "e2b"
+      "e2b",
+      "@cmux/modal-client",
+      "modal"
     ],
     "nodeVersion": "22"
   }

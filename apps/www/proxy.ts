@@ -33,6 +33,10 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
+  if (hostname === "cloudrouter.dev" && pathname === "/") {
+    return NextResponse.rewrite(new URL("/cloudrouter", request.url));
+  }
+
   // Handle preview.new domain routing
   if (hostname === "preview.new") {
     // Redirect /preview/* to /* to avoid duplicate URLs

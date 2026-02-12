@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as analytics from "../analytics.js";
 import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
@@ -50,6 +51,8 @@ import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as media_proxy_http from "../media_proxy_http.js";
 import type * as migrations from "../migrations.js";
+import type * as modalInstances from "../modalInstances.js";
+import type * as modal_actions from "../modal_actions.js";
 import type * as morphInstanceMaintenance from "../morphInstanceMaintenance.js";
 import type * as morphInstances from "../morphInstances.js";
 import type * as notifications_http from "../notifications_http.js";
@@ -79,6 +82,8 @@ import type * as userEditorSettings from "../userEditorSettings.js";
 import type * as users from "../users.js";
 import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
 import type * as users_utils_index from "../users/utils/index.js";
+import type * as warmPool from "../warmPool.js";
+import type * as warmPoolMaintenance from "../warmPoolMaintenance.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceSettings from "../workspaceSettings.js";
 
@@ -89,6 +94,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  analytics: typeof analytics;
   anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
@@ -131,6 +137,8 @@ declare const fullApi: ApiFromModules<{
   localWorkspaces: typeof localWorkspaces;
   media_proxy_http: typeof media_proxy_http;
   migrations: typeof migrations;
+  modalInstances: typeof modalInstances;
+  modal_actions: typeof modal_actions;
   morphInstanceMaintenance: typeof morphInstanceMaintenance;
   morphInstances: typeof morphInstances;
   notifications_http: typeof notifications_http;
@@ -160,6 +168,8 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
   "users/utils/index": typeof users_utils_index;
+  warmPool: typeof warmPool;
+  warmPoolMaintenance: typeof warmPoolMaintenance;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceSettings: typeof workspaceSettings;
 }>;

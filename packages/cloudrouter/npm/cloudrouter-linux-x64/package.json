@@ -1,0 +1,9 @@
+{
+  "name": "@manaflow-ai/cloudrouter-linux-x64",
+  "version": "0.9.6",
+  "description": "cloudrouter binary for Linux x64",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "license": "MIT",
+  "files": ["bin"]
+}

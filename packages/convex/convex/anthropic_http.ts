@@ -300,35 +300,29 @@ function trackAnthropicProxyRequest(event: AnthropicProxyEvent): void {
  * Strip unsupported fields from cache_control objects in the request body.
  * Some clients (e.g. Claude Code) send cache_control with a "scope" field
  * that the Anthropic API rejects. The API only accepts { "type": "ephemeral" }.
+ *
+ * Recursively walks the body to catch cache_control at any nesting depth
+ * (e.g. tool_result blocks with nested content arrays).
  */
 function sanitizeCacheControl(body: Record<string, unknown>): void {
-  function stripScope(block: unknown): void {
-    if (isRecord(block) && isRecord(block.cache_control)) {
-      delete (block.cache_control as Record<string, unknown>).scope;
-    }
-  }
+  function walk(node: unknown): void {
+    if (!isRecord(node)) return;
 
-  if (Array.isArray(body.system)) {
-    for (const block of body.system) {
-      stripScope(block);
+    if (isRecord(node.cache_control)) {
+      delete (node.cache_control as Record<string, unknown>).scope;
     }
-  }
 
-  if (Array.isArray(body.messages)) {
-    for (const message of body.messages) {
-      if (isRecord(message) && Array.isArray(message.content)) {
-        for (const block of message.content) {
-          stripScope(block);
+    // Recurse into arrays (system, messages, content, tools, etc.)
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          walk(item);
         }
       }
     }
   }
 
-  if (Array.isArray(body.tools)) {
-    for (const tool of body.tools) {
-      stripScope(tool);
-    }
-  }
+  walk(body);
 }
 
 function getSource(req: Request): AnthropicProxySource {

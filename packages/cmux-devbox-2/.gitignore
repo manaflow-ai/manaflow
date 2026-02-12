@@ -1,9 +1,0 @@
-# Build artifacts (platform-specific native binaries)
-npm/darwin-*/bin/
-npm/linux-*/bin/
-npm/win32-*/bin/
-npm/cmux/lib/cmux
-npm/*/*.tgz
-
-# Binary outputs (top-level build directory)
-/bin/

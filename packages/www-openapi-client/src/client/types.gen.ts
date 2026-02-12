@@ -675,6 +675,17 @@ export type StartSandboxBody = {
     depth?: number;
 };
 
+export type PrewarmSandboxResponse = {
+    id: string;
+    alreadyExists: boolean;
+};
+
+export type PrewarmSandboxBody = {
+    teamSlugOrId: string;
+    repoUrl?: string;
+    branch?: string;
+};
+
 export type UpdateSandboxEnvResponse = {
     applied: true;
 };
@@ -2714,6 +2725,33 @@ export type PostApiSandboxesStartResponses = {
 };
 
 export type PostApiSandboxesStartResponse = PostApiSandboxesStartResponses[keyof PostApiSandboxesStartResponses];
+
+export type PostApiSandboxesPrewarmData = {
+    body: PrewarmSandboxBody;
+    path?: never;
+    query?: never;
+    url: '/api/sandboxes/prewarm';
+};
+
+export type PostApiSandboxesPrewarmErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Failed to create prewarm entry
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesPrewarmResponses = {
+    /**
+     * Prewarm entry created (provisioning in background)
+     */
+    200: PrewarmSandboxResponse;
+};
+
+export type PostApiSandboxesPrewarmResponse = PostApiSandboxesPrewarmResponses[keyof PostApiSandboxesPrewarmResponses];
 
 export type PostApiSandboxesByIdEnvData = {
     body: UpdateSandboxEnvBody;

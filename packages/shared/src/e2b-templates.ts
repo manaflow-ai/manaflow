@@ -125,4 +125,4 @@ export const getE2BTemplateIdByPresetId = (
  * The default template ID for preview configure environments.
  */
 export const DEFAULT_E2B_PREVIEW_TEMPLATE_ID: E2BTemplateId =
-  getE2BTemplateIdByPresetId("cmux-devbox-base") ?? DEFAULT_E2B_TEMPLATE_ID;
+  getE2BTemplateIdByPresetId("cmux-devbox-docker") ?? DEFAULT_E2B_TEMPLATE_ID;

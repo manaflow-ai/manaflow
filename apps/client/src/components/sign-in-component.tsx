@@ -1,15 +1,50 @@
 "use client";
 
 import { isElectron } from "@/lib/electron";
+import { getElectronBridge } from "@/lib/electron";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { SignIn, useUser } from "@stackframe/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { type CSSProperties } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 
 export function SignInComponent() {
   const user = useUser({ or: "return-null" });
   const showSignIn = !user;
-  const showEmbeddedSignIn = !isElectron || import.meta.env.DEV;
+  const [protocolStatus, setProtocolStatus] = useState<
+    | { ok: true; isPackaged: boolean; isDefaultProtocolClient: boolean }
+    | { ok: false; error: string }
+    | null
+  >(null);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = getElectronBridge();
+    if (!bridge?.app?.getProtocolStatus) return;
+
+    bridge.app
+      .getProtocolStatus()
+      .then((res) => {
+        setProtocolStatus(res);
+      })
+      .catch((error: unknown) => {
+        console.error("[SignIn] Failed to get protocol status:", error);
+        setProtocolStatus({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, []);
+
+  const browserSignInSupported = useMemo(() => {
+    if (!isElectron) return true;
+    if (!protocolStatus) return true; // optimistic until we know otherwise
+    if (!protocolStatus.ok) return true;
+    return protocolStatus.isDefaultProtocolClient;
+  }, [protocolStatus]);
+
+  const showEmbeddedSignIn =
+    !isElectron || import.meta.env.DEV || !browserSignInSupported;
+
   return (
     <AnimatePresence mode="wait">
       {showSignIn ? (
@@ -35,13 +70,21 @@ export function SignInComponent() {
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
                   We'll open your browser to continue.
                 </p>
+                {!browserSignInSupported ? (
+                  <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                    The <code className="font-mono">cmux://</code> deeplink isn&apos;t registered on this machine for
+                    this app build. Restart cmux to re-register, or use the embedded sign-in below.
+                  </p>
+                ) : null}
               </div>
               <button
                 onClick={() => {
+                  if (!browserSignInSupported) return;
                   const url = `${WWW_ORIGIN}/handler/sign-in`;
                   window.open(url, "_blank", "noopener,noreferrer");
                 }}
-                className="px-4 py-2 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90"
+                disabled={!browserSignInSupported}
+                className={`px-4 py-2 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 ${browserSignInSupported ? "hover:opacity-90" : "opacity-50 cursor-not-allowed"}`}
               >
                 Sign in with browser
               </button>

@@ -1,0 +1,26 @@
+# Compiled binaries in platform-specific npm packages
+npm/cloudrouter-darwin-*/bin/
+npm/cloudrouter-linux-*/bin/
+npm/cloudrouter-win32-*/bin/
+npm/cmux55-darwin-*/bin/
+npm/cmux55-linux-*/bin/
+npm/cmux55-win32-*/bin/
+npm/darwin-*/bin/
+npm/linux-*/bin/
+npm/win32-*/bin/
+
+# Compiled binaries in wrapper packages
+npm/cloudrouter/bin/cloudrouter
+npm/cloudrouter/lib/cloudrouter
+npm/cloudrouter/lib/cmux
+npm/cmux/bin/cmux
+npm/cmux/lib/cmux
+npm/cmux55/bin/cmux55
+npm/cmux55/lib/cmux55
+npm/cloudrouter-zzz/lib/cmux
+
+# Tarballs
+npm/*/*.tgz
+
+# Binary outputs (top-level build directory)
+/bin/

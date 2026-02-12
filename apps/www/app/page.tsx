@@ -225,8 +225,8 @@ export default async function LandingPage() {
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-neutral-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-neutral-800"
                   title={
                     latestVersion
-                      ? `Download cmux ${latestVersion} for macOS`
-                      : "Download cmux for macOS"
+                      ? `Download Manaflow ${latestVersion} for macOS`
+                      : "Download Manaflow for macOS"
                   }
                   urls={macDownloadUrls}
                 >
@@ -245,9 +245,9 @@ export default async function LandingPage() {
               </div>
               {latestVersion ? (
                 <p className="text-xs text-neutral-400">
-                  Latest release: cmux {latestVersion}. Need another build? Visit the{" "}
+                  Latest release: Manaflow {latestVersion}. Need another build? Visit the{" "}
                   <a
-                    href="https://github.com/manaflow-ai/cmux/releases"
+                    href="https://github.com/manaflow-ai/manaflow/releases"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline hover:text-neutral-300"
@@ -546,7 +546,7 @@ export default async function LandingPage() {
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
             <a
               className="transition hover:text-white"
-              href="https://github.com/manaflow-ai/cmux"
+              href="https://github.com/manaflow-ai/manaflow"
               rel="noopener noreferrer"
               target="_blank"
             >

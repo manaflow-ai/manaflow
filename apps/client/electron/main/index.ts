@@ -52,6 +52,11 @@ import {
   type ElectronRendererEventMap,
 } from "../../src/types/electron-events";
 import { CertificateManager } from "./preview-proxy-certs";
+import {
+  buildStackAuthCookieSpecs,
+  isStackAuthCookieName,
+} from "./stack-auth-cookies";
+import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -525,6 +530,40 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+function registerAppIpcHandlers(): void {
+  ipcMain.handle("cmux:app:get-protocol-status", async () => {
+    try {
+      const call = computeSetAsDefaultProtocolClientCall({
+        scheme: "cmux",
+        defaultApp: process.defaultApp,
+        execPath: process.execPath,
+        argv: process.argv,
+      });
+      let isDefaultProtocolClient = false;
+      try {
+        isDefaultProtocolClient =
+          call.kind === "withArgs"
+            ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
+            : app.isDefaultProtocolClient(call.scheme);
+      } catch (error) {
+        mainWarn("isDefaultProtocolClient(cmux) failed", error);
+      }
+
+      return {
+        ok: true as const,
+        isPackaged: app.isPackaged,
+        isDefaultProtocolClient,
+      };
+    } catch (error) {
+      mainWarn("Failed to get protocol status", error);
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+}
+
 
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
@@ -811,6 +850,7 @@ app.whenReady().then(async () => {
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerAppIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
@@ -934,10 +974,33 @@ app.whenReady().then(async () => {
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
   try {
-    const ok = app.setAsDefaultProtocolClient("cmux");
+    const call = computeSetAsDefaultProtocolClientCall({
+      scheme: "cmux",
+      defaultApp: process.defaultApp,
+      execPath: process.execPath,
+      argv: process.argv,
+    });
+    const ok =
+      call.kind === "withArgs"
+        ? app.setAsDefaultProtocolClient(call.scheme, call.execPath, call.args)
+        : app.setAsDefaultProtocolClient(call.scheme);
+    let isDefaultProtocolClient = false;
+    try {
+      isDefaultProtocolClient =
+        call.kind === "withArgs"
+          ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
+          : app.isDefaultProtocolClient(call.scheme);
+    } catch (error) {
+      mainWarn("isDefaultProtocolClient(cmux) failed after registration", error);
+    }
     mainLog("setAsDefaultProtocolClient(cmux)", {
       ok,
+      isDefaultProtocolClient,
       packaged: app.isPackaged,
+      defaultApp: process.defaultApp,
+      registrationKind: call.kind,
+      execPath: call.kind === "withArgs" ? call.execPath : null,
+      args: call.kind === "withArgs" ? call.args : null,
     });
   } catch (e) {
     mainWarn("setAsDefaultProtocolClient failed", e);
@@ -1246,71 +1309,124 @@ async function handleProtocolUrl(url: string): Promise<void> {
       accessLength: stackAccess.length,
     });
 
-    // Verify tokens with Stack JWKS and extract exp for cookie expiry.
-    const [refreshPayload, accessPayload] = await Promise.all([
-      verifyJwtAndGetPayload(stackRefresh),
-      verifyJwtAndGetPayload(stackAccess),
-    ]);
-
-    // If verification fails, tokens may be in a non-JWT format (e.g., opaque tokens).
-    // Still proceed but log a warning.
-    if (!refreshPayload || !accessPayload) {
-      mainWarn("JWT verification failed - tokens may be opaque or malformed", {
-        hasRefreshPayload: !!refreshPayload,
-        hasAccessPayload: !!accessPayload,
+    // Verify refresh token when it looks like a JWT (for logs only). Access token
+    // may be a JSON array string (`["refresh","access"]`) so skip verification.
+    const refreshPayload = await verifyJwtAndGetPayload(stackRefresh);
+    if (!refreshPayload) {
+      mainWarn("JWT verification failed - refresh token may be opaque/malformed", {
+        refreshLength: stackRefresh.length,
       });
     }
 
-    // Calculate cookie expiration dates.
-    // If JWT verification failed, use 30 days as default (matching server session creation).
-    // This prevents session cookies that expire on app close.
-    const THIRTY_DAYS_IN_SECONDS = 30 * 24 * 60 * 60;
-    const nowInSeconds = Math.floor(Date.now() / 1000);
-    const defaultExpiry = nowInSeconds + THIRTY_DAYS_IN_SECONDS;
-    const refreshExpiry = refreshPayload?.exp ?? defaultExpiry;
-    const accessExpiry = accessPayload?.exp ?? defaultExpiry;
-
-    // Determine a cookieable URL. Prefer our custom cmux:// origin when not
-    // running against an http(s) dev server.
-    const currentUrl = new URL(mainWindow.webContents.getURL());
-    currentUrl.hash = "";
-    const realUrl = currentUrl.toString() + "/";
-
-    await Promise.all([
-      mainWindow.webContents.session.cookies.remove(
-        realUrl,
-        `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`
-      ),
-      mainWindow.webContents.session.cookies.remove(realUrl, `stack-access`),
-    ]);
-
-    const refreshCookieName = `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`;
-    mainLog("Setting auth cookies", {
-      url: realUrl,
-      refreshCookieName,
-      refreshValueLength: stackRefresh.length,
-      accessValueLength: stackAccess.length,
-      refreshExp: refreshExpiry,
-      accessExp: accessExpiry,
+    // Stack Auth SDK expects structured refresh cookies and a paired access cookie
+    // value. Using these formats avoids refresh-token rotation issues on Electron.
+    const win = mainWindow;
+    if (!win) {
+      mainWarn("Aborting cookie set due to missing window");
+      return;
+    }
+    const currentUrl = new URL(win.webContents.getURL());
+    const cookieOrigin = `${currentUrl.origin}/`;
+    const cookieHost = currentUrl.hostname;
+    const isSecure = currentUrl.protocol === "https:";
+    const cookieSpecs = buildStackAuthCookieSpecs({
+      projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID,
+      refreshToken: stackRefresh,
+      stackAccessParam: stackAccess,
+      secure: isSecure,
     });
 
+    // Clear all Stack Auth cookies for this host across all paths. This
+    // migrates away from legacy cookie paths (e.g. /index-electron.html) that
+    // can prevent Stack Auth from deleting rotated refresh tokens.
+    try {
+      const allCookies = await win.webContents.session.cookies.get({});
+      const relevantCookies = allCookies.filter((cookie) => {
+        if (!cookie.domain) return false;
+        const domain = cookie.domain?.startsWith(".")
+          ? cookie.domain.slice(1)
+          : cookie.domain;
+        return (
+          domain === cookieHost &&
+          isStackAuthCookieName(cookie.name, env.NEXT_PUBLIC_STACK_PROJECT_ID)
+        );
+      });
+
+      if (relevantCookies.length > 0) {
+        mainLog("Clearing existing Stack Auth cookies", {
+          host: cookieHost,
+          count: relevantCookies.length,
+          names: relevantCookies.map((c) => c.name),
+        });
+      }
+
+      await Promise.all(
+        relevantCookies.map(async (cookie) => {
+          const domain = cookie.domain?.startsWith(".")
+            ? cookie.domain.slice(1)
+            : cookie.domain;
+          if (!domain) return;
+          const scheme = cookie.secure
+            ? "https"
+            : currentUrl.protocol.replace(":", "");
+          const removalUrl = `${scheme}://${domain}${cookie.path}`;
+          try {
+            await win.webContents.session.cookies.remove(removalUrl, cookie.name);
+          } catch (removeError) {
+            // Best-effort cleanup; don't block login.
+            mainWarn("Failed to remove cookie", {
+              name: cookie.name,
+              removalUrl,
+              error: removeError,
+            });
+          }
+        })
+      );
+    } catch (clearError) {
+      mainWarn("Failed to enumerate/clear Stack Auth cookies", clearError);
+    }
+
+    mainLog("Setting auth cookies", {
+      url: cookieOrigin,
+      refreshCookieName: cookieSpecs.refresh.name,
+      accessCookieName: cookieSpecs.access.name,
+      refreshValueLength: cookieSpecs.refresh.value.length,
+      accessValueLength: cookieSpecs.access.value.length,
+      secure: isSecure,
+    });
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
     try {
       await Promise.all([
-        mainWindow.webContents.session.cookies.set({
-          url: realUrl,
-          name: refreshCookieName,
-          value: stackRefresh,
-          expirationDate: refreshExpiry,
-          sameSite: "no_restriction",
-          secure: true,
+        win.webContents.session.cookies.set({
+          url: cookieOrigin,
+          name: cookieSpecs.refresh.name,
+          value: cookieSpecs.refresh.value,
+          expirationDate: nowSeconds + cookieSpecs.refresh.maxAgeSeconds,
+          sameSite: cookieSpecs.refresh.sameSite,
+          secure: cookieSpecs.refresh.secure,
+          httpOnly: cookieSpecs.refresh.httpOnly,
+          path: cookieSpecs.refresh.path,
         }),
-        mainWindow.webContents.session.cookies.set({
-          url: realUrl,
-          name: "stack-access",
-          value: stackAccess,
-          expirationDate: accessExpiry,
-          sameSite: "no_restriction",
-          secure: true,
+        win.webContents.session.cookies.set({
+          url: cookieOrigin,
+          name: cookieSpecs.access.name,
+          value: cookieSpecs.access.value,
+          expirationDate: nowSeconds + cookieSpecs.access.maxAgeSeconds,
+          sameSite: cookieSpecs.access.sameSite,
+          secure: cookieSpecs.access.secure,
+          httpOnly: cookieSpecs.access.httpOnly,
+          path: cookieSpecs.access.path,
+        }),
+        win.webContents.session.cookies.set({
+          url: cookieOrigin,
+          name: cookieSpecs.isHttps.name,
+          value: cookieSpecs.isHttps.value,
+          expirationDate: nowSeconds + cookieSpecs.isHttps.maxAgeSeconds,
+          sameSite: cookieSpecs.isHttps.sameSite,
+          secure: cookieSpecs.isHttps.secure,
+          httpOnly: cookieSpecs.isHttps.httpOnly,
+          path: cookieSpecs.isHttps.path,
         }),
       ]);
       mainLog("Auth cookies set successfully");
@@ -1320,7 +1436,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
     }
 
     mainLog("Reloading renderer to apply auth cookies");
-    mainWindow.webContents.reload();
+    win.webContents.reload();
     return;
   }
 

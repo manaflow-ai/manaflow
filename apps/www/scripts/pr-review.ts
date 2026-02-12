@@ -11,7 +11,7 @@ import {
 } from "../src/pr-review";
 import { parsePrUrl } from "./pr-review/github";
 
-const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/653";
+const DEFAULT_PR_URL = "https://github.com/manaflow-ai/manaflow/pull/653";
 const execFileAsync = promisify(execFile);
 
 import type {

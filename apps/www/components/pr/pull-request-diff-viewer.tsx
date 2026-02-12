@@ -2371,7 +2371,7 @@ export function PullRequestDiffViewer({
                   </pre>
                 </div>
                 <a
-                  href="https://github.com/manaflow-ai/cmux"
+                  href="https://github.com/manaflow-ai/manaflow"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none"
@@ -2510,7 +2510,7 @@ function CmuxPromoCard() {
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
           <a
-            href="https://github.com/manaflow-ai/cmux"
+            href="https://github.com/manaflow-ai/manaflow"
             target="_blank"
             rel="noopener noreferrer"
             className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"

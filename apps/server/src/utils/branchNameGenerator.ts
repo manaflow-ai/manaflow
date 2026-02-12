@@ -172,3 +172,44 @@ export async function getPRTitleFromTaskDescription(
 
   return data.prTitle;
 }
+
+// ── Instant (no AI) branch name generation ──────────────────────────
+
+function toKebabCase(input: string): string {
+  return input
+    .replace(/([a-z])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .substring(0, 50);
+}
+
+function generateRandomId(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < 5; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+/**
+ * Generate branch names instantly from the task description (no API call).
+ * Used to skip the ~20s AI branch name generation on the critical path.
+ */
+export function generateBranchNamesFromDescription(
+  taskDescription: string,
+  count: number
+): string[] {
+  const kebab = toKebabCase(taskDescription);
+  const base = `cmux/${kebab || "feature-update"}`;
+  const separator = base.endsWith("-") ? "" : "-";
+
+  const ids = new Set<string>();
+  while (ids.size < count) {
+    ids.add(generateRandomId());
+  }
+
+  return Array.from(ids).map((id) => `${base}${separator}${id}`);
+}

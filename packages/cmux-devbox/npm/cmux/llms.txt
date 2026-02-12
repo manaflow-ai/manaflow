@@ -67,4 +67,4 @@ cmux computer screenshot cmux_abc123 test.png
 
 - Homepage: https://cmux.sh
 - Documentation: https://cmux.sh/docs
-- GitHub: https://github.com/manaflow-ai/cmux
+- GitHub: https://github.com/manaflow-ai/manaflow

@@ -10,8 +10,8 @@ const JSON_HEADERS = {
 };
 
 // Security: Validate instance ID format to prevent injection attacks
-// IDs should be cmux_ followed by 8+ alphanumeric characters
-const INSTANCE_ID_REGEX = /^cmux_[a-zA-Z0-9]{8,}$/;
+// IDs should be cr_ or cmux_ followed by 8+ alphanumeric characters
+const INSTANCE_ID_REGEX = /^(cr|cmux)_[a-zA-Z0-9]{8,}$/;
 
 function isValidInstanceId(id: string): boolean {
   return INSTANCE_ID_REGEX.test(id);

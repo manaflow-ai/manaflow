@@ -1,5 +1,5 @@
-const CMUX_REPO_API_URL = "https://api.github.com/repos/manaflow-ai/cmux";
-export const CMUX_REPO_URL = "https://github.com/manaflow-ai/cmux";
+const CMUX_REPO_API_URL = "https://api.github.com/repos/manaflow-ai/manaflow";
+export const CMUX_REPO_URL = "https://github.com/manaflow-ai/manaflow";
 
 type GithubRepoResponse = {
   stargazers_count?: number;
@@ -23,7 +23,7 @@ export async function fetchGithubRepoStats(): Promise<GithubRepoStats> {
       },
       next: {
         revalidate: 1800,
-        tags: ["github:repo:manaflow-ai/cmux"],
+        tags: ["github:repo:manaflow-ai/manaflow"],
       },
     });
 

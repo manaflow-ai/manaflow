@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build the E2B templates used by cmux-devbox-2 (base + docker) and update the
+Build the E2B templates used by cloudrouter (base + docker) and update the
 versioned manifest in packages/shared/src/e2b-templates.json.
 
 This is analogous to scripts/snapshot.py (Morph snapshots), but for E2B
@@ -34,9 +34,8 @@ import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-E2B_TEMPLATE_ROOT = REPO_ROOT / "packages/cmux-devbox-2"
-E2B_BASE_CONFIG_PATH = E2B_TEMPLATE_ROOT / "e2b.toml"
-E2B_DOCKER_CONFIG_PATH = E2B_TEMPLATE_ROOT / "e2b.docker.toml"
+E2B_TEMPLATE_ROOT = REPO_ROOT / "packages/cloudrouter"
+E2B_CONFIG_PATH = E2B_TEMPLATE_ROOT / "e2b.docker.toml"
 
 E2B_TEMPLATE_MANIFEST_PATH = REPO_ROOT / "packages/shared/src/e2b-templates.json"
 CURRENT_MANIFEST_SCHEMA_VERSION = 1
@@ -294,8 +293,6 @@ def _sort_manifest_templates(manifest: E2BTemplateManifestEntry, order: list[str
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-cache", action="store_true", help="Pass --no-cache to e2b builds")
-    parser.add_argument("--skip-base", action="store_true", help="Skip building the base (no-docker) template")
-    parser.add_argument("--skip-docker", action="store_true", help="Skip building the Docker-enabled template")
     parser.add_argument("--json", action="store_true", help="Print a machine-readable summary to stdout")
     args = parser.parse_args(argv)
 
@@ -303,57 +300,29 @@ def main(argv: list[str]) -> int:
         print("E2B_API_KEY is required to build templates", file=sys.stderr)
         return 2
 
-    base_cfg = _read_toml(E2B_BASE_CONFIG_PATH)
-    docker_cfg = _read_toml(E2B_DOCKER_CONFIG_PATH)
+    cfg = _read_toml(E2B_CONFIG_PATH)
 
-    team_id = _require_str(base_cfg, "team_id", path=E2B_BASE_CONFIG_PATH)
-    docker_team_id = _require_str(docker_cfg, "team_id", path=E2B_DOCKER_CONFIG_PATH)
-    if docker_team_id != team_id:
-        raise RuntimeError(
-            f"team_id mismatch: {E2B_BASE_CONFIG_PATH}={team_id} vs {E2B_DOCKER_CONFIG_PATH}={docker_team_id}"
-        )
-
-    cpu_count = _require_int(base_cfg, "cpu_count", path=E2B_BASE_CONFIG_PATH)
-    memory_mb = _require_int(base_cfg, "memory_mb", path=E2B_BASE_CONFIG_PATH)
-    docker_cpu_count = _require_int(docker_cfg, "cpu_count", path=E2B_DOCKER_CONFIG_PATH)
-    docker_memory_mb = _require_int(docker_cfg, "memory_mb", path=E2B_DOCKER_CONFIG_PATH)
-    if docker_cpu_count != cpu_count or docker_memory_mb != memory_mb:
-        print(
-            f"Warning: base and docker resources differ (base={cpu_count}cpu/{memory_mb}mb, docker={docker_cpu_count}cpu/{docker_memory_mb}mb)",
-            file=sys.stderr,
-        )
+    team_id = _require_str(cfg, "team_id", path=E2B_CONFIG_PATH)
+    cpu_count = _require_int(cfg, "cpu_count", path=E2B_CONFIG_PATH)
+    memory_mb = _require_int(cfg, "memory_mb", path=E2B_CONFIG_PATH)
 
     cpu_display = _cpu_display(cpu_count)
     memory_display = _memory_display(memory_mb)
 
-    base_template_name = _require_str(base_cfg, "template_name", path=E2B_BASE_CONFIG_PATH)
-    docker_template_name = _require_str(docker_cfg, "template_name", path=E2B_DOCKER_CONFIG_PATH)
+    template_name = _require_str(cfg, "template_name", path=E2B_CONFIG_PATH)
 
-    plans: list[TemplatePlan] = [
-        TemplatePlan(
-            preset_id="cmux-devbox-base",
-            config_path=E2B_BASE_CONFIG_PATH,
-            label="Standard workspace",
-            disk_display="20 GB SSD",
-            description="Base E2B template for cmux workspaces (no Docker).",
-        ),
-        TemplatePlan(
-            preset_id="cmux-devbox-docker",
-            config_path=E2B_DOCKER_CONFIG_PATH,
-            label="Standard workspace (Docker)",
-            disk_display="20 GB SSD",
-            description="E2B template for cmux workspaces with Docker-in-Docker enabled.",
-        ),
-    ]
+    plan = TemplatePlan(
+        preset_id="cmux-devbox-docker",
+        config_path=E2B_CONFIG_PATH,
+        label="Standard workspace",
+        disk_display="20 GB SSD",
+        description="E2B template for cmux workspaces with Docker-in-Docker enabled.",
+    )
 
-    if not args.skip_base:
-        _e2b_build(config_path=E2B_BASE_CONFIG_PATH, no_cache=args.no_cache)
-    if not args.skip_docker:
-        _e2b_build(config_path=E2B_DOCKER_CONFIG_PATH, no_cache=args.no_cache)
+    _e2b_build(config_path=E2B_CONFIG_PATH, no_cache=args.no_cache)
 
     templates = _e2b_list_templates(team_id=team_id)
-    base_template_id = _find_template_id(templates=templates, template_name=base_template_name)
-    docker_template_id = _find_template_id(templates=templates, template_name=docker_template_name)
+    template_id = _find_template_id(templates=templates, template_name=template_name)
 
     captured_at = _iso_timestamp()
     manifest = _load_manifest(E2B_TEMPLATE_MANIFEST_PATH)
@@ -361,21 +330,13 @@ def main(argv: list[str]) -> int:
 
     _upsert_template_preset(
         manifest,
-        plan=plans[0],
+        plan=plan,
         cpu=cpu_display,
         memory=memory_display,
-        e2b_template_id=base_template_id,
+        e2b_template_id=template_id,
         captured_at=captured_at,
     )
-    _upsert_template_preset(
-        manifest,
-        plan=plans[1],
-        cpu=_cpu_display(docker_cpu_count),
-        memory=_memory_display(docker_memory_mb),
-        e2b_template_id=docker_template_id,
-        captured_at=captured_at,
-    )
-    _sort_manifest_templates(manifest, [p.preset_id for p in plans])
+    _sort_manifest_templates(manifest, [plan.preset_id])
 
     E2B_TEMPLATE_MANIFEST_PATH.write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
@@ -386,14 +347,9 @@ def main(argv: list[str]) -> int:
         "teamId": team_id,
         "templates": [
             {
-                "presetId": plans[0].preset_id,
-                "templateName": base_template_name,
-                "e2bTemplateId": base_template_id,
-            },
-            {
-                "presetId": plans[1].preset_id,
-                "templateName": docker_template_name,
-                "e2bTemplateId": docker_template_id,
+                "presetId": plan.preset_id,
+                "templateName": template_name,
+                "e2bTemplateId": template_id,
             },
         ],
         "manifestPath": str(E2B_TEMPLATE_MANIFEST_PATH),

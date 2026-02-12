@@ -167,6 +167,8 @@ const convexSchema = defineSchema({
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_created", ["teamId", "userId", "createdAt"])
+    .index("by_team_user_merge_updated", ["teamId", "userId", "mergeStatus", "updatedAt"])
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
@@ -328,6 +330,7 @@ const convexSchema = defineSchema({
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_status_created", ["teamId", "userId", "status", "createdAt"])
     .index("by_pull_request_url", ["pullRequestUrl"]),
 
   // Junction table linking taskRuns to pull requests by PR identity
@@ -1188,7 +1191,7 @@ const convexSchema = defineSchema({
 
   // User-owned devbox instances (standalone sandboxes not tied to task runs)
   devboxInstances: defineTable({
-    devboxId: v.string(), // Friendly ID (cmux_xxxxxxxx) for CLI users
+    devboxId: v.string(), // Friendly ID (cr_xxxxxxxx) for CLI users
     userId: v.string(), // Owner user ID
     teamId: v.string(), // Team scope
     name: v.optional(v.string()), // User-friendly name
@@ -1214,8 +1217,8 @@ const convexSchema = defineSchema({
 
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
-    devboxId: v.string(), // Our friendly ID (cmux_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("daytona")), // Provider name (extensible for future providers)
+    devboxId: v.string(), // Our friendly ID (cr_xxxxxxxx)
+    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona")), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),
@@ -1260,6 +1263,42 @@ const convexSchema = defineSchema({
     .index("by_comment", ["commentId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"]),
 
+  // Modal instance activity tracking (for managing instance lifecycle)
+  modalInstanceActivity: defineTable({
+    instanceId: v.string(), // Modal sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+    gpu: v.optional(v.string()), // GPU config used (e.g., "T4", "A100", "H100:2")
+  }).index("by_instanceId", ["instanceId"]),
+
+  // Prewarmed Morph instances for fast task startup.
+  // Instances are provisioned with a specific repo already cloned,
+  // triggered when a user starts typing a task description.
+  warmPool: defineTable({
+    instanceId: v.string(), // Morph instance ID (morphvm_xxx)
+    snapshotId: v.string(), // Snapshot used to create this instance
+    status: v.union(
+      v.literal("provisioning"), // Instance is being created + repo cloning
+      v.literal("ready"), // Instance ready with repo cloned
+      v.literal("claimed"), // Claimed by a task
+      v.literal("failed") // Failed to provision
+    ),
+    teamId: v.string(), // Team that requested the prewarm
+    userId: v.string(), // User that requested the prewarm
+    repoUrl: v.optional(v.string()), // GitHub repo URL (if repo-specific)
+    branch: v.optional(v.string()), // Base branch
+    vscodeUrl: v.optional(v.string()), // Pre-resolved VSCode URL
+    workerUrl: v.optional(v.string()), // Pre-resolved worker URL
+    claimedAt: v.optional(v.number()),
+    claimedByTaskRunId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    errorMessage: v.optional(v.string()),
+  })
+    .index("by_status", ["status", "createdAt"])
+    .index("by_instanceId", ["instanceId"])
+    .index("by_team_status", ["teamId", "status", "createdAt"]),
 });
 
 export default convexSchema;

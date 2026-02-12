@@ -1,0 +1,43 @@
+{
+  "name": "cmux",
+  "version": "0.8.3",
+  "description": "CLI tool to instantly spin up cloud VMs preloaded with Chrome, VNC, SSH, and rsync",
+  "keywords": [
+    "cli",
+    "devbox",
+    "cloud",
+    "sandbox",
+    "development",
+    "e2b",
+    "vscode",
+    "vnc"
+  ],
+  "homepage": "https://cmux.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manaflow-ai/manaflow.git",
+    "directory": "packages/cloudrouter"
+  },
+  "license": "MIT",
+  "author": "Manaflow",
+  "bin": {
+    "cmux": "bin/cmux"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "scripts": {
+    "postinstall": "node lib/postinstall.js"
+  },
+  "optionalDependencies": {
+    "cmux-darwin-arm64": "0.8.3",
+    "cmux-darwin-x64": "0.8.3",
+    "cmux-linux-arm64": "0.8.3",
+    "cmux-linux-x64": "0.8.3",
+    "cmux-win32-x64": "0.8.3"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

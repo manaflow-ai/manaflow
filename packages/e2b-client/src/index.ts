@@ -3,16 +3,9 @@ import { Sandbox } from "e2b";
 export const DEFAULT_E2B_BASE_URL = "https://api.e2b.dev";
 
 /**
- * Default template ID for cmux devbox (with VSCode, VNC, Chrome CDP)
- * This is the base template WITHOUT Docker (faster builds)
+ * Default template ID for cmux devbox (with VSCode, VNC, Chrome CDP, Docker)
  */
-export const CMUX_DEVBOX_TEMPLATE_ID = "jwxrccum0mglnp704hnk";
-
-/**
- * Template ID for cmux devbox WITH Docker support
- * Use this when you need to run Docker containers inside the sandbox
- */
-export const CMUX_DEVBOX_DOCKER_TEMPLATE_ID = "pou9b3m5z92g2hafjxrl";
+export const CMUX_DEVBOX_TEMPLATE_ID = "pou9b3m5z92g2hafjxrl";
 
 /**
  * Configuration for creating an E2B client

@@ -31,6 +31,8 @@ export default tseslint.config(
     '**/dist-electron',
     '**/.next',
     '**/build',
+    '**/.vscode-test',
+    '**/.vscode-test/**',
     'node_modules',
     '**/node_modules',
     // Generated files

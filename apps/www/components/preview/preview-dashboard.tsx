@@ -704,7 +704,7 @@ function MockCmuxStartRun() {
             <div className="mt-3 flex items-center gap-2">
               <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
                 <Github className="h-3 w-3" />
-                manaflow-ai/cmux
+                manaflow-ai/manaflow
               </div>
               <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
                 <GitBranch className="h-3 w-3 text-emerald-400" />
@@ -1182,7 +1182,7 @@ function MockGitHubPRBrowser() {
               {activeTab === "github" ? (
                 <>
                   <span className="text-[#9AA0A6]">github.com/</span>
-                  <span>manaflow-ai/cmux/pull/1124</span>
+                  <span>manaflow-ai/manaflow/pull/1124</span>
                 </>
               ) : (
                 <>
@@ -1223,12 +1223,12 @@ function MockGitHubPRBrowser() {
                 </a>
                 <span className="text-[#7d8590]">/</span>
                 <a
-                  href="https://github.com/manaflow-ai/cmux"
+                  href="https://github.com/manaflow-ai/manaflow"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[#2f81f7] font-semibold hover:underline cursor-pointer"
                 >
-                  cmux
+                  manaflow
                 </a>
               </div>
             </div>
@@ -2227,7 +2227,7 @@ function MockGitHubPRBrowser() {
                     <div className="space-y-px">
                       <PreviewItemButton
                         title="Preview screenshots for PR #1168"
-                        subtitle="main • manaflow-ai/cmux"
+                        subtitle="main • manaflow-ai/manaflow"
                         isExpanded={expandedTasks.has("task-1")}
                         isSelected={selectedTaskId === "task-1"}
                         isPRMerged={isPRMerged}
@@ -2358,7 +2358,7 @@ function MockGitHubPRBrowser() {
                     <div className="space-y-px">
                       <PreviewItemButton
                         title="Preview screenshots for PR #1142"
-                        subtitle="feat/dark-mode • manaflow-ai/cmux"
+                        subtitle="feat/dark-mode • manaflow-ai/manaflow"
                         isExpanded={expandedTasks.has("task-2")}
                         isSelected={selectedTaskId === "task-2"}
                         onToggleExpand={() => toggleTaskExpanded("task-2")}
@@ -2478,7 +2478,7 @@ function MockGitHubPRBrowser() {
                     <div className="space-y-px">
                       <PreviewItemButton
                         title="Preview screenshots for PR #1098"
-                        subtitle="fix/auth-redirect • manaflow-ai/cmux"
+                        subtitle="fix/auth-redirect • manaflow-ai/manaflow"
                         isExpanded={expandedTasks.has("task-3")}
                         isSelected={selectedTaskId === "task-3"}
                         onToggleExpand={() => toggleTaskExpanded("task-3")}
@@ -4856,7 +4856,7 @@ function PreviewDashboardInner({
             </p>
             <div className="flex items-center gap-3 pt-2">
               <Link
-                href="https://github.com/manaflow-ai/cmux"
+                href="https://github.com/manaflow-ai/manaflow"
                 className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white"
               >
                 <Star className="h-3.5 w-3.5" />

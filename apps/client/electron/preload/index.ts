@@ -203,6 +203,17 @@ const cmuxAPI = {
         reason?: string;
       }>,
   },
+  app: {
+    getProtocolStatus: () =>
+      ipcRenderer.invoke("cmux:app:get-protocol-status") as Promise<
+        | {
+            ok: true;
+            isPackaged: boolean;
+            isDefaultProtocolClient: boolean;
+          }
+        | { ok: false; error: string }
+      >,
+  },
   webContentsView: {
     create: (options: {
       url: string;

@@ -114,6 +114,13 @@ export const pauseOldMorphInstances = internalAction({
             instanceId: instance.id,
           });
 
+          // If this was a warm pool instance, remove it from the pool
+          if (instance.metadata?.app === "cmux-warm-pool") {
+            await ctx.runMutation(internal.warmPool.removeByInstanceId, {
+              instanceId: instance.id,
+            });
+          }
+
           console.log(`[morphInstanceMaintenance] Paused ${instance.id}`);
           return instance.id;
         })
