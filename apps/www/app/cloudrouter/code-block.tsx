@@ -9,7 +9,7 @@ export async function CodeBlock({
   lang?: string;
 }) {
   const html = await codeToHtml(children, {
-    lang: lang === "bash" || lang === "sh" ? "bash" : "text",
+    lang: ["bash", "sh", "markdown", "md"].includes(lang) ? lang : "text",
     themes: {
       light: "github-light",
       dark: "github-dark-dimmed",
