@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useStickToBottom } from "use-stick-to-bottom";
 
 // --- Types ---
 
@@ -373,15 +374,12 @@ export function TerminalDemo() {
   const [isComplete, setIsComplete] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const { scrollRef, contentRef } = useStickToBottom({
+    resize: "smooth",
+    initial: "smooth",
+  });
   const abortRef = useRef<AbortController | null>(null);
   const lineCounterRef = useRef(0);
-
-  const scrollToBottom = useCallback(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, []);
 
   const sleep = useCallback((ms: number, signal?: AbortSignal) => {
     return new Promise<void>((resolve, reject) => {
@@ -397,9 +395,8 @@ export function TerminalDemo() {
     (content: Line) => {
       const key = `line-${lineCounterRef.current++}`;
       setLines((prev) => [...prev, { key, content }]);
-      setTimeout(scrollToBottom, 0);
     },
-    [scrollToBottom],
+    [],
   );
 
   const typeCommand = useCallback(
@@ -516,8 +513,7 @@ export function TerminalDemo() {
     setShowCursor(true);
     setIsComplete(true);
     setIsRunning(false);
-    setTimeout(scrollToBottom, 0);
-  }, [scrollToBottom]);
+  }, []);
 
   const restart = useCallback(() => {
     if (abortRef.current) {
@@ -585,48 +581,49 @@ export function TerminalDemo() {
 
         {/* Terminal body */}
         <div
-          ref={containerRef}
-          className="h-[420px] overflow-y-auto p-4 font-mono text-[13px] leading-[1.35] sm:h-[480px] sm:text-sm"
-          style={{ scrollBehavior: "smooth" }}
+          ref={scrollRef}
+          className="h-[420px] overflow-y-auto font-mono text-[13px] leading-[1.35] sm:h-[480px] sm:text-sm"
           onClick={() => {
             if (isRunning) skipToEnd();
           }}
         >
-          {/* Rendered lines */}
-          {lines.map((line) => (
-            <RenderedLine key={line.key} line={line.content} />
-          ))}
+          <div ref={contentRef} className="p-4">
+            {/* Rendered lines */}
+            {lines.map((line) => (
+              <RenderedLine key={line.key} line={line.content} />
+            ))}
 
-          {/* Current prompt + typing */}
-          {showCursor && (
-            <div className="min-h-[1.35em]">
-              <span style={{ color: "#22c55e" }}>{currentPrompt} </span>
-              <span style={{ color: "#737373" }}>$ </span>
-              <span style={{ color: "#d4d4d4" }}>{currentTyping}</span>
-              <span
-                className="inline-block h-[1.1em] w-[0.55em] translate-y-[0.15em] align-baseline"
-                style={{
-                  backgroundColor: cursorVisible ? "#d4d4d4" : "transparent",
-                }}
-              />
-            </div>
-          )}
-
-          {/* Completion message */}
-          {isComplete && (
-            <div className="mt-4">
-              <div className="min-h-[1.35em]" />
-              <div className="min-h-[1.35em] text-neutral-600">
-                {"  "}— Demo complete. Click the{" "}
-                <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#ff5f57] align-middle" />{" "}
-                button or press{" "}
-                <kbd className="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400">
-                  R
-                </kbd>{" "}
-                to replay.
+            {/* Current prompt + typing */}
+            {showCursor && (
+              <div className="min-h-[1.35em]">
+                <span style={{ color: "#22c55e" }}>{currentPrompt} </span>
+                <span style={{ color: "#737373" }}>$ </span>
+                <span style={{ color: "#d4d4d4" }}>{currentTyping}</span>
+                <span
+                  className="inline-block h-[1.1em] w-[0.55em] translate-y-[0.15em] align-baseline"
+                  style={{
+                    backgroundColor: cursorVisible ? "#d4d4d4" : "transparent",
+                  }}
+                />
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Completion message */}
+            {isComplete && (
+              <div className="mt-4">
+                <div className="min-h-[1.35em]" />
+                <div className="min-h-[1.35em] text-neutral-600">
+                  {"  "}— Demo complete. Click the{" "}
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#ff5f57] align-middle" />{" "}
+                  button or press{" "}
+                  <kbd className="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400">
+                    R
+                  </kbd>{" "}
+                  to replay.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
