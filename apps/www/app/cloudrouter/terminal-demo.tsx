@@ -88,7 +88,7 @@ const STEPS: Step[] = [
         { text: "If browser doesn't open, visit:", color: "#d4d4d4" },
       ],
       [
-        { text: "  https://app.cloudrouter.dev/auth?code=x7k9m2", color: "#38bdf8" },
+        { text: "  https://cloudrouter.dev/handler/cli-auth-confirm?login_code=x7k9m2", color: "#38bdf8" },
       ],
       "",
       [{ text: "Waiting for authentication... (press Ctrl+C to cancel)", color: "#a3a3a3" }],
@@ -564,7 +564,7 @@ export function TerminalDemo() {
             <div className="h-3 w-3 rounded-full bg-[#febc2e]" />
             <div className="h-3 w-3 rounded-full bg-[#28c840]" />
           </div>
-          <span className="ml-2 flex-1 text-center text-xs text-neutral-500">
+          <span className="ml-2 flex-1 select-none text-center text-xs text-neutral-500">
             cloudrouter — bash
           </span>
         </div>

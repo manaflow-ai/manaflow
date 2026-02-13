@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Source_Serif_4 } from "next/font/google";
 import { CloudrouterHeader } from "./header";
 import { CodeBlock } from "./code-block";
@@ -31,6 +32,32 @@ export const metadata: Metadata = {
       "Cloud sandboxes for development. Instant remote VMs with VS Code, terminal, VNC, and browser automation via Chrome CDP.",
   },
 };
+
+const MAILTO_SUBJECT = encodeURIComponent("GPU Access Request — cloudrouter");
+const MAILTO_BODY = encodeURIComponent(
+  `Hi Manaflow team,
+
+I'd like to request access to GPU sandboxes on cloudrouter.
+
+Team/Company:
+Use case:
+GPU type(s) needed:
+
+Thanks!`,
+);
+const MAILTO_HREF = `mailto:founders@manaflow.com?subject=${MAILTO_SUBJECT}&body=${MAILTO_BODY}`;
+
+const instances = [
+  { gpu: "T4", vram: "16 GB", bestFor: "Inference, fine-tuning small models", availability: "self-serve" },
+  { gpu: "L4", vram: "24 GB", bestFor: "Inference, image generation", availability: "self-serve" },
+  { gpu: "A10G", vram: "24 GB", bestFor: "Training medium models", availability: "self-serve" },
+  { gpu: "L40S", vram: "48 GB", bestFor: "Inference, video generation", availability: "approval" },
+  { gpu: "A100", vram: "40 GB", bestFor: "Training large models (7B–70B)", availability: "approval" },
+  { gpu: "A100-80GB", vram: "80 GB", bestFor: "Very large models", availability: "approval" },
+  { gpu: "H100", vram: "80 GB", bestFor: "Fast training, research", availability: "approval" },
+  { gpu: "H200", vram: "141 GB", bestFor: "Maximum memory capacity", availability: "approval" },
+  { gpu: "B200", vram: "192 GB", bestFor: "Latest gen, frontier models", availability: "approval" },
+] as const;
 
 const features = [
   {
@@ -196,6 +223,51 @@ export default function CloudRouterPage() {
 
           <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
 
+          {/* Instances / GPU options */}
+          <section id="instances" className="mb-8 scroll-mt-8">
+            <h2 className="mb-2 text-lg font-semibold">Instances</h2>
+            <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Standard sandboxes are available instantly. GPU instances can be added with{" "}
+              <code className="rounded bg-neutral-100 px-1 py-0.5 dark:bg-neutral-800">--gpu</code>.
+              Multi-GPU supported via <code className="rounded bg-neutral-100 px-1 py-0.5 dark:bg-neutral-800">--gpu H100:2</code>.
+            </p>
+            <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+                    <th className="px-4 py-2 font-semibold">GPU</th>
+                    <th className="px-4 py-2 font-semibold">VRAM</th>
+                    <th className="px-4 py-2 font-semibold">Best for</th>
+                    <th className="px-4 py-2 font-semibold">Availability</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {instances.map((row) => (
+                    <tr key={row.gpu} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">{row.gpu}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-neutral-600 dark:text-neutral-400">{row.vram}</td>
+                      <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">{row.bestFor}</td>
+                      <td className="whitespace-nowrap px-4 py-2">
+                        {row.availability === "self-serve" ? (
+                          <span className="text-green-600 dark:text-green-400">Self-serve</span>
+                        ) : (
+                          <a
+                            href={MAILTO_HREF}
+                            className="text-neutral-500 underline transition hover:text-neutral-900 dark:hover:text-white"
+                          >
+                            Requires approval
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
+
           {/* File transfer */}
           <section className="mb-8 scroll-mt-8">
             <h2 className="mb-4 text-lg font-semibold">File transfer</h2>
@@ -251,9 +323,9 @@ export default function CloudRouterPage() {
 
         {/* Footer */}
         <footer className="flex flex-col items-center gap-4 text-center text-xs text-neutral-400 dark:text-neutral-500">
-          <div className="flex gap-4">
+          <div className="flex flex-wrap justify-center gap-4">
             <a
-              href="https://github.com/manaflow-ai/manaflow"
+              href="https://github.com/manaflow-ai/cloudrouter"
               target="_blank"
               rel="noopener noreferrer"
               className="transition hover:text-neutral-900 dark:hover:text-white"
@@ -276,6 +348,18 @@ export default function CloudRouterPage() {
             >
               Discord
             </a>
+            <Link href="/privacy-policy" className="transition hover:text-neutral-900 dark:hover:text-white">
+              Privacy
+            </Link>
+            <Link href="/terms-of-service" className="transition hover:text-neutral-900 dark:hover:text-white">
+              Terms
+            </Link>
+            <Link href="/eula" className="transition hover:text-neutral-900 dark:hover:text-white">
+              EULA
+            </Link>
+            <Link href="/contact" className="transition hover:text-neutral-900 dark:hover:text-white">
+              Contact
+            </Link>
           </div>
           <span>
             cloudrouter by{" "}
