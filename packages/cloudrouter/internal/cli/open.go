@@ -24,13 +24,13 @@ func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
 	if isVNC {
 		// noVNC params for best experience
 		// See: https://github.com/novnc/noVNC/blob/master/docs/EMBEDDING.md
-		query.Set("autoconnect", "true")      // Auto-connect to VNC
-		query.Set("resize", "scale")          // Local scaling mode
-		query.Set("quality", "9")             // Highest JPEG quality (0-9)
-		query.Set("compression", "0")         // No compression (0-9, 0=best quality)
-		query.Set("show_dot", "true")         // Show local cursor
-		query.Set("reconnect", "true")        // Auto-reconnect on disconnect
-		query.Set("reconnect_delay", "1000")  // 1 second reconnect delay
+		query.Set("autoconnect", "true")     // Auto-connect to VNC
+		query.Set("resize", "scale")         // Local scaling mode
+		query.Set("quality", "9")            // Highest JPEG quality (0-9)
+		query.Set("compression", "0")        // No compression (0-9, 0=best quality)
+		query.Set("show_dot", "true")        // Show local cursor
+		query.Set("reconnect", "true")       // Auto-reconnect on disconnect
+		query.Set("reconnect_delay", "1000") // 1 second reconnect delay
 	} else {
 		// Set default folder for VSCode
 		query.Set("folder", "/home/user/workspace")
@@ -75,7 +75,13 @@ Examples:
 		}
 
 		fmt.Println("Opening VS Code...")
-		return openBrowser(authURL)
+		if err := openBrowser(authURL); err != nil {
+			return err
+		}
+		captureTeamEvent(teamSlug, "cloudrouter_workspace_opened", map[string]interface{}{
+			"surface": "vscode",
+		})
+		return nil
 	},
 }
 
@@ -115,7 +121,13 @@ Examples:
 		}
 
 		fmt.Println("Opening VNC...")
-		return openBrowser(authURL)
+		if err := openBrowser(authURL); err != nil {
+			return err
+		}
+		captureTeamEvent(teamSlug, "cloudrouter_workspace_opened", map[string]interface{}{
+			"surface": "vnc",
+		})
+		return nil
 	},
 }
 
@@ -159,7 +171,13 @@ Examples:
 		parsed.RawQuery = query.Encode()
 
 		fmt.Println("Opening Jupyter Lab...")
-		return openBrowser(parsed.String())
+		if err := openBrowser(parsed.String()); err != nil {
+			return err
+		}
+		captureTeamEvent(teamSlug, "cloudrouter_workspace_opened", map[string]interface{}{
+			"surface": "jupyter",
+		})
+		return nil
 	},
 }
 

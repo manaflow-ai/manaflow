@@ -285,9 +285,9 @@ func (c *Client) GetAuthToken(teamSlug, id string) (string, error) {
 
 // ConfigResponse from GET /api/v2/devbox/config
 type ConfigResponse struct {
-	Providers       []string       `json:"providers"`
-	DefaultProvider string         `json:"defaultProvider"`
-	Modal           *ModalConfig   `json:"modal,omitempty"`
+	Providers       []string     `json:"providers"`
+	DefaultProvider string       `json:"defaultProvider"`
+	Modal           *ModalConfig `json:"modal,omitempty"`
 }
 
 type ModalConfig struct {
@@ -307,6 +307,25 @@ func (c *Client) GetConfig() (*ConfigResponse, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+type CaptureTelemetryRequest struct {
+	Event      string                 `json:"event"`
+	Properties map[string]interface{} `json:"properties,omitempty"`
+}
+
+func (c *Client) CaptureTelemetry(event string, properties map[string]interface{}) error {
+	if event == "" {
+		return nil
+	}
+
+	body := CaptureTelemetryRequest{
+		Event:      event,
+		Properties: properties,
+	}
+
+	_, err := c.doRequest("POST", "/api/v2/devbox/telemetry", body)
+	return err
 }
 
 // UploadEnvToWorker sends environment variable content to the worker's /env endpoint.
