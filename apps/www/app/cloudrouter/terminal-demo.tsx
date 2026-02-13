@@ -342,7 +342,6 @@ const STEPS: Step[] = [
 
 const CHAR_DELAY = 32;
 const CHAR_VARIANCE = 18;
-const LINE_DELAY = 45;
 const STEP_PAUSE = 800;
 
 function randomDelay(base: number, variance: number) {
@@ -453,17 +452,16 @@ export function TerminalDemo() {
         setCurrentTyping("");
         addLine(promptLine);
 
-        // Output lines with staggered reveal
+        // Output all lines at once (like a real terminal)
         setShowCursor(false);
+        signal.throwIfAborted();
         for (const outputLine of step.output) {
-          signal.throwIfAborted();
-          await sleep(LINE_DELAY, signal);
           addLine(outputLine);
         }
 
         // Pause between steps
         const pause = step.pauseAfter ?? STEP_PAUSE;
-        await sleep(pause, signal);
+        await sleep(pause + 400, signal);
         setShowCursor(true);
       }
 
