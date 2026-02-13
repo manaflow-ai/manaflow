@@ -16,6 +16,7 @@ import { githubSetup } from "./github_setup";
 import { githubWebhook } from "./github_webhook";
 import { reportEnvironmentError } from "./taskRuns_http";
 import { stackWebhook } from "./stack_webhook";
+import { e2bWebhook } from "./e2b_webhook";
 import {
   updatePreviewStatus,
   createScreenshotSet,
@@ -72,6 +73,12 @@ http.route({
   path: "/stack_webhook",
   method: "POST",
   handler: stackWebhook,
+});
+
+http.route({
+  path: "/e2b_webhook",
+  method: "POST",
+  handler: e2bWebhook,
 });
 
 http.route({

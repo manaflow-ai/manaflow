@@ -21,6 +21,7 @@ export const env = createEnv({
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
     MORPH_API_KEY: z.string().min(1).optional(),
     E2B_API_KEY: z.string().min(1).optional(),
+    E2B_WEBHOOK_SECRET: z.string().min(1).optional(),
     MODAL_TOKEN_ID: z.string().min(1),
     MODAL_TOKEN_SECRET: z.string().min(1),
     CMUX_IS_STAGING: z.string().optional(),
