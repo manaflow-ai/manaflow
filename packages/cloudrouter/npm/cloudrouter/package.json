@@ -1,6 +1,6 @@
 {
   "name": "@manaflow-ai/cloudrouter",
-  "version": "0.9.6",
+  "version": "0.9.17",
   "description": "CLI tool to instantly spin up cloud VMs preloaded with Chrome, VNC, SSH, and rsync",
   "keywords": [
     "cli",
@@ -31,11 +31,11 @@
     "postinstall": "node lib/postinstall.js"
   },
   "optionalDependencies": {
-    "@manaflow-ai/cloudrouter-darwin-arm64": "0.9.6",
-    "@manaflow-ai/cloudrouter-darwin-x64": "0.9.6",
-    "@manaflow-ai/cloudrouter-linux-arm64": "0.9.6",
-    "@manaflow-ai/cloudrouter-linux-x64": "0.9.6",
-    "@manaflow-ai/cloudrouter-win32-x64": "0.9.6"
+    "@manaflow-ai/cloudrouter-darwin-arm64": "0.9.17",
+    "@manaflow-ai/cloudrouter-darwin-x64": "0.9.17",
+    "@manaflow-ai/cloudrouter-linux-arm64": "0.9.17",
+    "@manaflow-ai/cloudrouter-linux-x64": "0.9.17",
+    "@manaflow-ai/cloudrouter-win32-x64": "0.9.17"
   },
   "engines": {
     "node": ">=16"

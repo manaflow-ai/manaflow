@@ -245,7 +245,7 @@ export class E2BClient {
         envs: options.envs,
       });
 
-      // Set up default HTTP services for VSCode, worker, and VNC ports
+      // Set up default HTTP services for VSCode, worker, VNC, and Jupyter ports
       const httpServices: E2BHttpService[] = [
         {
           name: "vscode",
@@ -261,6 +261,11 @@ export class E2BClient {
           name: "vnc",
           port: 39380,
           url: `https://${sandbox.getHost(39380)}`,
+        },
+        {
+          name: "jupyter",
+          port: 8888,
+          url: `https://${sandbox.getHost(8888)}`,
         },
       ];
 
@@ -291,6 +296,11 @@ export class E2BClient {
           name: "vnc",
           port: 39380,
           url: `https://${sandbox.getHost(39380)}`,
+        },
+        {
+          name: "jupyter",
+          port: 8888,
+          url: `https://${sandbox.getHost(8888)}`,
         },
       ];
 

@@ -76,8 +76,12 @@ func main() {
 	// Start SSH server in goroutine
 	go startSSHServer()
 
+	// Start VNC auth proxy in goroutine
+	vncProxySrv := newVNCProxy()
+	go vncProxySrv.Start()
+
 	// Start HTTP server (browser manager is cleaned up on shutdown)
-	startHTTPServer()
+	startHTTPServer(vncProxySrv)
 }
 
 // =============================================================================
@@ -207,7 +211,7 @@ func verifyAuth(r *http.Request) bool {
 // HTTP Server
 // =============================================================================
 
-func startHTTPServer() {
+func startHTTPServer(vncProxySrv *vncProxy) {
 	mux := http.NewServeMux()
 
 	// Health check - no auth
@@ -234,6 +238,7 @@ func startHTTPServer() {
 		<-sigCh
 		log.Printf("[worker] Shutting down...")
 		browser.Close()
+		vncProxySrv.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		server.Shutdown(ctx)
@@ -355,8 +360,6 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleDeleteFile(w, r, body)
 	case "/list-files":
 		handleListFiles(w, r, body)
-	case "/env":
-		handleEnv(w, r, body)
 	case "/status":
 		handleStatus(w, r)
 	case "/services":
@@ -542,124 +545,6 @@ func handleListFiles(w http.ResponseWriter, r *http.Request, body map[string]int
 		"files":    files,
 		"basePath": dirPath,
 	})
-}
-
-const envFilePath = "/home/user/.env"
-
-func handleEnv(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
-	switch r.Method {
-	case "GET":
-		content, err := os.ReadFile(envFilePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				sendJSON(w, map[string]string{"content": ""})
-				return
-			}
-			w.WriteHeader(http.StatusInternalServerError)
-			sendJSON(w, map[string]string{"error": err.Error()})
-			return
-		}
-		sendJSON(w, map[string]string{"content": string(content)})
-
-	case "POST":
-		content, _ := body["content"].(string)
-		encoding, _ := body["encoding"].(string)
-
-		if encoding == "base64" {
-			decoded, err := base64.StdEncoding.DecodeString(content)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				sendJSON(w, map[string]string{"error": "invalid base64 content"})
-				return
-			}
-			content = string(decoded)
-		}
-
-		if content == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			sendJSON(w, map[string]string{"error": "content required"})
-			return
-		}
-
-		// Write env file with restricted permissions
-		if err := os.WriteFile(envFilePath, []byte(content), 0600); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			sendJSON(w, map[string]string{"error": err.Error()})
-			return
-		}
-
-		// Chown to user:user (UID/GID 1000) so the sandbox user can read it
-		if err := os.Chown(envFilePath, 1000, 1000); err != nil {
-			log.Printf("[worker] Failed to chown .env: %v", err)
-		}
-
-		// Ensure .bashrc sources the .env file (idempotent)
-		ensureEnvSourced()
-
-		// Best-effort: load into envctl daemon if available
-		tryLoadEnvctl()
-
-		sendJSON(w, map[string]bool{"success": true})
-
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		sendJSON(w, map[string]string{"error": "Method not allowed"})
-	}
-}
-
-// ensureEnvSourced appends a source line to /home/user/.profile so env vars
-// are available in both interactive and non-interactive shells (login shells
-// source .profile, and .bashrc has an early return for non-interactive shells).
-func ensureEnvSourced() {
-	sourceLine := "\n# Load environment variables\nif [ -f /home/user/.env ]; then set -a; . /home/user/.env; set +a; fi\n"
-
-	for _, rcPath := range []string{"/home/user/.profile", "/home/user/.bashrc"} {
-		appendSourceLine(rcPath, sourceLine)
-	}
-}
-
-func appendSourceLine(rcPath, sourceLine string) {
-	content, err := os.ReadFile(rcPath)
-	if err != nil {
-		log.Printf("[worker] Failed to read %s: %v", rcPath, err)
-		return
-	}
-
-	if strings.Contains(string(content), "/home/user/.env") {
-		return // Already sourced
-	}
-
-	f, err := os.OpenFile(rcPath, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Printf("[worker] Failed to open %s for append: %v", rcPath, err)
-		return
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(sourceLine); err != nil {
-		log.Printf("[worker] Failed to append to %s: %v", rcPath, err)
-	}
-}
-
-// tryLoadEnvctl attempts to load the .env file into the envctl daemon.
-// This is best-effort: if envctl is not installed or the daemon is not
-// running, we log and continue. The .env file is still sourced via
-// .bashrc/.profile as a fallback.
-func tryLoadEnvctl() {
-	var cmd *exec.Cmd
-	if userExists() {
-		cmd = exec.Command("su", "-", "user", "-c", "envctl load /home/user/.env")
-	} else {
-		cmd = exec.Command("bash", "-c", "envctl load /home/user/.env")
-	}
-	cmd.Dir = "/home/user"
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("[worker] envctl load (best-effort): %v: %s", err, strings.TrimSpace(string(output)))
-		return
-	}
-	log.Printf("[worker] envctl loaded .env successfully")
 }
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {

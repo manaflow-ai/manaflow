@@ -27,7 +27,7 @@ var rootCmd = &cobra.Command{
 Quick start:
   cloudrouter login                      # Authenticate
   cloudrouter start                      # Create a sandbox
-  cloudrouter start --gpu T4             # Create a sandbox with GPU
+  cloudrouter start --gpu B200           # Create a sandbox with GPU
   cloudrouter start ./my-project         # Create sandbox + upload directory
   cloudrouter code <id>                  # Open VS Code
   cloudrouter pty <id>                   # Open terminal session
@@ -40,9 +40,12 @@ GPU options (--gpu):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
-
-  The following require approval (contact founders@manaflow.com):
-  L40S, A100, A100-80GB, H100, H200, B200`,
+  L40S        48GB VRAM  - inference, video generation
+  A100        40GB VRAM  - training large models (7B-70B)
+  A100-80GB   80GB VRAM  - very large models
+  H100        80GB VRAM  - fast training, research
+  H200        141GB VRAM - maximum memory capacity
+  B200        192GB VRAM - latest gen, frontier models`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -117,9 +120,6 @@ func init() {
 	// File transfer commands
 	rootCmd.AddCommand(uploadCmd)
 	rootCmd.AddCommand(downloadCmd)
-
-	// Environment variable management
-	rootCmd.AddCommand(envCmd)
 
 	// PTY commands (terminal session)
 	rootCmd.AddCommand(ptyCmd)

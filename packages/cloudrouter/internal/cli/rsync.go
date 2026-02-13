@@ -698,15 +698,6 @@ var defaultExcludes = []string{
 	"*.egg-info",
 	".eggs",
 
-	// === Environment files (use 'cmux env push' instead) ===
-	".env",
-	".env.*",
-	".env.local",
-	".env.development",
-	".env.production",
-	".env.staging",
-	".env.test",
-
 	// === Secrets and credentials (security) ===
 	".npmrc",     // May contain auth tokens
 	".yarnrc",    // May contain auth tokens

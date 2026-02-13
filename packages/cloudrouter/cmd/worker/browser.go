@@ -542,7 +542,7 @@ func (bm *browserManager) cmdHover(ctx context.Context, selector string) (map[st
 	}, nil
 }
 
-// RunBrowserAgent shells out to the browser-agent-runner.js script.
+// RunBrowserAgent shells out to the agent-browser CLI.
 func (bm *browserManager) RunBrowserAgent(body map[string]interface{}) (map[string]interface{}, error) {
 	prompt, _ := body["prompt"].(string)
 	if prompt == "" {
@@ -557,15 +557,13 @@ func (bm *browserManager) RunBrowserAgent(body map[string]interface{}) (map[stri
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "node", "/usr/local/bin/browser-agent-runner.js")
+	// Use agent-browser CLI: first ensure it's connected to Chrome CDP,
+	// then run the prompt.
+	cmd := exec.CommandContext(ctx, "agent-browser", "run", prompt)
 	cmd.Dir = workspaceDir
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("CDP_ENDPOINT=http://localhost:%d", cdpPort),
-		"BROWSER_AGENT_PROMPT="+prompt,
 	)
-	if sp, ok := body["screenshotPath"].(string); ok && sp != "" {
-		cmd.Env = append(cmd.Env, "BROWSER_AGENT_SCREENSHOT_PATH="+sp)
-	}
 
 	stdout, err := cmd.Output()
 	exitCode := 0

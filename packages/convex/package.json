@@ -32,7 +32,6 @@
     "@ai-sdk/openai": "^2.0.19",
     "@ai-sdk/provider-utils": "^3.0.9",
     "@cmux/e2b-client": "workspace:*",
-    "@cmux/modal-client": "workspace:*",
     "@cmux/morphcloud-openapi-client": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@convex-dev/migrations": "^0.2.9",

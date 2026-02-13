@@ -17,7 +17,7 @@ export function CopyButton({ text }: { text: string }) {
           console.error("Failed to copy:", err);
         });
       }}
-      className="absolute right-3 top-3 text-neutral-400 transition hover:text-neutral-700 dark:text-neutral-500 dark:hover:text-neutral-200"
+      className="pt-1 text-neutral-400 transition hover:text-neutral-700 dark:text-neutral-500 dark:hover:text-neutral-200"
     >
       {copied ? (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

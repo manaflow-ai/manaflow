@@ -124,7 +124,7 @@ export default function ManaflowPage() {
             github
           </a>
           <a
-            href="https://discord.gg/FVevu78A"
+            href="https://discord.gg/SDbQmzQhRK"
             target="_blank"
             className="text-neutral-500 hover:text-black hover:underline"
           >

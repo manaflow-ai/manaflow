@@ -39,6 +39,18 @@ func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
 	return parsed.String(), nil
 }
 
+// buildJupyterAuthURL builds a Jupyter URL with ?token= authentication
+func buildJupyterAuthURL(baseURL, token string) (string, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("token", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
 var codeCmd = &cobra.Command{
 	Use:   "code <id>",
 	Short: "Open VS Code in browser",
@@ -134,7 +146,7 @@ Examples:
 var jupyterCmd = &cobra.Command{
 	Use:   "jupyter <id>",
 	Short: "Open Jupyter Lab in browser",
-	Long: `Open Jupyter Lab for a sandbox in your browser (Modal sandboxes only).
+	Long: `Open Jupyter Lab for a sandbox in your browser.
 
 Examples:
   cloudrouter jupyter cr_abc123`,
@@ -152,7 +164,7 @@ Examples:
 		}
 
 		if inst.JupyterURL == "" {
-			return fmt.Errorf("Jupyter URL not available (only available on Modal sandboxes)")
+			return fmt.Errorf("Jupyter URL not available")
 		}
 
 		// Fetch auth token from the sandbox
@@ -215,10 +227,6 @@ Examples:
 					codeURL, _ := buildAuthURL(inst.VSCodeURL, token, false)
 					fmt.Printf("VS Code:  %s\n", codeURL)
 				}
-				if inst.VNCURL != "" {
-					vncURL, _ := buildAuthURL(inst.VNCURL, token, true)
-					fmt.Printf("VNC:      %s\n", vncURL)
-				}
 				if inst.JupyterURL != "" {
 					parsed, _ := url.Parse(inst.JupyterURL)
 					if parsed != nil {
@@ -228,15 +236,19 @@ Examples:
 						fmt.Printf("Jupyter:  %s\n", parsed.String())
 					}
 				}
+				if inst.VNCURL != "" {
+					vncURL, _ := buildAuthURL(inst.VNCURL, token, true)
+					fmt.Printf("VNC:      %s\n", vncURL)
+				}
 			} else {
 				if inst.VSCodeURL != "" {
 					fmt.Printf("VS Code:  %s\n", inst.VSCodeURL)
 				}
-				if inst.VNCURL != "" {
-					fmt.Printf("VNC:      %s\n", inst.VNCURL)
-				}
 				if inst.JupyterURL != "" {
 					fmt.Printf("Jupyter:  %s\n", inst.JupyterURL)
+				}
+				if inst.VNCURL != "" {
+					fmt.Printf("VNC:      %s\n", inst.VNCURL)
 				}
 			}
 		}

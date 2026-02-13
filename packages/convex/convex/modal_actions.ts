@@ -7,20 +7,56 @@ import {
   DEFAULT_MODAL_TEMPLATE_ID,
   getModalTemplateByPresetId,
 } from "@cmux/shared/modal-templates";
-import { ModalClient, type ModalInstance } from "@cmux/modal-client";
-
-const MODAL_SNAPSHOT_IMAGE_ID = "im-oFT8A193wId9GMCThyNsac";
+import { DEFAULT_MODAL_SNAPSHOT_ID } from "@cmux/shared/modal-snapshots";
+import { ModalClient } from "modal";
+import type { Sandbox } from "modal";
 
 /**
- * Get Modal client with credentials from env
+ * Create a Modal client using env credentials.
  */
-function getModalClient(): ModalClient {
-  const tokenId = env.MODAL_TOKEN_ID;
-  const tokenSecret = env.MODAL_TOKEN_SECRET;
-  if (!tokenId || !tokenSecret) {
-    throw new Error("MODAL_TOKEN_ID and MODAL_TOKEN_SECRET not configured");
+function createClient(): ModalClient {
+  return new ModalClient({
+    tokenId: env.MODAL_TOKEN_ID,
+    tokenSecret: env.MODAL_TOKEN_SECRET,
+  });
+}
+
+/**
+ * Execute a bash command in a sandbox. Returns stdout/stderr/exit_code.
+ */
+async function execBash(
+  sandbox: Sandbox,
+  command: string,
+): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+  try {
+    const proc = await sandbox.exec(["bash", "-c", command]);
+    const stdout = await proc.stdout.readText();
+    const stderr = await proc.stderr.readText();
+    const exitCode = await proc.wait();
+    return { stdout, stderr, exit_code: exitCode ?? 0 };
+  } catch (err: unknown) {
+    console.error("[modal_actions.execBash] Error:", err);
+    return {
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+      exit_code: 1,
+    };
   }
-  return new ModalClient({ tokenId, tokenSecret });
+}
+
+/**
+ * Get tunnel URLs from a sandbox, mapped by port name.
+ */
+async function getTunnelUrls(sandbox: Sandbox) {
+  const tunnels = await sandbox.tunnels();
+  const portUrl = (port: number) => tunnels[port]?.url;
+
+  return {
+    jupyterUrl: portUrl(8888),
+    vscodeUrl: portUrl(39378),
+    vncUrl: portUrl(39380),
+    workerUrl: portUrl(39377),
+  };
 }
 
 /**
@@ -30,32 +66,6 @@ function generateAuthToken(): string {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
   return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Extract networking URLs from Modal instance.
- */
-function extractNetworkingUrls(instance: ModalInstance) {
-  const httpServices = instance.networking.httpServices;
-  const jupyterService = httpServices.find(
-    (s) => s.port === 8888 || s.name === "jupyter",
-  );
-  const vscodeService = httpServices.find(
-    (s) => s.port === 39378 || s.name === "vscode",
-  );
-  const vncService = httpServices.find(
-    (s) => s.port === 39380 || s.name === "vnc",
-  );
-  const workerService = httpServices.find(
-    (s) => s.port === 39377 || s.name === "worker",
-  );
-
-  return {
-    jupyterUrl: jupyterService?.url,
-    vscodeUrl: vscodeService?.url,
-    vncUrl: vncService?.url,
-    workerUrl: workerService?.url,
-  };
 }
 
 /**
@@ -114,13 +124,10 @@ nohup google-chrome \\
   --start-maximized --window-position=0,0 --window-size=1920,1080 \\
   --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 \\
   --user-data-dir=/root/.config/chrome --password-store=basic \\
-  --remote-debugging-port=9222 \\
-  --remote-debugging-address=127.0.0.1 \\
   about:blank > /tmp/chrome.log 2>&1 &
 sleep 1
 
-# VNC auth proxy on port 39380 (token-validated, serves noVNC + proxies WebSocket)
-nohup node /usr/local/bin/vnc-auth-proxy.js > /tmp/novnc.log 2>&1 &
+# VNC auth proxy on port 39380 is now built into the Go worker daemon
 
 # cmux-code on port 39378
 nohup /app/cmux-code/bin/code-server-oss \\
@@ -140,7 +147,18 @@ nohup jupyter lab \\
   --ServerApp.root_dir=/home/user/workspace \\
   --no-browser > /tmp/jupyter.log 2>&1 &
 
-sleep 2
+# Create agent-browser wrapper that auto-connects to Chrome CDP on first use
+cat > /usr/local/bin/ab << 'WRAPPER_EOF'
+#!/bin/bash
+# Auto-connect to Chrome CDP if not already connected
+if [ ! -S "$HOME/.agent-browser/default.sock" ] || ! agent-browser get url >/dev/null 2>&1; then
+  mkdir -p "$HOME/.agent-browser"
+  agent-browser connect 9222 >/dev/null 2>&1
+fi
+exec agent-browser "$@"
+WRAPPER_EOF
+chmod +x /usr/local/bin/ab
+
 echo "STARTUP_COMPLETE"
 `;
 }
@@ -160,43 +178,49 @@ export const startInstance = internalAction({
     image: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
-    const client = getModalClient();
+    const client = createClient();
 
     // Resolve template preset to get GPU/image config
     const presetId = args.templateId ?? DEFAULT_MODAL_TEMPLATE_ID;
     const preset = getModalTemplateByPresetId(presetId);
     const gpu = args.gpu ?? preset?.gpu;
-    const snapshotImageId = MODAL_SNAPSHOT_IMAGE_ID;
+    const snapshotImageId = DEFAULT_MODAL_SNAPSHOT_ID;
 
     try {
       console.log(`[modal_actions] Starting from snapshot ${snapshotImageId}`);
 
-      const instance = await client.instances.start({
+      const app = await client.apps.fromName("cmux-devbox", {
+        createIfMissing: true,
+      });
+      const image = await client.images.fromId(snapshotImageId);
+
+      const sandbox = await client.sandboxes.create(app, image, {
         gpu,
         cpu: args.cpu,
         memoryMiB: args.memoryMiB,
-        timeoutSeconds: args.ttlSeconds ?? 60 * 60,
-        metadata: args.metadata,
-        envs: args.envs,
-        snapshotImageId,
+        timeoutMs: (args.ttlSeconds ?? 60 * 60) * 1000,
+        env: args.envs,
         encryptedPorts: [8888, 39377, 39378, 39380],
       });
 
       const authToken = generateAuthToken();
 
       console.log("[modal_actions] Running startup script...");
-      const result = await instance.exec(buildStartupScript(authToken));
+      const result = await execBash(sandbox, buildStartupScript(authToken));
       if (result.exit_code !== 0) {
         console.error("[modal_actions] Startup script failed:", result.stderr);
       }
 
-      // Refresh tunnel URLs
-      await instance.refreshTunnels();
+      if (args.metadata) {
+        await sandbox.setTags(args.metadata);
+      }
+
+      // Get tunnel URLs
       const { jupyterUrl, vscodeUrl, vncUrl, workerUrl } =
-        extractNetworkingUrls(instance);
+        await getTunnelUrls(sandbox);
 
       return {
-        instanceId: instance.id,
+        instanceId: sandbox.sandboxId,
         status: "running",
         gpu: gpu ?? null,
         authToken,
@@ -225,17 +249,13 @@ export const getInstance = internalAction({
     instanceId: v.string(),
   },
   handler: async (_ctx, args) => {
-    const client = getModalClient();
+    const client = createClient();
     try {
-      const instance = await client.instances.get({
-        instanceId: args.instanceId,
-      });
-      const isRunning = await instance.isRunning();
+      const sandbox = await client.sandboxes.fromId(args.instanceId);
+      const isRunning = (await sandbox.poll()) === null;
 
-      // Refresh tunnels for current URLs
-      await instance.refreshTunnels();
       const { jupyterUrl, vscodeUrl, vncUrl, workerUrl } =
-        extractNetworkingUrls(instance);
+        await getTunnelUrls(sandbox);
 
       return {
         instanceId: args.instanceId,
@@ -272,18 +292,10 @@ export const execCommand = internalAction({
     command: v.string(),
   },
   handler: async (_ctx, args) => {
-    const client = getModalClient();
+    const client = createClient();
     try {
-      const instance = await client.instances.get({
-        instanceId: args.instanceId,
-      });
-      const result = await instance.exec(args.command);
-
-      return {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exit_code: result.exit_code,
-      };
+      const sandbox = await client.sandboxes.fromId(args.instanceId);
+      return await execBash(sandbox, args.command);
     } catch (err) {
       console.error("[modal_actions.execCommand] Error:", err);
       return {
@@ -305,9 +317,10 @@ export const stopInstance = internalAction({
     instanceId: v.string(),
   },
   handler: async (_ctx, args) => {
-    const client = getModalClient();
+    const client = createClient();
     try {
-      await client.instances.kill(args.instanceId);
+      const sandbox = await client.sandboxes.fromId(args.instanceId);
+      await sandbox.terminate();
       return { stopped: true };
     } finally {
       client.close();
@@ -321,13 +334,16 @@ export const stopInstance = internalAction({
 export const listInstances = internalAction({
   args: {},
   handler: async () => {
-    const client = getModalClient();
+    const client = createClient();
     try {
-      const sandboxes = await client.instances.list();
-      return sandboxes.map((s) => ({
-        sandboxId: s.sandboxId,
-        startedAt: s.startedAt.toISOString(),
-      }));
+      const sandboxes: Array<{ sandboxId: string; startedAt: string }> = [];
+      for await (const sb of client.sandboxes.list()) {
+        sandboxes.push({
+          sandboxId: sb.sandboxId,
+          startedAt: new Date().toISOString(),
+        });
+      }
+      return sandboxes;
     } finally {
       client.close();
     }

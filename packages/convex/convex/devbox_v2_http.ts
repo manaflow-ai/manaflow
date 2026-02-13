@@ -310,7 +310,12 @@ export const createInstance = httpAction(async (ctx, req) => {
     }
 
     // Default: E2B provider
-    const templateId = body.templateId ?? DEFAULT_E2B_TEMPLATE_ID;
+    // Resolve preset ID (e.g. "cmux-devbox-docker") to actual E2B template ID
+    const requestedTemplate = body.templateId ?? DEFAULT_E2B_TEMPLATE_ID;
+    const resolvedPreset = E2B_TEMPLATE_PRESETS.find(
+      (p) => p.templateId === requestedTemplate,
+    );
+    const templateId = resolvedPreset?.id ?? requestedTemplate;
 
     const result = (await ctx.runAction(e2bActionsApi.startInstance, {
       templateId,
@@ -324,6 +329,7 @@ export const createInstance = httpAction(async (ctx, req) => {
     })) as {
       instanceId: string;
       status: string;
+      jupyterUrl?: string;
       vscodeUrl?: string;
       workerUrl?: string;
       vncUrl?: string;
@@ -346,6 +352,7 @@ export const createInstance = httpAction(async (ctx, req) => {
       provider: "e2b",
       status: result.status,
       templateId,
+      jupyterUrl: result.jupyterUrl,
       vscodeUrl: result.vscodeUrl,
       workerUrl: result.workerUrl,
       vncUrl: result.vncUrl,
@@ -393,13 +400,22 @@ export const listInstances = httpAction(async (ctx, req) => {
       updatedAt: number;
     }>;
 
-    const instances = rawInstances.map((inst) => ({
-      id: inst.devboxId,
-      status: inst.status,
-      name: inst.name,
-      createdAt: inst.createdAt,
-      updatedAt: inst.updatedAt,
-    }));
+    // Enrich each instance with provider info
+    const instances = await Promise.all(
+      rawInstances.map(async (inst) => {
+        const info = (await ctx.runQuery(devboxInternalApi.getInfo, {
+          devboxId: inst.devboxId,
+        })) as { provider: string; providerInstanceId: string } | null;
+        return {
+          id: inst.devboxId,
+          status: inst.status,
+          name: inst.name,
+          provider: info?.provider,
+          createdAt: inst.createdAt,
+          updatedAt: inst.updatedAt,
+        };
+      }),
+    );
 
     return jsonResponse({ instances });
   } catch (error) {
@@ -454,7 +470,15 @@ async function handleGetInstance(
       vncUrl?: string | null;
     };
 
-    const status = providerResult.status as "running" | "stopped";
+    const providerStatus = providerResult.status as "running" | "stopped";
+
+    // If the user explicitly paused and the provider still reports "running"
+    // (e.g. E2B has no native pause), preserve the local "paused" status.
+    // Only sync from provider when it reports a terminal state like "stopped".
+    const status =
+      instance.status === "paused" && providerStatus === "running"
+        ? "paused"
+        : providerStatus;
 
     if (status !== instance.status) {
       await ctx.runMutation(devboxApi.updateStatus, {

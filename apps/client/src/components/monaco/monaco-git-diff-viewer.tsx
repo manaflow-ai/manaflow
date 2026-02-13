@@ -498,6 +498,12 @@ function createDiffEditorMount({
       return;
     }
 
+    // Explicitly enable word wrap on both sub-editors so long lines never
+    // overflow horizontally.  The top-level diffOptions.wordWrap doesn't
+    // always propagate reliably to both panes.
+    originalEditor.updateOptions({ wordWrap: "on" });
+    modifiedEditor.updateOptions({ wordWrap: "on" });
+
     const disposables: Array<{ dispose: () => void }> = [];
     const originalVisibility = container.style.visibility;
     const originalTransform = container.style.transform;

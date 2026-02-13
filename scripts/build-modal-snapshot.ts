@@ -7,39 +7,45 @@
  *   bun scripts/build-modal-snapshot.ts
  */
 
-import { ModalClient } from "@cmux/modal-client";
-import { readFileSync, existsSync } from "node:fs";
+import { ModalClient } from "modal";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { createEnv } from "@t3-oss/env-core";
+import { z } from "zod";
 
-// Load .env
+// Load .env file into process.env for createEnv
 const envPath = resolve(import.meta.dirname!, "../.env");
-const envContent = readFileSync(envPath, "utf-8");
-const env: Record<string, string> = {};
-for (const line of envContent.split("\n")) {
-  const match = line.match(/^([^#=]+)=(.*)$/);
-  if (match) {
-    const key = match[1].trim();
-    let value = match[2].trim();
-    // Strip surrounding quotes
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
+if (existsSync(envPath)) {
+  const envContent = readFileSync(envPath, "utf-8");
+  for (const line of envContent.split("\n")) {
+    const match = line.match(/^([^#=]+)=(.*)$/);
+    if (match) {
+      const key = match[1].trim();
+      let value = match[2].trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
     }
-    env[key] = value;
   }
 }
 
-const tokenId = env.MODAL_TOKEN_ID;
-const tokenSecret = env.MODAL_TOKEN_SECRET;
+const env = createEnv({
+  server: {
+    MODAL_TOKEN_ID: z.string().min(1),
+    MODAL_TOKEN_SECRET: z.string().min(1),
+  },
+  runtimeEnv: process.env,
+  emptyStringAsUndefined: true,
+});
 
-if (!tokenId || !tokenSecret) {
-  console.error(
-    "Missing MODAL_TOKEN_ID or MODAL_TOKEN_SECRET in .env",
-  );
-  process.exit(1);
-}
+const MODAL_SNAPSHOTS_PATH = resolve(
+  import.meta.dirname!,
+  "../packages/shared/src/modal-snapshots.json",
+);
 
 const CMUX_CODE_VERSION = "0.9.0";
 
@@ -59,7 +65,11 @@ apt-get install -y -qq \\
   xfce4 xfce4-terminal dbus-x11 \\
   novnc python3-websockify \\
   fonts-liberation fonts-dejavu \\
+  npm \\
   > /dev/null 2>&1
+
+# Install agent-browser (Vercel's browser automation CLI)
+npm install -g agent-browser > /dev/null 2>&1
 
 # Install Google Chrome
 curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb
@@ -78,8 +88,40 @@ curl -fSL --retry 3 --retry-delay 2 -o /usr/local/bin/worker-daemon \\
   "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_VERSION}/worker-daemon"
 chmod +x /usr/local/bin/worker-daemon
 
-# Install JupyterLab
-pip install -q jupyterlab 2>/dev/null || true
+# Install JupyterLab + data science stack
+pip install -q \
+  jupyterlab \
+  numpy \
+  pandas \
+  scipy \
+  scikit-learn \
+  matplotlib \
+  seaborn \
+  plotly \
+  tensorflow \
+  transformers \
+  datasets \
+  accelerate \
+  opencv-python-headless \
+  Pillow \
+  requests \
+  httpx \
+  beautifulsoup4 \
+  lxml \
+  sqlalchemy \
+  ipywidgets \
+  tqdm \
+  pyyaml \
+  boto3 \
+  openai \
+  anthropic \
+  2>/dev/null || true
+
+# Install PyTorch CPU (separate due to custom index URL)
+pip install -q \
+  torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cpu \
+  2>/dev/null || true
 
 # Set Google Chrome as the default browser (system-level)
 update-alternatives --set x-www-browser /usr/bin/google-chrome-stable 2>/dev/null || true
@@ -154,26 +196,82 @@ rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 echo "INSTALL_COMPLETE"
 `;
 
+/**
+ * Execute a bash command in a sandbox and return stdout/stderr/exit_code.
+ */
+async function execBash(
+  sandbox: Awaited<ReturnType<InstanceType<typeof ModalClient>["sandboxes"]["create"]>>,
+  command: string,
+) {
+  const proc = await sandbox.exec(["bash", "-c", command]);
+  const stdout = await proc.stdout.readText();
+  const stderr = await proc.stderr.readText();
+  const exitCode = await proc.wait();
+  return { stdout, stderr, exit_code: exitCode ?? 0 };
+}
+
+/**
+ * Update the modal-snapshots.json manifest with a new snapshot version.
+ */
+function updateSnapshotManifest(snapshotId: string, baseImage: string): void {
+  const manifest = JSON.parse(readFileSync(MODAL_SNAPSHOTS_PATH, "utf-8"));
+  const existingVersions = manifest.snapshots as Array<{
+    version: number;
+    snapshotId: string;
+    image: string;
+    capturedAt: string;
+  }>;
+
+  const maxVersion = existingVersions.reduce(
+    (max, s) => Math.max(max, s.version),
+    0,
+  );
+
+  existingVersions.push({
+    snapshotId,
+    version: maxVersion + 1,
+    image: baseImage,
+    capturedAt: new Date().toISOString(),
+  });
+
+  manifest.updatedAt = new Date().toISOString();
+  manifest.snapshots = existingVersions;
+
+  writeFileSync(MODAL_SNAPSHOTS_PATH, JSON.stringify(manifest, null, 2) + "\n");
+  console.log(
+    `[build-snapshot] Updated modal-snapshots.json (version ${maxVersion + 1})`,
+  );
+}
+
 async function main() {
-  const client = new ModalClient({ tokenId, tokenSecret });
+  const client = new ModalClient({
+    tokenId: env.MODAL_TOKEN_ID,
+    tokenSecret: env.MODAL_TOKEN_SECRET,
+  });
+
+  const baseImage = "python:3.13-slim";
 
   try {
-    console.log("[build-snapshot] Creating sandbox from python:3.11-slim...");
+    console.log(`[build-snapshot] Creating sandbox from ${baseImage}...`);
     const startTime = Date.now();
 
-    const instance = await client.instances.start({
-      image: "python:3.11-slim",
-      timeoutSeconds: 30 * 60,
+    const app = await client.apps.fromName("cmux-devbox", {
+      createIfMissing: true,
+    });
+    const image = client.images.fromRegistry(baseImage);
+
+    const sandbox = await client.sandboxes.create(app, image, {
+      timeoutMs: 30 * 60 * 1000,
       encryptedPorts: [8888, 39377, 39378, 39380],
     });
 
     console.log(
-      `[build-snapshot] Sandbox created: ${instance.id} (${((Date.now() - startTime) / 1000).toFixed(1)}s)`,
+      `[build-snapshot] Sandbox created: ${sandbox.sandboxId} (${((Date.now() - startTime) / 1000).toFixed(1)}s)`,
     );
 
     console.log("[build-snapshot] Running install script...");
     const installStart = Date.now();
-    const result = await instance.exec(INSTALL_SCRIPT);
+    const result = await execBash(sandbox, INSTALL_SCRIPT);
 
     if (result.exit_code !== 0) {
       console.error("[build-snapshot] Install failed:");
@@ -187,71 +285,60 @@ async function main() {
     );
 
     // Upload locally-built worker-daemon if available (overrides the release binary)
-    const localWorkerDaemon = resolve(import.meta.dirname!, "/tmp/worker-daemon-linux");
+    const localWorkerDaemon = resolve(
+      import.meta.dirname!,
+      "/tmp/worker-daemon-linux",
+    );
     if (existsSync(localWorkerDaemon)) {
       console.log("[build-snapshot] Uploading local worker-daemon binary...");
       const binary = readFileSync(localWorkerDaemon);
       const b64 = binary.toString("base64");
-      // Write base64 chunks to avoid shell arg limits
       const chunkSize = 65536;
       const chunks = Math.ceil(b64.length / chunkSize);
-      await instance.exec("rm -f /tmp/worker-daemon.b64");
+      await execBash(sandbox, "rm -f /tmp/worker-daemon.b64");
       for (let i = 0; i < chunks; i++) {
         const chunk = b64.slice(i * chunkSize, (i + 1) * chunkSize);
-        await instance.exec(`printf '%s' '${chunk}' >> /tmp/worker-daemon.b64`);
+        await execBash(
+          sandbox,
+          `printf '%s' '${chunk}' >> /tmp/worker-daemon.b64`,
+        );
       }
-      const uploadResult = await instance.exec(
+      const uploadResult = await execBash(
+        sandbox,
         "base64 -d /tmp/worker-daemon.b64 > /usr/local/bin/worker-daemon && chmod +x /usr/local/bin/worker-daemon && rm /tmp/worker-daemon.b64 && echo UPLOAD_OK",
       );
       if (uploadResult.stdout.includes("UPLOAD_OK")) {
-        console.log("[build-snapshot] Local worker-daemon uploaded successfully");
+        console.log(
+          "[build-snapshot] Local worker-daemon uploaded successfully",
+        );
       } else {
-        console.error("[build-snapshot] Failed to upload worker-daemon:", uploadResult.stderr);
+        console.error(
+          "[build-snapshot] Failed to upload worker-daemon:",
+          uploadResult.stderr,
+        );
       }
     }
 
-    // Install vnc-auth-proxy.js (same Node.js proxy used by E2B, adjusted for Modal paths)
-    console.log("[build-snapshot] Installing vnc-auth-proxy...");
-    const vncProxySrc = readFileSync(
-      resolve(import.meta.dirname!, "../packages/cloudrouter/worker/vnc-auth-proxy.js"),
-      "utf-8",
-    );
-    // Adjust NOVNC_DIR for Modal (apt-installed noVNC is at /usr/share/novnc)
-    const vncProxyAdjusted = vncProxySrc.replace(
-      "const NOVNC_DIR = '/opt/noVNC';",
-      "const NOVNC_DIR = '/usr/share/novnc';",
-    );
-    const vncProxyB64 = Buffer.from(vncProxyAdjusted).toString("base64");
-    const vncProxyChunkSize = 65536;
-    const vncProxyChunks = Math.ceil(vncProxyB64.length / vncProxyChunkSize);
-    await instance.exec("rm -f /tmp/vnc-auth-proxy.b64");
-    for (let i = 0; i < vncProxyChunks; i++) {
-      const chunk = vncProxyB64.slice(i * vncProxyChunkSize, (i + 1) * vncProxyChunkSize);
-      await instance.exec(`printf '%s' '${chunk}' >> /tmp/vnc-auth-proxy.b64`);
-    }
-    const vncResult = await instance.exec(
-      "base64 -d /tmp/vnc-auth-proxy.b64 > /usr/local/bin/vnc-auth-proxy.js && chmod +x /usr/local/bin/vnc-auth-proxy.js && rm /tmp/vnc-auth-proxy.b64 && echo VNC_PROXY_OK",
-    );
-    if (vncResult.stdout.includes("VNC_PROXY_OK")) {
-      console.log("[build-snapshot] vnc-auth-proxy installed successfully");
-    } else {
-      console.error("[build-snapshot] Failed to install vnc-auth-proxy:", vncResult.stderr);
-    }
+    // VNC auth proxy is now built into the Go worker daemon binary (no separate JS file needed)
 
     console.log("[build-snapshot] Snapshotting filesystem...");
     const snapStart = Date.now();
-    const snapshotImageId = await instance.snapshotFilesystem(5 * 60 * 1000);
+    const snapshotImage = await sandbox.snapshotFilesystem(5 * 60 * 1000);
+    const snapshotImageId = snapshotImage.imageId;
     console.log(
       `[build-snapshot] Snapshot created: ${snapshotImageId} (${((Date.now() - snapStart) / 1000).toFixed(1)}s)`,
     );
 
-    await instance.stop();
+    await sandbox.terminate();
+
+    // Auto-update the modal-snapshots.json manifest
+    updateSnapshotManifest(snapshotImageId, baseImage);
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`\n[build-snapshot] Done in ${totalTime}s`);
     console.log(`\nSnapshot ID: ${snapshotImageId}`);
     console.log(
-      `\nTo use this snapshot, update Convex env:\n  cd packages/convex && bunx convex env set MODAL_SNAPSHOT_IMAGE_ID "${snapshotImageId}"`,
+      `\nManifest updated at: ${MODAL_SNAPSHOTS_PATH}`,
     );
   } finally {
     client.close();

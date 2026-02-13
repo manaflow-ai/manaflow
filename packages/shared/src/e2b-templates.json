@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-02-09T00:00:00Z",
+  "updatedAt": "2026-02-12T00:00:00Z",
   "templates": [
     {
       "templateId": "cmux-devbox-docker",
@@ -13,6 +13,11 @@
           "version": 1,
           "e2bTemplateId": "pou9b3m5z92g2hafjxrl",
           "capturedAt": "2026-01-30T00:00:00Z"
+        },
+        {
+          "version": 2,
+          "e2bTemplateId": "mzsphes266za7z5o1bbh",
+          "capturedAt": "2026-02-12T00:00:00Z"
         }
       ],
       "description": "E2B template for cmux workspaces with Docker-in-Docker enabled."

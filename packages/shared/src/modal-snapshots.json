@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-02-12T00:00:00Z",
+  "snapshots": [
+    {
+      "snapshotId": "im-WjlWgd7XETGXXz02cmGEZV",
+      "version": 1,
+      "image": "python:3.13-slim",
+      "capturedAt": "2026-02-12T00:00:00Z"
+    }
+  ]
+}

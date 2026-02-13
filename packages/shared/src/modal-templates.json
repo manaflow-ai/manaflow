@@ -3,12 +3,12 @@
   "updatedAt": "2026-02-07T00:00:00Z",
   "templates": [
     {
-      "templateId": "cmux-modal-base",
-      "label": "Modal - Jupyter Lab (CPU)",
+      "templateId": "cmux-devbox-gpu",
+      "label": "Jupyter Lab (CPU)",
       "cpu": "2 vCPU",
       "memory": "4 GB RAM",
       "disk": "20 GB SSD",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "Jupyter Lab environment for data science, scripting, and CPU-bound tasks. Includes VS Code in browser. Best for: Python development, data analysis, automation, API development.",
       "useCases": ["data-science", "scripting", "automation", "api-dev"],
       "versions": [
@@ -19,13 +19,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-t4",
-      "label": "Modal - T4 GPU (16GB VRAM)",
+      "templateId": "cmux-devbox-gpu-t4",
+      "label": "T4 GPU (16GB VRAM)",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
       "disk": "40 GB SSD",
       "gpu": "T4",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA T4 GPU with 16GB VRAM. Good for inference, fine-tuning small models (up to 7B params), and CUDA development. Cost-effective GPU option.",
       "useCases": ["inference", "fine-tuning-small", "cuda-dev", "stable-diffusion"],
       "versions": [
@@ -36,13 +36,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-l4",
-      "label": "Modal - L4 GPU (24GB VRAM)",
+      "templateId": "cmux-devbox-gpu-l4",
+      "label": "L4 GPU (24GB VRAM)",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
       "disk": "40 GB SSD",
       "gpu": "L4",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA L4 GPU with 24GB VRAM. Excellent for inference, image generation, and medium model fine-tuning. Good price-to-performance ratio.",
       "useCases": ["inference", "image-generation", "fine-tuning-medium", "video"],
       "versions": [
@@ -53,13 +53,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-a10g",
-      "label": "Modal - A10G GPU (24GB VRAM)",
+      "templateId": "cmux-devbox-gpu-a10g",
+      "label": "A10G GPU (24GB VRAM)",
       "cpu": "8 vCPU",
       "memory": "32 GB RAM",
       "disk": "80 GB SSD",
       "gpu": "A10G",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA A10G GPU with 24GB VRAM. Great for training medium models, batch inference, and compute-heavy tasks. Good balance of cost and performance.",
       "useCases": ["training-medium", "batch-inference", "compute-heavy"],
       "versions": [
@@ -70,13 +70,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-a100",
-      "label": "Modal - A100 GPU (40GB VRAM)",
+      "templateId": "cmux-devbox-gpu-a100",
+      "label": "A100 GPU (40GB VRAM)",
       "cpu": "8 vCPU",
       "memory": "64 GB RAM",
       "disk": "100 GB SSD",
       "gpu": "A100",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA A100 GPU with 40GB VRAM. Best for training large models (7B-70B params), large batch inference, and research workloads. Supports multi-GPU with A100:2, A100:4.",
       "useCases": ["training-large", "research", "llm-fine-tuning", "multi-gpu"],
       "versions": [
@@ -87,13 +87,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-a100-80gb",
-      "label": "Modal - A100 GPU (80GB VRAM)",
+      "templateId": "cmux-devbox-gpu-a100-80gb",
+      "label": "A100 GPU (80GB VRAM)",
       "cpu": "12 vCPU",
       "memory": "128 GB RAM",
       "disk": "200 GB SSD",
       "gpu": "A100-80GB",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA A100 GPU with 80GB VRAM. For very large models that don't fit in 40GB. Training 13B-70B parameter models, large-scale experiments. Supports multi-GPU.",
       "useCases": ["training-very-large", "70b-models", "research-large"],
       "versions": [
@@ -104,13 +104,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-l40s",
-      "label": "Modal - L40S GPU (48GB VRAM)",
+      "templateId": "cmux-devbox-gpu-l40s",
+      "label": "L40S GPU (48GB VRAM)",
       "cpu": "8 vCPU",
       "memory": "64 GB RAM",
       "disk": "100 GB SSD",
       "gpu": "L40S",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA L40S GPU with 48GB GDDR6 VRAM. Ada Lovelace architecture with FP8 support. Great for inference, image/video generation, and medium-large model training.",
       "useCases": ["inference", "image-generation", "video-generation", "training-medium-large"],
       "versions": [
@@ -121,13 +121,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-h100",
-      "label": "Modal - H100 GPU (80GB VRAM)",
+      "templateId": "cmux-devbox-gpu-h100",
+      "label": "H100 GPU (80GB VRAM)",
       "cpu": "12 vCPU",
       "memory": "128 GB RAM",
       "disk": "200 GB SSD",
       "gpu": "H100",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA H100 GPU with 80GB HBM3 VRAM. Hopper architecture, 3x faster than A100 for transformer training. For large models and cutting-edge research. Supports multi-GPU with H100:2, H100:4, H100:8.",
       "useCases": ["training-largest", "100b-models", "cutting-edge-research", "maximum-throughput"],
       "versions": [
@@ -138,13 +138,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-h200",
-      "label": "Modal - H200 GPU (141GB VRAM)",
+      "templateId": "cmux-devbox-gpu-h200",
+      "label": "H200 GPU (141GB VRAM)",
       "cpu": "12 vCPU",
       "memory": "128 GB RAM",
       "disk": "200 GB SSD",
       "gpu": "H200",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA H200 GPU with 141GB HBM3e VRAM. 1.75x memory and 1.4x bandwidth vs H100. For the largest models and maximum memory capacity workloads. Supports multi-GPU.",
       "useCases": ["training-largest", "200b-models", "maximum-memory", "cutting-edge-research"],
       "versions": [
@@ -155,13 +155,13 @@
       ]
     },
     {
-      "templateId": "cmux-modal-gpu-b200",
-      "label": "Modal - B200 GPU (192GB VRAM)",
+      "templateId": "cmux-devbox-gpu-b200",
+      "label": "B200 GPU (192GB VRAM)",
       "cpu": "16 vCPU",
       "memory": "256 GB RAM",
       "disk": "200 GB SSD",
       "gpu": "B200",
-      "image": "python:3.11-slim",
+      "image": "python:3.13-slim",
       "description": "NVIDIA B200 GPU with 192GB HBM3e VRAM. Blackwell architecture, latest generation. For the most demanding workloads, largest models, and maximum throughput. Supports multi-GPU.",
       "useCases": ["training-frontier", "400b-models", "maximum-throughput", "next-gen-research"],
       "versions": [

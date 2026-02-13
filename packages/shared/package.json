@@ -129,6 +129,10 @@
     "./modal-templates": {
       "import": "./src/modal-templates.ts",
       "types": "./src/modal-templates.ts"
+    },
+    "./modal-snapshots": {
+      "import": "./src/modal-snapshots.ts",
+      "types": "./src/modal-snapshots.ts"
     }
   },
   "peerDependencies": {
