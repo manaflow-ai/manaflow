@@ -459,10 +459,14 @@ export function TerminalDemo() {
           addLine(outputLine);
         }
 
+        // Show next prompt immediately, then pause before typing
+        const nextPrompt = STEPS[stepIdx + 1]?.prompt ?? "~/my-app";
+        setCurrentPrompt(nextPrompt);
+        setShowCursor(true);
+
         // Pause between steps
         const pause = step.pauseAfter ?? STEP_PAUSE;
         await sleep(pause + 400, signal);
-        setShowCursor(true);
       }
 
       // Demo complete
