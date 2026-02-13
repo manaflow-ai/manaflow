@@ -50,7 +50,7 @@ func runSSHCommand(workerURL, token, command string) (string, string, int, error
 	// Try curl-based SSH first (preferred - simpler, no Go bridge needed)
 	curlPath := getCurlWithWebSocket()
 	if curlPath != "" {
-		return runSSHCommandWithCurl(curlPath, wsURL, command)
+		return runSSHCommandWithCurl(curlPath, wsURL, token, command)
 	}
 
 	// Fall back to Go WebSocket bridge
@@ -58,14 +58,14 @@ func runSSHCommand(workerURL, token, command string) (string, string, int, error
 }
 
 // runSSHCommandWithCurl runs a command via SSH using curl as ProxyCommand.
-func runSSHCommandWithCurl(curlPath, wsURL, command string) (string, string, int, error) {
+func runSSHCommandWithCurl(curlPath, wsURL, token, command string) (string, string, int, error) {
 	proxyCmd := fmt.Sprintf("%s --no-progress-meter -N --http1.1 -T . '%s'", curlPath, wsURL)
 	sshArgs := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", fmt.Sprintf("ProxyCommand=%s", proxyCmd),
-		"user@e2b-sandbox",
+		fmt.Sprintf("%s@e2b-sandbox", token),
 		command,
 	}
 
