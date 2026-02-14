@@ -133,6 +133,10 @@
     "./modal-snapshots": {
       "import": "./src/modal-snapshots.ts",
       "types": "./src/modal-snapshots.ts"
+    },
+    "./vercel-templates": {
+      "import": "./src/vercel-templates.ts",
+      "types": "./src/vercel-templates.ts"
     }
   },
   "peerDependencies": {

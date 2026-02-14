@@ -93,6 +93,12 @@ type CreateInstanceRequest struct {
 	Image        string            `json:"image,omitempty"`
 	TTLSeconds   int               `json:"ttlSeconds,omitempty"`
 	Envs         map[string]string `json:"envs,omitempty"`
+	// Vercel-specific options
+	Runtime     string `json:"runtime,omitempty"`
+	VCPUs       int    `json:"vcpus,omitempty"`
+	Ports       []int  `json:"ports,omitempty"`
+	GitURL      string `json:"gitUrl,omitempty"`
+	GitRevision string `json:"gitRevision,omitempty"`
 }
 
 type CreateInstanceResponse struct {
@@ -237,6 +243,7 @@ type Template struct {
 	Disk           string `json:"disk,omitempty"`
 	GPU            string `json:"gpu,omitempty"`
 	Image          string `json:"image,omitempty"`
+	Runtime        string `json:"runtime,omitempty"`
 	SupportsDocker bool   `json:"supportsDocker,omitempty"`
 	Gated          bool   `json:"gated,omitempty"`
 }
