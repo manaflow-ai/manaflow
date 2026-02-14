@@ -57,6 +57,8 @@ interface ProviderClient {
   listInstances(): Promise<ProviderInstance[]>;
   pauseInstance(instanceId: string): Promise<void>;
   stopInstance(instanceId: string): Promise<void>;
+  listOrphanedTemplates?: () => Promise<Array<{ vmid: number; hostname: string }>>;
+  deleteTemplate?: (vmid: number) => Promise<void>;
 }
 
 // ============================================================================
@@ -143,6 +145,16 @@ function createPveLxcProviderClient(
     async stopInstance(instanceId: string): Promise<void> {
       const inst = await pveClient.instances.get({ instanceId });
       await inst.delete();
+    },
+
+    // Add method to list orphaned templates
+    listOrphanedTemplates: async (): Promise<Array<{ vmid: number; hostname: string }>> => {
+      return pveClient.listOrphanedTemplates();
+    },
+
+    // Add method to delete templates
+    deleteTemplate: async (vmid: number): Promise<void> => {
+      return pveClient.deleteTemplate(vmid);
     },
   };
 }
@@ -778,5 +790,95 @@ export const cleanupOrphanedContainers = internalAction({
     console.log(
       `[sandboxMaintenance:orphanCleanup] Finished: ${totalCleaned} cleaned, ${totalSkipped} skipped`
     );
+  },
+});
+
+/**
+ * Clean up orphaned PVE templates with VMID < 9000.
+ * These are intermediate templates created during custom environment saving
+ * that were not properly cleaned up (bug fix in createTemplateFromContainer).
+ *
+ * Safety: Only deletes templates that:
+ * - Have cmux-* or pvelxc-* hostname prefix
+ * - Are templates (not running containers)
+ * - Have VMID in range 200-8999 (excludes base templates 100-199 and protected 9000+)
+ * - Are NOT referenced by any environmentSnapshotVersions record
+ */
+export const cleanupOrphanedPveTemplates = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    // Only run in production
+    if (env.CONVEX_IS_PRODUCTION !== "true") {
+      console.log("[sandboxMaintenance:templateCleanup] Skipping: not in production");
+      return;
+    }
+
+    console.log("[sandboxMaintenance:templateCleanup] Starting orphaned template cleanup...");
+
+    // Only run for PVE-LXC provider
+    const pveApiUrl = process.env.PVE_API_URL;
+    const pveApiToken = process.env.PVE_API_TOKEN;
+    const pveNode = process.env.PVE_NODE;
+
+    if (!pveApiUrl || !pveApiToken) {
+      console.log("[sandboxMaintenance:templateCleanup] Skipping: PVE not configured");
+      return;
+    }
+
+    const pveClient = createPveLxcProviderClient(pveApiUrl, pveApiToken, pveNode);
+    if (!pveClient.listOrphanedTemplates || !pveClient.deleteTemplate) {
+      console.log("[sandboxMaintenance:templateCleanup] Skipping: PVE template APIs unavailable");
+      return;
+    }
+
+    try {
+      const orphanedTemplates = await pveClient.listOrphanedTemplates();
+      console.log(
+        `[sandboxMaintenance:templateCleanup] Found ${orphanedTemplates.length} orphaned templates`
+      );
+
+      if (orphanedTemplates.length === 0) {
+        return;
+      }
+
+      // Get all template VMIDs that are actually in use by environments
+      const usedTemplateVmids = await ctx.runQuery(
+        internal.environments.getUsedTemplateVmidsInternal
+      );
+      const usedVmidSet = new Set(usedTemplateVmids);
+
+      let totalCleaned = 0;
+      let totalSkipped = 0;
+
+      for (const orphan of orphanedTemplates) {
+        // Skip if this template is referenced by an environment
+        if (usedVmidSet.has(orphan.vmid)) {
+          console.log(
+            `[sandboxMaintenance:templateCleanup] Skipping template ${orphan.vmid} (${orphan.hostname}): in use by environment`
+          );
+          totalSkipped++;
+          continue;
+        }
+
+        try {
+          console.log(
+            `[sandboxMaintenance:templateCleanup] Deleting orphaned template ${orphan.vmid} (${orphan.hostname})`
+          );
+          await pveClient.deleteTemplate(orphan.vmid);
+          totalCleaned++;
+        } catch (error) {
+          console.error(
+            `[sandboxMaintenance:templateCleanup] Failed to delete template ${orphan.vmid}:`,
+            error
+          );
+        }
+      }
+
+      console.log(
+        `[sandboxMaintenance:templateCleanup] Finished: ${totalCleaned} deleted, ${totalSkipped} skipped`
+      );
+    } catch (error) {
+      console.error("[sandboxMaintenance:templateCleanup] Error:", error);
+    }
   },
 });

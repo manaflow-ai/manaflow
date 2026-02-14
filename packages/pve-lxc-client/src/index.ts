@@ -932,6 +932,7 @@ export class PveLxcClient {
    * 2. Convert source container to template (in-place)
    * 3. Linked clone from source template to new template VMID (9000+)
    * 4. Convert linked clone to template
+   * 5. Delete source template (best effort cleanup)
    *
    * Rollback strategy:
    * - If step 2 fails: Source is still a container, just restart it
@@ -1021,6 +1022,20 @@ export class PveLxcClient {
           return config.template === 1;
         }
       );
+
+      // Step 5: Delete the source template (no longer needed after linked clone)
+      console.log(
+        `[PveLxcClient] Deleting source template ${sourceVmid} (linked clone ${linkedCloneVmid} is now the template)`
+      );
+      try {
+        await this.deleteContainer(sourceVmid);
+      } catch (deleteError) {
+        // Non-fatal: the new template is created, source just couldn't be cleaned up
+        console.warn(
+          `[PveLxcClient] Failed to delete source template ${sourceVmid} (non-fatal):`,
+          deleteError instanceof Error ? deleteError.message : deleteError
+        );
+      }
 
       const snapshotId = this.generateSnapshotId();
       console.log(
@@ -1615,5 +1630,53 @@ export class PveLxcClient {
       return instances;
     },
   };
-}
 
+  /**
+   * List orphaned templates with VMID < 9000.
+   * These are intermediate templates created during custom environment saving
+   * that were not properly cleaned up.
+   */
+  async listOrphanedTemplates(): Promise<Array<{ vmid: number; hostname: string }>> {
+    const node = await this.getNode();
+    const containers = await this.apiRequest<PveContainerStatus[]>(
+      "GET",
+      `/api2/json/nodes/${node}/lxc`
+    );
+
+    const orphans: Array<{ vmid: number; hostname: string }> = [];
+    for (const container of containers) {
+      const hostname = container.name || "";
+      // Orphaned templates:
+      // - Have cmux-* or pvelxc-* prefix (cmux-managed)
+      // - Are templates (template === 1)
+      // - Have VMID < 9000 (not in protected template range)
+      // - Exclude base templates (VMID 100-199)
+      if (
+        (hostname.startsWith("cmux-") || hostname.startsWith("pvelxc-")) &&
+        container.template === 1 &&
+        container.vmid >= 200 &&
+        container.vmid < 9000
+      ) {
+        orphans.push({ vmid: container.vmid, hostname });
+      }
+    }
+
+    return orphans;
+  }
+
+  /**
+   * Delete a template by VMID.
+   */
+  async deleteTemplate(vmid: number): Promise<void> {
+    const node = await this.getNode();
+    const upid = await this.apiRequest<string>(
+      "DELETE",
+      `/api2/json/nodes/${node}/lxc/${vmid}`
+    );
+    await this.waitForTaskNormalized(upid, `delete template ${vmid}`);
+
+    // Clean up in-memory service URLs
+    this.instanceServices.delete(vmid);
+    this.instanceHostnames.delete(vmid);
+  }
+}
