@@ -138,6 +138,73 @@ export default function CloudRouterPage() {
 
           <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
 
+          {/* Providers & authentication */}
+          <section id="providers" className="mb-8 scroll-mt-8">
+            <h2 className="mb-4 text-lg font-semibold">Providers & authentication</h2>
+            <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              cloudrouter requires a <strong className="text-neutral-900 dark:text-neutral-100">sandbox provider</strong> to
+              create and manage VMs. A provider is the cloud infrastructure backend that actually runs your
+              sandboxes — cloudrouter is the CLI/skill layer that talks to it.
+            </p>
+            <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Before spinning up your first sandbox, you need to authenticate with{" "}
+              <code className="rounded bg-neutral-100 px-1 py-0.5 dark:bg-neutral-800">cloudrouter login</code>.
+              This opens your browser for a one-time sign-in that links your CLI to your account and provider credentials.
+              Once authenticated, all sandbox operations (start, stop, SSH, browser automation) work seamlessly without
+              additional auth steps.
+            </p>
+
+            <h3 className="mb-2 mt-6 text-sm font-semibold">Currently supported</h3>
+            <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+                    <th className="px-4 py-2 font-semibold">Provider</th>
+                    <th className="px-4 py-2 font-semibold">Description</th>
+                    <th className="px-4 py-2 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-neutral-100 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">E2B</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Cloud sandboxes with fast cold starts</td>
+                    <td className="px-4 py-2 text-green-600 dark:text-green-400">Supported</td>
+                  </tr>
+                  <tr className="border-b border-neutral-100 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Modal</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Serverless GPU/CPU sandboxes</td>
+                    <td className="px-4 py-2 text-green-600 dark:text-green-400">Supported</td>
+                  </tr>
+                  <tr className="border-b border-neutral-100 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Morph</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Snapshotable cloud instances with RAM capture</td>
+                    <td className="px-4 py-2 text-green-600 dark:text-green-400">Supported</td>
+                  </tr>
+                  <tr className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Daytona</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Standardized development environments</td>
+                    <td className="px-4 py-2 text-yellow-600 dark:text-yellow-400">Coming soon</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Our goal is to support <strong className="text-neutral-900 dark:text-neutral-100">all major sandbox providers</strong>.
+              If your preferred provider isn&apos;t listed, open an issue on{" "}
+              <a
+                href="https://github.com/manaflow-ai/manaflow"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline transition hover:text-neutral-900 dark:hover:text-white"
+              >
+                GitHub
+              </a>{" "}
+              — the provider interface is extensible and we actively welcome contributions.
+            </p>
+          </section>
+
+          <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
+
           {/* Quick start */}
           <section className="mb-8 scroll-mt-8">
             <h2 className="mb-4 text-lg font-semibold">Quick start</h2>
