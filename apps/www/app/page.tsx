@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Cloud,
   GitPullRequest,
+  KeyRound,
   Layers,
   Settings,
   Terminal,
@@ -61,16 +62,16 @@ const productPillars = [
     icon: Zap,
   },
   {
-    title: "Supports cloud sandboxes or local Docker",
+    title: "Multiple sandbox providers supported",
     description:
-      "cmux includes configurations for cloud sandbox mode with repos, cloud sandbox mode with environments, and local mode with Docker containers.",
+      "Run agents in Docker locally or use cloud sandbox providers like Morph, Daytona, E2B, and Modal. We're working to support every sandbox provider.",
     icon: Cloud,
   },
   {
-    title: "Integrates with your local auth setup",
+    title: "Bring your own API keys and auth",
     description:
-      "cmux integrates with your local auth setup and you can bring your OpenAI and Claude subscriptions or API keys to run the coding agents on tasks.",
-    icon: Zap,
+      "Connect your existing OpenAI, Anthropic, or Google API keys and authenticate with your sandbox provider to start running agents immediately.",
+    icon: KeyRound,
   },
 ];
 
@@ -492,6 +493,96 @@ export default async function LandingPage() {
           </div>
         </section>
 
+        <section id="nav-providers" className="mx-auto max-w-6xl px-4 pb-20 sm:px-6 scroll-mt-32">
+          <div className="space-y-12">
+            <div className="space-y-3 text-center">
+              <h2 className="text-2xl font-semibold text-white sm:text-3xl">
+                Sandbox providers &amp; authentication
+              </h2>
+              <p className="mx-auto max-w-3xl text-sm text-neutral-400 sm:text-base">
+                cmux needs a sandbox provider to create the isolated environments where each agent runs. Every agent gets its own VM or container with a full VS Code instance, terminal, and dev server — the provider is what makes that possible.
+              </p>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-gradient-to-br from-sky-500/40 via-blue-500/40 to-purple-500/40 p-3 text-white shadow-lg">
+                    <Cloud className="h-5 w-5" aria-hidden />
+                  </div>
+                  <h3 className="text-base font-semibold text-white">Supported sandbox providers</h3>
+                </div>
+                <p className="text-sm text-neutral-300">
+                  Choose the provider that fits your workflow. You can run fully local with Docker or use a cloud provider for remote sandboxes:
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-sm font-semibold text-white">Docker</p>
+                    <p className="text-xs text-neutral-400">Local containers on your machine</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-sm font-semibold text-white">Morph</p>
+                    <p className="text-xs text-neutral-400">Cloud VMs with snapshotting</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-sm font-semibold text-white">Daytona</p>
+                    <p className="text-xs text-neutral-400">Cloud dev environments</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-sm font-semibold text-white">E2B</p>
+                    <p className="text-xs text-neutral-400">Cloud sandboxes</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 col-span-2">
+                    <p className="text-sm font-semibold text-white">Modal</p>
+                    <p className="text-xs text-neutral-400">Serverless cloud sandboxes</p>
+                  </div>
+                </div>
+                <p className="text-xs text-neutral-400">
+                  Our goal is to support every sandbox provider. If your preferred provider isn&apos;t listed,{" "}
+                  <a
+                    className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-2"
+                    href="https://github.com/manaflow-ai/manaflow/issues"
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    open an issue
+                  </a>{" "}
+                  and we&apos;ll prioritize it.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-gradient-to-br from-sky-500/40 via-blue-500/40 to-purple-500/40 p-3 text-white shadow-lg">
+                    <KeyRound className="h-5 w-5" aria-hidden />
+                  </div>
+                  <h3 className="text-base font-semibold text-white">Authentication &amp; API keys</h3>
+                </div>
+                <p className="text-sm text-neutral-300">
+                  cmux connects to your existing accounts — it doesn&apos;t host models or sandboxes itself. You bring two things:
+                </p>
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 space-y-1">
+                    <p className="text-sm font-semibold text-white">1. Sandbox provider credentials</p>
+                    <p className="text-xs text-neutral-400">
+                      For Docker, just have it running locally. For cloud providers like Morph, Daytona, E2B, or Modal, add your API key in cmux settings to provision remote VMs.
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 space-y-1">
+                    <p className="text-sm font-semibold text-white">2. AI provider API keys</p>
+                    <p className="text-xs text-neutral-400">
+                      Bring your Anthropic (Claude), OpenAI (Codex), or Google (Gemini) API key or subscription. cmux passes your credentials to the agent CLIs running in each sandbox.
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-neutral-400">
+                  In demos, VMs and agent sessions are pre-configured — but in practice, you authenticate once in cmux settings and every subsequent run uses those credentials automatically.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section id="nav-requirements" className="mx-auto max-w-4xl px-4 pb-20 text-center sm:px-6 scroll-mt-32">
           <h2 className="text-2xl font-semibold text-white sm:text-3xl">Requirements</h2>
           <p className="mt-4 text-sm text-neutral-400 sm:text-base">
@@ -499,7 +590,10 @@ export default async function LandingPage() {
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
-              Docker installed or use cmux cloud
+              A sandbox provider (Docker locally or a cloud provider)
+            </div>
+            <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
+              AI provider API key or subscription
             </div>
             <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
               macOS 13+, Linux (preview), Windows (waitlist)
