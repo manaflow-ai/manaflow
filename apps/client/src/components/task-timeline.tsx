@@ -510,21 +510,21 @@ export function TaskTimeline({
               key={c._id}
               authorName={
                 c.userId === "cmux"
-                  ? "cmux"
+                  ? "Manaflow"
                   : user?.displayName ||
                     user?.primaryEmail?.split("@")[0] ||
                     "User"
               }
               avatar={
                 c.userId === "cmux" ? (
-                  <CmuxLogoMark height={20} label="cmux" />
+                  <CmuxLogoMark height={20} label="Manaflow" />
                 ) : undefined
               }
               authorImageUrl={
                 c.userId === "cmux" ? undefined : user?.profileImageUrl || ""
               }
               authorAlt={
-                c.userId === "cmux" ? "cmux" : user?.primaryEmail || "User"
+                c.userId === "cmux" ? "Manaflow" : user?.primaryEmail || "User"
               }
               timestamp={c.createdAt}
               content={c.content}

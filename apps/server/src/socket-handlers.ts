@@ -1965,7 +1965,7 @@ export function setupSocketHandlers(
               teamSlugOrId,
               ttlSeconds: 60 * 60,
               metadata: {
-                instance: `cmux-workspace-${taskRunId}`,
+                instance: `manaflow-workspace-${taskRunId}`,
                 agentName: "cloud-workspace",
               },
               taskRunId,

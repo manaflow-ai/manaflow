@@ -66,7 +66,7 @@ export function TeamOnboardingPrompt({
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-2xl font-semibold text-neutral-900">
-                Welcome to cmux!
+                Welcome to Manaflow!
               </h1>
               <p className="mt-3 text-base text-neutral-600 leading-relaxed">
                 To view pull requests you need a team. Teams help organize
@@ -98,7 +98,7 @@ export function TeamOnboardingPrompt({
                       <span className="shrink-0 font-semibold text-neutral-900">
                         2.
                       </span>
-                      <span>You can install the cmux GitHub App for your repos</span>
+                      <span>You can install the Manaflow GitHub App for your repos</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="shrink-0 font-semibold text-neutral-900">

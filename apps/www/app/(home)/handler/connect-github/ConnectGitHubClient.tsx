@@ -21,7 +21,7 @@ export function ConnectGitHubClient(props: ConnectGitHubClientProps) {
       try {
         window.location.href = props.href;
       } catch {
-        console.error("Failed to open cmux", props.href);
+        console.error("Failed to open Manaflow", props.href);
       }
     }
   }, [props.alreadyConnected, props.href]);
@@ -63,14 +63,14 @@ export function ConnectGitHubClient(props: ConnectGitHubClientProps) {
             GitHub Connected
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-            Opening cmux...
+            Opening Manaflow...
           </p>
           <div className="mt-5">
             <a
               href={props.href}
               className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90"
             >
-              Open cmux
+              Open Manaflow
             </a>
           </div>
         </div>

@@ -29,7 +29,7 @@ export default function HeatmapPage() {
           href="https://cmux.dev"
           className="mb-6 inline-block text-sm text-neutral-600 hover:text-black sm:mb-8"
         >
-          ← Back to <span className="bg-sky-100 px-1">cmux</span>
+          ← Back to <span className="bg-sky-100 px-1">Manaflow</span>
         </Link>
         <h1 className="mb-6 text-2xl font-bold sm:mb-8 sm:text-3xl">
           A <span className="bg-yellow-200 px-1">heatmap</span> diff viewer for

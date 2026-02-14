@@ -52,7 +52,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
         teamSlugOrId: this.teamSlugOrId,
         ttlSeconds: 60 * 60,
         metadata: {
-          instance: `cmux-${this.taskRunId}`,
+          instance: `manaflow-${this.taskRunId}`,
           agentName: this.config.agentName || "",
         },
         taskRunId: this.taskRunId,

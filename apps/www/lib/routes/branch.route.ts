@@ -94,7 +94,7 @@ branchRouter.openapi(
 
       if (!body.taskDescription && body.prTitle) {
         const kebabTitle = toKebabCase(body.prTitle);
-        const baseBranchName = `cmux/${kebabTitle}`;
+        const baseBranchName = `manaflow/${kebabTitle}`;
         const branchNames = generateBranchNamesFromBase(
           baseBranchName,
           count,

@@ -85,7 +85,7 @@ function GitHubInstallCompleteContent() {
           <p className="mt-2 text-sm text-neutral-600">
             {returnPath
               ? "Redirecting you back to the pull request…"
-              : "Opening cmux app…"}
+              : "Opening Manaflow app…"}
           </p>
         </div>
       </div>
@@ -107,7 +107,7 @@ function GitHubInstallCompleteContent() {
                 GitHub App Installed Successfully
               </h1>
               <p className="mt-3 text-base text-neutral-600 leading-relaxed">
-                The cmux GitHub App has been connected. Return to your pull
+                The Manaflow GitHub App has been connected. Return to your pull
                 request and refresh the page to continue your review.
               </p>
 

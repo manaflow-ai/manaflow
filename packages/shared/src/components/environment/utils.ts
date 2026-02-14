@@ -227,7 +227,7 @@ function resolveMorphHostId(
     }
 
     const proxyMatch = url.hostname.match(
-      /^cmux-([^-]+)-[a-z0-9-]+-\d+\.cmux\.(?:app|dev|sh|local|localhost)$/i
+      /^(?:manaflow|cmux)-([^-]+)-[a-z0-9-]+-\d+\.(?:manaflow|cmux)\.(?:app|dev|sh|local|localhost)$/i
     );
     if (proxyMatch && proxyMatch[1]) {
       return `morphvm-${proxyMatch[1].toLowerCase()}`;

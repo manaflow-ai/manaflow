@@ -47,7 +47,7 @@ export async function ensureRunWorktreeAndBranch(
     // Determine base branch: prefer explicit task.baseBranch; otherwise detect later
     let baseBranch = task.baseBranch || "";
     const branchName = sanitizeBranchName(
-      run.newBranch || `cmux-run-${String(taskRunId).slice(-8)}`
+      run.newBranch || `manaflow-run-${String(taskRunId).slice(-8)}`
     );
 
     // Ensure worktree exists

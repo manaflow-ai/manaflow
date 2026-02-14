@@ -1,5 +1,5 @@
 /**
- * cmux devbox CLI HTTP API - Convex httpActions that proxy Morph Cloud operations.
+ * Manaflow devbox CLI HTTP API - Convex httpActions that proxy Morph Cloud operations.
  *
  * All endpoints require Stack Auth authentication and inject the MORPH_API_KEY server-side.
  * Instance data is tracked in devboxInstances table, with provider info in devboxInfo.
@@ -11,7 +11,7 @@ import type { FunctionReference } from "convex/server";
 
 const MORPH_API_BASE_URL = "https://cloud.morph.so/api";
 
-// Default snapshot ID for cmux devbox CLI instances
+// Default snapshot ID for manaflow devbox CLI instances
 const DEFAULT_CMUX_SNAPSHOT_ID = "snapshot_b74x626y";
 
 const JSON_HEADERS = {
@@ -19,8 +19,8 @@ const JSON_HEADERS = {
 };
 
 // Security: Validate instance ID format to prevent injection attacks
-// IDs should be cmux_ followed by 8+ alphanumeric characters
-const INSTANCE_ID_REGEX = /^cmux_[a-zA-Z0-9]{8,}$/;
+// IDs should be manaflow_ or cmux_ followed by 8+ alphanumeric characters
+const INSTANCE_ID_REGEX = /^(?:manaflow|cmux)_[a-zA-Z0-9]{8,}$/;
 
 function isValidInstanceId(id: string): boolean {
   return INSTANCE_ID_REGEX.test(id);
@@ -1392,10 +1392,11 @@ export const instanceActionRouter = httpAction(async (ctx, req) => {
 
   // Parse path to get id and action
   // Path formats:
-  // /api/v1/cmux/instances/{id}/{action}
-  // /api/v1/cmux/instances/{id}/http/{serviceName}
+  // /api/v1/manaflow/instances/{id}/{action}
+  // /api/v1/manaflow/instances/{id}/http/{serviceName}
+  // Legacy: /api/v1/cmux/instances/{id}/{action}
   const pathParts = path.split("/").filter(Boolean);
-  // pathParts: ["api", "v1", "cmux", "instances", "{id}", "{action}", ...]
+  // pathParts: ["api", "v1", "manaflow"|"cmux", "instances", "{id}", "{action}", ...]
 
   const id = pathParts[4]; // instances/{id}
   const action = pathParts[5]; // {action}

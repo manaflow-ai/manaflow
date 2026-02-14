@@ -1996,10 +1996,11 @@ function deriveRoute(url: string): ProxyRoute | null {
         continue;
       }
       const subdomain = hostname.slice(0, -suffix.length);
-      if (!subdomain.startsWith("cmux-")) {
+      if (!subdomain.startsWith("manaflow-") && !subdomain.startsWith("cmux-")) {
         continue;
       }
-      const remainder = subdomain.slice("cmux-".length);
+      const prefix = subdomain.startsWith("manaflow-") ? "manaflow-" : "cmux-";
+      const remainder = subdomain.slice(prefix.length);
       const segments = remainder
         .split("-")
         .filter((segment) => segment.length > 0);

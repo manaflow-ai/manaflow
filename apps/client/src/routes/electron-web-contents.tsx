@@ -127,7 +127,7 @@ function LayoutPlayground() {
         </p>
         {!isElectronRuntime ? (
           <p className="rounded-md border border-neutral-300 bg-neutral-100 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-            Launch the cmux Electron app to see the embedded site instead of the
+            Launch the Manaflow Electron app to see the embedded site instead of the
             placeholder.
           </p>
         ) : null}

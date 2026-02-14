@@ -203,7 +203,7 @@ export function generateBranchNamesFromDescription(
   count: number
 ): string[] {
   const kebab = toKebabCase(taskDescription);
-  const base = `cmux/${kebab || "feature-update"}`;
+  const base = `manaflow/${kebab || "feature-update"}`;
   const separator = base.endsWith("-") ? "" : "-";
 
   const ids = new Set<string>();

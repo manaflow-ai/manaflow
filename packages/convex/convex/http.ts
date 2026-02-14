@@ -245,9 +245,15 @@ http.route({
 });
 
 // =============================================================================
-// v1/cmux API - Morph instance management for cmux devbox CLI
+// v1/manaflow API - Morph instance management for manaflow devbox CLI
+// Legacy v1/cmux routes kept for backward compatibility
 // =============================================================================
 
+http.route({
+  path: "/api/v1/manaflow/instances",
+  method: "POST",
+  handler: cmuxCreateInstance,
+});
 http.route({
   path: "/api/v1/cmux/instances",
   method: "POST",
@@ -255,11 +261,21 @@ http.route({
 });
 
 http.route({
+  path: "/api/v1/manaflow/instances",
+  method: "GET",
+  handler: cmuxListInstances,
+});
+http.route({
   path: "/api/v1/cmux/instances",
   method: "GET",
   handler: cmuxListInstances,
 });
 
+http.route({
+  path: "/api/v1/manaflow/snapshots",
+  method: "GET",
+  handler: cmuxListSnapshots,
+});
 http.route({
   path: "/api/v1/cmux/snapshots",
   method: "GET",
@@ -267,17 +283,32 @@ http.route({
 });
 
 http.route({
+  pathPrefix: "/api/v1/manaflow/snapshots/",
+  method: "GET",
+  handler: cmuxGetSnapshot,
+});
+http.route({
   pathPrefix: "/api/v1/cmux/snapshots/",
   method: "GET",
   handler: cmuxGetSnapshot,
 });
 
 http.route({
+  path: "/api/v1/manaflow/config",
+  method: "GET",
+  handler: cmuxGetConfig,
+});
+http.route({
   path: "/api/v1/cmux/config",
   method: "GET",
   handler: cmuxGetConfig,
 });
 
+http.route({
+  path: "/api/v1/manaflow/me",
+  method: "GET",
+  handler: cmuxGetMe,
+});
 http.route({
   path: "/api/v1/cmux/me",
   method: "GET",
@@ -286,11 +317,21 @@ http.route({
 
 // Instance-specific routes use pathPrefix to capture the instance ID
 http.route({
+  pathPrefix: "/api/v1/manaflow/instances/",
+  method: "GET",
+  handler: cmuxInstanceGetRouter,
+});
+http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "GET",
   handler: cmuxInstanceGetRouter,
 });
 
+http.route({
+  pathPrefix: "/api/v1/manaflow/instances/",
+  method: "POST",
+  handler: cmuxInstanceActionRouter,
+});
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "POST",

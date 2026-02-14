@@ -81,7 +81,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
   constructor(config: VSCodeInstanceConfig) {
     super(config);
-    this.containerName = `cmux-${this.taskRunId}`;
+    this.containerName = `manaflow-${this.taskRunId}`;
     this.imageName =
       process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest";
     dockerLogger.info(`WORKER_IMAGE_NAME: ${process.env.WORKER_IMAGE_NAME}`);
@@ -1543,7 +1543,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private static async handleDockerEvent(event: DockerEvent): Promise<void> {
     const containerName = event.Actor?.Attributes?.name;
     const status = event.status;
-    if (!containerName || !status || !containerName.startsWith("cmux-")) {
+    if (!containerName || !status || !(containerName.startsWith("manaflow-") || containerName.startsWith("cmux-"))) {
       return;
     }
 
