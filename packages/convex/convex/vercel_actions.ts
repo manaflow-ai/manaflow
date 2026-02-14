@@ -131,12 +131,19 @@ export const getInstance = internalAction({
       const instance = await client.instances.get({
         instanceId: args.instanceId,
       });
-      const status = instance.getStatus();
+      const rawStatus = instance.getStatus();
       const urls = extractNetworkingUrls(instance);
+
+      // Vercel SDK returns "pending" | "running" | "stopping" | "stopped" | "failed"
+      // Map to CloudRouter's "running" | "stopped" model
+      const status =
+        rawStatus === "running" || rawStatus === "pending"
+          ? "running"
+          : "stopped";
 
       return {
         instanceId: args.instanceId,
-        status: status === "running" ? "running" : "stopped",
+        status,
         ...urls,
       };
     } catch {
