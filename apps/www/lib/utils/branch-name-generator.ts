@@ -36,7 +36,7 @@ export function generateBranchName(prTitle: string): string {
   const kebabTitle = toKebabCase(prTitle);
   const randomId = generateRandomId();
   const separator = kebabTitle.endsWith("-") ? "" : "-";
-  return `cmux/${kebabTitle}${separator}${randomId}`;
+  return `manaflow/${kebabTitle}${separator}${randomId}`;
 }
 
 export const prGenerationSchema = z.object({
@@ -218,7 +218,7 @@ export async function generateBranchBaseName(
   providerName: string | null;
 }> {
   const info = await generatePRInfo(taskDescription, apiKeys);
-  const baseBranchName = `cmux/${info.branchName}`;
+  const baseBranchName = `manaflow/${info.branchName}`;
   return {
     baseBranchName,
     prTitle: info.prTitle,
@@ -255,7 +255,7 @@ export function generateUniqueBranchNamesFromTitle(
   count: number
 ): string[] {
   const kebabTitle = toKebabCase(prTitle);
-  const baseBranchName = `cmux/${kebabTitle}`;
+  const baseBranchName = `manaflow/${kebabTitle}`;
   return generateBranchNamesFromBase(baseBranchName, count);
 }
 

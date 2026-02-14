@@ -74,9 +74,9 @@ describe("generateRandomId", () => {
 });
 
 describe("generateBranchName", () => {
-  it("prefixes with cmux and appends random id", () => {
+  it("prefixes with manaflow and appends random id", () => {
     const name = generateBranchName("Fix auth bug");
-    expect(name).toMatch(/^cmux\/fix-auth-bug-[a-z0-9]{5}$/);
+    expect(name).toMatch(/^manaflow\/fix-auth-bug-[a-z0-9]{5}$/);
   });
 });
 
@@ -129,7 +129,7 @@ describe("generateBranchNames", () => {
       "Add auditing to auth",
       OPENAI_KEYS
     );
-    expect(baseBranchName).toBe("cmux/add-auth-logging");
+    expect(baseBranchName).toBe("manaflow/add-auth-logging");
   });
 
   it("respects provided unique id for single branch", async () => {
@@ -138,7 +138,7 @@ describe("generateBranchNames", () => {
       {},
       "abcde"
     );
-    expect(branchName).toBe("cmux/fix-bug-abcde");
+    expect(branchName).toBe("manaflow/fix-bug-abcde");
   });
 
   it("generates the requested number of unique branches", async () => {
@@ -159,23 +159,23 @@ describe("generateBranchNames", () => {
       {},
       "abcde"
     );
-    expect(branchNames[0]).toBe("cmux/improve-logging-abcde");
-    expect(branchNames[1]).toMatch(/^cmux\/improve-logging-[a-z0-9]{5}$/);
+    expect(branchNames[0]).toBe("manaflow/improve-logging-abcde");
+    expect(branchNames[1]).toMatch(/^manaflow\/improve-logging-[a-z0-9]{5}$/);
   });
 
   it("builds multiple branches from existing title", () => {
     const names = generateUniqueBranchNamesFromTitle("Fix Bug", 2);
     expect(names).toHaveLength(2);
     names.forEach((name) =>
-      expect(name).toMatch(/^cmux\/fix-bug-[a-z0-9]{5}$/)
+      expect(name).toMatch(/^manaflow\/fix-bug-[a-z0-9]{5}$/)
     );
   });
 });
 
 describe("generateBranchNamesFromBase", () => {
   it("ensures custom id is first", () => {
-    const names = generateBranchNamesFromBase("cmux/test", 2, "abcde");
-    expect(names[0]).toBe("cmux/test-abcde");
+    const names = generateBranchNamesFromBase("manaflow/test", 2, "abcde");
+    expect(names[0]).toBe("manaflow/test-abcde");
   });
 });
 
