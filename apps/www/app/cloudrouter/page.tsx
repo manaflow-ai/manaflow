@@ -88,7 +88,7 @@ export default function CloudRouterPage() {
 
         {/* Hero */}
         <section className="mb-8">
-          <h1 className="mb-3 text-xl font-bold leading-tight whitespace-nowrap sm:text-2xl">
+          <h1 className="mb-3 text-xl font-bold leading-tight sm:whitespace-nowrap sm:text-2xl">
             Skill for Claude Code/Codex to spin up VMs and GPUs
           </h1>
           <p className="max-w-xl text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
