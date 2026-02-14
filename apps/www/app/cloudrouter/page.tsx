@@ -138,25 +138,16 @@ export default function CloudRouterPage() {
 
           <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
 
-          {/* Providers & Authentication */}
+          {/* Providers */}
           <section id="providers" className="mb-8 scroll-mt-8">
-            <h2 className="mb-4 text-lg font-semibold">Providers & Authentication</h2>
+            <h2 className="mb-4 text-lg font-semibold">Providers</h2>
             <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               cloudrouter connects to sandbox providers that provision the actual VMs and GPUs.
-              Before you can create sandboxes, you need to authenticate with a provider.
+              After authenticating with <code className="rounded bg-neutral-100 px-1 py-0.5 dark:bg-neutral-800">cloudrouter login</code>,
+              you can create sandboxes on any supported provider.
             </p>
 
-            <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
-              <h3 className="mb-2 text-sm font-semibold">How it works</h3>
-              <ol className="list-inside list-decimal space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
-                <li>Run <code className="rounded bg-neutral-100 px-1 py-0.5 dark:bg-neutral-800">cloudrouter login</code> to authenticate</li>
-                <li>cloudrouter provisions a VM from your chosen provider</li>
-                <li>Your code is synced to the remote sandbox</li>
-                <li>Access via VS Code, terminal, VNC, or browser automation</li>
-              </ol>
-            </div>
-
-            <h3 className="mb-2 text-sm font-semibold">Currently supported providers</h3>
+            <h3 className="mb-2 text-sm font-semibold">Currently supported</h3>
             <div className="mb-4 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -170,7 +161,7 @@ export default function CloudRouterPage() {
                   <tr className="border-b border-neutral-100 dark:border-neutral-800">
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">E2B</td>
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-400">-p e2b</td>
-                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Default provider. Supports Docker and GPUs.</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Default provider. Supports Docker.</td>
                   </tr>
                   <tr className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Modal</td>
@@ -183,14 +174,12 @@ export default function CloudRouterPage() {
 
             <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               We are actively working to support <span className="font-semibold">all major sandbox providers</span> including
-              Runloop, Daytona, and others. If you have a preferred provider,{" "}
+              Vercel, Daytona, Morph, Freestyle, and others. If you have a preferred provider,{" "}
               <a
-                href="https://github.com/manaflow-ai/manaflow/issues"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="mailto:founders@manaflow.ai"
                 className="underline transition hover:text-neutral-900 dark:hover:text-white"
               >
-                let us know
+                contact us
               </a>.
             </p>
           </section>
