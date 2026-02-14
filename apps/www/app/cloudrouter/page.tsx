@@ -138,6 +138,65 @@ export default function CloudRouterPage() {
 
           <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
 
+          {/* Providers & Authentication */}
+          <section id="providers" className="mb-8 scroll-mt-8">
+            <h2 className="mb-4 text-lg font-semibold">Providers & Authentication</h2>
+            <p className="mb-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              cloudrouter connects to sandbox providers that provision the actual VMs and GPUs.
+              Before you can create sandboxes, you need to authenticate with a provider.
+            </p>
+
+            <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <h3 className="mb-2 text-sm font-semibold">How it works</h3>
+              <ol className="list-inside list-decimal space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
+                <li>Run <code className="rounded bg-neutral-100 px-1 py-0.5 dark:bg-neutral-800">cloudrouter login</code> to authenticate</li>
+                <li>cloudrouter provisions a VM from your chosen provider</li>
+                <li>Your code is synced to the remote sandbox</li>
+                <li>Access via VS Code, terminal, VNC, or browser automation</li>
+              </ol>
+            </div>
+
+            <h3 className="mb-2 text-sm font-semibold">Currently supported providers</h3>
+            <div className="mb-4 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+                    <th className="px-4 py-2 font-semibold">Provider</th>
+                    <th className="px-4 py-2 font-semibold">Flag</th>
+                    <th className="px-4 py-2 font-semibold">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-neutral-100 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">E2B</td>
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-400">-p e2b</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Default provider. Supports Docker and GPUs.</td>
+                  </tr>
+                  <tr className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Modal</td>
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-400">-p modal</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Alternative provider with GPU support.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              We are actively working to support <span className="font-semibold">all major sandbox providers</span> including
+              Runloop, Daytona, and others. If you have a preferred provider,{" "}
+              <a
+                href="https://github.com/manaflow-ai/manaflow/issues"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline transition hover:text-neutral-900 dark:hover:text-white"
+              >
+                let us know
+              </a>.
+            </p>
+          </section>
+
+          <hr className="mb-8 border-neutral-200 dark:border-neutral-800" />
+
           {/* Quick start */}
           <section className="mb-8 scroll-mt-8">
             <h2 className="mb-4 text-lg font-semibold">Quick start</h2>
