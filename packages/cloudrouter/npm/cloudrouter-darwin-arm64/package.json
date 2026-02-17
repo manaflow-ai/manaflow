@@ -1,6 +1,6 @@
 {
   "name": "@manaflow-ai/cloudrouter-darwin-arm64",
-  "version": "0.9.29",
+  "version": "0.9.30",
   "description": "cloudrouter binary for macOS ARM64",
   "os": ["darwin"],
   "cpu": ["arm64"],
