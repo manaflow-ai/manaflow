@@ -209,8 +209,8 @@ export const triggerGithubComment = internalAction({
           teamId: previewRun.teamId,
         });
         const teamSlug = team?.slug ?? previewRun.teamId;
-        workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
-        devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
+        workspaceUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}`;
+        devServerUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
 
         console.log("[previewScreenshots] Built workspace URLs", {
           previewRunId: args.previewRunId,

@@ -64,6 +64,11 @@ type AgentSelectionInstance = {
   id: string;
 };
 
+const GITHUB_INSTALL_COMPLETE_MESSAGE_TYPES = new Set([
+  "manaflow/github-install-complete",
+  "cmux/github-install-complete",
+]);
+
 function watchPopupClosed(win: Window | null, onClose: () => void): void {
   if (!win) return;
   const timer = window.setInterval(() => {
@@ -88,7 +93,7 @@ function openCenteredPopup(
     window.open(url, "_blank", "noopener,noreferrer");
     return null;
   }
-  const name = opts?.name ?? "cmux-popup";
+  const name = opts?.name ?? "manaflow-popup";
   const width = Math.floor(opts?.width ?? 980);
   const height = Math.floor(opts?.height ?? 780);
   const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
@@ -383,7 +388,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      if (event.data?.type === "cmux/github-install-complete") {
+      if (GITHUB_INSTALL_COMPLETE_MESSAGE_TYPES.has(event.data?.type ?? "")) {
         void queryClient.invalidateQueries();
       }
     };

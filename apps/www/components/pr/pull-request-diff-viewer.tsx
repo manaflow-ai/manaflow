@@ -2488,16 +2488,16 @@ function CmuxPromoCard() {
             From the creators of
           </p>
           <a
-            href="https://cmux.dev"
+            href="https://manaflow.com"
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Visit cmux.dev"
+            aria-label="Visit manaflow.com"
             className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-4.8px]"
           >
             <CmuxLogo
               height={30}
-              label="cmux.dev"
-              wordmarkText="cmux.dev"
+              label="manaflow.com"
+              wordmarkText="manaflow.com"
               wordmarkFill="#0f172a"
             />
           </a>
@@ -2505,7 +2505,7 @@ function CmuxPromoCard() {
         <div className="mb-1 translate-y-[-1.5px]">
           <p className="text-xs font-sans leading-relaxed text-neutral-500">
             We also made an open-source Claude Code/Codex manager! Check out
-            cmux if you want heatmaps for your vibe coded diffs (coming soon)!
+            Manaflow if you want heatmaps for your vibe coded diffs (coming soon)!
           </p>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
@@ -2519,12 +2519,12 @@ function CmuxPromoCard() {
             Star on GitHub
           </a>
           <a
-            href="https://cmux.dev"
+            href="https://manaflow.com"
             target="_blank"
             rel="noopener noreferrer"
             className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
           >
-            Explore cmux
+            Explore Manaflow
           </a>
         </div>
       </div>

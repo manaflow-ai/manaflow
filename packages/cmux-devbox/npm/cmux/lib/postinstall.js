@@ -21,7 +21,7 @@ if (isInteractive) {
 │     $ cmux start          # Create a cloud VM           │
 │     $ cmux --help         # See all commands            │
 │                                                         │
-│   Documentation: https://cmux.sh/docs                   │
+│   Documentation: https://manaflow.com/docs               │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 `;

@@ -4,7 +4,7 @@ if (!stackProjectId) {
   throw new Error("NEXT_PUBLIC_STACK_PROJECT_ID environment variable is required");
 }
 
-// Production Stack Auth project ID for CLI login via cmux.dev
+// Production Stack Auth project ID for CLI login via manaflow.com
 const prodStackProjectId = "8a877114-b905-47c5-8b64-3a2d90679577";
 
 // Build provider config for a Stack Auth project
@@ -31,7 +31,7 @@ export default {
   providers: [
     // Primary Stack Auth project (from env)
     ...makeStackAuthProviders(stackProjectId),
-    // Also accept production Stack Auth tokens (for devbox CLI using cmux.dev login)
+    // Also accept production Stack Auth tokens (for devbox CLI using manaflow.com login)
     ...(stackProjectId !== prodStackProjectId ? makeStackAuthProviders(prodStackProjectId) : []),
   ],
 };

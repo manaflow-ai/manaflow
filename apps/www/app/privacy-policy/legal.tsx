@@ -1406,7 +1406,7 @@ export const EulaScreen = ({
 
         <Paragraph>
           Please read this End-User License Agreement carefully before clicking
-          the "I Agree" button, downloading or using cmux.
+          the "I Agree" button, downloading or using Manaflow.
         </Paragraph>
 
         <Paragraph>Interpretation and Definitions</Paragraph>
@@ -1434,7 +1434,7 @@ export const EulaScreen = ({
 
         <Paragraph>
           "Application" means the software program and web service provided by
-          the Company, known as cmux, which enables users to run AI-powered
+          the Company, known as Manaflow, which enables users to run AI-powered
           coding agents in parallel across multiple tasks with isolated
           development environments.
         </Paragraph>

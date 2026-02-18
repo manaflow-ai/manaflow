@@ -86,6 +86,8 @@ app.use(
       getHostUrl(defaultHostConfig.server),
       "https://cmux.sh",
       "https://www.cmux.sh",
+      "https://manaflow.com",
+      "https://www.manaflow.com",
       ...(clientPreviewOrigin ? [clientPreviewOrigin] : []),
     ],
     credentials: true,
@@ -150,8 +152,8 @@ app.doc("/doc", {
   openapi: "3.0.0",
   info: {
     version: "1.0.0",
-    title: "cmux API",
-    description: "API for cmux",
+    title: "Manaflow API",
+    description: "API for Manaflow",
   },
 });
 

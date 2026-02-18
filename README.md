@@ -2,7 +2,7 @@
 <p align="center">Open source Claude Code web/Codex Cloud/Devin alternative</p>
 
 <p align="center">
-  <a href="https://www.cmux.dev/direct-download-macos">
+  <a href="https://www.manaflow.com/direct-download-macos">
     <img src="./docs/assets/macos-badge.png" alt="Download Manaflow for macOS" width="180" />
   </a>
 </p>
@@ -93,7 +93,7 @@ Every run spins up an isolated VS Code workspace either in the cloud or in a loc
 
 Manaflow supports macOS. Linux in beta. Windows coming soon.
 
-<a href="https://www.cmux.dev/direct-download-macos">
+<a href="https://www.manaflow.com/direct-download-macos">
   <img src="./docs/assets/macos-badge.png" alt="Download Manaflow for macOS" width="180" />
 </a>
 

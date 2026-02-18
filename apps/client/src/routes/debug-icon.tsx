@@ -82,7 +82,7 @@ function DebugIconPage() {
               showGuides={showGuides}
               showBorder={showBorder}
               showWordmark={showWordmark}
-              aria-label="cmux logo"
+              aria-label="manaflow logo"
             />
           </div>
           <div className="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-500">
@@ -100,7 +100,7 @@ function DebugIconPage() {
               showGuides={showGuides}
               showBorder={showBorder}
               showWordmark={showWordmark}
-              aria-label="cmux logo dark"
+              aria-label="manaflow logo dark"
             />
           </div>
           <div className="mt-2 text-center text-xs text-neutral-400 dark:text-neutral-600">

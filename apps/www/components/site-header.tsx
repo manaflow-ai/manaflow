@@ -97,9 +97,9 @@ export function SiteHeader({
           isScrolled ? "py-3" : "py-4"
         )}
       >
-        <Link aria-label="cmux" href="/">
+        <Link aria-label="Manaflow" href="/">
           <div className="flex items-center gap-3">
-            <CmuxLogo height={36} label="cmux" showWordmark />
+            <CmuxLogo height={36} label="Manaflow" showWordmark />
           </div>
         </Link>
         <nav className="hidden items-center gap-8 text-sm font-medium md:flex">

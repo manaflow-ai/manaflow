@@ -524,7 +524,7 @@ function MockCmuxStartRun() {
   ];
 
   const pullRequests: MockSidebarItem[] = [
-    { title: "Devbox", subtitle: "cmux/devbox-v1", status: "success" },
+    { title: "Devbox", subtitle: "manaflow/devbox-v1", status: "success" },
     {
       title: "chore: daily morph snapshot...",
       subtitle: "morph-snapshot-20260120...",
@@ -566,23 +566,23 @@ function MockCmuxStartRun() {
   const pinnedTasks: MockPinnedTask[] = [
     {
       text: "we need to implement rsync between the local vscode to the cloud vscode for th...",
-      owner: "cmux",
+      owner: "manaflow",
     },
     {
       text: "our normal git diff viewer should have the sidebar thing where we can easily filter...",
-      owner: "cmux-helpers",
+      owner: "manaflow-helpers",
     },
     {
       text: "i think the trimming feature in the hostScreenshotCollector is too much...",
-      owner: "cmux",
+      owner: "manaflow",
     },
     {
-      text: "for some reason the cmux terminal is still not showing up all of the time...",
-      owner: "cmux",
+      text: "for some reason the manaflow terminal is still not showing up all of the time...",
+      owner: "manaflow",
     },
     {
       text: "the env picker dropdown should show recent repos first by default...",
-      owner: "cmux",
+      owner: "manaflow",
     },
   ];
 
@@ -596,7 +596,7 @@ function MockCmuxStartRun() {
         </div>
         <div className="flex items-center gap-2 rounded-full bg-neutral-800/80 px-3 py-1 text-[11px] text-neutral-200">
           <Lock className="h-3 w-3 text-neutral-400" />
-          <span>cmux - Start a Run</span>
+          <span>Manaflow - Start a Run</span>
         </div>
       </div>
 
@@ -604,7 +604,7 @@ function MockCmuxStartRun() {
         <aside className="w-[230px] bg-neutral-950/80 border-r border-neutral-800 flex flex-col min-h-0">
           <div className="px-4 pt-4 pb-3 flex items-center gap-2 text-neutral-100 text-sm font-semibold">
             <span className="h-2.5 w-2.5 rounded-full bg-sky-400" />
-            cmux
+            Manaflow
           </div>
 
           <nav className="px-2 space-y-1">
@@ -695,7 +695,7 @@ function MockCmuxStartRun() {
         <main className="flex-1 bg-neutral-950/35 flex flex-col min-h-0">
           <div className="px-6 pt-5 pb-4">
             <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">
-              cmux
+              manaflow
             </div>
             <div className="mt-3 rounded-xl border border-neutral-800 bg-neutral-950/70 px-4 py-3">
               <div className="text-sm text-neutral-500">Describe a task</div>
@@ -1140,7 +1140,7 @@ function MockGitHubPRBrowser() {
             />
             <ChromeTab
               icon={<TabFavicon />}
-              label="cmux"
+              label="manaflow"
               isActive={activeTab === "workspace"}
               onClick={() => setActiveTab("workspace")}
             />
@@ -1187,7 +1187,7 @@ function MockGitHubPRBrowser() {
               ) : (
                 <>
                   <span className="text-[#9AA0A6]">https://</span>
-                  <span>cmux.sh</span>
+                  <span>manaflow.com</span>
                 </>
               )}
             </span>
@@ -1274,7 +1274,7 @@ function MockGitHubPRBrowser() {
                     main
                   </span>
                   {" from "}
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">cmux/test-re6k4tq</span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">manaflow/test-re6k4tq</span>
                 </span>
               </div>
             </div>
@@ -1517,7 +1517,7 @@ function MockGitHubPRBrowser() {
                     <div className="shrink-0 w-10 h-10 rounded-full bg-[#0d1117] border border-[#30363d] flex items-center justify-center relative z-10">
                       <Image
                         src="https://avatars.githubusercontent.com/in/1690796?s=80&v=4"
-                        alt="cmux-agent avatar"
+                        alt="manaflow-agent avatar"
                         width={40}
                         height={40}
                         className="rounded-full"
@@ -1532,7 +1532,7 @@ function MockGitHubPRBrowser() {
                             onClick={() => setActiveTab("workspace")}
                             className="font-semibold text-sm text-[#e6edf3] hover:text-[#2f81f7] cursor-pointer"
                           >
-                            cmux-agent
+                            manaflow-agent
                           </button>
                           <span className="px-1.5 py-0.5 rounded-md text-xs font-medium bg-[#6e40c926] text-[#a371f7] border border-[#6e40c966]">
                             bot
@@ -1636,7 +1636,7 @@ function MockGitHubPRBrowser() {
                               }}
                               className="text-[#2f81f7] hover:underline cursor-pointer"
                             >
-                              cmux
+                              manaflow
                             </button>{" "}
                             preview system
                           </p>
@@ -2053,7 +2053,7 @@ function MockGitHubPRBrowser() {
                           </span>
                           <span className="flex-1 px-2 text-[#3fb950]">
                             +import {"{"} api {"}"} from
-                            &quot;@cmux/convex/api&quot;;
+                            &quot;@manaflow/convex/api&quot;;
                           </span>
                         </div>
                         <div className="flex bg-[#2ea04326]">
@@ -2182,11 +2182,11 @@ function MockGitHubPRBrowser() {
             ref={containerRef}
             className="bg-neutral-900 flex flex-1 min-h-0"
           >
-            {/* Left Sidebar - cmux style */}
+            {/* Left Sidebar - manaflow style */}
             <div className="w-[280px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
               {/* Header with logo */}
               <div className="h-[38px] flex items-center px-3 shrink-0">
-                <CmuxLogo height={28} wordmarkText="cmux" />
+                <CmuxLogo height={28} wordmarkText="manaflow" />
                 <div className="ml-auto">
                   <div className="w-[25px] h-[25px] border border-neutral-800 rounded-lg flex items-center justify-center cursor-not-allowed">
                     <Plus className="w-4 h-4 text-neutral-400" />
@@ -2622,7 +2622,7 @@ function MockGitHubPRBrowser() {
                         </div>
                         <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#cccccc]">
                           <ChevronDown className="h-3 w-3" />
-                          <span className="text-[10px]">cmux</span>
+                          <span className="text-[10px]">manaflow</span>
                         </div>
                         <div className="flex-1 overflow-y-auto text-[11px]">
                           {/* Root folders */}
@@ -2693,7 +2693,7 @@ function MockGitHubPRBrowser() {
                             <div className="pr-3 text-[#858585] select-none text-right w-8">
                               3
                             </div>
-                            <div>Welcome to cmux!</div>
+                            <div>Welcome to Manaflow!</div>
                           </div>
                           <div className="flex">
                             <div className="pr-3 text-[#858585] select-none text-right w-8">
@@ -2744,7 +2744,7 @@ function MockGitHubPRBrowser() {
                               11
                             </div>
                             <div className="text-[#6a9955]">
-                              ## What is cmux?
+                              ## What is Manaflow?
                             </div>
                           </div>
                           <div className="flex">
@@ -2796,7 +2796,7 @@ function MockGitHubPRBrowser() {
                               19
                             </div>
                             <div>
-                              today, preview.new screenshot agent runs on cmux
+                              today, preview.new screenshot agent runs on manaflow
                             </div>
                           </div>
                           <div className="flex">
@@ -2946,7 +2946,7 @@ function MockGitHubPRBrowser() {
                                 </span>
                                 <span className="flex-1 px-2 text-[#3fb950]">
                                   +import {"{"} api {"}"} from
-                                  &quot;@cmux/convex/api&quot;;
+                                  &quot;@manaflow/convex/api&quot;;
                                 </span>
                               </div>
                               <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">
@@ -3100,7 +3100,7 @@ function MockGitHubPRBrowser() {
                       </div>
                       <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#cccccc] bg-[#37373d]">
                         <ChevronDown className="h-3 w-3" />
-                        <span className="text-[10px]">cmux</span>
+                        <span className="text-[10px]">manaflow</span>
                       </div>
                       <div className="flex-1 overflow-y-auto text-[11px]">
                         {/* Root folders */}
@@ -3170,7 +3170,7 @@ function MockGitHubPRBrowser() {
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
                             3
                           </div>
-                          <div>Welcome to cmux!</div>
+                          <div>Welcome to Manaflow!</div>
                         </div>
                         <div className="flex">
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
@@ -3218,7 +3218,7 @@ function MockGitHubPRBrowser() {
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
                             11
                           </div>
-                          <div className="text-[#6a9955]">## What is cmux?</div>
+                          <div className="text-[#6a9955]">## What is Manaflow?</div>
                         </div>
                         <div className="flex">
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
@@ -3371,7 +3371,7 @@ function MockGitHubPRBrowser() {
                             </span>
                             <span className="flex-1 px-4 text-[#3fb950]">
                               +import {"{"} api {"}"} from
-                              &quot;@cmux/convex/api&quot;;
+                              &quot;@manaflow/convex/api&quot;;
                             </span>
                           </div>
                           <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">
@@ -3566,14 +3566,14 @@ function MockGitHubPRBrowser() {
                       {activeTmuxSession === 1 && (
                         <>
                           <div className="text-[#8b949e]">
-                            $ /var/tmp/cmux-scripts/maintenance.sh
+                            $ /var/tmp/manaflow-scripts/maintenance.sh
                           </div>
                           <div className="text-[#7ee787]">
                             === Maintenance Script Started at 09:41 ===
                           </div>
                           <div className="mt-1" />
                           <div className="text-[#c9d1d9]">
-                            /var/tmp/cmux-scripts/maintenance.sh:10&gt; bun i
+                            /var/tmp/manaflow-scripts/maintenance.sh:10&gt; bun i
                           </div>
                           <div className="text-[#58a6ff]">
                             bun install v1.3.3 (274e01c7)
@@ -3585,7 +3585,7 @@ function MockGitHubPRBrowser() {
                           </div>
                           <div className="mt-1" />
                           <div className="text-[#8b949e]">
-                            /var/tmp/cmux-scripts/maintenance.sh:11&gt; echo
+                            /var/tmp/manaflow-scripts/maintenance.sh:11&gt; echo
                             &apos;=== Maintenance Script Completed ===&apos;
                           </div>
                           <div className="text-[#7ee787]">
@@ -3610,7 +3610,7 @@ function MockGitHubPRBrowser() {
                             </span>{" "}
                             <span className="text-[#c9d1d9]">
                               start
-                              headRefOrigin/cmux/add-mock-example-to-preview-front-page
+                              headRefOrigin/manaflow/add-mock-example-to-preview-front-page
                             </span>
                           </div>
                           <div>
@@ -3777,7 +3777,7 @@ function MockGitHubPRBrowser() {
                   <div className="flex items-center justify-between px-1 py-0.5 bg-[#238636] text-white text-[11px] shrink-0">
                     <div className="flex items-center">
                       <span className="text-[#7ee787] font-medium px-2">
-                        [cmux]
+                        [manaflow]
                       </span>
                       {[
                         { id: 0, name: "bunx" },
@@ -4838,20 +4838,20 @@ function PreviewDashboardInner({
             inlineHeader={true}
             headerContent={
               <Link
-                href="https://cmux.dev"
+                href="https://manaflow.com"
                 className="inline-flex items-center hover:opacity-80 transition-opacity"
                 style={{ transform: "translate(-2.5px, -0.5px)" }}
               >
                 <CmuxLogo
                   height="2em"
-                  wordmarkText="cmux.dev"
+                  wordmarkText="manaflow.com"
                   wordmarkFill="#fff"
                 />
               </Link>
             }
           >
             <p className="text-sm text-neutral-400 pb-2">
-              Want UI screenshots for your code reviews? Check out cmux - an
+              Want UI screenshots for your code reviews? Check out Manaflow - an
               open-source Claude Code/Codex manager with visual diffs!
             </p>
             <div className="flex items-center gap-3 pt-2">
@@ -4863,11 +4863,11 @@ function PreviewDashboardInner({
                 Star on GitHub
               </Link>
               <Link
-                href="https://cmux.dev"
+                href="https://manaflow.com"
                 className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                Explore cmux
+                Explore Manaflow
               </Link>
             </div>
           </Section>

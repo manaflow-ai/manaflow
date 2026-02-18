@@ -3,9 +3,9 @@ import type { OnboardingStep } from "./onboarding-context";
 export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     id: "welcome",
-    title: "Welcome to cmux!",
+    title: "Welcome to Manaflow!",
     description:
-      "Let's take a quick tour to help you get started. cmux helps you run multiple AI coding agents in parallel to solve tasks faster.",
+      "Let's take a quick tour to help you get started. Manaflow helps you run multiple AI coding agents in parallel to solve tasks faster.",
     placement: "center",
   },
   {
@@ -102,7 +102,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
     id: "complete",
     title: "You're all set!",
     description:
-      "You now know the essentials of cmux. Start by selecting a repository and describing a task. The AI agents will handle the rest!",
+      "You now know the essentials of Manaflow. Start by selecting a repository and describing a task. The AI agents will handle the rest!",
     placement: "center",
   },
 ];

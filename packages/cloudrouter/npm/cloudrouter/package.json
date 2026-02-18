@@ -12,7 +12,7 @@
     "vscode",
     "vnc"
   ],
-  "homepage": "https://cmux.sh",
+  "homepage": "https://manaflow.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/manaflow-ai/cloudrouter.git"

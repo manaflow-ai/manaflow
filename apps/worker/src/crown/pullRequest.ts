@@ -9,7 +9,7 @@ import type {
 } from "./types";
 
 export function buildPullRequestTitle(prompt: string): string {
-  const base = prompt.trim() || "cmux changes";
+  const base = prompt.trim() || "manaflow changes";
   const title = `[Crown] ${base}`;
   return title.length > 72 ? `${title.slice(0, 69)}...` : title;
 }

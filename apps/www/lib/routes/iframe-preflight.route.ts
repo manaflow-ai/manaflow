@@ -15,6 +15,7 @@ import { MorphCloudClient } from "morphcloud";
 const ALLOWED_HOST_SUFFIXES = [
   ".cmux.sh",
   ".cmux.dev",
+  ".manaflow.com",
   ".cmux.local",
   ".cmux.localhost",
   ".cmux.app",
@@ -28,6 +29,8 @@ const ALLOWED_EXACT_HOSTS = new Set<string>([
   "www.cmux.sh",
   "cmux.dev",
   "www.cmux.dev",
+  "manaflow.com",
+  "www.manaflow.com",
   "cmux.local",
   "cmux.localhost",
   "cmux.app",

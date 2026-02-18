@@ -243,7 +243,7 @@ function OnboardingTourSection({ teamSlugOrId }: { teamSlugOrId: string }) {
                 Product Tour
               </p>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                Take a guided tour of cmux to learn about its features and how to get the most out of it.
+                Take a guided tour of Manaflow to learn about its features and how to get the most out of it.
               </p>
             </div>
           </div>
@@ -773,7 +773,7 @@ function SettingsComponent() {
                     Display Name
                   </label>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-                    How your team is displayed across cmux.
+                    How your team is displayed across Manaflow.
                   </p>
                   <input
                     type="text"
@@ -822,7 +822,7 @@ function SettingsComponent() {
                             <path d="M14.5 12.5a5 5 0 1 0-7 7"></path>
                           </svg>
                           <span className="truncate">
-                            {`https://cmux.dev/${(teamSlug || "your-team").replace(/^\/+/, "")}/dashboard`}
+                            {`https://manaflow.com/${(teamSlug || "your-team").replace(/^\/+/, "")}/dashboard`}
                           </span>
                         </div>
                       </div>
@@ -880,7 +880,7 @@ function SettingsComponent() {
                       aria-hidden
                       className="px-3 py-2 text-sm text-neutral-500 dark:text-neutral-400 select-none bg-neutral-50 dark:bg-neutral-800/50 border-r border-neutral-200 dark:border-neutral-700 rounded-l-lg"
                     >
-                      cmux.dev/
+                      manaflow.com/
                     </span>
                     <input
                       id="teamSlug"
@@ -1204,7 +1204,7 @@ function SettingsComponent() {
                       autoComplete="off"
                     />
                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
-                      Default location: ~/cmux
+                      Default location: ~/manaflow
                     </p>
                   </div>
                 </div>
@@ -1265,11 +1265,11 @@ function SettingsComponent() {
                           <ul className="list-disc ml-4 space-y-0.5">
                             <li>
                               Start a coding CLI (Claude Code, Codex CLI, Gemini
-                              CLI, Amp, Opencode) and complete its sign-in; cmux
+                              CLI, Amp, Opencode) and complete its sign-in; Manaflow
                               reuses that authentication.
                             </li>
                             <li>
-                              Or enter API keys here and cmux will use them
+                              Or enter API keys here and Manaflow will use them
                               directly.
                             </li>
                           </ul>

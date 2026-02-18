@@ -161,7 +161,7 @@ type AfterSignInPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-const CMUX_SCHEME = "cmux://";
+const CMUX_SCHEME = "manaflow://";
 
 function getSingleValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -239,7 +239,7 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
 
   // ALWAYS create a fresh session and get new tokens for Electron deeplinks.
   // This is critical because:
-  // 1. When a user is already logged in on cmux.dev and initiates sign-in from Electron,
+  // 1. When a user is already logged in on manaflow.com and initiates sign-in from Electron,
   //    the existing session's refresh token may have been rotated/invalidated
   // 2. getAuthJson() returns the current session's tokens which may be stale
   // 3. Creating a new session via createSession() generates fresh, valid tokens

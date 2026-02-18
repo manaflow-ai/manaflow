@@ -1,6 +1,6 @@
 {
-  "appId": "com.cmux.app",
-  "productName": "cmux",
+  "appId": "com.manaflow.app",
+  "productName": "Manaflow",
   "directories": {
     "output": "dist-electron",
     "buildResources": "build"
@@ -37,16 +37,16 @@
   "nodeGypRebuild": false,
   "protocols": [
     {
-      "name": "cmux",
+      "name": "manaflow",
       "schemes": [
-        "cmux"
+        "manaflow"
       ]
     }
   ],
   "extraResources": [
     {
-      "from": "assets/cmux-logos/cmux.iconset",
-      "to": "cmux-logos/cmux.iconset"
+      "from": "assets/manaflow-logos/manaflow.iconset",
+      "to": "manaflow-logos/manaflow.iconset"
     },
     {
       "from": "electron/app-update.yml",

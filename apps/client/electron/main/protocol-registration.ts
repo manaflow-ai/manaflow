@@ -34,7 +34,7 @@ export function computeSetAsDefaultProtocolClientCall(params: {
 
   // In development, Electron is launched as the "default app" (Electron.app).
   // Registering a protocol handler must include an app path argument so the OS
-  // can relaunch Electron with our app when a cmux:// URL is opened.
+  // can relaunch Electron with our app when a manaflow:// URL is opened.
   const appPathArg = params.argv.slice(1).find(isLikelyAppPathArg);
   if (!appPathArg) {
     return { kind: "simple", scheme: params.scheme };

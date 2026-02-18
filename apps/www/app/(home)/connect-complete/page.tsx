@@ -7,7 +7,7 @@ export default function ConnectCompletePage({
 }: {
   params: { teamSlugOrId: string };
 }) {
-  const href = `cmux://github-connect-complete?team=${encodeURIComponent(
+  const href = `manaflow://github-connect-complete?team=${encodeURIComponent(
     params.teamSlugOrId
   )}`;
   return <OpenCmuxClient href={href} />;

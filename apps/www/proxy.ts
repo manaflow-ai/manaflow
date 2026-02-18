@@ -64,9 +64,11 @@ export function proxy(request: NextRequest) {
     }
   }
 
-  if (hostname === "manaflow.com" && pathname === "/") {
-    return NextResponse.rewrite(new URL("/manaflow", request.url));
-  }
+  // Disabled for cmux.dev -> manaflow.com migration.
+  // Keep "/" on manaflow.com pointing at the main product landing page.
+  // if (hostname === "manaflow.com" && pathname === "/") {
+  //   return NextResponse.rewrite(new URL("/manaflow", request.url));
+  // }
 
   // Check if this is a PR review page that requires authentication
   const isPRReviewPage =

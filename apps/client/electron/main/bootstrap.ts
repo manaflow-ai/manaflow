@@ -19,7 +19,7 @@ import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
 const require = createRequire(import.meta.url);
 (globalThis as typeof globalThis & { require?: typeof require }).require = require;
 
-const PARTITION = "persist:cmux";
+const PARTITION = "persist:manaflow";
 
 // Sentry must initialize before the Electron app "ready" event fires.
 Sentry.init({
