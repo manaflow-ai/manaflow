@@ -737,18 +737,27 @@ export function setupSocketHandlers(
               }
             }
 
-            if (!docker.workerImage?.isAvailable || shouldForcePull) {
+            // Only show the pull dialog when the image is not yet available locally.
+            // When the image IS available but has a mutable tag (e.g. :latest),
+            // pull silently in the background to check for updates.
+            const imageAlreadyAvailable = docker.workerImage?.isAvailable === true;
+            const needsPull = !imageAlreadyAvailable || shouldForcePull;
+
+            if (needsPull) {
               serverLogger.info(
                 `Ensuring Docker image "${imageName}" is pulled before starting task`
               );
-              rt.emit("docker-pull-progress", {
-                imageName,
-                status: "Starting pull",
-                phase: "pulling",
-              });
-              await updateTaskRunStatusMessage(
-                `Pulling Docker image: ${imageName}`
-              );
+
+              if (!imageAlreadyAvailable) {
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: "Starting pull",
+                  phase: "pulling",
+                });
+                await updateTaskRunStatusMessage(
+                  `Pulling Docker image: ${imageName}`
+                );
+              }
 
               try {
                 const stream = await dockerClient.pull(imageName);
@@ -782,6 +791,11 @@ export function setupSocketHandlers(
                     },
                     (event: DockerPullProgressEvent) => {
                       if (!event.status) {
+                        return;
+                      }
+
+                      // Skip progress UI when silently refreshing an already-available image
+                      if (imageAlreadyAvailable) {
                         return;
                       }
 
@@ -863,13 +877,15 @@ export function setupSocketHandlers(
                   );
                 });
 
-                await updateTaskRunStatusMessage(undefined);
-                rt.emit("docker-pull-progress", {
-                  imageName,
-                  status: "Pull complete",
-                  percent: 100,
-                  phase: "complete",
-                });
+                if (!imageAlreadyAvailable) {
+                  await updateTaskRunStatusMessage(undefined);
+                  rt.emit("docker-pull-progress", {
+                    imageName,
+                    status: "Pull complete",
+                    percent: 100,
+                    phase: "complete",
+                  });
+                }
                 serverLogger.info(
                   `Successfully pulled Docker image: ${imageName}`
                 );
@@ -879,21 +895,28 @@ export function setupSocketHandlers(
                   "Error auto-pulling Docker image:",
                   pullError
                 );
-                rt.emit("docker-pull-progress", {
-                  imageName,
-                  status: "Pull failed",
-                  phase: "error",
-                });
-                await updateTaskRunStatusMessage(undefined);
-                const errorMessage =
-                  pullError instanceof Error
-                    ? pullError.message
-                    : "Unknown error";
-                callback({
-                  taskId,
-                  error: `Failed to pull Docker image "${imageName}": ${errorMessage}`,
-                });
-                return;
+                if (!imageAlreadyAvailable) {
+                  rt.emit("docker-pull-progress", {
+                    imageName,
+                    status: "Pull failed",
+                    phase: "error",
+                  });
+                  await updateTaskRunStatusMessage(undefined);
+                  const errorMessage =
+                    pullError instanceof Error
+                      ? pullError.message
+                      : "Unknown error";
+                  callback({
+                    taskId,
+                    error: `Failed to pull Docker image "${imageName}": ${errorMessage}`,
+                  });
+                  return;
+                }
+                // Image is already available locally — log the refresh failure
+                // but don't block the task from starting.
+                serverLogger.warn(
+                  `Silent refresh of Docker image "${imageName}" failed, continuing with local copy`
+                );
               }
             } else if (imageAvailableAfterWait) {
               rt.emit("docker-pull-progress", {
