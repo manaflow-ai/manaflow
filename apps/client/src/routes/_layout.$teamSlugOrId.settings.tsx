@@ -302,9 +302,9 @@ function SettingsComponent() {
 
   // Heatmap settings state
   const [heatmapModel, setHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>("anthropic-haiku-4-5");
   const [originalHeatmapModel, setOriginalHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>("anthropic-haiku-4-5");
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
   const [originalHeatmapThreshold, setOriginalHeatmapThreshold] =
     useState<number>(0);
@@ -320,8 +320,7 @@ function SettingsComponent() {
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
-    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
-    { value: "anthropic", label: "Claude Opus 4.1" },
+    { value: "anthropic-haiku-4-5", label: "Claude Haiku 4.5" },
     { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
     { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
   ];

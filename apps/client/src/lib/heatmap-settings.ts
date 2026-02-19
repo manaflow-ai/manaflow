@@ -6,18 +6,17 @@ import {
 } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 
 export const HEATMAP_MODEL_OPTIONS = [
-  { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
+  { value: "anthropic-haiku-4-5", label: "Claude Haiku 4.5" },
   { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
   { value: "cmux-heatmap-0", label: "cmux-heatmap-0" },
   { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
-  { value: "anthropic", label: "Claude Opus 4.1" },
 ] as const;
 
 export type HeatmapModelOptionValue =
   (typeof HEATMAP_MODEL_OPTIONS)[number]["value"];
 
 export const DEFAULT_HEATMAP_MODEL: HeatmapModelOptionValue =
-  "anthropic-opus-4-5";
+  "anthropic-haiku-4-5";
 
 export const TOOLTIP_LANGUAGE_OPTIONS = [
   { value: "en", label: "English" },

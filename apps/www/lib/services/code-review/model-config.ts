@@ -1,4 +1,4 @@
-import { ANTHROPIC_MODEL_OPUS_45 } from "@cmux/shared/utils/anthropic";
+import { ANTHROPIC_MODEL_HAIKU_45 } from "@cmux/shared/utils/anthropic";
 import type { ModelConfig } from "./run-simple-anthropic-review";
 
 type SearchParamsRecord = {
@@ -171,18 +171,22 @@ export function parseTooltipLanguageFromUrlSearchParams(
 export const HEATMAP_MODEL_FINETUNE_QUERY_VALUE = "finetune";
 export const HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE = "cmux-heatmap-1";
 export const HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE = "cmux-heatmap-2";
-export const HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE = "anthropic-opus-4-5";
-export const HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE = "anthropic";
+export const HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE = "anthropic-haiku-4-5";
 export type HeatmapModelQueryValue =
   | typeof HEATMAP_MODEL_FINETUNE_QUERY_VALUE
   | typeof HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE
   | typeof HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE
-  | typeof HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE
-  | typeof HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE;
+  | typeof HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE;
 
 const LEGACY_HEATMAP_MODEL_PARAM_MAP: Record<string, HeatmapModelQueryValue> = {
   ft0: HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
   ft1: HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE,
+};
+
+// Map old Anthropic model query values to the new Haiku 4.5 default
+const LEGACY_ANTHROPIC_MODEL_MAP: Record<string, HeatmapModelQueryValue> = {
+  "anthropic-opus-4-5": HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE,
+  anthropic: HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE,
 };
 
 const FINE_TUNED_OPENAI_MODEL_ID =
@@ -213,28 +217,25 @@ function createFineTunedDenseV2OpenAiConfig(): ModelConfig {
   };
 }
 
-function createAnthropicOpus45Config(): ModelConfig {
+function createAnthropicHaiku45Config(): ModelConfig {
   return {
     provider: "anthropic",
-    model: ANTHROPIC_MODEL_OPUS_45,
+    model: ANTHROPIC_MODEL_HAIKU_45,
   };
 }
 
 export function getDefaultHeatmapModelConfig(): ModelConfig {
-  return createAnthropicOpus45Config();
+  return createAnthropicHaiku45Config();
 }
 
 export function getHeatmapModelConfigForSelection(
   selection: HeatmapModelQueryValue
 ): ModelConfig {
-  if (selection === HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE) {
-    return createAnthropicOpus45Config();
+  if (selection === HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE) {
+    return createAnthropicHaiku45Config();
   }
   if (selection === HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE) {
     return createFineTunedDenseV2OpenAiConfig();
-  }
-  if (selection === HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE) {
-    return createAnthropicOpus45Config();
   }
   if (selection === HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE) {
     return createFineTunedDenseOpenAiConfig();
@@ -246,17 +247,18 @@ export function normalizeHeatmapModelQueryValue(
   raw: string | null | undefined
 ): HeatmapModelQueryValue {
   if (typeof raw !== "string") {
-    return HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE;
+    return HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE;
   }
   const normalized = raw.trim().toLowerCase();
-  if (normalized === HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE) {
-    return HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE;
+  // Map legacy Anthropic model values to Haiku 4.5
+  if (normalized in LEGACY_ANTHROPIC_MODEL_MAP) {
+    return LEGACY_ANTHROPIC_MODEL_MAP[normalized];
+  }
+  if (normalized === HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE) {
+    return HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE;
   }
   if (normalized === HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE) {
     return HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE;
-  }
-  if (normalized === HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE) {
-    return HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE;
   }
   if (normalized === HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE) {
     return HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE;
@@ -264,7 +266,7 @@ export function normalizeHeatmapModelQueryValue(
   if (normalized === HEATMAP_MODEL_FINETUNE_QUERY_VALUE) {
     return HEATMAP_MODEL_FINETUNE_QUERY_VALUE;
   }
-  return HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE;
+  return HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE;
 }
 
 function extractRecordValue(
