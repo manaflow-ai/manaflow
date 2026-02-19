@@ -111,29 +111,6 @@ type DockerPullProgressEvent = {
   };
 };
 
-function isMutableDockerTag(imageName: string): boolean {
-  const digestSeparatorIndex = imageName.indexOf("@");
-  if (digestSeparatorIndex !== -1) {
-    return false;
-  }
-
-  const lastSlashIndex = imageName.lastIndexOf("/");
-  const lastColonIndex = imageName.lastIndexOf(":");
-
-  // No colon means no explicit tag, which is implicitly :latest.
-  if (lastColonIndex === -1) {
-    return true;
-  }
-
-  // If the last colon appears before the last slash, it belongs to the registry port.
-  if (lastColonIndex < lastSlashIndex) {
-    return true;
-  }
-
-  const tag = imageName.slice(lastColonIndex + 1);
-  return tag === "latest";
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -691,7 +668,6 @@ export function setupSocketHandlers(
               process.env.WORKER_IMAGE_NAME ||
               "docker.io/manaflow/cmux:latest";
             const dockerClient = DockerVSCodeInstance.getDocker();
-            const shouldForcePull = isMutableDockerTag(imageName);
             let imageAvailableAfterWait = false;
 
             if (docker.workerImage?.isPulling) {
@@ -737,7 +713,7 @@ export function setupSocketHandlers(
               }
             }
 
-            if (!docker.workerImage?.isAvailable || shouldForcePull) {
+            if (!docker.workerImage?.isAvailable) {
               serverLogger.info(
                 `Ensuring Docker image "${imageName}" is pulled before starting task`
               );
