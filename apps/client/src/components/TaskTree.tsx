@@ -1380,6 +1380,7 @@ function TaskRunTreeInner({
   }, [onArchiveToggle, run._id]);
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
+  const isLocalProviderRunEntry = run.vscode?.provider === "other";
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
 
   const statusIcon = getStatusIcon(run.status);
@@ -1765,7 +1766,9 @@ function TaskRunTreeInner({
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
-        isLocalWorkspace={Boolean(isLocalWorkspaceRunEntry)}
+        isLocalWorkspace={Boolean(
+          isLocalWorkspaceRunEntry || isLocalProviderRunEntry
+        )}
         isCloudWorkspace={Boolean(isCloudWorkspaceRunEntry)}
       />
     </div>

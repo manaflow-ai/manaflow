@@ -795,17 +795,18 @@ function TaskDetailPage() {
       });
   }, [autoSyncEnabled, teamSlugOrId, updateWorkspaceSettings]);
 
-  // Determine workspace type for layout overrides
-  const isLocalWorkspaceTask = task?.isLocalWorkspace;
+  // Determine workspace type for layout overrides.
+  // Treat runs on the local provider as local-task views as well.
+  const isLocalWorkspaceTask = task?.isLocalWorkspace || isLocalWorkspace;
   const isCloudWorkspaceTask = task?.isCloudWorkspace;
 
   // Determine effective layout mode based on workspace type
-  // - Local workspaces: single panel (just VSCode)
+  // - Local tasks/workspaces: VS Code + Git diff only
   // - Cloud workspaces: two-horizontal (VSCode left, browser right)
   // - Regular tasks: use user's configured layout
   const effectiveLayoutMode = useMemo(() => {
     if (isLocalWorkspaceTask) {
-      return "single-panel" as const;
+      return "two-horizontal" as const;
     }
     if (isCloudWorkspaceTask) {
       return "two-horizontal" as const;
@@ -814,11 +815,11 @@ function TaskDetailPage() {
   }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
 
   const currentLayout = useMemo(() => {
-    // For local workspaces: just VSCode
+    // For local tasks/workspaces: VSCode + Git diff
     if (isLocalWorkspaceTask) {
       return {
         topLeft: "workspace" as const,
-        topRight: null,
+        topRight: "gitDiff" as const,
         bottomLeft: null,
         bottomRight: null,
       };
@@ -841,9 +842,9 @@ function TaskDetailPage() {
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
 
-    // For local workspaces, exclude gitDiff and browser from available panels
+    // For local tasks/workspaces, only allow VSCode + Git diff panel types.
     if (isLocalWorkspaceTask) {
-      return panels.filter((p) => p !== "gitDiff" && p !== "browser");
+      return panels.filter((p) => p === "workspace" || p === "gitDiff");
     }
 
     // For cloud workspaces, exclude gitDiff (browser is used)
