@@ -800,12 +800,12 @@ function TaskDetailPage() {
   const isCloudWorkspaceTask = task?.isCloudWorkspace;
 
   // Determine effective layout mode based on workspace type
-  // - Local workspaces: single panel (just VSCode)
+  // - Local workspaces: two-horizontal (VSCode left, git diff right)
   // - Cloud workspaces: two-horizontal (VSCode left, browser right)
   // - Regular tasks: use user's configured layout
   const effectiveLayoutMode = useMemo(() => {
     if (isLocalWorkspaceTask) {
-      return "single-panel" as const;
+      return "two-horizontal" as const;
     }
     if (isCloudWorkspaceTask) {
       return "two-horizontal" as const;
@@ -814,11 +814,11 @@ function TaskDetailPage() {
   }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
 
   const currentLayout = useMemo(() => {
-    // For local workspaces: just VSCode
+    // For local workspaces: VSCode left, git diff right
     if (isLocalWorkspaceTask) {
       return {
         topLeft: "workspace" as const,
-        topRight: null,
+        topRight: "gitDiff" as const,
         bottomLeft: null,
         bottomRight: null,
       };
@@ -841,9 +841,9 @@ function TaskDetailPage() {
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
 
-    // For local workspaces, exclude gitDiff and browser from available panels
+    // For local workspaces, exclude browser and terminal (only VSCode + git diff)
     if (isLocalWorkspaceTask) {
-      return panels.filter((p) => p !== "gitDiff" && p !== "browser");
+      return panels.filter((p) => p !== "browser" && p !== "terminal");
     }
 
     // For cloud workspaces, exclude gitDiff (browser is used)
