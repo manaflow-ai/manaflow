@@ -737,7 +737,8 @@ export function setupSocketHandlers(
               }
             }
 
-            if (!docker.workerImage?.isAvailable || shouldForcePull) {
+            if (!docker.workerImage?.isAvailable && !imageAvailableAfterWait) {
+              // Image is not available locally — pull with progress UI
               serverLogger.info(
                 `Ensuring Docker image "${imageName}" is pulled before starting task`
               );
@@ -895,6 +896,36 @@ export function setupSocketHandlers(
                 });
                 return;
               }
+            } else if (shouldForcePull) {
+              // Image is available locally but has a mutable tag (e.g. :latest) —
+              // pull silently in the background without showing progress UI.
+              // Don't block task start; just fire-and-forget so the user isn't
+              // waiting on a pull that's almost certainly a no-op.
+              serverLogger.info(
+                `Docker image "${imageName}" exists locally; refreshing mutable tag in background`
+              );
+              dockerClient.pull(imageName).then((stream: NodeJS.ReadableStream) => {
+                dockerClient.modem.followProgress(
+                  stream,
+                  (err: Error | null) => {
+                    if (err) {
+                      serverLogger.error(
+                        `Background pull for "${imageName}" failed:`,
+                        err
+                      );
+                    } else {
+                      serverLogger.info(
+                        `Background pull for "${imageName}" completed`
+                      );
+                    }
+                  }
+                );
+              }).catch((err: Error) => {
+                serverLogger.error(
+                  `Failed to start background pull for "${imageName}":`,
+                  err
+                );
+              });
             } else if (imageAvailableAfterWait) {
               rt.emit("docker-pull-progress", {
                 imageName,
