@@ -24,13 +24,13 @@ func buildAuthURL(baseURL, token string, isVNC bool) (string, error) {
 	if isVNC {
 		// noVNC params for best experience
 		// See: https://github.com/novnc/noVNC/blob/master/docs/EMBEDDING.md
-		query.Set("autoconnect", "true")      // Auto-connect to VNC
-		query.Set("resize", "scale")          // Local scaling mode
-		query.Set("quality", "9")             // Highest JPEG quality (0-9)
-		query.Set("compression", "0")         // No compression (0-9, 0=best quality)
-		query.Set("show_dot", "true")         // Show local cursor
-		query.Set("reconnect", "true")        // Auto-reconnect on disconnect
-		query.Set("reconnect_delay", "1000")  // 1 second reconnect delay
+		query.Set("autoconnect", "true")     // Auto-connect to VNC
+		query.Set("resize", "scale")         // Local scaling mode
+		query.Set("quality", "9")            // Highest JPEG quality (0-9)
+		query.Set("compression", "0")        // No compression (0-9, 0=best quality)
+		query.Set("show_dot", "true")        // Show local cursor
+		query.Set("reconnect", "true")       // Auto-reconnect on disconnect
+		query.Set("reconnect_delay", "1000") // 1 second reconnect delay
 	} else {
 		// Set default folder for VSCode
 		query.Set("folder", "/home/user/workspace")
@@ -78,7 +78,8 @@ Examples:
 		// Fetch auth token from the sandbox
 		token, err := client.GetAuthToken(teamSlug, args[0])
 		if err != nil {
-			return fmt.Errorf("failed to get auth token: %w", err)
+			fmt.Println("Auth token not available yet, opening raw VS Code URL...")
+			return openBrowser(inst.VSCodeURL)
 		}
 
 		authURL, err := buildAuthURL(inst.VSCodeURL, token, false)
@@ -118,7 +119,8 @@ Examples:
 		// Fetch auth token from the sandbox
 		token, err := client.GetAuthToken(teamSlug, args[0])
 		if err != nil {
-			return fmt.Errorf("failed to get auth token: %w", err)
+			fmt.Println("Auth token not available yet, opening raw VNC URL...")
+			return openBrowser(inst.VNCURL)
 		}
 
 		authURL, err := buildAuthURL(inst.VNCURL, token, true)
@@ -158,7 +160,8 @@ Examples:
 		// Fetch auth token from the sandbox
 		token, err := client.GetAuthToken(teamSlug, args[0])
 		if err != nil {
-			return fmt.Errorf("failed to get auth token: %w", err)
+			fmt.Println("Auth token not available yet, opening raw Jupyter URL...")
+			return openBrowser(inst.JupyterURL)
 		}
 
 		// Jupyter uses ?token= for auth
@@ -197,6 +200,10 @@ Examples:
 
 		fmt.Printf("ID:       %s\n", inst.ID)
 		fmt.Printf("Status:   %s\n", inst.Status)
+		if inst.Provider != "" {
+			fmt.Printf("Provider: %s\n", inst.Provider)
+		}
+		fmt.Printf("Type:     %s\n", instanceTypeLabel(*inst))
 		if inst.Name != "" {
 			fmt.Printf("Name:     %s\n", inst.Name)
 		}

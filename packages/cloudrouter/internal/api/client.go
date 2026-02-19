@@ -1,4 +1,4 @@
-// Package api provides the sandbox API client (E2B + Modal)
+// Package api provides the sandbox API client (E2B + Modal + Vercel)
 package api
 
 import (
@@ -74,6 +74,7 @@ type Instance struct {
 	Provider   string `json:"provider,omitempty"`
 	Template   string `json:"templateId,omitempty"`
 	GPU        string `json:"gpu,omitempty"`
+	Runtime    string `json:"runtime,omitempty"`
 	CreatedAt  int64  `json:"createdAt,omitempty"`
 	JupyterURL string `json:"jupyterUrl,omitempty"`
 	VSCodeURL  string `json:"vscodeUrl,omitempty"`
@@ -107,6 +108,7 @@ type CreateInstanceResponse struct {
 	Status     string `json:"status"`
 	Template   string `json:"templateId,omitempty"`
 	GPU        string `json:"gpu,omitempty"`
+	Runtime    string `json:"runtime,omitempty"`
 	JupyterURL string `json:"jupyterUrl,omitempty"`
 	VSCodeURL  string `json:"vscodeUrl,omitempty"`
 	WorkerURL  string `json:"workerUrl,omitempty"`
@@ -207,9 +209,10 @@ type ExecRequest struct {
 }
 
 type ExecResponse struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exitCode"`
+	Stdout        string `json:"stdout"`
+	Stderr        string `json:"stderr"`
+	ExitCode      int    `json:"exitCode"`
+	ExitCodeSnake int    `json:"exit_code"`
 }
 
 func (c *Client) Exec(teamSlug, id, command string, timeout int) (*ExecResponse, error) {
@@ -228,6 +231,11 @@ func (c *Client) Exec(teamSlug, id, command string, timeout int) (*ExecResponse,
 	var resp ExecResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, err
+	}
+	// API providers may return either exitCode or exit_code.
+	// Normalize to ExitCode so CLI command handling is provider-agnostic.
+	if resp.ExitCode == 0 && resp.ExitCodeSnake != 0 {
+		resp.ExitCode = resp.ExitCodeSnake
 	}
 	return &resp, nil
 }
@@ -292,14 +300,25 @@ func (c *Client) GetAuthToken(teamSlug, id string) (string, error) {
 
 // ConfigResponse from GET /api/v2/devbox/config
 type ConfigResponse struct {
-	Providers       []string       `json:"providers"`
-	DefaultProvider string         `json:"defaultProvider"`
-	Modal           *ModalConfig   `json:"modal,omitempty"`
+	Providers       []string      `json:"providers"`
+	DefaultProvider string        `json:"defaultProvider"`
+	E2B             *E2BConfig    `json:"e2b,omitempty"`
+	Modal           *ModalConfig  `json:"modal,omitempty"`
+	Vercel          *VercelConfig `json:"vercel,omitempty"`
+}
+
+type E2BConfig struct {
+	DefaultTemplateID string `json:"defaultTemplateId"`
 }
 
 type ModalConfig struct {
 	DefaultTemplateID string   `json:"defaultTemplateId"`
 	GPUOptions        []string `json:"gpuOptions"`
+}
+
+type VercelConfig struct {
+	DefaultTemplateID string   `json:"defaultTemplateId"`
+	Runtimes          []string `json:"runtimes"`
 }
 
 // GetConfig fetches the devbox configuration (available providers, GPU options, etc.)

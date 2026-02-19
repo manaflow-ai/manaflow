@@ -29,6 +29,7 @@ Quick start:
   cloudrouter start                      # Create a sandbox
   cloudrouter start --size small         # Create a smaller sandbox (2 vCPU, 8 GB)
   cloudrouter start --gpu B200           # Create a sandbox with GPU
+  cloudrouter start -p vercel --runtime node22 # Create a Vercel sandbox
   cloudrouter start ./my-project         # Create sandbox + upload directory
   cloudrouter code <id>                  # Open VS Code
   cloudrouter jupyter <id>               # Open Jupyter Lab

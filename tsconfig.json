@@ -11,6 +11,7 @@
     { "path": "packages/host-screenshot-collector" },
     { "path": "packages/morphcloud-openapi-client" },
     { "path": "packages/shared" },
+    { "path": "packages/vercel-client" },
     { "path": "packages/vscode-extension" },
     { "path": "packages/www-openapi-client" },
     { "path": "scripts" }

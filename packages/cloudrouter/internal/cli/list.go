@@ -21,7 +21,8 @@ var listCmd = &cobra.Command{
 Examples:
   cloudrouter list                        # List all sandboxes
   cloudrouter list --provider e2b         # List only Docker sandboxes
-  cloudrouter list --provider modal       # List only GPU sandboxes`,
+  cloudrouter list --provider modal       # List only GPU sandboxes
+  cloudrouter list --provider vercel      # List only Vercel sandboxes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -45,14 +46,7 @@ Examples:
 			if name == "" {
 				name = "(unnamed)"
 			}
-			typeLabel := "Docker"
-			if inst.Provider == "modal" {
-				if inst.GPU != "" {
-					typeLabel = fmt.Sprintf("GPU (%s)", inst.GPU)
-				} else {
-					typeLabel = "GPU"
-				}
-			}
+			typeLabel := instanceTypeLabel(inst)
 			fmt.Printf("  %s - %s (%s) [%s]\n", inst.ID, inst.Status, name, typeLabel)
 		}
 		return nil
@@ -67,7 +61,8 @@ var templatesCmd = &cobra.Command{
 Examples:
   cloudrouter templates                   # List all templates
   cloudrouter templates --provider e2b    # List only Docker templates
-  cloudrouter templates --provider modal  # List only GPU templates`,
+  cloudrouter templates --provider modal  # List only GPU templates
+  cloudrouter templates --provider vercel # List only Vercel templates`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -87,14 +82,7 @@ Examples:
 
 		fmt.Println("Templates:")
 		for _, t := range templates {
-			typeLabel := "Docker"
-			if t.Provider == "modal" {
-				if t.GPU != "" {
-					typeLabel = fmt.Sprintf("GPU (%s)", t.GPU)
-				} else {
-					typeLabel = "GPU"
-				}
-			}
+			typeLabel := templateTypeLabel(t)
 			fmt.Printf("  %s - %s [%s]\n", t.ID, t.Name, typeLabel)
 		}
 		return nil
@@ -102,6 +90,6 @@ Examples:
 }
 
 func init() {
-	listCmd.Flags().StringVarP(&listFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal")
-	templatesCmd.Flags().StringVarP(&templatesFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal")
+	listCmd.Flags().StringVarP(&listFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal, vercel")
+	templatesCmd.Flags().StringVarP(&templatesFlagProvider, "provider", "p", "", "Filter by provider: e2b, modal, vercel")
 }

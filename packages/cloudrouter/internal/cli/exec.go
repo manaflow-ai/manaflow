@@ -16,9 +16,10 @@ func init() {
 }
 
 var execCmd = &cobra.Command{
-	Use:   "ssh <id> <command...>",
-	Short: "Run a command in a sandbox via SSH",
-	Args:  cobra.MinimumNArgs(2),
+	Use:     "ssh <id> <command...>",
+	Aliases: []string{"exec"},
+	Short:   "Run a command in a sandbox via SSH",
+	Args:    cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamSlug, err := getTeamSlug()
 		if err != nil {
@@ -35,7 +36,23 @@ var execCmd = &cobra.Command{
 		}
 
 		if inst.WorkerURL == "" {
-			return fmt.Errorf("worker URL not available — sandbox may not be running")
+			if flagVerbose {
+				fmt.Fprintln(os.Stderr, "[debug] worker URL unavailable, falling back to API exec")
+			}
+			execResp, err := client.Exec(teamSlug, id, command, 600)
+			if err != nil {
+				return fmt.Errorf("failed to execute command: %w", err)
+			}
+			if execResp.Stdout != "" {
+				fmt.Print(execResp.Stdout)
+			}
+			if execResp.Stderr != "" {
+				fmt.Fprint(os.Stderr, execResp.Stderr)
+			}
+			if execResp.ExitCode != 0 {
+				return fmt.Errorf("exit code: %d", execResp.ExitCode)
+			}
+			return nil
 		}
 
 		token, err := client.GetAuthToken(teamSlug, id)

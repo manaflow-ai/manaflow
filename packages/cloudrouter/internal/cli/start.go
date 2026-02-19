@@ -44,10 +44,10 @@ var (
 
 // sizePreset defines a machine size preset (cpu, memory, disk).
 type sizePreset struct {
-	CPU      float64
+	CPU       float64
 	MemoryMiB int
-	DiskGB   int
-	Label    string
+	DiskGB    int
+	Label     string
 }
 
 var sizePresets = map[string]sizePreset{
@@ -64,6 +64,32 @@ func isGitURL(s string) bool {
 		strings.HasPrefix(s, "https://gitlab.com/") ||
 		strings.HasPrefix(s, "https://bitbucket.org/") ||
 		strings.HasSuffix(s, ".git")
+}
+
+func validateStartProviderFlags(provider, gpu, runtime string) error {
+	switch provider {
+	case "":
+		return nil
+	case "e2b":
+		if gpu != "" {
+			return fmt.Errorf("--gpu can only be used with --provider modal")
+		}
+		if runtime != "" {
+			return fmt.Errorf("--runtime can only be used with --provider vercel")
+		}
+	case "modal":
+		if runtime != "" {
+			return fmt.Errorf("--runtime can only be used with --provider vercel")
+		}
+	case "vercel":
+		if gpu != "" {
+			return fmt.Errorf("--gpu can only be used with --provider modal")
+		}
+	default:
+		return fmt.Errorf("invalid provider %q, valid providers: e2b, modal, vercel", provider)
+	}
+
+	return nil
 }
 
 var startCmd = &cobra.Command{
@@ -195,7 +221,11 @@ Examples:
 		}
 
 		client := api.NewClient()
-		provider := startFlagProvider
+		provider := strings.ToLower(strings.TrimSpace(startFlagProvider))
+
+		if startFlagGPU != "" && startFlagRuntime != "" && provider == "" {
+			return fmt.Errorf("--gpu and --runtime cannot be used together without --provider")
+		}
 
 		// If --gpu is specified without --provider, default to modal
 		if startFlagGPU != "" && provider == "" {
@@ -205,6 +235,10 @@ Examples:
 		// If --runtime is specified without --provider, default to vercel
 		if startFlagRuntime != "" && provider == "" {
 			provider = "vercel"
+		}
+
+		if err := validateStartProviderFlags(provider, startFlagGPU, startFlagRuntime); err != nil {
+			return err
 		}
 
 		// Apply --size preset (individual flags override preset values)
@@ -336,6 +370,12 @@ Examples:
 		if startFlagRuntime != "" {
 			createReq.Runtime = startFlagRuntime
 		}
+		if gitURL != "" {
+			createReq.GitURL = gitURL
+		}
+		if startFlagBranch != "" {
+			createReq.GitRevision = startFlagBranch
+		}
 
 		resp, err := client.CreateInstance(createReq)
 		if err != nil {
@@ -354,9 +394,12 @@ Examples:
 			}
 		}
 		fmt.Println()
+		if token == "" {
+			fmt.Println("Warning: auth token not yet available; using raw URLs where possible")
+		}
 
 		// Clone git repo if specified (fast!)
-		if gitURL != "" && token != "" {
+		if gitURL != "" && resp.Provider != "vercel" {
 			fmt.Printf("Cloning %s...\n", gitURL)
 			cloneCmd := fmt.Sprintf("cd /home/user/workspace && git clone %s .", gitURL)
 			if startFlagBranch != "" {
@@ -373,14 +416,22 @@ Examples:
 		}
 
 		// Sync directory if specified (using rsync over WebSocket SSH)
-		if syncPath != "" && token != "" {
-			inst, err := client.GetInstance(teamSlug, resp.DevboxID)
-			if err == nil && inst.WorkerURL != "" {
-				fmt.Printf("Syncing %s to sandbox...\n", syncPath)
-				if err := runRsyncOverWebSocket(inst.WorkerURL, token, syncPath, "/home/user/workspace"); err != nil {
-					fmt.Printf("Warning: failed to sync files: %v\n", err)
-				} else {
-					fmt.Println("✓ Files synced")
+		if syncPath != "" {
+			if token == "" {
+				fmt.Printf("Warning: failed to sync %s (auth token not available yet)\n", syncPath)
+			} else {
+				inst, err := client.GetInstance(teamSlug, resp.DevboxID)
+				if err != nil {
+					fmt.Printf("Warning: failed to sync %s (%v)\n", syncPath, err)
+				} else if inst.WorkerURL != "" {
+					fmt.Printf("Syncing %s to sandbox...\n", syncPath)
+					if err := runRsyncOverWebSocket(inst.WorkerURL, token, syncPath, "/home/user/workspace"); err != nil {
+						fmt.Printf("Warning: failed to sync files: %v\n", err)
+					} else {
+						fmt.Println("✓ Files synced")
+					}
+				} else if inst.WorkerURL == "" {
+					fmt.Printf("Warning: failed to sync %s (worker URL not available)\n", syncPath)
 				}
 			}
 		}
@@ -403,21 +454,7 @@ Examples:
 			jupyterAuthURL = resp.JupyterURL
 		}
 
-		// Build type label: "Docker" for e2b, "GPU (type)" for modal, "Vercel (runtime)" for vercel
-		typeLabel := "Docker"
-		if resp.Provider == "modal" {
-			if resp.GPU != "" {
-				typeLabel = fmt.Sprintf("GPU (%s)", resp.GPU)
-			} else {
-				typeLabel = "GPU"
-			}
-		} else if resp.Provider == "vercel" {
-			runtime := startFlagRuntime
-			if runtime == "" {
-				runtime = "node24"
-			}
-			typeLabel = fmt.Sprintf("Vercel (%s)", runtime)
-		}
+		typeLabel := createResponseTypeLabel(resp, startFlagRuntime)
 
 		fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
 		fmt.Printf("  Type:   %s\n", typeLabel)
@@ -438,6 +475,9 @@ Examples:
 
 		// Auto-open: prefer Jupyter for GPU, VSCode for Docker
 		openableURL := vscodeAuthURL
+		if openableURL == "" {
+			openableURL = resp.VSCodeURL
+		}
 		if resp.Provider == "modal" && jupyterAuthURL != "" {
 			openableURL = jupyterAuthURL
 		}

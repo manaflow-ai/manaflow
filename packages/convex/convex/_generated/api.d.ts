@@ -82,6 +82,8 @@ import type * as userEditorSettings from "../userEditorSettings.js";
 import type * as users from "../users.js";
 import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
 import type * as users_utils_index from "../users/utils/index.js";
+import type * as vercelInstances from "../vercelInstances.js";
+import type * as vercel_actions from "../vercel_actions.js";
 import type * as warmPool from "../warmPool.js";
 import type * as warmPoolMaintenance from "../warmPoolMaintenance.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
@@ -168,6 +170,8 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
   "users/utils/index": typeof users_utils_index;
+  vercelInstances: typeof vercelInstances;
+  vercel_actions: typeof vercel_actions;
   warmPool: typeof warmPool;
   warmPoolMaintenance: typeof warmPoolMaintenance;
   workspaceConfigs: typeof workspaceConfigs;

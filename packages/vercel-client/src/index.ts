@@ -228,27 +228,14 @@ export class VercelClient {
       };
       metadata?: VercelMetadata;
     }): Promise<VercelInstance> => {
-      const createParams: Record<string, unknown> = {
+      const sandbox = await Sandbox.create({
         ...this.getCredentials(),
         runtime: options.runtime ?? "node24",
         timeout: options.timeout ?? 300_000, // 5 minutes default
-      };
-
-      if (options.vcpus) {
-        createParams.resources = { vcpus: options.vcpus };
-      }
-
-      if (options.ports) {
-        createParams.ports = options.ports;
-      }
-
-      if (options.source) {
-        createParams.source = options.source;
-      }
-
-      const sandbox = await Sandbox.create(
-        createParams as Parameters<typeof Sandbox.create>[0],
-      );
+        ...(options.vcpus ? { resources: { vcpus: options.vcpus } } : {}),
+        ...(options.ports ? { ports: options.ports } : {}),
+        ...(options.source ? { source: options.source } : {}),
+      });
 
       // Build HTTP services from exposed ports
       const httpServices: VercelHttpService[] = (options.ports ?? []).map(
@@ -281,13 +268,11 @@ export class VercelClient {
       Array<{ sandboxId: string; status: string; createdAt: Date }>
     > => {
       const result = await Sandbox.list(this.getCredentials());
-      return result.json.sandboxes.map(
-        (s: { sandboxId: string; status: string; createdAt: string }) => ({
-          sandboxId: s.sandboxId,
-          status: s.status,
-          createdAt: new Date(s.createdAt),
-        }),
-      );
+      return result.json.sandboxes.map((s) => ({
+        sandboxId: s.id,
+        status: s.status,
+        createdAt: new Date(s.createdAt),
+      }));
     },
 
     /**

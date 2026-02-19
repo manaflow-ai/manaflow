@@ -146,7 +146,8 @@ export const getInstance = internalAction({
         status,
         ...urls,
       };
-    } catch {
+    } catch (err) {
+      console.error("[vercel_actions.getInstance] Error:", err);
       return {
         instanceId: args.instanceId,
         status: "stopped",

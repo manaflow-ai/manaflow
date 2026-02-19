@@ -163,10 +163,15 @@ export default function CloudRouterPage() {
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-400">-p e2b</td>
                     <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Default provider. Supports Docker.</td>
                   </tr>
-                  <tr className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                  <tr className="border-b border-neutral-100 dark:border-neutral-800">
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Modal</td>
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-400">-p modal</td>
                     <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Alternative provider with GPU support.</td>
+                  </tr>
+                  <tr className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">Vercel</td>
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-400">-p vercel</td>
+                    <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">Vercel Sandbox provider.</td>
                   </tr>
                 </tbody>
               </table>
@@ -174,7 +179,7 @@ export default function CloudRouterPage() {
 
             <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               We are actively working to support <span className="font-semibold">all major sandbox providers</span> including
-              Vercel, Daytona, Morph, Freestyle, and others. If you have a preferred provider,{" "}
+              Daytona, Morph, Freestyle, and others. If you have a preferred provider,{" "}
               <a
                 href="mailto:founders@manaflow.ai"
                 className="underline transition hover:text-neutral-900 dark:hover:text-white"
