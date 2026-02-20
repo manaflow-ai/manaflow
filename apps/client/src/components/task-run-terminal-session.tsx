@@ -16,6 +16,7 @@ const MIN_COLS = 20;
 const MAX_COLS = 320;
 const MIN_ROWS = 8;
 const MAX_ROWS = 120;
+const MIN_CONTAINER_DIMENSION_PX = 2;
 
 export type TerminalConnectionState =
   | "connecting"
@@ -166,12 +167,19 @@ export function TaskRunTerminalSession({
 
   const measureAndQueueResize = useCallback(() => {
     const fitAddon = fitAddonRef.current;
-    if (!terminal || !fitAddon) {
+    const container = containerRef.current;
+    if (!terminal || !fitAddon || !container) {
+      return;
+    }
+    if (
+      container.clientWidth < MIN_CONTAINER_DIMENSION_PX ||
+      container.clientHeight < MIN_CONTAINER_DIMENSION_PX
+    ) {
       return;
     }
     fitAddon.fit();
     queueResize();
-  }, [queueResize, terminal]);
+  }, [containerRef, queueResize, terminal]);
 
   const flushPendingResize = useCallback(() => {
     if (!pendingResizeRef.current) {
@@ -187,6 +195,11 @@ export function TaskRunTerminalSession({
       }
     }
   }, []);
+
+  const synchronizeResize = useCallback(() => {
+    measureAndQueueResize();
+    flushPendingResize();
+  }, [flushPendingResize, measureAndQueueResize]);
 
   useEffect(() => {
     if (!terminal || !isActive) {
@@ -215,7 +228,11 @@ export function TaskRunTerminalSession({
 
     let frame = 0;
     const handle = () => {
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame);
+      }
       frame = window.requestAnimationFrame(() => {
+        frame = 0;
         measureAndQueueResize();
       });
     };
@@ -260,6 +277,9 @@ export function TaskRunTerminalSession({
 
     notifyConnectionState("connecting");
 
+    let openSyncFrame = 0;
+    let openSyncTimeout: number | null = null;
+
     const handleOpen = () => {
       if (cancelled) {
         return;
@@ -267,8 +287,19 @@ export function TaskRunTerminalSession({
       notifyConnectionState("open");
       if (isActiveRef.current) {
         // Ensure terminal dimensions are synchronised once the socket is ready
-        measureAndQueueResize();
-        flushPendingResize();
+        synchronizeResize();
+        openSyncFrame = window.requestAnimationFrame(() => {
+          if (cancelled) {
+            return;
+          }
+          synchronizeResize();
+        });
+        openSyncTimeout = window.setTimeout(() => {
+          if (cancelled) {
+            return;
+          }
+          synchronizeResize();
+        }, 120);
       }
     };
 
@@ -295,6 +326,10 @@ export function TaskRunTerminalSession({
       socket.removeEventListener("open", handleOpen);
       socket.removeEventListener("close", handleClose);
       socket.removeEventListener("error", handleError);
+      window.cancelAnimationFrame(openSyncFrame);
+      if (openSyncTimeout !== null) {
+        window.clearTimeout(openSyncTimeout);
+      }
 
       attachAddon.dispose();
       attachAddonRef.current = null;
@@ -309,9 +344,8 @@ export function TaskRunTerminalSession({
     };
   }, [
     baseUrl,
-    flushPendingResize,
-    measureAndQueueResize,
     notifyConnectionState,
+    synchronizeResize,
     terminal,
     terminalId,
   ]);
@@ -321,21 +355,53 @@ export function TaskRunTerminalSession({
       return;
     }
 
-    if (isActive) {
-      measureAndQueueResize();
-      // Defer focus to avoid triggering terminal queries during panel transitions
-      // Use double RAF to ensure resize operations are fully complete
-      // This prevents special characters from appearing when panels are swapped
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (terminal && isActive) {
-            terminal.refresh(0, Math.max(0, terminal.rows - 1));
-            terminal.focus();
-          }
-        });
-      });
+    if (!isActive) {
+      return;
     }
-  }, [isActive, measureAndQueueResize, terminal]);
+
+    synchronizeResize();
+
+    const delayedResize = window.setTimeout(() => {
+      synchronizeResize();
+    }, 120);
+
+    let frameOne = 0;
+    let frameTwo = 0;
+
+    // Defer focus to avoid triggering terminal queries during panel transitions
+    // Use double RAF to ensure resize operations are fully complete
+    // This prevents special characters from appearing when panels are swapped
+    frameOne = requestAnimationFrame(() => {
+      frameTwo = requestAnimationFrame(() => {
+        if (terminal && isActiveRef.current) {
+          synchronizeResize();
+          terminal.refresh(0, Math.max(0, terminal.rows - 1));
+          terminal.focus();
+        }
+      });
+    });
+
+    return () => {
+      window.clearTimeout(delayedResize);
+      window.cancelAnimationFrame(frameOne);
+      window.cancelAnimationFrame(frameTwo);
+    };
+  }, [isActive, synchronizeResize, terminal]);
+
+  useEffect(() => {
+    if (!terminal || !isActive) {
+      return;
+    }
+
+    const blurRefitTimeout = window.setTimeout(() => {
+      // Defer focus to avoid triggering terminal queries during panel transitions
+      synchronizeResize();
+    }, 300);
+
+    return () => {
+      window.clearTimeout(blurRefitTimeout);
+    };
+  }, [isActive, synchronizeResize, terminal]);
 
   const statusMessage = useMemo(() => {
     switch (connectionState) {

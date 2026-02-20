@@ -154,6 +154,7 @@ const MAX_SCROLLBACK: usize = 100_000;
 const PTY_READ_BUFFER_SIZE: usize = 4096;
 const PTY_WRITE_CHUNK_SIZE: usize = 512; // Small chunks for smooth writes
 const PTY_INPUT_CHANNEL_SIZE: usize = 1024; // Bounded channel for backpressure
+const PTY_OUTPUT_CHANNEL_SIZE: usize = 8192; // Headroom for bursty TUI output (e.g., Codex)
 
 // =============================================================================
 // Error Types
@@ -1022,7 +1023,7 @@ fn create_pty_session_inner(
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
 
-    let (output_tx, _) = broadcast::channel(1024);
+    let (output_tx, _) = broadcast::channel(PTY_OUTPUT_CHANNEL_SIZE);
 
     // Create bounded channel for input with backpressure
     let (input_tx, input_rx) = std::sync::mpsc::sync_channel(PTY_INPUT_CHANNEL_SIZE);
@@ -1677,21 +1678,35 @@ async fn handle_terminal_websocket(
         let mut output_count = 0usize;
         let mut total_bytes = 0usize;
 
-        while let Ok(data) = output_rx.recv().await {
-            output_count += 1;
-            total_bytes += data.len();
+        loop {
+            match output_rx.recv().await {
+                Ok(data) => {
+                    output_count += 1;
+                    total_bytes += data.len();
 
-            // Send raw binary data (xterm AttachAddon expects this)
-            if sender
-                .send(Message::Binary(data.into_bytes()))
-                .await
-                .is_err()
-            {
-                warn!(
-                    "[term-ws:{}] Failed to send output, closing",
-                    session_id_clone
-                );
-                break;
+                    // Send raw binary data (xterm AttachAddon expects this)
+                    if sender
+                        .send(Message::Binary(data.into_bytes()))
+                        .await
+                        .is_err()
+                    {
+                        warn!(
+                            "[term-ws:{}] Failed to send output, closing",
+                            session_id_clone
+                        );
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(
+                        "[term-ws:{}] Output forwarder lagged; skipped {} messages",
+                        session_id_clone, skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
             }
         }
 
