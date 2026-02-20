@@ -296,6 +296,35 @@ function trackAnthropicProxyRequest(event: AnthropicProxyEvent): void {
   });
 }
 
+/**
+ * Strip unsupported fields from cache_control objects in the request body.
+ * Some clients (e.g. Claude Code) send cache_control with a "scope" field
+ * that the Anthropic API rejects. The API only accepts { "type": "ephemeral" }.
+ *
+ * Recursively walks the body to catch cache_control at any nesting depth
+ * (e.g. tool_result blocks with nested content arrays).
+ */
+function sanitizeCacheControl(body: Record<string, unknown>): void {
+  function walk(node: unknown): void {
+    if (!isRecord(node)) return;
+
+    if (isRecord(node.cache_control)) {
+      delete (node.cache_control as Record<string, unknown>).scope;
+    }
+
+    // Recurse into arrays (system, messages, content, tools, etc.)
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          walk(item);
+        }
+      }
+    }
+  }
+
+  walk(body);
+}
+
 function getSource(req: Request): AnthropicProxySource {
   const sourceHeader = req.headers.get("x-cmux-source");
   if (sourceHeader === "preview-new") {
@@ -379,6 +408,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
   try {
     const useUserApiKey = hasUserApiKey(xApiKey);
     const body = await req.json();
+    sanitizeCacheControl(body);
     const requestedModel = body.model ?? "unknown";
     const isStreaming = body.stream ?? false;
     const payloadSummary = summarizeAnthropicPayload(body);
@@ -571,6 +601,7 @@ export const anthropicCountTokens = httpAction(async (_ctx, req) => {
 
   try {
     const body = await req.json();
+    sanitizeCacheControl(body);
     const response = await fetch(
       `${CLOUDFLARE_ANTHROPIC_BASE_URL}/v1/messages/count_tokens`,
       {

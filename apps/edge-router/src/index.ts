@@ -779,14 +779,15 @@ export default {
         }
       }
 
-      if (sub.startsWith("cmux-")) {
+      if (sub.startsWith("manaflow-") || sub.startsWith("cmux-")) {
         const isAlreadyProxied =
           request.headers.get("X-Cmux-Proxied") === "true";
         if (isAlreadyProxied) {
           return new Response("Loop detected in proxy", { status: 508 });
         }
 
-        const remainder = sub.slice("cmux-".length);
+        const subPrefix = sub.startsWith("manaflow-") ? "manaflow-" : "cmux-";
+        const remainder = sub.slice(subPrefix.length);
         const segments = remainder.split("-");
         if (segments.length < 2) {
           return new Response("Invalid cmux proxy subdomain", { status: 400 });

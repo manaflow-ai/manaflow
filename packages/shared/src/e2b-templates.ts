@@ -109,7 +109,36 @@ if (!firstPreset) {
   throw new Error("E2B template manifest must include a default template");
 }
 
-export const DEFAULT_E2B_TEMPLATE_ID: E2BTemplateId = firstPreset.id;
+const highPreset = E2B_TEMPLATE_PRESETS.find(
+  (p) => p.templateId === "cmux-devbox-docker",
+);
+export const DEFAULT_E2B_TEMPLATE_ID: E2BTemplateId =
+  highPreset?.id ?? firstPreset.id;
+
+/**
+ * Size tiers for E2B templates: low, mid, high.
+ * Default is "high" (cmux-devbox-docker).
+ */
+export type E2BSizeTier = "low" | "mid" | "high";
+
+const E2B_SIZE_TIER_PRESET_IDS: Record<E2BSizeTier, string> = {
+  low: "cmux-devbox-low",
+  mid: "cmux-devbox-mid",
+  high: "cmux-devbox-docker",
+};
+
+export const DEFAULT_E2B_SIZE_TIER: E2BSizeTier = "high";
+
+/**
+ * Get the latest E2B template ID for a size tier.
+ */
+export const getE2BTemplateIdByTier = (
+  tier: E2BSizeTier,
+): E2BTemplateId | undefined => {
+  const presetId = E2B_SIZE_TIER_PRESET_IDS[tier];
+  const preset = E2B_TEMPLATE_PRESETS.find((p) => p.templateId === presetId);
+  return preset?.id;
+};
 
 /**
  * Get the latest template ID for a given preset ID.
@@ -125,4 +154,4 @@ export const getE2BTemplateIdByPresetId = (
  * The default template ID for preview configure environments.
  */
 export const DEFAULT_E2B_PREVIEW_TEMPLATE_ID: E2BTemplateId =
-  getE2BTemplateIdByPresetId("cmux-devbox-base") ?? DEFAULT_E2B_TEMPLATE_ID;
+  getE2BTemplateIdByTier(DEFAULT_E2B_SIZE_TIER) ?? DEFAULT_E2B_TEMPLATE_ID;

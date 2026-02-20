@@ -96,6 +96,13 @@ export interface CmuxAPI {
   rpc: (event: string, ...args: unknown[]) => Promise<unknown>;
   on: (event: string, callback: (...args: unknown[]) => void) => () => void;
   off: (event: string, callback?: (...args: unknown[]) => void) => void;
+  app?: {
+    getProtocolStatus: () =>
+      Promise<
+        | { ok: true; isPackaged: boolean; isDefaultProtocolClient: boolean }
+        | { ok: false; error: string }
+      >;
+  };
   ui: {
     focusWebContents: (id: number) => Promise<{ ok: boolean; queued?: boolean }>;
     restoreLastFocusInWebContents: (id: number) => Promise<{ ok: boolean; queued?: boolean }>;

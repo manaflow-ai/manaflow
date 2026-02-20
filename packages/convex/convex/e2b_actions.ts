@@ -3,7 +3,8 @@
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { env } from "../_shared/convex-env";
-import { E2BClient, CMUX_DEVBOX_TEMPLATE_ID, type E2BInstance } from "@cmux/e2b-client";
+import { DEFAULT_E2B_TEMPLATE_ID } from "@cmux/shared/e2b-templates";
+import { E2BClient, type E2BInstance } from "@cmux/e2b-client";
 
 /**
  * Get E2B client with API key from env
@@ -21,11 +22,13 @@ function getE2BClient(): E2BClient {
  */
 function extractNetworkingUrls(instance: E2BInstance) {
   const httpServices = instance.networking.httpServices;
+  const jupyterService = httpServices.find((s) => s.port === 8888);
   const vscodeService = httpServices.find((s) => s.port === 39378);
   const workerService = httpServices.find((s) => s.port === 39377);
   const vncService = httpServices.find((s) => s.port === 39380);
 
   return {
+    jupyterUrl: jupyterService?.url,
     vscodeUrl: vscodeService?.url,
     workerUrl: workerService?.url,
     vncUrl: vncService?.url,
@@ -46,17 +49,18 @@ export const startInstance = internalAction({
     const client = getE2BClient();
 
     const instance = await client.instances.start({
-      templateId: args.templateId || CMUX_DEVBOX_TEMPLATE_ID,
+      templateId: args.templateId ?? DEFAULT_E2B_TEMPLATE_ID,
       ttlSeconds: args.ttlSeconds ?? 60 * 60,
       metadata: args.metadata,
       envs: args.envs,
     });
 
-    const { vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(instance);
+    const { jupyterUrl, vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(instance);
 
     return {
       instanceId: instance.id,
       status: "running",
+      jupyterUrl,
       vscodeUrl,
       workerUrl,
       vncUrl,
@@ -76,11 +80,12 @@ export const getInstance = internalAction({
       const client = getE2BClient();
       const instance = await client.instances.get({ instanceId: args.instanceId });
       const isRunning = await instance.isRunning();
-      const { vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(instance);
+      const { jupyterUrl, vscodeUrl, workerUrl, vncUrl } = extractNetworkingUrls(instance);
 
       return {
         instanceId: args.instanceId,
         status: isRunning ? "running" : "stopped",
+        jupyterUrl,
         vscodeUrl,
         workerUrl,
         vncUrl,
@@ -89,6 +94,7 @@ export const getInstance = internalAction({
       return {
         instanceId: args.instanceId,
         status: "stopped",
+        jupyterUrl: null,
         vscodeUrl: null,
         workerUrl: null,
         vncUrl: null,

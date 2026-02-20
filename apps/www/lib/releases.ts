@@ -1,8 +1,8 @@
 export const RELEASE_PAGE_URL =
-  "https://github.com/manaflow-ai/cmux/releases";
+  "https://github.com/manaflow-ai/manaflow/releases";
 
 export const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/manaflow-ai/cmux/releases?per_page=20";
+  "https://api.github.com/repos/manaflow-ai/manaflow/releases?per_page=20";
 
 export const DMG_SUFFIXES = {
   universal: "-universal.dmg",

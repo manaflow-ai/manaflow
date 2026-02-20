@@ -31,6 +31,8 @@ export default tseslint.config(
     '**/dist-electron',
     '**/.next',
     '**/build',
+    '**/.vscode-test',
+    '**/.vscode-test/**',
     'node_modules',
     '**/node_modules',
     // Generated files
@@ -59,7 +61,16 @@ export default tseslint.config(
   // Base configs for all TypeScript files
   withTypescriptFiles(js.configs.recommended),
   ...tseslint.configs.recommended.map(withTypescriptFiles),
-  withTypescriptFiles(reactHooks.configs['recommended-latest']),
+  // Register react-hooks plugin with only the classic rules (rules-of-hooks + exhaustive-deps).
+  // The v7 recommended/recommended-latest presets include React Compiler rules
+  // which this codebase does not yet conform to.
+  withTypescriptFiles({
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
+  }),
 
   // Base rules
   {

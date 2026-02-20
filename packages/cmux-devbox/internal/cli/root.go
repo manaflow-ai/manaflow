@@ -50,7 +50,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output")
 
 	// Config override flags (override env vars and build-time values)
-	rootCmd.PersistentFlags().StringVar(&flagAPIURL, "api-url", "", "Override API URL (default: https://cmux.sh)")
+	rootCmd.PersistentFlags().StringVar(&flagAPIURL, "api-url", "", "Override API URL (default: https://manaflow.com)")
 	rootCmd.PersistentFlags().StringVar(&flagConvexSiteURL, "convex-url", "", "Override Convex site URL")
 
 	// Version command

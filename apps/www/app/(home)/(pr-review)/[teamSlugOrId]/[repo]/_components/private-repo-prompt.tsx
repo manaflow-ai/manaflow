@@ -102,7 +102,7 @@ export function PrivateRepoPrompt({
                       <span className="shrink-0 font-semibold text-neutral-900">
                         1.
                       </span>
-                      <span>Install the cmux GitHub App</span>
+                      <span>Install the Manaflow GitHub App</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="shrink-0 font-semibold text-neutral-900">
@@ -145,7 +145,7 @@ export function PrivateRepoPrompt({
                 </button>
 
                 <p className="text-xs text-center text-neutral-500">
-                  You will be redirected to github.com to authorize the cmux app.
+                  You will be redirected to github.com to authorize the Manaflow app.
                 </p>
               </div>
             </div>

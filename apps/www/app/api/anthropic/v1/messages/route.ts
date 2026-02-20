@@ -10,6 +10,35 @@ import {
 const CLOUDFLARE_ANTHROPIC_API_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Strip unsupported fields from cache_control objects in the request body.
+ * Some clients (e.g. Claude Code) send cache_control with a "scope" field
+ * that the Anthropic API rejects. The API only accepts { "type": "ephemeral" }.
+ */
+function sanitizeCacheControl(body: Record<string, unknown>): void {
+  function walk(node: unknown): void {
+    if (!isRecord(node)) return;
+
+    if (isRecord(node.cache_control)) {
+      delete (node.cache_control as Record<string, unknown>).scope;
+    }
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          walk(item);
+        }
+      }
+    }
+  }
+
+  walk(body);
+}
+
 // Toggle between Cloudflare AI Gateway and Convex Anthropic Bedrock endpoint
 // Set to true to use Cloudflare AI Gateway, false to use Convex Anthropic Bedrock
 const USE_CLOUDFLARE_AI_GATEWAY = false;
@@ -102,6 +131,7 @@ export async function POST(request: NextRequest) {
       xApiKeyHeader !== hardCodedApiKey &&
       authorizationHeader !== hardCodedApiKey;
     const body = await request.json();
+    sanitizeCacheControl(body);
 
     // Build headers
     // When using Convex endpoint with platform credits, send the placeholder key

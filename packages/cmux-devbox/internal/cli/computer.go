@@ -135,14 +135,29 @@ var computerSnapshotCmd = &cobra.Command{
 
 Each element is assigned a ref (e.g., @e1, @e2) that can be used with click, type, etc.
 
-Example:
-  cmux computer snapshot cmux_abc123`,
+Examples:
+  cmux computer snapshot cmux_abc123           # Full accessibility tree
+  cmux computer snapshot -i cmux_abc123        # Interactive elements only (preferred)
+  cmux computer snapshot -i -c cmux_abc123     # Interactive + compact`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		result, err := execAgentBrowser(ctx, args[0], "/snapshot", nil)
+		body := map[string]interface{}{}
+		if interactive, _ := cmd.Flags().GetBool("interactive"); interactive {
+			body["interactive"] = true
+		}
+		if compact, _ := cmd.Flags().GetBool("compact"); compact {
+			body["compact"] = true
+		}
+
+		var bodyArg map[string]interface{}
+		if len(body) > 0 {
+			bodyArg = body
+		}
+
+		result, err := execAgentBrowser(ctx, args[0], "/snapshot", bodyArg)
 		if err != nil {
 			return err
 		}
@@ -546,14 +561,77 @@ Example:
 	},
 }
 
+// Double-click command
+var computerDblclickCmd = &cobra.Command{
+	Use:   "dblclick <id> <selector>",
+	Short: "Double-click an element",
+	Long: `Double-click an element by selector (ref like @e1 or CSS selector).
+
+Examples:
+  cmux computer dblclick cmux_abc123 @e1          # Double-click by ref
+  cmux computer dblclick cmux_abc123 "#item"      # Double-click by CSS selector`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		_, err := execAgentBrowser(ctx, args[0], "/dblclick", map[string]interface{}{
+			"selector": args[1],
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("Double-clicked: %s\n", args[1])
+		return nil
+	},
+}
+
+// Eval command
+var computerEvalCmd = &cobra.Command{
+	Use:   "eval <id> <script>",
+	Short: "Evaluate JavaScript in the browser",
+	Long: `Execute JavaScript in the browser and return the result.
+
+Examples:
+  cmux computer eval cmux_abc123 "document.title"
+  cmux computer eval cmux_abc123 "document.querySelectorAll('a').length"`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		result, err := execAgentBrowser(ctx, args[0], "/eval", map[string]interface{}{
+			"script": args[1],
+		})
+		if err != nil {
+			return err
+		}
+
+		if data, ok := result["data"].(map[string]interface{}); ok {
+			if val, ok := data["result"]; ok {
+				output, _ := json.Marshal(val)
+				fmt.Println(string(output))
+				return nil
+			}
+		}
+		output, _ := json.Marshal(result)
+		fmt.Println(string(output))
+		return nil
+	},
+}
+
 func init() {
 	// Add flags
+	computerSnapshotCmd.Flags().BoolP("interactive", "i", false, "Show only interactive elements")
+	computerSnapshotCmd.Flags().BoolP("compact", "c", false, "Compact output")
 	computerWaitCmd.Flags().Int("timeout", 30000, "Timeout in milliseconds")
 
 	// Add subcommands
 	computerCmd.AddCommand(computerSnapshotCmd)
 	computerCmd.AddCommand(computerOpenCmd)
 	computerCmd.AddCommand(computerClickCmd)
+	computerCmd.AddCommand(computerDblclickCmd)
 	computerCmd.AddCommand(computerTypeCmd)
 	computerCmd.AddCommand(computerFillCmd)
 	computerCmd.AddCommand(computerPressCmd)
@@ -566,6 +644,7 @@ func init() {
 	computerCmd.AddCommand(computerTitleCmd)
 	computerCmd.AddCommand(computerWaitCmd)
 	computerCmd.AddCommand(computerHoverCmd)
+	computerCmd.AddCommand(computerEvalCmd)
 
 	// Add to root
 	rootCmd.AddCommand(computerCmd)

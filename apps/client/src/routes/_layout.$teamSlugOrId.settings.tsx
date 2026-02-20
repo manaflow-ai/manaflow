@@ -19,6 +19,10 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electron";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  normalizeHeatmapModel,
+} from "@/lib/heatmap-settings";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -243,7 +247,7 @@ function OnboardingTourSection({ teamSlugOrId }: { teamSlugOrId: string }) {
                 Product Tour
               </p>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                Take a guided tour of cmux to learn about its features and how to get the most out of it.
+                Take a guided tour of Manaflow to learn about its features and how to get the most out of it.
               </p>
             </div>
           </div>
@@ -302,9 +306,9 @@ function SettingsComponent() {
 
   // Heatmap settings state
   const [heatmapModel, setHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>(DEFAULT_HEATMAP_MODEL);
   const [originalHeatmapModel, setOriginalHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>(DEFAULT_HEATMAP_MODEL);
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
   const [originalHeatmapThreshold, setOriginalHeatmapThreshold] =
     useState<number>(0);
@@ -320,8 +324,7 @@ function SettingsComponent() {
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
-    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
-    { value: "anthropic", label: "Claude Opus 4.1" },
+    { value: "anthropic-haiku-4-5", label: "Claude Haiku 4.5" },
     { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
     { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
   ];
@@ -439,13 +442,9 @@ function SettingsComponent() {
       prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
     );
 
-    if (workspaceSettings?.heatmapModel) {
-      const nextModel = workspaceSettings.heatmapModel;
-      setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
-      setOriginalHeatmapModel((prev) =>
-        prev === nextModel ? prev : nextModel
-      );
-    }
+    const nextModel = normalizeHeatmapModel(workspaceSettings?.heatmapModel ?? null);
+    setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
+    setOriginalHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
     if (workspaceSettings?.heatmapThreshold !== undefined) {
       const nextThreshold = workspaceSettings.heatmapThreshold;
       setHeatmapThreshold((prev) =>
@@ -773,7 +772,7 @@ function SettingsComponent() {
                     Display Name
                   </label>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-                    How your team is displayed across cmux.
+                    How your team is displayed across Manaflow.
                   </p>
                   <input
                     type="text"
@@ -822,7 +821,7 @@ function SettingsComponent() {
                             <path d="M14.5 12.5a5 5 0 1 0-7 7"></path>
                           </svg>
                           <span className="truncate">
-                            {`https://cmux.dev/${(teamSlug || "your-team").replace(/^\/+/, "")}/dashboard`}
+                            {`https://manaflow.com/${(teamSlug || "your-team").replace(/^\/+/, "")}/dashboard`}
                           </span>
                         </div>
                       </div>
@@ -880,7 +879,7 @@ function SettingsComponent() {
                       aria-hidden
                       className="px-3 py-2 text-sm text-neutral-500 dark:text-neutral-400 select-none bg-neutral-50 dark:bg-neutral-800/50 border-r border-neutral-200 dark:border-neutral-700 rounded-l-lg"
                     >
-                      cmux.dev/
+                      manaflow.com/
                     </span>
                     <input
                       id="teamSlug"
@@ -1204,7 +1203,7 @@ function SettingsComponent() {
                       autoComplete="off"
                     />
                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
-                      Default location: ~/cmux
+                      Default location: ~/manaflow
                     </p>
                   </div>
                 </div>
@@ -1265,11 +1264,11 @@ function SettingsComponent() {
                           <ul className="list-disc ml-4 space-y-0.5">
                             <li>
                               Start a coding CLI (Claude Code, Codex CLI, Gemini
-                              CLI, Amp, Opencode) and complete its sign-in; cmux
+                              CLI, Amp, Opencode) and complete its sign-in; Manaflow
                               reuses that authentication.
                             </li>
                             <li>
-                              Or enter API keys here and cmux will use them
+                              Or enter API keys here and Manaflow will use them
                               directly.
                             </li>
                           </ul>

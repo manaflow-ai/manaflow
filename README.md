@@ -1,17 +1,17 @@
-<h1 align="center">cmux</h1>
+<h1 align="center">Manaflow</h1>
 <p align="center">Open source Claude Code web/Codex Cloud/Devin alternative</p>
 
 <p align="center">
-  <a href="https://www.cmux.dev/direct-download-macos">
-    <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
+  <a href="https://www.manaflow.com/direct-download-macos">
+    <img src="./docs/assets/macos-badge.png" alt="Download Manaflow for macOS" width="180" />
   </a>
 </p>
 
 <p align="center">
-  Join the <a href="https://discord.gg/SDbQmzQhRK">Discord</a> to talk more about cmux!
+  Join the <a href="https://discord.gg/SDbQmzQhRK">Discord</a> to talk more about Manaflow!
 </p>
 
-cmux lets you spawn Claude Code, Codex CLI, Cursor CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks.
+Manaflow lets you spawn Claude Code, Codex CLI, Cursor CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks.
 
 Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready so parallel agent work stays verifiable, fast, and ready to ship.
 
@@ -60,7 +60,7 @@ Every run spins up an isolated VS Code workspace either in the cloud or in a loc
 </td>
 <td width="50%">
 <h3>One-Click PR Creation</h3>
-<p>Review diffs, squash and merge, or open pull requests directly from the workspace. View GitHub Action results and CI status without leaving cmux.</p>
+<p>Review diffs, squash and merge, or open pull requests directly from the workspace. View GitHub Action results and CI status without leaving Manaflow.</p>
 </td>
 </tr>
 </table>
@@ -91,10 +91,10 @@ Every run spins up an isolated VS Code workspace either in the cloud or in a loc
 
 ## Install
 
-cmux supports macOS. Linux in beta. Windows coming soon.
+Manaflow supports macOS. Linux in beta. Windows coming soon.
 
-<a href="https://www.cmux.dev/direct-download-macos">
-  <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
+<a href="https://www.manaflow.com/direct-download-macos">
+  <img src="./docs/assets/macos-badge.png" alt="Download Manaflow for macOS" width="180" />
 </a>
 
 <!-- ```bash

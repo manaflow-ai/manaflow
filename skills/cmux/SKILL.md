@@ -17,15 +17,19 @@ npm install -g cmux
 
 ```bash
 cmux login                      # Authenticate (opens browser)
-cmux start ./my-project         # Create sandbox, sync directory → returns ID
+cmux start ./my-project         # Create sandbox, upload directory → returns ID
+cmux start .                    # Or use current directory
 cmux code <id>                  # Open VS Code
 cmux pty <id>                   # Open terminal session
-cmux sync <id> ./my-project     # Sync files via rsync
+cmux upload <id> ./my-project   # Upload files/directories to sandbox
+cmux download <id> ./output     # Download files from sandbox
 cmux computer screenshot <id>   # Take browser screenshot
 cmux stop <id>                  # Stop sandbox
 cmux delete <id>                # Delete sandbox
 cmux ls                         # List all sandboxes
 ```
+
+> **Preferred:** Always use `cmux start .` or `cmux start <local-path>` to sync your local directory to a cloud sandbox. This is the recommended workflow over cloning from a git repo.
 
 ## Commands
 
@@ -40,8 +44,15 @@ cmux whoami              # Show current user and team
 ### Sandbox Lifecycle
 
 ```bash
-cmux start [path]        # Create sandbox, optionally sync directory
-cmux start -i [path]     # Create and open VS Code immediately
+# Preferred: local-to-cloud (syncs your local directory to the sandbox)
+cmux start .             # Create sandbox from current directory (recommended)
+cmux start ./my-project  # Create sandbox from a specific local directory
+cmux start -o .          # Create from local dir and open VS Code immediately
+
+# Alternative: clone from git
+cmux start --git user/repo  # Clone a git repo into sandbox
+
+cmux start --docker      # Create sandbox with Docker support
 cmux ls                  # List all sandboxes
 cmux status <id>         # Show sandbox details and URLs
 cmux stop <id>           # Stop sandbox
@@ -61,10 +72,30 @@ cmux pty <id>            # Interactive terminal session
 ### Work with Sandbox
 
 ```bash
-cmux exec <id> "cmd"           # Run command in sandbox
-cmux sync <id> <path>          # Sync local files to sandbox (rsync)
-cmux sync <id> <path> --pull   # Pull files from sandbox
-cmux sync <id> <path> --watch  # Watch and sync on changes
+cmux pty <id>                  # Interactive terminal session (use this to run commands)
+cmux exec <id> <command>       # Execute a one-off command
+```
+
+> **Important:** Prefer `cmux pty` for interactive work. Use `cmux exec` only for quick one-off commands.
+
+### File Transfer
+
+Upload and download files or directories between local machine and sandbox.
+
+```bash
+# Upload (local → sandbox)
+cmux upload <id>                            # Upload current dir to /home/user/workspace
+cmux upload <id> ./my-project               # Upload directory to workspace
+cmux upload <id> ./config.json              # Upload single file to workspace
+cmux upload <id> . -r /home/user/app        # Upload to specific remote path
+cmux upload <id> . --watch                  # Watch and re-upload on changes
+cmux upload <id> . --delete                 # Delete remote files not present locally
+cmux upload <id> . -e "*.log"              # Exclude patterns
+
+# Download (sandbox → local)
+cmux download <id>                          # Download workspace to current dir
+cmux download <id> ./output                 # Download workspace to ./output
+cmux download <id> . -r /home/user/app      # Download from specific remote path
 ```
 
 ### Browser Automation (cmux computer)
@@ -114,19 +145,20 @@ Sandbox IDs look like `cmux_abc12345`. Use the full ID when running commands. Ge
 
 ## Common Workflows
 
-### Create and develop in a sandbox
+### Create and develop in a sandbox (preferred: local-to-cloud)
 
 ```bash
-cmux start ./my-project        # Creates sandbox, syncs files
+cmux start ./my-project        # Creates sandbox, uploads files
 cmux code cmux_abc123          # Open VS Code
-cmux exec cmux_abc123 "npm install && npm run dev"
+cmux pty cmux_abc123           # Open terminal to run commands (e.g. npm install && npm run dev)
 ```
 
-### Sync workflow
+### File transfer workflow
 
 ```bash
-cmux sync cmux_abc123 . --watch      # Watch local changes, sync automatically
-cmux sync cmux_abc123 ./dist --pull  # Pull build output back
+cmux upload cmux_abc123 ./my-project     # Push local files to sandbox
+# ... do work in sandbox ...
+cmux download cmux_abc123 ./output       # Pull files from sandbox to local
 ```
 
 ### Browser automation: Login to a website
@@ -155,6 +187,31 @@ cmux computer screenshot cmux_abc123 # Visual capture
 ```bash
 cmux stop cmux_abc123      # Stop (can restart later)
 cmux delete cmux_abc123    # Delete permanently
+```
+
+## Security: Dev Server URLs
+
+**CRITICAL: NEVER share or output raw E2B port-forwarded URLs.**
+
+When a dev server runs in the sandbox (e.g., Vite on port 5173, Next.js on port 3000), E2B creates publicly accessible URLs like `https://5173-xxx.e2b.app`. These URLs have **NO authentication** — anyone with the link can access the running application.
+
+**Rules:**
+- **NEVER** output URLs like `https://5173-xxx.e2b.app`, `https://3000-xxx.e2b.app`, or any `https://<port>-xxx.e2b.app` URL
+- **NEVER** construct or guess E2B port URLs from sandbox metadata
+- **ALWAYS** tell the user to view dev servers through VNC: `cmux vnc <id>`
+- VNC is protected by token authentication (`?tkn=`) and is the only safe way to view dev server output
+- Only VSCode URLs (`cmux code <id>`) and VNC URLs (`cmux vnc <id>`) should be shared — these have proper token auth
+
+**When a dev server is started:**
+```
+✓ Dev server running on port 5173
+  View it in your sandbox's VNC desktop: cmux vnc <id>
+  (The browser inside VNC can access http://localhost:5173)
+```
+
+**NEVER do this:**
+```
+Frontend: https://5173-xxx.e2b.app   ← WRONG: publicly accessible, no auth
 ```
 
 ## Tips

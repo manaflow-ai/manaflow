@@ -1,4 +1,5 @@
 import { env } from "@/client-env";
+import { AnalyticsCards } from "@/components/dashboard/AnalyticsCards";
 import {
   DashboardInput,
   type EditorApi,
@@ -12,7 +13,6 @@ import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
-import { TitleBar } from "@/components/TitleBar";
 import type { SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip,
@@ -23,6 +23,8 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useOnboardingOptional } from "@/contexts/onboarding";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { getApiIntegrationsGithubBranches } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
@@ -70,11 +72,16 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
       query: api.tasks.get,
       args: { teamSlugOrId },
     });
+    // Prewarm analytics query
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.analytics.getDashboardStats,
+      args: { teamSlugOrId },
+    });
   },
 });
 
 // Default agents (not persisted to localStorage)
-const DEFAULT_AGENTS = ["claude/opus-4.5"];
+const DEFAULT_AGENTS = ["claude/opus-4.6", "codex/gpt-5.3-codex-xhigh"];
 const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
 const DISABLED_AGENT_NAMES = new Set(
   AGENT_CONFIGS.filter((agent) => agent.disabled).map((agent) => agent.name)
@@ -658,6 +665,46 @@ function DashboardComponent() {
     return [];
   }, [selectedBranch, defaultBranchName, branchNames]);
 
+  // Prewarm sandbox when user starts typing with a repo selected in cloud mode
+  const prewarmCacheKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!taskDescription.trim()) {
+      // Reset when input is cleared (after task submission) so next typing triggers a new prewarm
+      prewarmCacheKeyRef.current = null;
+      return;
+    }
+    // Only trigger in cloud mode with a repo selected (not environment)
+    if (isEnvSelected || !isCloudMode || !selectedProject[0]) return;
+
+    const repoUrl = `https://github.com/${selectedProject[0]}.git`;
+    const branch = effectiveSelectedBranch[0] || "";
+    const cacheKey = `${teamSlugOrId}:${repoUrl}:${branch}`;
+
+    // Skip if already prewarmed for this exact combo
+    if (prewarmCacheKeyRef.current === cacheKey) return;
+    prewarmCacheKeyRef.current = cacheKey;
+
+    // Fire-and-forget prewarm request
+    (async () => {
+      try {
+        const user = await stackClientApp.getUser();
+        if (!user) return;
+        const authHeaders = await user.getAuthHeaders();
+        await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teamSlugOrId,
+            repoUrl,
+            branch: branch || undefined,
+          }),
+        });
+      } catch (error) {
+        console.error("[prewarm] Failed to trigger prewarm:", error);
+      }
+    })();
+  }, [taskDescription, selectedProject, effectiveSelectedBranch, isEnvSelected, isCloudMode, teamSlugOrId]);
+
   const ensureDockerReadyForLocalTask = useCallback(async (): Promise<boolean> => {
     if (!socket) {
       console.error("Cannot verify Docker status: socket not connected");
@@ -1229,7 +1276,7 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
+    <FloatingPane>
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">
@@ -1280,6 +1327,8 @@ function DashboardComponent() {
                 projectFullName={selectedRepoFullName}
               />
             ) : null}
+
+            <AnalyticsCards teamSlugOrId={teamSlugOrId} />
 
             {/* {shouldShowCloudRepoOnboarding && createEnvironmentSearch ? (
               <div className="mt-4 mb-4 flex items-start gap-2 rounded-xl border border-green-200/60 dark:border-green-500/40 bg-green-50/80 dark:bg-green-500/10 px-3 py-2 text-sm text-green-900 dark:text-green-100">

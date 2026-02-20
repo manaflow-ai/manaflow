@@ -3,9 +3,9 @@ import { Sandbox } from "e2b";
 export const DEFAULT_E2B_BASE_URL = "https://api.e2b.dev";
 
 /**
- * Default template ID for cmux devbox (with VSCode, VNC, Chrome CDP)
+ * Default template ID for cmux devbox (with VSCode, VNC, Chrome CDP, Docker)
  */
-export const CMUX_DEVBOX_TEMPLATE_ID = "pou9b3m5z92g2hafjxrl";
+export const CMUX_DEVBOX_TEMPLATE_ID = "mknr7v3io3fqwpn7pbnk"; // high tier (8 vCPU / 32 GB)
 
 /**
  * Configuration for creating an E2B client
@@ -245,7 +245,7 @@ export class E2BClient {
         envs: options.envs,
       });
 
-      // Set up default HTTP services for VSCode, worker, and VNC ports
+      // Set up default HTTP services for VSCode, worker, VNC, and Jupyter ports
       const httpServices: E2BHttpService[] = [
         {
           name: "vscode",
@@ -261,6 +261,11 @@ export class E2BClient {
           name: "vnc",
           port: 39380,
           url: `https://${sandbox.getHost(39380)}`,
+        },
+        {
+          name: "jupyter",
+          port: 8888,
+          url: `https://${sandbox.getHost(8888)}`,
         },
       ];
 
@@ -291,6 +296,11 @@ export class E2BClient {
           name: "vnc",
           port: 39380,
           url: `https://${sandbox.getHost(39380)}`,
+        },
+        {
+          name: "jupyter",
+          port: 8888,
+          url: `https://${sandbox.getHost(8888)}`,
         },
       ];
 

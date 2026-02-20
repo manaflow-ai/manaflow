@@ -36,7 +36,7 @@ type StartCodeReviewPayload = {
   modelConfig?: ModelConfig;
   /** Pre-fetched diffs from the client to avoid re-fetching from GitHub API */
   fileDiffs?: FileDiff[];
-  /** Model selection for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2") */
+  /** Model selection for heatmap review (e.g., "anthropic-haiku-4-5", "cmux-heatmap-2") */
   heatmapModel?: string;
   /** Language for tooltip text (e.g., "en", "zh-Hant", "ja") */
   tooltipLanguage?: string;

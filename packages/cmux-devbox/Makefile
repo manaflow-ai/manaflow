@@ -137,7 +137,7 @@ build-dev:
 # Override with: make build-staging STAGING_PROJECT_ID=... STAGING_CMUX_URL=... STAGING_CONVEX_URL=...
 STAGING_PROJECT_ID ?= $(STACK_PROJECT_ID)
 STAGING_PUBLISHABLE_KEY ?= $(STACK_PUBLISHABLE_CLIENT_KEY)
-STAGING_CMUX_URL ?= https://staging.cmux.sh
+STAGING_CMUX_URL ?= https://staging.manaflow.com
 # No default - must be explicitly set
 STAGING_CONVEX_URL ?=
 

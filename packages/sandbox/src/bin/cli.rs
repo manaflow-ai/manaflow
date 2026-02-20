@@ -3015,7 +3015,7 @@ fn get_cmux_api_url() -> String {
         #[cfg(not(debug_assertions))]
         {
             // Production
-            "https://cmux.sh".to_string()
+            "https://manaflow.com".to_string()
         }
     })
 }
@@ -3409,7 +3409,7 @@ async fn resolve_team(
 
     if teams.is_empty() {
         return Err(anyhow::anyhow!(
-            "No teams found. Create a team at https://cmux.sh or specify --team."
+            "No teams found. Create a team at https://manaflow.com or specify --team."
         ));
     }
 
@@ -3474,7 +3474,7 @@ async fn handle_auth_login() -> anyhow::Result<()> {
 
     let init_response: CliAuthInitResponse = response.json().await?;
 
-    // Step 2: Open browser (use cmux.sh for browser URL, not auth API)
+    // Step 2: Open browser (use manaflow.com for browser URL, not auth API)
     let cmux_url = get_cmux_api_url();
     let auth_url = format!(
         "{}/handler/cli-auth-confirm?login_code={}",

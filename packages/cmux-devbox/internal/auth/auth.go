@@ -49,7 +49,7 @@ const (
 var (
 	ProjectID      = "" // Stack Auth project ID
 	PublishableKey = "" // Stack Auth publishable client key
-	CmuxURL        = "" // cmux web app URL (e.g., https://cmux.sh)
+	CmuxURL        = "" // cmux web app URL (e.g., https://manaflow.com)
 	ConvexSiteURL  = "" // Convex HTTP site URL
 )
 

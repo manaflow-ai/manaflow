@@ -123,8 +123,11 @@ function sanitizeBranchName(input?: string | null): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
   let normalized = trimmed;
-  // Strip "cmux/" prefix for display
-  if (normalized.startsWith("cmux/")) {
+  // Strip "manaflow/" or legacy "cmux/" prefix for display
+  if (normalized.startsWith("manaflow/")) {
+    normalized = normalized.slice("manaflow/".length).trim();
+    if (!normalized) return null;
+  } else if (normalized.startsWith("cmux/")) {
     normalized = normalized.slice("cmux/".length).trim();
     if (!normalized) return null;
   }

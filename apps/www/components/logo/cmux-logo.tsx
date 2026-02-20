@@ -19,7 +19,7 @@ export default function CmuxLogo({
   from = "#00D4FF",
   to = "#7C3AED",
   showWordmark = true,
-  wordmarkText = "cmux",
+  wordmarkText = "Manaflow",
   wordmarkFill = "#fff",
   style,
   ...rest
@@ -30,8 +30,8 @@ export default function CmuxLogo({
   const titleId = label ? `cmuxTitle-${id}` : undefined;
 
   const css = `
-    .wordmark  { font-weight: 700; letter-spacing: 1.5px;
-                 font-family: "JetBrains Mono","SFMono-Regular","Menlo","Consolas","ui-monospace","Monaco","Courier New",monospace; }
+    .wordmark  { font-weight: 500; letter-spacing: 1.5px;
+                 font-family: var(--font-geist-sans),"Inter","system-ui","-apple-system","Segoe UI","Helvetica Neue","Arial",sans-serif; }
   `;
 
   const markTranslateX = 87.2;
@@ -133,8 +133,8 @@ export default function CmuxLogo({
           className="wordmark"
           fill={wordmarkFill}
           x={208}
-          y={162}
-          fontSize={108}
+          y={168}
+          fontSize={106}
         >
           {wordmarkText}
         </text>

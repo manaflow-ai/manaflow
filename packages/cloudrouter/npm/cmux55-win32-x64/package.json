@@ -1,0 +1,9 @@
+{
+  "name": "cmux55-win32-x64",
+  "version": "0.8.0-dev.2",
+  "description": "cmux55 binary for Windows x64",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "license": "MIT",
+  "files": ["bin"]
+}

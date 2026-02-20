@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Cross-platform generation of Electron app icons for macOS, Windows, and Linux.
-// - Reads the largest PNG from assets/cmux-logos/cmux.iconset as the source.
+// - Reads the largest PNG from assets/manaflow-logos/manaflow.iconset as the source.
 // - Produces build/icon.icns, build/icon.ico, and build/icon.png.
 
 import path from "node:path";
@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 
 const rootDir = path.resolve(__dirname, "..", "");
 const projectDir = path.resolve(__dirname, "..", "");
-const assetsIconsetDir = path.resolve(projectDir, "assets", "cmux-logos", "cmux.iconset");
+const assetsIconsetDir = path.resolve(projectDir, "assets", "manaflow-logos", "manaflow.iconset");
 const buildDir = path.resolve(projectDir, "build");
 
 async function ensureDir(p) {

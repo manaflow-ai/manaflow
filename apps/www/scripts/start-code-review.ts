@@ -10,7 +10,7 @@ import {
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
 
-const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/661";
+const DEFAULT_PR_URL = "https://github.com/manaflow-ai/manaflow/pull/661";
 type CliOptions = {
   prUrl: string;
   commitRef?: string;

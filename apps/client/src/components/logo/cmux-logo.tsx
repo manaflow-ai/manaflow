@@ -43,8 +43,8 @@ export default function CmuxLogo({
   const css = `
     .mark-line { stroke: url(#${gradId}); stroke-width: 14; stroke-linecap: round; }
     .mark-fill { fill: url(#${gradId}); }
-    .wordmark  { font-weight: 700; letter-spacing: 1.5px;
-                 font-family: "JetBrains Mono","SFMono-Regular","Menlo","Consolas","ui-monospace","Monaco","Courier New",monospace; }
+    .wordmark  { font-weight: 500; letter-spacing: 1.5px;
+                 font-family: var(--font-geist-sans),"Inter","system-ui","-apple-system","Segoe UI","Helvetica Neue","Arial",sans-serif; }
   `;
 
   return (
@@ -156,10 +156,10 @@ export default function CmuxLogo({
         <text
           className="wordmark fill-neutral-900 dark:fill-white"
           x={208}
-          y={162}
-          fontSize={108}
+          y={168}
+          fontSize={106}
         >
-          cmux
+          Manaflow
         </text>
       )}
 

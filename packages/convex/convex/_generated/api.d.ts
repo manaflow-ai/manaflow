@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as analytics from "../analytics.js";
 import type * as anthropic_http from "../anthropic_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
 import type * as bedrock_utils from "../bedrock_utils.js";
+import type * as cloudRouterSubscription from "../cloudRouterSubscription.js";
 import type * as cmux_http from "../cmux_http.js";
 import type * as codeReview from "../codeReview.js";
 import type * as codeReviewActions from "../codeReviewActions.js";
@@ -27,7 +29,6 @@ import type * as devbox_http from "../devbox_http.js";
 import type * as devbox_v2_http from "../devbox_v2_http.js";
 import type * as e2bInstances from "../e2bInstances.js";
 import type * as e2b_actions from "../e2b_actions.js";
-import type * as e2b_http from "../e2b_http.js";
 import type * as environmentSnapshots from "../environmentSnapshots.js";
 import type * as environments from "../environments.js";
 import type * as github from "../github.js";
@@ -50,6 +51,8 @@ import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as media_proxy_http from "../media_proxy_http.js";
 import type * as migrations from "../migrations.js";
+import type * as modalInstances from "../modalInstances.js";
+import type * as modal_actions from "../modal_actions.js";
 import type * as morphInstanceMaintenance from "../morphInstanceMaintenance.js";
 import type * as morphInstances from "../morphInstances.js";
 import type * as notifications_http from "../notifications_http.js";
@@ -79,6 +82,8 @@ import type * as userEditorSettings from "../userEditorSettings.js";
 import type * as users from "../users.js";
 import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
 import type * as users_utils_index from "../users/utils/index.js";
+import type * as warmPool from "../warmPool.js";
+import type * as warmPoolMaintenance from "../warmPoolMaintenance.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceSettings from "../workspaceSettings.js";
 
@@ -89,10 +94,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  analytics: typeof analytics;
   anthropic_http: typeof anthropic_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
   bedrock_utils: typeof bedrock_utils;
+  cloudRouterSubscription: typeof cloudRouterSubscription;
   cmux_http: typeof cmux_http;
   codeReview: typeof codeReview;
   codeReviewActions: typeof codeReviewActions;
@@ -108,7 +115,6 @@ declare const fullApi: ApiFromModules<{
   devbox_v2_http: typeof devbox_v2_http;
   e2bInstances: typeof e2bInstances;
   e2b_actions: typeof e2b_actions;
-  e2b_http: typeof e2b_http;
   environmentSnapshots: typeof environmentSnapshots;
   environments: typeof environments;
   github: typeof github;
@@ -131,6 +137,8 @@ declare const fullApi: ApiFromModules<{
   localWorkspaces: typeof localWorkspaces;
   media_proxy_http: typeof media_proxy_http;
   migrations: typeof migrations;
+  modalInstances: typeof modalInstances;
+  modal_actions: typeof modal_actions;
   morphInstanceMaintenance: typeof morphInstanceMaintenance;
   morphInstances: typeof morphInstances;
   notifications_http: typeof notifications_http;
@@ -160,6 +168,8 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
   "users/utils/index": typeof users_utils_index;
+  warmPool: typeof warmPool;
+  warmPoolMaintenance: typeof warmPoolMaintenance;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceSettings: typeof workspaceSettings;
 }>;

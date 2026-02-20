@@ -1,13 +1,13 @@
 {
   "name": "@cmux/client",
-  "version": "1.0.258",
+  "version": "1.0.269",
   "description": "cmux client application",
   "author": "cmux",
   "type": "module",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/manaflow-ai/cmux.git"
+    "url": "https://github.com/manaflow-ai/manaflow.git"
   },
   "main": "./out/main/index.js",
   "scripts": {
@@ -142,6 +142,7 @@
     "react-dom": "^19.2.2",
     "react-markdown": "^10.1.0",
     "react-textarea-autosize": "^8.5.9",
+    "recharts": "^3.7.0",
     "refractor": "^5.0.0",
     "remark-gfm": "^4.0.1",
     "sax": "^1.4.1",

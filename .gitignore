@@ -38,6 +38,15 @@ cmux-cli
 apps/devbox-v1/dba/bin/
 apps/devbox-v1/dba/dba
 apps/devbox-v1/dba/coverage.out
+packages/cloudrouter/npm/cloudrouter-darwin-arm64/cloudrouter
+packages/cloudrouter/npm/cloudrouter-darwin-x64/cloudrouter
+packages/cloudrouter/npm/cloudrouter-linux-arm64/cloudrouter
+packages/cloudrouter/npm/cloudrouter-linux-x64/cloudrouter
+packages/cloudrouter/npm/cloudrouter-win32-x64/cloudrouter.exe
+
+# Agent skills (local)
+.agents/skills/
+.claude/skills/
 .vercel
 scripts/vnc-proxy/vnc-proxy
 

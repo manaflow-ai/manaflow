@@ -3,11 +3,11 @@ import { normalizeOrigin } from "./normalize-origin";
 
 describe("normalizeOrigin", () => {
   it("upgrades non-local http origins to https", () => {
-    expect(normalizeOrigin("http://cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeOrigin("http://manaflow.com")).toBe("https://manaflow.com");
   });
 
   it("keeps https origins untouched", () => {
-    expect(normalizeOrigin("https://cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeOrigin("https://manaflow.com")).toBe("https://manaflow.com");
   });
 
   it("preserves localhost http origins", () => {
@@ -29,7 +29,7 @@ describe("normalizeOrigin", () => {
   });
 
   it("adds https:// prefix when protocol is missing", () => {
-    expect(normalizeOrigin("cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeOrigin("manaflow.com")).toBe("https://manaflow.com");
     expect(normalizeOrigin("example.vercel.app")).toBe(
       "https://example.vercel.app"
     );

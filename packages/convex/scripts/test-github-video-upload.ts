@@ -200,7 +200,7 @@ async function main() {
   console.log("=".repeat(60));
 
   const accessToken = process.env.GITHUB_TOKEN;
-  const repoFullName = process.env.REPO || "manaflow-ai/cmux";
+  const repoFullName = process.env.REPO || "manaflow-ai/manaflow";
   const videoFilePath = process.env.VIDEO_FILE;
   const prNumber = process.env.PR_NUMBER ? parseInt(process.env.PR_NUMBER, 10) : undefined;
 

@@ -49,7 +49,10 @@ import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { localCloudSyncManager } from "./localCloudSync";
-import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
+import {
+  generateBranchNamesFromDescription,
+  generatePRInfoAndBranchNames,
+} from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
@@ -927,45 +930,50 @@ export function setupSocketHandlers(
             // Determine number of agents to spawn
             const agentCount = taskData.selectedAgents?.length || 1;
 
-            // Generate PR title and branch names in a single API call
-            let generatedTitle: string | null = null;
-            let branchNames: string[] | undefined;
-            try {
-              const prInfo = await generatePRInfoAndBranchNames(
-                taskData.taskDescription,
-                agentCount,
-                safeTeam
-              );
-              generatedTitle = prInfo.prTitle;
-              branchNames = prInfo.branchNames;
+            // Generate branch names INSTANTLY (~0ms) from task description
+            // instead of waiting ~20s for AI-generated names
+            const branchNames = generateBranchNamesFromDescription(
+              taskData.taskDescription,
+              agentCount
+            );
+            serverLogger.info(
+              `[Server] Generated ${branchNames.length} deterministic branch names instantly`
+            );
 
-              // Persist PR title to Convex
-              await getConvex().mutation(api.tasks.setPullRequestTitle, {
-                teamSlugOrId: safeTeam,
-                id: taskId,
-                pullRequestTitle: generatedTitle,
-              });
-              serverLogger.info(
-                `[Server] Generated PR title and ${branchNames.length} branch names in single call`
-              );
-            } catch (e) {
-              serverLogger.error(
-                `[Server] Failed generating PR info:`,
-                e
-              );
-            }
+            // Fire-and-forget: generate AI PR title asynchronously
+            // This doesn't block agent spawning
+            void (async () => {
+              try {
+                const prInfo = await generatePRInfoAndBranchNames(
+                  taskData.taskDescription,
+                  agentCount,
+                  safeTeam
+                );
+                await getConvex().mutation(api.tasks.setPullRequestTitle, {
+                  teamSlugOrId: safeTeam,
+                  id: taskId,
+                  pullRequestTitle: prInfo.prTitle,
+                });
+                serverLogger.info(
+                  `[Server] AI-generated PR title saved: "${prInfo.prTitle}"`
+                );
+              } catch (e) {
+                serverLogger.error(
+                  `[Server] Failed generating PR title (non-blocking):`,
+                  e
+                );
+              }
+            })();
 
-            // Spawn all agents in parallel
+            // Spawn all agents immediately with deterministic branch names
             // - If taskRunIds provided, uses pre-created runs (fast path)
-            // - If branchNames generated above, passes them to avoid re-generating
             const agentResults = await spawnAllAgents(
               taskId,
               {
                 repoUrl: taskData.repoUrl,
                 branch: taskData.branch,
                 taskDescription: taskData.taskDescription,
-                prTitle: generatedTitle ?? undefined,
-                branchNames, // Pass pre-generated branch names to avoid second API call
+                branchNames,
                 selectedAgents: taskData.selectedAgents,
                 taskRunIds: taskData.taskRunIds,
                 isCloudMode: taskData.isCloudMode,
@@ -2777,7 +2785,7 @@ Please address the issue mentioned in the comment above.`;
         const { taskId } = await getConvex().mutation(api.tasks.create, {
           teamSlugOrId: safeTeam,
           text: formattedPrompt,
-          projectFullName: "manaflow-ai/cmux",
+          projectFullName: "manaflow-ai/manaflow",
         });
         // Create a comment reply with link to the task
         try {
@@ -2801,15 +2809,15 @@ Please address the issue mentioned in the comment above.`;
         const agentResults = await spawnAllAgents(
           taskId,
           {
-            repoUrl: "https://github.com/manaflow-ai/cmux.git",
+            repoUrl: "https://github.com/manaflow-ai/manaflow.git",
             branch: "main",
             taskDescription: formattedPrompt,
             isCloudMode: true,
             theme: "dark",
-            // Use provided selectedAgents or default to claude/sonnet-4 and codex/gpt-5.1-codex-high
+            // Use provided selectedAgents or default to claude/opus-4.6 and codex/gpt-5.3-codex-xhigh
             selectedAgents: selectedAgents || [
-              "claude/sonnet-4",
-              "codex/gpt-5.1-codex-high",
+              "claude/opus-4.6",
+              "codex/gpt-5.3-codex-xhigh",
             ],
           },
           safeTeam

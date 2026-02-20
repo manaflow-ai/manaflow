@@ -26,10 +26,10 @@ export default function HeatmapPage() {
     <div className="flex min-h-screen flex-col items-center bg-white p-4 pb-16 text-black sm:p-8 sm:pb-24">
       <div className="mx-auto mb-0 mt-8 max-w-3xl sm:mt-[70px]">
         <Link
-          href="https://cmux.dev"
+          href="https://manaflow.com"
           className="mb-6 inline-block text-sm text-neutral-600 hover:text-black sm:mb-8"
         >
-          ← Back to <span className="bg-sky-100 px-1">cmux</span>
+          ← Back to <span className="bg-sky-100 px-1">Manaflow</span>
         </Link>
         <h1 className="mb-6 text-2xl font-bold sm:mb-8 sm:text-3xl">
           A <span className="bg-yellow-200 px-1">heatmap</span> diff viewer for
@@ -86,13 +86,13 @@ export default function HeatmapPage() {
               /simonw/datasette/pull/2548
             </a>
             <a
-              href="https://0github.com/manaflow-ai/cmux/pull/666"
+              href="https://0github.com/manaflow-ai/manaflow/pull/666"
               target="_blank"
               rel="noopener noreferrer"
               className="break-all text-black underline"
             >
               https://<span className="bg-yellow-300 px-1">0github.com</span>
-              /manaflow-ai/cmux/pull/666
+              /manaflow-ai/manaflow/pull/666
             </a>
           </div>
         </div>
@@ -103,13 +103,13 @@ export default function HeatmapPage() {
           </p>
           <div className="flex flex-col gap-2">
             <a
-              href="https://github.com/manaflow-ai/cmux"
+              href="https://github.com/manaflow-ai/manaflow"
               target="_blank"
               rel="noopener noreferrer"
               className="break-all text-black underline"
             >
               https://github.com/manaflow-ai/
-              <span className="bg-blue-200 px-1">cmux</span>
+              <span className="bg-blue-200 px-1">manaflow</span>
             </a>
           </div>
         </div>

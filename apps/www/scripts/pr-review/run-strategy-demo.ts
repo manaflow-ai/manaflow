@@ -8,7 +8,7 @@ import type {
   StrategyProcessContext,
 } from "./core/types";
 
-const DIFF_URL = "https://patch-diff.githubusercontent.com/raw/manaflow-ai/cmux/pull/709.diff";
+const DIFF_URL = "https://patch-diff.githubusercontent.com/raw/manaflow-ai/manaflow/pull/709.diff";
 const TEMP_DIFF_PATH = "/tmp/pr-709.diff";
 const OUTPUT_ROOT = join(process.cwd(), "tmp", "strategy-demo");
 

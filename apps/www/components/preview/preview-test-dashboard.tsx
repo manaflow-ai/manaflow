@@ -152,10 +152,10 @@ function PreviewTestDashboardInner({
 
   // Client app base URL for workspace/browser links
   // In development, the client app runs on port 5173
-  // In production, workspace/browser are on www.cmux.sh (not preview.new)
+  // In production, workspace/browser are on www.manaflow.com (not preview.new)
   const clientBaseUrl = typeof window !== "undefined" && window.location.hostname === "localhost"
     ? "http://localhost:5173"
-    : "https://www.cmux.sh";
+    : "https://www.manaflow.com";
 
   // Fetch preview configs for this team
   const { data: configsData, isLoading: isLoadingConfigs } = useQuery({

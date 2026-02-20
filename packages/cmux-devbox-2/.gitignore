@@ -1,4 +1,0 @@
-# Build artifacts
-npm/*/bin/
-npm/cmux/lib/cmux
-npm/*/*.tgz

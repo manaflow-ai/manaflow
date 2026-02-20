@@ -1,0 +1,9 @@
+{
+  "name": "cmux55-darwin-arm64",
+  "version": "0.8.0-dev.2",
+  "description": "cmux55 binary for macOS ARM64",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "license": "MIT",
+  "files": ["bin"]
+}

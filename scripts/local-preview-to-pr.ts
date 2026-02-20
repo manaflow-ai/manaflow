@@ -124,9 +124,9 @@ Environment Variables:
   ANTHROPIC_API_KEY                   Required for screenshot capture
 
 Examples:
-  bun run scripts/local-preview-to-pr.ts --pr https://github.com/manaflow-ai/cmux/pull/123
-  bun run scripts/local-preview-to-pr.ts --pr https://github.com/manaflow-ai/cmux/pull/123 --skip-capture
-  bun run scripts/local-preview-to-pr.ts --pr https://github.com/manaflow-ai/cmux/pull/123 --dry-run
+  bun run scripts/local-preview-to-pr.ts --pr https://github.com/manaflow-ai/manaflow/pull/123
+  bun run scripts/local-preview-to-pr.ts --pr https://github.com/manaflow-ai/manaflow/pull/123 --skip-capture
+  bun run scripts/local-preview-to-pr.ts --pr https://github.com/manaflow-ai/manaflow/pull/123 --dry-run
 `);
 }
 

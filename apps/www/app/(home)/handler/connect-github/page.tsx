@@ -30,8 +30,8 @@ export default async function ConnectGitHubPage({
   if (githubAccount) {
     // Already connected - redirect to deep link immediately
     const deepLinkHref = teamSlugOrId
-      ? `cmux://github-connect-complete?team=${encodeURIComponent(teamSlugOrId)}`
-      : `cmux://github-connect-complete`;
+      ? `manaflow://github-connect-complete?team=${encodeURIComponent(teamSlugOrId)}`
+      : `manaflow://github-connect-complete`;
 
     // Use client component to trigger deep link
     return <ConnectGitHubClient href={deepLinkHref} alreadyConnected />;

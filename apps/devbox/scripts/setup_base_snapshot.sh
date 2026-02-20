@@ -771,6 +771,8 @@ async function handleRequest(req, res) {
     'https://cmux.sh',
     'https://www.cmux.sh',
     'https://staging.cmux.sh',
+    'https://manaflow.com',
+    'https://www.manaflow.com',
     'http://localhost:3000',
     'http://localhost:5173',
   ];

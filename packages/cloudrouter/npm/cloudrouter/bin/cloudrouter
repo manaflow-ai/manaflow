@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+const { execFileSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+// This is a placeholder that gets overwritten by postinstall.
+// If postinstall didn't run (e.g. npx), fall back to lib/cloudrouter binary.
+const libBinary = path.join(__dirname, "..", "lib", "cloudrouter");
+if (fs.existsSync(libBinary)) {
+  try {
+    const result = execFileSync(libBinary, process.argv.slice(2), {
+      stdio: "inherit",
+      env: process.env,
+    });
+    process.exit(0);
+  } catch (e) {
+    process.exit(e.status || 1);
+  }
+} else {
+  console.error("cloudrouter: binary not found. Try reinstalling: npm install -g @manaflow-ai/cloudrouter");
+  process.exit(1);
+}

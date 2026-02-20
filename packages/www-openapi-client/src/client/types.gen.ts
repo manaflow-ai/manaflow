@@ -425,7 +425,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_2w82l9mg' | 'snapshot_mr8wyw8u' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_vj6wyhkb' | 'snapshot_g3so7fvm' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -563,6 +563,17 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+};
+
+export type PrewarmSandboxResponse = {
+    id: string;
+    alreadyExists: boolean;
+};
+
+export type PrewarmSandboxBody = {
+    teamSlugOrId: string;
+    repoUrl?: string;
+    branch?: string;
 };
 
 export type UpdateSandboxEnvResponse = {
@@ -2470,6 +2481,33 @@ export type PostApiSandboxesStartResponses = {
 };
 
 export type PostApiSandboxesStartResponse = PostApiSandboxesStartResponses[keyof PostApiSandboxesStartResponses];
+
+export type PostApiSandboxesPrewarmData = {
+    body: PrewarmSandboxBody;
+    path?: never;
+    query?: never;
+    url: '/api/sandboxes/prewarm';
+};
+
+export type PostApiSandboxesPrewarmErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Failed to create prewarm entry
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesPrewarmResponses = {
+    /**
+     * Prewarm entry created (provisioning in background)
+     */
+    200: PrewarmSandboxResponse;
+};
+
+export type PostApiSandboxesPrewarmResponse = PostApiSandboxesPrewarmResponses[keyof PostApiSandboxesPrewarmResponses];
 
 export type PostApiSandboxesByIdEnvData = {
     body: UpdateSandboxEnvBody;

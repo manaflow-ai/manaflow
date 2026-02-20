@@ -59,10 +59,10 @@ export const pauseOldMorphInstances = internalAction({
     const now = Date.now();
     const thresholdMs = PAUSE_HOURS_THRESHOLD * MILLISECONDS_PER_HOUR;
 
-    // Filter for cmux ready instances older than the threshold
-    // Note: app can be "cmux", "cmux-dev", "cmux-preview", "cmux-automated-code-review", etc.
+    // Filter for manaflow/cmux ready instances older than the threshold
+    // Note: app can be "manaflow", "manaflow-dev", "cmux", "cmux-dev", "cmux-preview", etc.
     const staleActiveInstances = instances
-      .filter((instance) => instance.metadata?.app?.startsWith("cmux"))
+      .filter((instance) => instance.metadata?.app?.startsWith("manaflow") || instance.metadata?.app?.startsWith("cmux"))
       .filter((instance) => instance.status === "ready")
       .filter((instance) => {
         const createdMs = instance.created * 1000;
@@ -113,6 +113,13 @@ export const pauseOldMorphInstances = internalAction({
           await ctx.runMutation(internal.morphInstances.recordPauseInternal, {
             instanceId: instance.id,
           });
+
+          // If this was a warm pool instance, remove it from the pool
+          if (instance.metadata?.app === "cmux-warm-pool") {
+            await ctx.runMutation(internal.warmPool.removeByInstanceId, {
+              instanceId: instance.id,
+            });
+          }
 
           console.log(`[morphInstanceMaintenance] Paused ${instance.id}`);
           return instance.id;
@@ -189,10 +196,10 @@ export const stopOldMorphInstances = internalAction({
     const now = Date.now();
     const thresholdMs = STOP_DAYS_THRESHOLD * 24 * MILLISECONDS_PER_HOUR;
 
-    // Filter for cmux paused instances only (we don't stop running instances or non-cmux instances)
-    // Note: app can be "cmux", "cmux-dev", "cmux-preview", "cmux-automated-code-review", etc.
+    // Filter for manaflow/cmux paused instances only (we don't stop running instances)
+    // Note: app can be "manaflow", "manaflow-dev", "cmux", "cmux-dev", "cmux-preview", etc.
     const pausedInstances = instances
-      .filter((instance) => instance.metadata?.app?.startsWith("cmux"))
+      .filter((instance) => instance.metadata?.app?.startsWith("manaflow") || instance.metadata?.app?.startsWith("cmux"))
       .filter((instance) => instance.status === "paused");
 
     if (pausedInstances.length === 0) {

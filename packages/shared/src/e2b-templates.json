@@ -1,21 +1,56 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-01-30T00:00:00Z",
+  "updatedAt": "2026-02-13T00:00:00Z",
   "templates": [
     {
-      "templateId": "cmux-devbox-base",
-      "label": "Standard workspace",
+      "templateId": "cmux-devbox-low",
+      "label": "Low (4 vCPU / 16 GB)",
       "cpu": "4 vCPU",
-      "memory": "8 GB RAM",
+      "memory": "16 GB RAM",
       "disk": "20 GB SSD",
       "versions": [
         {
           "version": 1,
-          "e2bTemplateId": "base",
-          "capturedAt": "2026-01-30T00:00:00Z"
+          "e2bTemplateId": "g1gnzyvsu0xrjf66132t",
+          "capturedAt": "2026-02-13T00:00:00Z"
         }
       ],
-      "description": "Base E2B template for cmux workspaces. Uses default E2B base template until custom template is created."
+      "description": "E2B workspace with 4 vCPU and 16 GB RAM. Good for lightweight tasks."
+    },
+    {
+      "templateId": "cmux-devbox-mid",
+      "label": "Mid (6 vCPU / 24 GB)",
+      "cpu": "6 vCPU",
+      "memory": "24 GB RAM",
+      "disk": "20 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "e2bTemplateId": "6t6f1fqioqg77086y1ev",
+          "capturedAt": "2026-02-13T00:00:00Z"
+        }
+      ],
+      "description": "E2B workspace with 6 vCPU and 24 GB RAM. Balanced for most workloads."
+    },
+    {
+      "templateId": "cmux-devbox-docker",
+      "label": "High (8 vCPU / 32 GB)",
+      "cpu": "8 vCPU",
+      "memory": "32 GB RAM",
+      "disk": "20 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "e2bTemplateId": "pou9b3m5z92g2hafjxrl",
+          "capturedAt": "2026-01-30T00:00:00Z"
+        },
+        {
+          "version": 2,
+          "e2bTemplateId": "mknr7v3io3fqwpn7pbnk",
+          "capturedAt": "2026-02-13T00:00:00Z"
+        }
+      ],
+      "description": "E2B workspace with 8 vCPU and 32 GB RAM. Best for heavy workloads."
     }
   ]
 }

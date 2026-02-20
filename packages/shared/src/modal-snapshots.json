@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-02-13T06:03:13.951Z",
+  "snapshots": [
+    {
+      "snapshotId": "im-WjlWgd7XETGXXz02cmGEZV",
+      "version": 1,
+      "image": "python:3.13-slim",
+      "capturedAt": "2026-02-12T00:00:00Z"
+    },
+    {
+      "snapshotId": "im-4g80HV8gVjfm0e2CK7BGX0",
+      "version": 2,
+      "image": "python:3.13-slim",
+      "capturedAt": "2026-02-13T05:33:18.785Z"
+    },
+    {
+      "snapshotId": "im-PvH0D7A4dSsqvqgsHBzsj5",
+      "version": 3,
+      "image": "python:3.13-slim",
+      "capturedAt": "2026-02-13T06:03:13.951Z"
+    }
+  ]
+}

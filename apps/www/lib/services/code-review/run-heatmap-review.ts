@@ -70,7 +70,7 @@ export async function runHeatmapReview(
     prUrl: config.prUrl,
   });
 
-  // Determine the effective model configuration (defaults to Anthropic Opus 4.5)
+  // Determine the effective model configuration (defaults to Anthropic Haiku 4.5)
   const effectiveModelConfig: ModelConfig =
     config.modelConfig ?? getDefaultHeatmapModelConfig();
 

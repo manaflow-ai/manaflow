@@ -342,8 +342,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         teamId: taskRun.teamId,
       });
       const teamSlug = team?.slug ?? taskRun.teamId;
-      const workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
-      const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
+      const workspaceUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}`;
+      const devServerUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
       // Determine which comment to update:
       // 1. Use stored githubCommentId if available - update it
