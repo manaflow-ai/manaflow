@@ -5,10 +5,6 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import {
-  ACTIVE_TERMINAL_SCROLLBACK,
-  INACTIVE_TERMINAL_SCROLLBACK,
-} from "@cmux/shared/terminal-config";
 import clsx from "clsx";
 import { useXTerm } from "./xterm/use-xterm";
 
@@ -59,23 +55,9 @@ export function TaskRunTerminalSession({
 
   const fitAddonRef = useRef<FitAddon | null>(null);
 
-  useEffect(() => {
-    if (!terminal) {
-      return;
-    }
-
-    const nextScrollback = isActive
-      ? ACTIVE_TERMINAL_SCROLLBACK
-      : INACTIVE_TERMINAL_SCROLLBACK;
-
-    if (terminal.options.scrollback !== nextScrollback) {
-      terminal.options.scrollback = nextScrollback;
-    }
-
-    if (!isActive) {
-      terminal.clear();
-    }
-  }, [isActive, terminal]);
+  // Scrollback is always kept at the active level so content is preserved
+  // when switching tabs. The terminal is never cleared on deactivation;
+  // the WebSocket stays connected and xterm keeps its buffer up to date.
 
   useEffect(() => {
     if (!terminal) {
@@ -189,7 +171,7 @@ export function TaskRunTerminalSession({
   }, []);
 
   useEffect(() => {
-    if (!terminal || !isActive) {
+    if (!terminal) {
       return;
     }
 
@@ -200,7 +182,7 @@ export function TaskRunTerminalSession({
     return () => {
       disposable.dispose();
     };
-  }, [isActive, queueResize, terminal]);
+  }, [queueResize, terminal]);
 
   // Observe container resizes and propagate them to the backend
   useEffect(() => {
@@ -234,15 +216,12 @@ export function TaskRunTerminalSession({
     };
   }, [containerRef, isActive, measureAndQueueResize]);
 
-  // Manage WebSocket lifecycle
+  // Manage WebSocket lifecycle – the connection stays alive regardless of tab
+  // visibility so the terminal buffer is always up to date when the user
+  // switches back.
   useEffect(() => {
     if (!terminal) {
       notifyConnectionState("connecting");
-      return undefined;
-    }
-
-    if (!isActive) {
-      notifyConnectionState("closed");
       return undefined;
     }
 
@@ -313,7 +292,6 @@ export function TaskRunTerminalSession({
   }, [
     baseUrl,
     flushPendingResize,
-    isActive,
     measureAndQueueResize,
     notifyConnectionState,
     terminal,
@@ -356,7 +334,7 @@ export function TaskRunTerminalSession({
 
   return (
     <div
-      className={clsx("relative w-full h-full", { hidden: !isActive })}
+      className={clsx("absolute inset-0", { invisible: !isActive })}
       role="tabpanel"
       aria-hidden={!isActive}
       data-terminal-id={terminalId}
