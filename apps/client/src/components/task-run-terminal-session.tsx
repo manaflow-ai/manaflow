@@ -47,6 +47,10 @@ export function TaskRunTerminalSession({
   useEffect(() => {
     callbackRef.current = onConnectionStateChange;
   }, [onConnectionStateChange]);
+  const isActiveRef = useRef(isActive);
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
 
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>(
     "connecting"
@@ -70,10 +74,6 @@ export function TaskRunTerminalSession({
 
     if (terminal.options.scrollback !== nextScrollback) {
       terminal.options.scrollback = nextScrollback;
-    }
-
-    if (!isActive) {
-      terminal.clear();
     }
   }, [isActive, terminal]);
 
@@ -241,11 +241,6 @@ export function TaskRunTerminalSession({
       return undefined;
     }
 
-    if (!isActive) {
-      notifyConnectionState("closed");
-      return undefined;
-    }
-
     let cancelled = false;
     const base = new URL(baseUrl);
     const wsUrl = new URL(`/sessions/${terminalId}/ws`, base);
@@ -270,9 +265,11 @@ export function TaskRunTerminalSession({
         return;
       }
       notifyConnectionState("open");
-      // Ensure terminal dimensions are synchronised once the socket is ready
-      measureAndQueueResize();
-      flushPendingResize();
+      if (isActiveRef.current) {
+        // Ensure terminal dimensions are synchronised once the socket is ready
+        measureAndQueueResize();
+        flushPendingResize();
+      }
     };
 
     const handleClose = () => {
@@ -313,7 +310,6 @@ export function TaskRunTerminalSession({
   }, [
     baseUrl,
     flushPendingResize,
-    isActive,
     measureAndQueueResize,
     notifyConnectionState,
     terminal,
@@ -333,6 +329,7 @@ export function TaskRunTerminalSession({
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (terminal && isActive) {
+            terminal.refresh(0, Math.max(0, terminal.rows - 1));
             terminal.focus();
           }
         });
