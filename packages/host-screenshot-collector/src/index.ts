@@ -1332,7 +1332,7 @@ After capturing screenshots/videos, briefly state what you captured and leave th
       for await (const message of query({
         prompt,
         options: {
-          model: "claude-opus-4-5-20251101",
+          model: "claude-sonnet-4-6",
           mcpServers: {
             chrome: {
               command: "bunx",
