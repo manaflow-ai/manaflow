@@ -420,6 +420,7 @@ export async function runSimpleAnthropicReviewStream(
             prompt,
             temperature: 0,
             maxRetries: 2,
+            abortSignal: signal,
           });
 
           for await (const delta of stream.textStream) {
