@@ -7,6 +7,8 @@
       "cpu-features",
       "@octokit/request",
       "@cmux/e2b-client",
+      "@cmux/vercel-client",
+      "@vercel/sandbox",
       "e2b",
       "modal"
     ],
