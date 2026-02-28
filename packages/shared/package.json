@@ -118,6 +118,18 @@
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
     },
+    "./providers/anthropic/configs": {
+      "import": "./src/providers/anthropic/configs.ts",
+      "types": "./src/providers/anthropic/configs.ts"
+    },
+    "./providers/anthropic/environment": {
+      "import": "./src/providers/anthropic/environment.ts",
+      "types": "./src/providers/anthropic/environment.ts"
+    },
+    "./providers/openai/environment": {
+      "import": "./src/providers/openai/environment.ts",
+      "types": "./src/providers/openai/environment.ts"
+    },
     "./screenshots/sanitize-markdown": {
       "import": "./src/screenshots/sanitize-markdown.ts",
       "types": "./src/screenshots/sanitize-markdown.ts"

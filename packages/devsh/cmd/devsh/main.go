@@ -24,6 +24,12 @@ func main() {
 	cli.SetBuildMode(Mode)
 	auth.SetBuildMode(Mode)
 
+	// In dev mode, load .env file early so all packages (pvelxc, etc.)
+	// can read env vars like PVE_API_URL, PVE_API_TOKEN from .env
+	if Mode == "dev" {
+		auth.LoadEnvFile()
+	}
+
 	// Set DEVSH_DEV for IsDev detection (check new and legacy env vars)
 	if os.Getenv("DEVSH_DEV") == "" && os.Getenv("DEVSH_PROD") == "" &&
 		os.Getenv("CMUX_DEVBOX_DEV") == "" && os.Getenv("CMUX_DEVBOX_PROD") == "" {

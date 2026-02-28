@@ -1,10 +1,10 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { LucideIcon } from "lucide-react";
-import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Brain, Plus, Grid2x2, Columns2, Rows2, PanelsLeftBottom, PanelsRightBottom, PanelsTopLeft, Trash2, Square } from "lucide-react";
+import { X, RotateCcw, GripVertical, Plus, Grid2x2, Columns2, Rows2, PanelsLeftBottom, PanelsRightBottom, PanelsTopLeft, Trash2, Square } from "lucide-react";
 import clsx from "clsx";
 import type { PanelConfig, PanelType, LayoutMode, PanelPosition } from "@/lib/panel-config";
-import { PANEL_LABELS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions, getAvailablePanels, removePanelFromAllPositions } from "@/lib/panel-config";
+import { PANEL_LABELS, PANEL_ICON_COMPONENTS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions, getAvailablePanels, removePanelFromAllPositions } from "@/lib/panel-config";
 
 interface PanelConfigModalProps {
   open: boolean;
@@ -12,15 +12,6 @@ interface PanelConfigModalProps {
   config: PanelConfig;
   onChange: (config: PanelConfig) => void;
 }
-
-const PANEL_ICONS_MAP: Record<PanelType, LucideIcon> = {
-  chat: MessageSquare,
-  workspace: Code2,
-  terminal: TerminalSquare,
-  browser: Globe2,
-  gitDiff: GitCompare,
-  memory: Brain,
-};
 
 interface LayoutIconConfig {
   Icon: LucideIcon;
@@ -138,7 +129,7 @@ export function PanelConfigModal({ open, onOpenChange, config, onChange }: Panel
 
     const panelType = currentLayout[position];
     const panelLabel = panelType ? PANEL_LABELS[panelType] : "Empty";
-    const PanelIcon = panelType ? PANEL_ICONS_MAP[panelType] : Plus;
+    const PanelIcon = panelType ? PANEL_ICON_COMPONENTS[panelType] : Plus;
     const isDragging = draggedFrom === position;
     const isDraggable = Boolean(panelType);
     const isAddMenuOpen = showAddMenu === position;
@@ -221,7 +212,7 @@ export function PanelConfigModal({ open, onOpenChange, config, onChange }: Panel
                   />
                   <div className="absolute left-1/2 -translate-x-1/2 top-full z-[101] mt-2 w-40 rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
                     {availablePanels.map((availablePanelType) => {
-                      const Icon = PANEL_ICONS_MAP[availablePanelType];
+                      const Icon = PANEL_ICON_COMPONENTS[availablePanelType];
                       return (
                         <button
                           key={availablePanelType}

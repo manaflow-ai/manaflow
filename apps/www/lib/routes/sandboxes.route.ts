@@ -47,7 +47,17 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import { AGENT_CONFIGS, type EnvironmentResult } from "@cmux/shared/agentConfig";
+import { getClaudeEnvironment } from "@cmux/shared/providers/anthropic/environment";
+import { createApplyClaudeApiKeys } from "@cmux/shared/providers/anthropic/configs";
+import {
+  getOpenAIEnvironment,
+  applyCodexApiKeys,
+} from "@cmux/shared/providers/openai/environment";
+import {
+  getProviderRegistry,
+  type ProviderOverride,
+} from "@cmux/shared/provider-registry";
 
 /**
  * Create a MorphCloudClient instance.
@@ -239,6 +249,241 @@ function getSandboxStartErrorMessage(error: unknown): string {
   }
 
   return baseMessage;
+}
+
+/**
+ * Write auth files to a sandbox instance.
+ * Decodes base64 content, shell-escapes it, and writes with proper permissions.
+ */
+async function writeFilesToSandbox(
+  instance: SandboxInstance,
+  files: EnvironmentResult["files"],
+): Promise<void> {
+  for (const file of files) {
+    const destPath = file.destinationPath.replace("$HOME", "/root");
+    const content = Buffer.from(file.contentBase64, "base64").toString("utf-8");
+    // Only escape single quotes for shell - backslashes are literal in single-quoted strings
+    const escapedContent = content.replace(/'/g, "'\\''");
+    const dirPath = destPath.substring(0, destPath.lastIndexOf("/"));
+    await instance.exec(`mkdir -p '${dirPath}'`);
+    await instance.exec(`printf '%s' '${escapedContent}' > '${destPath}'`);
+    if (file.mode) {
+      await instance.exec(`chmod ${file.mode} '${destPath}'`);
+    }
+  }
+}
+
+/**
+ * Apply environment result (files, env vars, startup commands) to a sandbox.
+ */
+async function applyEnvironmentResult(
+  instance: SandboxInstance,
+  envResult: Partial<EnvironmentResult>,
+  label: string,
+): Promise<void> {
+  // Write files
+  if (envResult.files && envResult.files.length > 0) {
+    await writeFilesToSandbox(instance, envResult.files);
+    console.log(`[${label}] Wrote ${envResult.files.length} auth files`);
+  }
+
+  // Apply environment variables
+  if (envResult.env && Object.keys(envResult.env).length > 0) {
+    const envContent = Object.entries(envResult.env)
+      .map(([k, v]) => `${k}="${v}"`)
+      .join("\n");
+    const encodedEnv = encodeEnvContentForEnvctl(envContent);
+    await instance.exec(envctlLoadCommand(encodedEnv));
+    console.log(
+      `[${label}] Applied ${Object.keys(envResult.env).length} env vars`,
+    );
+  }
+
+  // Unset env vars
+  if (envResult.unsetEnv && envResult.unsetEnv.length > 0) {
+    for (const varName of envResult.unsetEnv) {
+      await instance.exec(`envctl unset ${varName} 2>/dev/null || true`);
+    }
+  }
+
+  // Run startup commands
+  if (
+    "startupCommands" in envResult &&
+    envResult.startupCommands &&
+    envResult.startupCommands.length > 0
+  ) {
+    for (const cmd of envResult.startupCommands) {
+      await instance.exec(cmd);
+    }
+  }
+}
+
+/**
+ * Set up provider auth (Claude + Codex) on a sandbox instance.
+ * Fetches API keys, provider overrides, and workspace settings from Convex,
+ * then applies full environment setup for both Claude and Codex CLIs.
+ *
+ * This is non-fatal: failures are logged but do not block sandbox creation.
+ */
+async function setupProviderAuth(
+  instance: SandboxInstance,
+  convex: ReturnType<typeof getConvex>,
+  options: {
+    teamSlugOrId: string;
+    taskRunId?: string;
+    taskRunJwt?: string;
+    callbackUrl: string;
+  },
+): Promise<{ providers: string[] }> {
+  const configuredProviders: string[] = [];
+
+  // Fetch API keys, provider overrides, and workspace settings in parallel
+  const [apiKeys, providerOverrides, workspaceSettings] = await Promise.all([
+    convex.query(api.apiKeys.getAllForAgents, {
+      teamSlugOrId: options.teamSlugOrId,
+    }),
+    convex
+      .query(api.providerOverrides.getForTeam, {
+        teamSlugOrId: options.teamSlugOrId,
+      })
+      .catch((err: unknown) => {
+        console.error(
+          "[setupProviderAuth] Failed to fetch provider overrides",
+          err,
+        );
+        return [];
+      }),
+    convex
+      .query(api.workspaceSettings.get, {
+        teamSlugOrId: options.teamSlugOrId,
+      })
+      .catch((err: unknown) => {
+        console.error(
+          "[setupProviderAuth] Failed to fetch workspace settings",
+          err,
+        );
+        return null;
+      }),
+  ]);
+
+  // Resolve provider overrides into the shape expected by environment functions
+  const registry = getProviderRegistry();
+  const overrideMapped: ProviderOverride[] = providerOverrides.map(
+    (o): ProviderOverride => ({
+      teamId: String(o.teamId),
+      providerId: o.providerId,
+      baseUrl: o.baseUrl,
+      apiFormat: o.apiFormat,
+      apiKeyEnvVar: o.apiKeyEnvVar,
+      customHeaders: o.customHeaders,
+      fallbacks: o.fallbacks,
+      enabled: o.enabled,
+    }),
+  );
+
+  // --- Claude (Anthropic) auth ---
+  try {
+    const hasClaudeKeys =
+      apiKeys.ANTHROPIC_API_KEY || apiKeys.CLAUDE_CODE_OAUTH_TOKEN;
+    if (hasClaudeKeys) {
+      const resolvedClaude = registry.resolveForAgent(
+        "claude/opus-4.6",
+        overrideMapped,
+      );
+
+      // Run full environment setup (hooks, memory, MCP, settings.json)
+      // If no taskRunJwt, bypass proxy to avoid empty x-cmux-token header failures
+      const shouldBypassProxy =
+        workspaceSettings?.bypassAnthropicProxy ?? !options.taskRunJwt;
+      const claudeEnvResult = await getClaudeEnvironment({
+        taskRunId: options.taskRunId || "",
+        taskRunJwt: options.taskRunJwt || "",
+        prompt: "",
+        apiKeys,
+        callbackUrl: options.callbackUrl,
+        workspaceSettings: {
+          bypassAnthropicProxy: shouldBypassProxy,
+        },
+        providerConfig: resolvedClaude?.isOverridden
+          ? {
+              baseUrl: resolvedClaude.baseUrl,
+              customHeaders: resolvedClaude.customHeaders,
+              apiFormat: resolvedClaude.apiFormat,
+              isOverridden: true,
+            }
+          : undefined,
+      });
+
+      await applyEnvironmentResult(
+        instance,
+        claudeEnvResult,
+        "setupProviderAuth:claude",
+      );
+
+      // Also apply API keys (OAuth token or API key injection)
+      const applyClaudeKeys = createApplyClaudeApiKeys();
+      const claudeKeysResult = await applyClaudeKeys(apiKeys);
+      await applyEnvironmentResult(
+        instance,
+        claudeKeysResult,
+        "setupProviderAuth:claude-keys",
+      );
+
+      configuredProviders.push("claude");
+      console.log("[setupProviderAuth] Claude provider auth configured");
+    }
+  } catch (error) {
+    console.error("[setupProviderAuth] Failed to set up Claude auth:", error);
+  }
+
+  // --- Codex (OpenAI) auth ---
+  try {
+    const hasCodexKeys = apiKeys.OPENAI_API_KEY || apiKeys.CODEX_AUTH_JSON;
+    if (hasCodexKeys) {
+      const resolvedOpenAI = registry.resolveForAgent(
+        "codex/gpt-5.2-codex-xhigh",
+        overrideMapped,
+      );
+
+      // Run full environment setup (notify hooks, config.toml, memory, MCP)
+      const codexEnvResult = await getOpenAIEnvironment({
+        taskRunId: options.taskRunId || "",
+        taskRunJwt: options.taskRunJwt || "",
+        prompt: "",
+        apiKeys,
+        callbackUrl: options.callbackUrl,
+        providerConfig: resolvedOpenAI?.isOverridden
+          ? {
+              baseUrl: resolvedOpenAI.baseUrl,
+              customHeaders: resolvedOpenAI.customHeaders,
+              apiFormat: resolvedOpenAI.apiFormat,
+              isOverridden: true,
+            }
+          : undefined,
+      });
+
+      await applyEnvironmentResult(
+        instance,
+        codexEnvResult,
+        "setupProviderAuth:codex",
+      );
+
+      // Also apply API keys (auth.json or env var injection)
+      const codexKeysResult = applyCodexApiKeys(apiKeys);
+      await applyEnvironmentResult(
+        instance,
+        codexKeysResult,
+        "setupProviderAuth:codex-keys",
+      );
+
+      configuredProviders.push("codex");
+      console.log("[setupProviderAuth] Codex provider auth configured");
+    }
+  } catch (error) {
+    console.error("[setupProviderAuth] Failed to set up Codex auth:", error);
+  }
+
+  return { providers: configuredProviders };
 }
 
 /**
@@ -836,6 +1081,44 @@ sandboxesRouter.openapi(
         }
       }
 
+      // Fetch user API keys early so they're available for provider auth and agent startup
+      const userApiKeysPromise = convex
+        .query(api.apiKeys.getAllForAgents, {
+          teamSlugOrId: body.teamSlugOrId,
+        })
+        .catch((err: unknown) => {
+          console.error(
+            "[sandboxes.start] Failed to fetch API keys (non-fatal):",
+            err,
+          );
+          return {} as Record<string, string>;
+        });
+
+      // Set up provider auth (Claude + Codex) so CLIs work out of the box
+      // This runs for all sandbox starts (web UI cloud workspace, task create, devsh)
+      const providerAuthPromise = (async () => {
+        try {
+          const callbackUrl =
+            env.NEXT_PUBLIC_CONVEX_URL || "http://localhost:9779";
+          const result = await setupProviderAuth(instance, convex, {
+            teamSlugOrId: body.teamSlugOrId,
+            taskRunId: body.taskRunId || undefined,
+            taskRunJwt: body.taskRunJwt || undefined,
+            callbackUrl,
+          });
+          if (result.providers.length > 0) {
+            console.log(
+              `[sandboxes.start] Provider auth configured: ${result.providers.join(", ")}`,
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Provider auth setup failed (non-fatal):",
+            error,
+          );
+        }
+      })();
+
       const configureGitIdentityTask = gitIdentityPromise
         .then(([who, gh]) => {
           const { name, email } = selectGitIdentity(who, gh);
@@ -1076,6 +1359,9 @@ sandboxesRouter.openapi(
       // If agent name and prompt are provided, start the agent in the sandbox
       // This is used by CLI task creation to spawn agents without the desktop app
       if (body.agentName && body.prompt) {
+        // Ensure provider auth is complete before starting the agent
+        await providerAuthPromise;
+
         const agentConfig = AGENT_CONFIGS.find(
           (a) => a.name === body.agentName
         );
@@ -1088,70 +1374,20 @@ sandboxesRouter.openapi(
           if (agentConfig.environment) {
             try {
               const callbackUrl = env.NEXT_PUBLIC_CONVEX_URL || "http://localhost:9779";
+              const resolvedApiKeys = await userApiKeysPromise;
               const envResult = await agentConfig.environment({
                 taskRunId: body.taskRunId || "",
                 taskRunJwt: body.taskRunJwt || "",
                 prompt: body.prompt,
-                apiKeys: {}, // API keys are configured via envctl/environment
+                apiKeys: resolvedApiKeys,
                 callbackUrl,
               });
 
-              // Write files to sandbox
-              if (envResult.files && envResult.files.length > 0) {
-                for (const file of envResult.files) {
-                  const destPath = file.destinationPath.replace(
-                    "$HOME",
-                    "/root"
-                  );
-                  // Decode base64 content and write to sandbox
-                  const content = Buffer.from(
-                    file.contentBase64,
-                    "base64"
-                  ).toString("utf-8");
-                  const escapedContent = content
-                    .replace(/\\/g, "\\\\")
-                    .replace(/'/g, "'\\''");
-                  const dirPath = destPath.substring(
-                    0,
-                    destPath.lastIndexOf("/")
-                  );
-                  await instance.exec(`mkdir -p '${dirPath}'`);
-                  await instance.exec(
-                    `printf '%s' '${escapedContent}' > '${destPath}'`
-                  );
-                  if (file.mode) {
-                    await instance.exec(`chmod ${file.mode} '${destPath}'`);
-                  }
-                  console.log(
-                    `[sandboxes.start] Wrote agent file: ${destPath}`
-                  );
-                }
-              }
-
-              // Apply environment variables
-              if (envResult.env && Object.keys(envResult.env).length > 0) {
-                const envContent = Object.entries(envResult.env)
-                  .map(([k, v]) => `${k}="${v}"`)
-                  .join("\n");
-                const encodedEnv = encodeEnvContentForEnvctl(envContent);
-                await instance.exec(envctlLoadCommand(encodedEnv));
-                console.log(
-                  `[sandboxes.start] Applied ${Object.keys(envResult.env).length} agent env vars`
-                );
-              }
-
-              // Run startup commands (these set up directories, etc.)
-              if (
-                envResult.startupCommands &&
-                envResult.startupCommands.length > 0
-              ) {
-                for (const cmd of envResult.startupCommands) {
-                  console.log(
-                    `[sandboxes.start] Running startup command: ${cmd.substring(0, 100)}...`
-                  );
-                  await instance.exec(cmd);
-                }
-              }
+              await applyEnvironmentResult(
+                instance,
+                envResult,
+                "sandboxes.start:agent-env",
+              );
             } catch (envError) {
               console.error(
                 `[sandboxes.start] Failed to set up agent environment:`,
@@ -1233,6 +1469,9 @@ sandboxesRouter.openapi(
         }
       }
 
+      // Ensure provider auth completes before returning
+      await providerAuthPromise;
+
       return c.json({
         instanceId: instance.id,
         vscodeUrl: vscodeService.url,
@@ -1254,6 +1493,139 @@ sandboxesRouter.openapi(
       // Provide a more descriptive error message without leaking sensitive details
       const errorMessage = getSandboxStartErrorMessage(error);
       return c.text(errorMessage, 500);
+    }
+  },
+);
+
+// Set up provider auth (Claude + Codex) on an existing sandbox instance.
+// Used by `devsh start` after VM creation, and other cases where a sandbox
+// was created without provider auth.
+
+const SetupProvidersBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    taskRunId: z.string().optional(),
+    taskRunJwt: z.string().optional(),
+  })
+  .openapi("SetupProvidersBody");
+
+const SetupProvidersResponse = z
+  .object({
+    success: z.boolean(),
+    providers: z.array(z.string()),
+  })
+  .openapi("SetupProvidersResponse");
+
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/setup-providers",
+    tags: ["Sandboxes"],
+    summary: "Set up provider auth on an existing sandbox",
+    description:
+      "Configures Claude and Codex CLI auth (API keys, OAuth tokens, settings files) " +
+      "on an existing sandbox instance so coding CLIs work out of the box.",
+    request: {
+      params: z.object({
+        id: z.string().openapi({ description: "Sandbox instance ID" }),
+      }),
+      body: {
+        content: {
+          "application/json": {
+            schema: SetupProvidersBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: SetupProvidersResponse,
+          },
+        },
+        description: "Provider auth configured",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "Instance not found" },
+      500: { description: "Failed to set up providers" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { id: instanceId } = c.req.valid("param");
+    const body = c.req.valid("json");
+
+    try {
+      const convex = getConvex({ accessToken });
+
+      // Verify team access
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      // Get the instance via provider dispatch
+      const morphClient = getMorphClientOrNull();
+      const instance = await tryGetInstanceById(
+        instanceId,
+        morphClient,
+        "setup-providers",
+      );
+      if (!instance) {
+        return c.text("Instance not found", 404);
+      }
+
+      // Verify sandbox ownership - check activity record first, fall back to instance metadata
+      if (isPveLxcInstanceId(instanceId)) {
+        const activity = await convex.query(api.sandboxInstances.getActivity, {
+          instanceId,
+        });
+        // Require activity record for PVE instances to prove ownership
+        // This prevents users from targeting arbitrary PVE instance IDs
+        if (!activity) {
+          return c.text("Forbidden: No ownership record for this instance", 403);
+        }
+        if (activity.teamId && activity.teamId !== team.uuid) {
+          return c.text("Forbidden", 403);
+        }
+      } else {
+        // For Morph instances, verify team ownership via metadata
+        const metadataTeamId = getInstanceTeamId(instance);
+        if (metadataTeamId && metadataTeamId !== team.uuid) {
+          return c.text("Forbidden", 403);
+        }
+      }
+
+      const callbackUrl =
+        env.NEXT_PUBLIC_CONVEX_URL || "http://localhost:9779";
+      const result = await setupProviderAuth(instance, convex, {
+        teamSlugOrId: body.teamSlugOrId,
+        taskRunId: body.taskRunId,
+        taskRunJwt: body.taskRunJwt,
+        callbackUrl,
+      });
+
+      return c.json({
+        success: true,
+        providers: result.providers,
+      });
+    } catch (error) {
+      // Re-throw HTTPException to preserve proper status codes (403, 404, etc.)
+      if (error instanceof HTTPException) {
+        throw error;
+      }
+      console.error("[setup-providers] Failed:", error);
+      return c.text("Failed to set up providers", 500);
     }
   },
 );

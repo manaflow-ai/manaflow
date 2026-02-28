@@ -150,9 +150,11 @@ async function handleStartTask(
     images,
   } = body;
 
-  if (!taskId || !taskDescription || !projectFullName) {
+  // taskDescription can be empty string for cloud workspaces (interactive TUI session)
+  // but must be a string type (not null, undefined, or other types)
+  if (!taskId || typeof taskDescription !== "string" || !projectFullName) {
     jsonResponse(res, 400, {
-      error: "Missing required fields: taskId, taskDescription, projectFullName",
+      error: "Missing required fields: taskId, taskDescription (string), projectFullName",
     });
     return;
   }
@@ -336,6 +338,231 @@ async function handleStartTask(
     serverLogger.error("[http-api] start-task failed", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     jsonResponse(res, 500, { error: message });
+  }
+}
+
+// ============================================================================
+// Cloud Workspace Endpoint
+// ============================================================================
+
+interface CreateCloudWorkspaceRequest {
+  teamSlugOrId: string;
+  taskId: string;
+  environmentId?: string;
+  projectFullName?: string;
+  repoUrl?: string;
+  theme?: "dark" | "light" | "system";
+}
+
+interface CreateCloudWorkspaceResponse {
+  success: boolean;
+  taskId: string;
+  taskRunId: string;
+  vscodeUrl?: string;
+  vncUrl?: string;
+  error?: string;
+}
+
+/**
+ * Handle POST /api/create-cloud-workspace
+ *
+ * Creates a cloud workspace without running an agent - just spawns a sandbox
+ * with VSCode access. This matches the web UI's "create-cloud-workspace" socket event.
+ */
+async function handleCreateCloudWorkspace(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  const authToken = parseAuthHeader(req);
+  if (!authToken) {
+    jsonResponse(res, 401, { error: "Unauthorized: Missing Bearer token" });
+    return;
+  }
+
+  // Construct authHeaderJson from token (same format as Stack Auth x-stack-auth header)
+  const authHeaderJson = JSON.stringify({ accessToken: authToken });
+
+  const body = await readJsonBody<CreateCloudWorkspaceRequest>(req);
+  if (!body) {
+    jsonResponse(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  const { teamSlugOrId, taskId, environmentId, projectFullName, repoUrl } = body;
+
+  if (!teamSlugOrId || !taskId) {
+    jsonResponse(res, 400, { error: "Missing required fields: teamSlugOrId, taskId" });
+    return;
+  }
+
+  // Require either environmentId or projectFullName to avoid sandbox start failures
+  if (!environmentId && !projectFullName) {
+    jsonResponse(res, 400, { error: "Missing required field: environmentId or projectFullName" });
+    return;
+  }
+
+  serverLogger.info("[http-api] POST /api/create-cloud-workspace", {
+    taskId,
+    environmentId,
+    projectFullName,
+  });
+
+  // Hoist taskRunId outside runWithAuth to handle failures properly
+  let createdTaskRunId: string | null = null;
+
+  try {
+    await runWithAuth(authToken, authHeaderJson, async () => {
+      const convex = getConvex();
+      const now = Date.now();
+
+      // Create a taskRun for the workspace (agentName: "cloud-workspace")
+      const taskRunResult = await convex.mutation(api.taskRuns.create, {
+        teamSlugOrId,
+        taskId: taskId as Id<"tasks">,
+        prompt: "Cloud Workspace",
+        agentName: "cloud-workspace",
+        environmentId: environmentId as Id<"environments"> | undefined,
+      });
+      const taskRunId = taskRunResult.taskRunId;
+      createdTaskRunId = taskRunId; // Save for error handling
+      const taskRunJwt = taskRunResult.jwt;
+
+      serverLogger.info(
+        `[create-cloud-workspace] Created taskRun ${taskRunId} for task ${taskId}`
+      );
+
+      // Update initial VSCode status
+      await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+        teamSlugOrId,
+        id: taskRunId,
+        vscode: {
+          provider: "morph",
+          status: "starting",
+          startedAt: now,
+        },
+      });
+
+      await convex.mutation(api.taskRuns.updateStatusPublic, {
+        teamSlugOrId,
+        id: taskRunId,
+        status: "pending",
+      });
+
+      // Spawn sandbox via www API
+      const { getWwwClient } = await import("./utils/wwwClient");
+      const { getWwwOpenApiModule } = await import("./utils/wwwOpenApiModule");
+      const { postApiSandboxesStart } = await getWwwOpenApiModule();
+
+      serverLogger.info(
+        environmentId
+          ? `[create-cloud-workspace] Starting sandbox for environment ${environmentId}`
+          : `[create-cloud-workspace] Starting sandbox for repo ${projectFullName}`
+      );
+
+      const startRes = await postApiSandboxesStart({
+        client: getWwwClient(),
+        body: {
+          teamSlugOrId,
+          ttlSeconds: 60 * 60,
+          metadata: {
+            instance: `cmux-workspace-${taskRunId}`,
+            agentName: "cloud-workspace",
+          },
+          taskRunId,
+          taskRunJwt,
+          isCloudWorkspace: true,
+          ...(environmentId
+            ? { environmentId }
+            : { projectFullName, repoUrl }),
+        },
+      });
+
+      const data = startRes.data;
+      if (!data) {
+        const errorText = startRes.error ? JSON.stringify(startRes.error) : "Unknown sandbox start error";
+        throw new Error(`Failed to start sandbox: ${errorText}`);
+      }
+
+      const sandboxId = data.instanceId;
+      const sandboxProvider = data.provider ?? "morph";
+      const vscodeBaseUrl = data.vscodeUrl;
+      const vncUrl = data.vncUrl;
+      const xtermUrl = data.xtermUrl;
+      const workspaceUrl = `${vscodeBaseUrl}?folder=/root/workspace`;
+
+      serverLogger.info(
+        `[create-cloud-workspace] Sandbox started: ${sandboxId}, VSCode URL: ${workspaceUrl}`
+      );
+
+      // Update taskRun with actual VSCode info
+      await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+        teamSlugOrId,
+        id: taskRunId,
+        vscode: {
+          provider: sandboxProvider,
+          containerName: sandboxId,
+          status: "running",
+          url: vscodeBaseUrl,
+          workspaceUrl,
+          vncUrl,
+          xtermUrl,
+          startedAt: now,
+        },
+      });
+
+      await convex.mutation(api.taskRuns.updateStatusPublic, {
+        teamSlugOrId,
+        id: taskRunId,
+        status: "running",
+      });
+
+      await convex.mutation(api.taskRuns.updateVSCodeStatus, {
+        teamSlugOrId,
+        id: taskRunId,
+        status: "running",
+      });
+
+      serverLogger.info("[http-api] create-cloud-workspace completed", {
+        taskId,
+        taskRunId,
+        sandboxId,
+      });
+
+      jsonResponse(res, 200, {
+        success: true,
+        taskId,
+        taskRunId,
+        vscodeUrl: workspaceUrl,
+        vncUrl,
+      } satisfies CreateCloudWorkspaceResponse);
+    });
+  } catch (error) {
+    serverLogger.error("[http-api] create-cloud-workspace failed", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+
+    // If taskRun was created, mark it as failed to avoid orphaned state
+    if (createdTaskRunId) {
+      try {
+        await runWithAuth(authToken, authHeaderJson, async () => {
+          await getConvex().mutation(api.taskRuns.failByTeamMember, {
+            teamSlugOrId,
+            id: createdTaskRunId as Id<"taskRuns">,
+            errorMessage: `Cloud workspace creation failed: ${message}`,
+            exitCode: 1,
+          });
+        });
+        serverLogger.info(`[http-api] Marked orphaned taskRun ${createdTaskRunId} as failed`);
+      } catch (cleanupError) {
+        serverLogger.error("[http-api] Failed to mark orphaned taskRun as failed", cleanupError);
+      }
+    }
+
+    jsonResponse(res, 500, {
+      success: false,
+      taskId,
+      taskRunId: createdTaskRunId ?? "",
+      error: message,
+    });
   }
 }
 
@@ -782,6 +1009,326 @@ async function handleOrchestrationStatus(
     const message = error instanceof Error ? error.message : "Unknown error";
     jsonResponse(res, 500, { error: message });
   }
+}
+
+/**
+ * Handle GET /api/orchestrate/results/*
+ *
+ * Returns aggregated results from all sub-agents in an orchestration.
+ * Supports both Bearer token and X-Task-Run-JWT authentication.
+ */
+async function handleOrchestrationResults(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  // Support both Bearer token and X-Task-Run-JWT
+  const authToken = parseAuthHeader(req);
+  const taskRunJwt = extractTaskRunJwt(req.headers);
+
+  if (!authToken && !taskRunJwt) {
+    jsonResponse(res, 401, { error: "Unauthorized: Missing Bearer token or X-Task-Run-JWT header" });
+    return;
+  }
+
+  const url = new URL(req.url || "/", `http://${req.headers.host}`);
+
+  // Extract orchestration ID from path: /api/orchestrate/results/<id>
+  const pathParts = url.pathname.split("/");
+  const orchestrationId = pathParts[pathParts.length - 1];
+
+  if (!orchestrationId || orchestrationId === "results") {
+    jsonResponse(res, 400, { error: "Missing orchestration ID in path" });
+    return;
+  }
+
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+
+  try {
+    // If using JWT auth, query via Convex HTTP endpoint
+    if (taskRunJwt) {
+      const convexSiteUrl = env.CONVEX_SITE_URL || env.NEXT_PUBLIC_CONVEX_URL;
+
+      const convexResponse = await fetch(
+        `${convexSiteUrl}/api/orchestration/results?orchestrationId=${encodeURIComponent(orchestrationId)}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Task-Run-JWT": taskRunJwt,
+          },
+        }
+      );
+
+      if (!convexResponse.ok) {
+        const errorText = await convexResponse.text();
+        jsonResponse(res, convexResponse.status, { error: errorText });
+        return;
+      }
+
+      const results = await convexResponse.json();
+      jsonResponse(res, 200, results);
+      return;
+    }
+
+    // Bearer token auth path
+    if (!teamSlugOrId) {
+      jsonResponse(res, 400, { error: "Missing required query parameter: teamSlugOrId" });
+      return;
+    }
+
+    const authHeaderJson = JSON.stringify({ accessToken: authToken });
+
+    const result = await runWithAuth(authToken!, authHeaderJson, async () => {
+      // Get all orchestration tasks for this orchestrationId (stored in metadata)
+      const tasks = await getConvex().query(api.orchestrationQueries.listTasksByTeam, {
+        teamSlugOrId,
+        limit: 100,
+      });
+
+      // Filter by orchestrationId (stored in metadata)
+      const filteredTasks = tasks.filter((task) => {
+        const metadata = task.metadata as Record<string, unknown> | undefined;
+        return metadata?.orchestrationId === orchestrationId;
+      });
+
+      const totalTasks = filteredTasks.length;
+      const completedTasks = filteredTasks.filter((t) => t.status === "completed").length;
+      const failedTasks = filteredTasks.filter((t) => t.status === "failed").length;
+
+      // Determine overall status
+      let status: "running" | "completed" | "failed" | "partial";
+      if (totalTasks === 0) {
+        status = "completed";
+      } else if (completedTasks === totalTasks) {
+        status = "completed";
+      } else if (failedTasks > 0 && completedTasks + failedTasks === totalTasks) {
+        status = "failed";
+      } else if (completedTasks > 0 || failedTasks > 0) {
+        status = "partial";
+      } else {
+        status = "running";
+      }
+
+      return {
+        orchestrationId,
+        status,
+        totalTasks,
+        completedTasks,
+        results: filteredTasks.map((t) => ({
+          taskId: t._id,
+          agentName: t.assignedAgentName,
+          status: t.status,
+          prompt: t.prompt,
+          result: t.result,
+          errorMessage: t.errorMessage,
+          taskRunId: t.taskRunId,
+        })),
+      };
+    });
+
+    jsonResponse(res, 200, result);
+  } catch (error) {
+    serverLogger.error("[http-api] orchestrate/results failed", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    jsonResponse(res, 500, { error: message });
+  }
+}
+
+/**
+ * Handle GET /api/orchestrate/events/*
+ *
+ * Server-Sent Events stream for orchestration updates.
+ * Provides real-time updates for head agents monitoring sub-agents.
+ *
+ * Events:
+ * - task_status: Task status changed
+ * - task_completed: Task completed (with result)
+ * - message_received: New message in mailbox
+ * - heartbeat: Keep-alive every 30 seconds
+ */
+async function handleOrchestrationEvents(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  // Support both Bearer token and X-Task-Run-JWT
+  const authToken = parseAuthHeader(req);
+  const taskRunJwt = extractTaskRunJwt(req.headers);
+
+  if (!authToken && !taskRunJwt) {
+    jsonResponse(res, 401, { error: "Unauthorized: Missing Bearer token or X-Task-Run-JWT header" });
+    return;
+  }
+
+  const url = new URL(req.url || "/", `http://${req.headers.host}`);
+
+  // Extract orchestration ID from path: /api/orchestrate/events/<id>
+  const pathParts = url.pathname.split("/");
+  const orchestrationId = pathParts[pathParts.length - 1];
+
+  if (!orchestrationId || orchestrationId === "events") {
+    jsonResponse(res, 400, { error: "Missing orchestration ID in path" });
+    return;
+  }
+
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+  const lastEventId = req.headers["last-event-id"];
+
+  // Validate auth
+  if (!taskRunJwt && !teamSlugOrId) {
+    jsonResponse(res, 400, { error: "Missing required query parameter: teamSlugOrId" });
+    return;
+  }
+
+  // Set up SSE headers
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "X-Accel-Buffering": "no",
+  });
+
+  serverLogger.info("[http-api] SSE connection established", { orchestrationId });
+
+  // Send initial connected event
+  const sendEvent = (event: string, data: unknown, id?: string) => {
+    if (id) {
+      res.write(`id: ${id}\n`);
+    }
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendEvent("connected", { orchestrationId, timestamp: Date.now() });
+
+  // Track task statuses for change detection
+  const taskStatuses = new Map<string, string>();
+  let eventId = parseInt(lastEventId as string, 10) || 0;
+  let isConnectionClosed = false;
+
+  // Handle client disconnect
+  req.on("close", () => {
+    isConnectionClosed = true;
+    serverLogger.info("[http-api] SSE connection closed", { orchestrationId });
+  });
+
+  // Helper to fetch current state
+  const fetchState = async () => {
+    try {
+      if (taskRunJwt) {
+        const convexSiteUrl = env.CONVEX_SITE_URL || env.NEXT_PUBLIC_CONVEX_URL;
+        const response = await fetch(
+          `${convexSiteUrl}/api/orchestration/pull?orchestrationId=${encodeURIComponent(orchestrationId)}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Task-Run-JWT": taskRunJwt,
+            },
+          }
+        );
+        if (response.ok) {
+          return await response.json();
+        }
+        return null;
+      }
+
+      // Bearer auth path
+      if (authToken && teamSlugOrId) {
+        const authHeaderJson = JSON.stringify({ accessToken: authToken });
+        return await runWithAuth(authToken, authHeaderJson, async () => {
+          const tasks = await getConvex().query(api.orchestrationQueries.listTasksByTeam, {
+            teamSlugOrId,
+            limit: 100,
+          });
+          const filtered = tasks.filter((t) => {
+            const metadata = t.metadata as Record<string, unknown> | undefined;
+            return metadata?.orchestrationId === orchestrationId;
+          });
+          return {
+            tasks: filtered,
+            completedCount: filtered.filter((t) => t.status === "completed").length,
+            pendingCount: filtered.filter((t) => t.status === "pending").length,
+            failedCount: filtered.filter((t) => t.status === "failed").length,
+            runningCount: filtered.filter((t) => t.status === "running" || t.status === "assigned").length,
+          };
+        });
+      }
+      return null;
+    } catch (error) {
+      serverLogger.error("[http-api] SSE fetch state error", error);
+      return null;
+    }
+  };
+
+  // Polling loop
+  const pollInterval = 5000; // 5 seconds
+  const heartbeatInterval = 30000; // 30 seconds
+  let lastHeartbeat = Date.now();
+
+  const poll = async () => {
+    if (isConnectionClosed) return;
+
+    try {
+      const state = await fetchState();
+      if (!state || isConnectionClosed) return;
+
+      // Check for status changes
+      for (const task of state.tasks) {
+        const taskId = task._id || task.id;
+        const prevStatus = taskStatuses.get(taskId);
+        const currentStatus = task.status;
+
+        if (prevStatus !== currentStatus) {
+          eventId++;
+          taskStatuses.set(taskId, currentStatus);
+
+          if (currentStatus === "completed") {
+            sendEvent("task_completed", {
+              taskId,
+              status: currentStatus,
+              result: task.result,
+              completedAt: task.completedAt || Date.now(),
+            }, String(eventId));
+          } else if (currentStatus === "failed") {
+            sendEvent("task_status", {
+              taskId,
+              status: currentStatus,
+              errorMessage: task.errorMessage,
+            }, String(eventId));
+          } else {
+            sendEvent("task_status", {
+              taskId,
+              status: currentStatus,
+              assignedAgentName: task.assignedAgentName,
+            }, String(eventId));
+          }
+        }
+      }
+
+      // Send heartbeat if needed
+      if (Date.now() - lastHeartbeat >= heartbeatInterval) {
+        lastHeartbeat = Date.now();
+        sendEvent("heartbeat", {
+          timestamp: lastHeartbeat,
+          completedCount: state.completedCount,
+          pendingCount: state.pendingCount,
+          failedCount: state.failedCount,
+          runningCount: state.runningCount,
+        });
+      }
+    } catch (error) {
+      serverLogger.error("[http-api] SSE poll error", error);
+    }
+
+    // Schedule next poll
+    if (!isConnectionClosed) {
+      setTimeout(poll, pollInterval);
+    }
+  };
+
+  // Start polling
+  void poll();
 }
 
 /**
@@ -1456,6 +2003,12 @@ export function handleHttpRequest(
     return true;
   }
 
+  // Route: POST /api/create-cloud-workspace
+  if (method === "POST" && path === "/api/create-cloud-workspace") {
+    void handleCreateCloudWorkspace(req, res);
+    return true;
+  }
+
   // Route: GET /api/health
   if (method === "GET" && path === "/api/health") {
     jsonResponse(res, 200, { status: "ok", service: "apps-server" });
@@ -1501,6 +2054,18 @@ export function handleHttpRequest(
   // Route: GET /api/orchestrate/status/* - Get orchestration task status
   if (method === "GET" && path.startsWith("/api/orchestrate/status/")) {
     void handleOrchestrationStatus(req, res);
+    return true;
+  }
+
+  // Route: GET /api/orchestrate/results/* - Get aggregated results from sub-agents
+  if (method === "GET" && path.startsWith("/api/orchestrate/results/")) {
+    void handleOrchestrationResults(req, res);
+    return true;
+  }
+
+  // Route: GET /api/orchestrate/events/* - SSE stream for real-time orchestration updates
+  if (method === "GET" && path.startsWith("/api/orchestrate/events/")) {
+    void handleOrchestrationEvents(req, res);
     return true;
   }
 

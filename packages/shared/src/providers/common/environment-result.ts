@@ -56,4 +56,11 @@ export type EnvironmentContext = {
     previousPlan?: string;    // Raw JSON of PLAN.json
     previousAgents?: string;  // Raw JSON of AGENTS.json
   };
+  /**
+   * When true, read config files from the host filesystem (e.g., ~/.codex/config.toml).
+   * This is safe for desktop/Electron apps where the host IS the user's machine.
+   * Should be false for server deployments to prevent credential leakage.
+   * @default false
+   */
+  useHostConfig?: boolean;
 };

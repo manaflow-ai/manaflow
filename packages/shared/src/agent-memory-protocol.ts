@@ -372,6 +372,90 @@ Messages from previous runs are automatically seeded into your mailbox.
 }
 
 /**
+ * Get head agent orchestration instructions for agents that coordinate sub-agents.
+ * This text should be included when spawning a cloud workspace as an orchestration head.
+ *
+ * Head agents receive CMUX_IS_ORCHESTRATION_HEAD=1 in their environment and have
+ * special responsibilities for coordinating work across multiple sub-agents.
+ */
+export function getHeadAgentInstructions(): string {
+  return `## Head Agent Orchestration
+
+You are operating as an **orchestration head agent** - a coordinator that spawns and manages sub-agents to accomplish complex tasks.
+
+### Your Role
+
+1. **Plan the Work**: Break down the overall task into discrete sub-tasks
+2. **Spawn Sub-Agents**: Use \`devsh orchestrate spawn\` to create sub-agents for each task
+3. **Monitor Progress**: Use \`devsh orchestrate status\` with \`--watch\` to track completion
+4. **Collect Results**: Use \`devsh orchestrate results\` to aggregate outputs
+5. **Coordinate**: Handle dependencies and sequencing between tasks
+
+### Key Commands
+
+| Command | Description |
+|---------|-------------|
+| \`devsh orchestrate spawn --agent <name> <prompt>\` | Spawn a sub-agent |
+| \`devsh orchestrate status <id> --watch\` | Monitor task progress in real-time |
+| \`devsh orchestrate results <orch-id>\` | Get aggregated results from all sub-agents |
+| \`devsh orchestrate list\` | List all orchestration tasks |
+| \`devsh orchestrate message send <to> <msg>\` | Send message to sub-agent |
+
+### Orchestration Files
+
+Your orchestration state is stored in \`${MEMORY_ORCHESTRATION_DIR}/\`:
+
+- **PLAN.json**: Your execution plan with task statuses
+- **AGENTS.json**: Registry of spawned sub-agents
+- **EVENTS.jsonl**: Event stream of orchestration activity
+
+### Bi-directional Sync
+
+Use the \`pull_orchestration_updates\` MCP tool to sync remote state:
+\`\`\`
+pull_orchestration_updates()  // Fetch latest task statuses from server
+\`\`\`
+
+This updates your local PLAN.json with:
+- Current status of all sub-agent tasks
+- Unread messages from the mailbox
+- Aggregated completion counts
+
+### Coordination Patterns
+
+**Sequential Pipeline** (task A -> task B -> task C):
+\`\`\`bash
+# Spawn with dependencies
+devsh orchestrate spawn --agent claude/opus-4.6 "Task A"  # Returns orch_id_a
+devsh orchestrate spawn --agent claude/opus-4.6 --depends-on orch_id_a "Task B"
+\`\`\`
+
+**Parallel Fan-out** (spawn N agents, wait for all):
+\`\`\`bash
+# Spawn multiple agents in parallel
+devsh orchestrate spawn --agent claude/opus-4.6 "Task 1"
+devsh orchestrate spawn --agent codex/gpt-5.2-xhigh "Task 2"
+devsh orchestrate spawn --agent claude/opus-4.6 "Task 3"
+# Then monitor with --watch
+\`\`\`
+
+**Leader-Worker** (you create plan, workers execute):
+1. Create a detailed plan
+2. Spawn sub-agents with specific task prompts
+3. Monitor completion and handle any failures
+4. Aggregate results and produce final output
+
+### Best Practices
+
+- **Be Specific**: Give sub-agents clear, focused prompts
+- **Use Dependencies**: Chain related tasks with \`--depends-on\`
+- **Monitor Actively**: Use \`--watch\` to catch failures early
+- **Handle Errors**: Check for failed tasks and retry or adjust
+- **Document Progress**: Log orchestration decisions in daily log
+`;
+}
+
+/**
  * Get the startup command to create the memory directory structure.
  * Creates daily/, knowledge/, and orchestration/ subdirectories.
  */
@@ -1025,6 +1109,24 @@ const tools = [
         }
       }
     }
+  },
+  // Orchestration head agent tool (Phase 1)
+  {
+    name: 'pull_orchestration_updates',
+    description: 'Pull the latest orchestration state from the server. For head agents to sync local PLAN.json with remote task statuses, unread messages, and completion counts. Returns aggregated state from all sub-agents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        orchestrationId: {
+          type: 'string',
+          description: 'Optional orchestration ID to filter tasks (defaults to current orchestration)'
+        },
+        syncToPlan: {
+          type: 'boolean',
+          description: 'If true, automatically update local PLAN.json with remote state (default: true)'
+        }
+      }
+    }
   }
 ];
 
@@ -1340,6 +1442,40 @@ function handleRequest(request) {
           return sendResponse(id, { content: [{ type: 'text', text: 'Found ' + staleEntries.length + ' stale entries (use autoRemove: true to remove):\\n' + JSON.stringify(staleEntries, null, 2) }] });
         }
 
+        // Orchestration head agent tool (Phase 1)
+        case 'pull_orchestration_updates': {
+          // Check required env vars for API call
+          const callbackUrl = process.env.CMUX_CALLBACK_URL;
+          const taskRunJwt = process.env.CMUX_TASK_RUN_JWT;
+
+          if (!callbackUrl || !taskRunJwt) {
+            return sendResponse(id, { content: [{ type: 'text', text: 'Missing required env vars (CMUX_CALLBACK_URL or CMUX_TASK_RUN_JWT). Cannot pull orchestration updates.' }] });
+          }
+
+          // Read current orchestration ID from PLAN.json if not provided
+          let orchestrationId = args?.orchestrationId;
+          if (!orchestrationId) {
+            const plan = readPlan();
+            if (plan && plan.orchestrationId) {
+              orchestrationId = plan.orchestrationId;
+            }
+          }
+
+          // Build URL with query params
+          let pullUrl = callbackUrl + '/api/orchestration/pull';
+          const params = [];
+          if (orchestrationId) params.push('orchestrationId=' + encodeURIComponent(orchestrationId));
+          if (params.length > 0) pullUrl += '?' + params.join('&');
+
+          // Make HTTP request to pull state
+          const https = require('https');
+          const http = require('http');
+          const url = require('url');
+
+          // Return instructions to use curl (MCP tools are synchronous, can't await here)
+          return sendResponse(id, { content: [{ type: 'text', text: 'To pull orchestration updates, run:\\ncurl -s -H "X-Task-Run-JWT: $CMUX_TASK_RUN_JWT" "' + pullUrl + '"\\n\\nOr use the sync.sh script which handles this automatically on shutdown.' }] });
+        }
+
         default:
           return sendResponse(id, null, 'Unknown tool: ' + name);
       }
@@ -1386,6 +1522,8 @@ export interface OrchestrationSeedOptions {
   description?: string;
   previousPlan?: string;
   previousAgents?: string;
+  /** Set to true to mark this agent as an orchestration head (spawns sub-agents) */
+  isOrchestrationHead?: boolean;
 }
 
 /**
@@ -1416,7 +1554,7 @@ export function getOrchestrationSeedFiles(
       ? options.previousAgents
       : getAgentsRegistrySeedContent(options.headAgent, orchestrationId);
 
-  return [
+  const files: AuthFile[] = [
     {
       destinationPath: `${MEMORY_ORCHESTRATION_DIR}/PLAN.json`,
       contentBase64: Buffer.from(planContent).toString("base64"),
@@ -1434,6 +1572,17 @@ export function getOrchestrationSeedFiles(
       mode: "644",
     },
   ];
+
+  // Include head agent instructions when this is an orchestration head
+  if (options.isOrchestrationHead) {
+    files.push({
+      destinationPath: `${MEMORY_ORCHESTRATION_DIR}/HEAD_AGENT_INSTRUCTIONS.md`,
+      contentBase64: Buffer.from(getHeadAgentInstructions()).toString("base64"),
+      mode: "644",
+    });
+  }
+
+  return files;
 }
 
 /**

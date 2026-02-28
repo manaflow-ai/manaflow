@@ -2,6 +2,7 @@
 package vm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -798,13 +799,14 @@ type Environment struct {
 
 // CreateTaskOptions represents options for creating a task
 type CreateTaskOptions struct {
-	Prompt        string
-	Repository    string
-	BaseBranch    string
-	Agents        []string
-	Images        []TaskImage
-	PRTitle       string
-	EnvironmentID string
+	Prompt           string
+	Repository       string
+	BaseBranch       string
+	Agents           []string
+	Images           []TaskImage
+	PRTitle          string
+	EnvironmentID    string
+	IsCloudWorkspace bool
 }
 
 // TaskRunWithJWT represents a task run with its JWT for sandbox auth
@@ -942,6 +944,9 @@ func (c *Client) CreateTask(ctx context.Context, opts CreateTaskOptions) (*Creat
 	}
 	if opts.EnvironmentID != "" {
 		body["environmentId"] = opts.EnvironmentID
+	}
+	if opts.IsCloudWorkspace {
+		body["isCloudWorkspace"] = true
 	}
 
 	resp, err := c.doRequest(ctx, "POST", "/api/v1/cmux/tasks", body)
@@ -1082,6 +1087,42 @@ func (c *Client) StartSandbox(ctx context.Context, opts StartSandboxOptions) (*S
 	}
 
 	var result StartSandboxResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// SetupProvidersResult represents the result of setting up provider auth
+type SetupProvidersResult struct {
+	Success   bool     `json:"success"`
+	Providers []string `json:"providers"`
+}
+
+// SetupProviders configures Claude + Codex provider auth on an existing sandbox.
+// Calls POST /api/sandboxes/{id}/setup-providers on the www API.
+func (c *Client) SetupProviders(ctx context.Context, instanceID string) (*SetupProvidersResult, error) {
+	if c.teamSlug == "" {
+		return nil, fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+	}
+
+	resp, err := c.doWwwRequest(ctx, "POST",
+		fmt.Sprintf("/api/sandboxes/%s/setup-providers", instanceID), body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("setup-providers failed (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
+	}
+
+	var result SetupProvidersResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -1355,6 +1396,67 @@ func (c *Client) StartTaskAgents(ctx context.Context, opts StartTaskAgentsOption
 	return &result, nil
 }
 
+// CreateCloudWorkspaceOptions contains options for creating a cloud workspace
+type CreateCloudWorkspaceOptions struct {
+	TaskID          string
+	EnvironmentID   string
+	ProjectFullName string
+	RepoURL         string
+	Theme           string
+}
+
+// CreateCloudWorkspaceResult represents the result of creating a cloud workspace
+type CreateCloudWorkspaceResult struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	TaskRunID string `json:"taskRunId"`
+	VSCodeURL string `json:"vscodeUrl,omitempty"`
+	VNCURL    string `json:"vncUrl,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// CreateCloudWorkspace creates a cloud workspace without running an agent
+// This spawns a sandbox with VSCode access, matching the web UI flow
+func (c *Client) CreateCloudWorkspace(ctx context.Context, opts CreateCloudWorkspaceOptions) (*CreateCloudWorkspaceResult, error) {
+	if c.teamSlug == "" {
+		return nil, fmt.Errorf("team slug not set")
+	}
+
+	body := map[string]interface{}{
+		"teamSlugOrId": c.teamSlug,
+		"taskId":       opts.TaskID,
+	}
+	if opts.EnvironmentID != "" {
+		body["environmentId"] = opts.EnvironmentID
+	}
+	if opts.ProjectFullName != "" {
+		body["projectFullName"] = opts.ProjectFullName
+	}
+	if opts.RepoURL != "" {
+		body["repoUrl"] = opts.RepoURL
+	}
+	if opts.Theme != "" {
+		body["theme"] = opts.Theme
+	}
+
+	resp, err := c.doServerRequest(ctx, "POST", "/api/create-cloud-workspace", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("create-cloud-workspace failed (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
+	}
+
+	var result CreateCloudWorkspaceResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // MemorySnapshot represents a single memory snapshot from a task run
 type MemorySnapshot struct {
 	ID         string `json:"id"`
@@ -1407,16 +1509,18 @@ func (c *Client) GetTaskRunMemory(ctx context.Context, taskRunID string, memoryT
 
 // OrchestrationSpawnOptions represents options for spawning with orchestration tracking
 type OrchestrationSpawnOptions struct {
-	Prompt        string
-	Agent         string
-	Repo          string
-	Branch        string
-	PRTitle       string
-	EnvironmentID string
-	IsCloudMode   bool
-	DependsOn     []string // Orchestration task IDs this task depends on
-	Priority      int      // Task priority (1=highest, 10=lowest, default 5)
-	TaskRunJwt    string   // If set, use X-Task-Run-JWT header instead of Bearer token
+	Prompt              string
+	Agent               string
+	Repo                string
+	Branch              string
+	PRTitle             string
+	EnvironmentID       string
+	IsCloudMode         bool
+	DependsOn           []string // Orchestration task IDs this task depends on
+	Priority            int      // Task priority (1=highest, 10=lowest, default 5)
+	TaskRunJwt          string   // If set, use X-Task-Run-JWT header instead of Bearer token
+	IsCloudWorkspace    bool     // If true, spawn as a cloud workspace (interactive TUI session)
+	IsOrchestrationHead bool     // If true, mark as orchestration head (coordinates sub-agents)
 }
 
 // OrchestrationSpawnResult represents the result of spawning an agent with orchestration
@@ -1491,6 +1595,12 @@ func (c *Client) OrchestrationSpawn(ctx context.Context, opts OrchestrationSpawn
 	}
 	// Always send priority (0=highest is valid, server defaults to 5 if omitted)
 	body["priority"] = opts.Priority
+	if opts.IsCloudWorkspace {
+		body["isCloudWorkspace"] = true
+	}
+	if opts.IsOrchestrationHead {
+		body["isOrchestrationHead"] = true
+	}
 
 	var resp *http.Response
 	var err error
@@ -1687,6 +1797,60 @@ func (c *Client) OrchestrationMigrate(ctx context.Context, opts OrchestrationMig
 	return &result, nil
 }
 
+// OrchestrationResultsResult represents aggregated results from all sub-agents
+type OrchestrationResultsResult struct {
+	OrchestrationID string                      `json:"orchestrationId"`
+	Status          string                      `json:"status"` // running, completed, failed, partial
+	TotalTasks      int                         `json:"totalTasks"`
+	CompletedTasks  int                         `json:"completedTasks"`
+	Results         []OrchestrationResultEntry  `json:"results"`
+}
+
+// OrchestrationResultEntry represents a single task result
+type OrchestrationResultEntry struct {
+	TaskID       string  `json:"taskId"`
+	AgentName    *string `json:"agentName,omitempty"`
+	Status       string  `json:"status"`
+	Prompt       string  `json:"prompt"`
+	Result       *string `json:"result,omitempty"`
+	ErrorMessage *string `json:"errorMessage,omitempty"`
+	TaskRunID    *string `json:"taskRunId,omitempty"`
+}
+
+// OrchestrationResults gets aggregated results from all sub-agents
+func (c *Client) OrchestrationResults(ctx context.Context, orchestrationID string, taskRunJwt string) (*OrchestrationResultsResult, error) {
+	path := fmt.Sprintf("/api/orchestrate/results/%s", orchestrationID)
+
+	var resp *http.Response
+	var err error
+
+	// Use JWT auth if provided, otherwise use Bearer token
+	if taskRunJwt != "" {
+		resp, err = c.doServerRequestWithJwt(ctx, "GET", path, nil, taskRunJwt)
+	} else {
+		if c.teamSlug == "" {
+			return nil, fmt.Errorf("team slug not set")
+		}
+		path = fmt.Sprintf("/api/orchestrate/results/%s?teamSlugOrId=%s", orchestrationID, c.teamSlug)
+		resp, err = c.doServerRequest(ctx, "GET", path, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("orchestration results failed (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
+	}
+
+	var result OrchestrationResultsResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // OrchestrationMetricsResult represents metrics for orchestration monitoring
 type OrchestrationMetricsResult struct {
 	ActiveOrchestrations int                                  `json:"activeOrchestrations"`
@@ -1702,6 +1866,111 @@ type OrchestrationProviderInfo struct {
 	LatencyP99   float64 `json:"latencyP99"`
 	SuccessRate  float64 `json:"successRate"`
 	FailureCount int     `json:"failureCount"`
+}
+
+// OrchestrationEvent represents an SSE event from orchestration updates
+type OrchestrationEvent struct {
+	Event string                 `json:"event"`
+	Data  map[string]interface{} `json:"data"`
+	ID    string                 `json:"id,omitempty"`
+}
+
+// OrchestrationSSECallback is called for each SSE event received
+type OrchestrationSSECallback func(event OrchestrationEvent)
+
+// SubscribeOrchestrationEvents connects to the SSE endpoint for real-time updates
+// Returns a channel that closes when the connection ends
+func (c *Client) SubscribeOrchestrationEvents(ctx context.Context, orchestrationID string, taskRunJwt string, callback OrchestrationSSECallback) error {
+	cfg := auth.GetConfig()
+
+	path := fmt.Sprintf("/api/orchestrate/events/%s", orchestrationID)
+	if c.teamSlug != "" && taskRunJwt == "" {
+		path += "?teamSlugOrId=" + c.teamSlug
+	}
+
+	url := cfg.ServerURL + path
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set auth header
+	if taskRunJwt != "" {
+		req.Header.Set("X-Task-Run-JWT", taskRunJwt)
+	} else {
+		accessToken, err := auth.GetAccessToken()
+		if err != nil {
+			return fmt.Errorf("not authenticated: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	// Use a client without timeout for SSE
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("SSE connection failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return fmt.Errorf("SSE endpoint returned %d", resp.StatusCode)
+	}
+
+	// Read SSE events in a goroutine
+	go func() {
+		defer resp.Body.Close()
+
+		scanner := bufio.NewScanner(resp.Body)
+		// Set larger buffer to handle large SSE payloads (256KB max line)
+		const maxScanTokenSize = 256 * 1024
+		scanner.Buffer(make([]byte, maxScanTokenSize), maxScanTokenSize)
+
+		var eventType string
+		var data string
+		var id string
+
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if line == "" {
+				// Empty line = end of event
+				if eventType != "" && data != "" {
+					var eventData map[string]interface{}
+					if err := json.Unmarshal([]byte(data), &eventData); err == nil {
+						callback(OrchestrationEvent{
+							Event: eventType,
+							Data:  eventData,
+							ID:    id,
+						})
+					}
+				}
+				eventType = ""
+				data = ""
+				id = ""
+				continue
+			}
+
+			if strings.HasPrefix(line, "event:") {
+				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			} else if strings.HasPrefix(line, "data:") {
+				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			} else if strings.HasPrefix(line, "id:") {
+				id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
+			}
+		}
+
+		// Log scanner errors if any
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "[SSE] Scanner error: %v\n", err)
+		}
+	}()
+
+	return nil
 }
 
 // OrchestrationMetrics gets orchestration metrics including provider health

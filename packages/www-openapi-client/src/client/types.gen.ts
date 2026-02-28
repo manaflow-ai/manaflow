@@ -790,6 +790,17 @@ export type StartSandboxBody = {
     prompt?: string;
 };
 
+export type SetupProvidersResponse = {
+    success: boolean;
+    providers: Array<string>;
+};
+
+export type SetupProvidersBody = {
+    teamSlugOrId: string;
+    taskRunId?: string;
+    taskRunJwt?: string;
+};
+
 export type PrewarmSandboxResponse = {
     id: string;
     alreadyExists: boolean;
@@ -3391,6 +3402,42 @@ export type PostApiSandboxesStartResponses = {
 };
 
 export type PostApiSandboxesStartResponse = PostApiSandboxesStartResponses[keyof PostApiSandboxesStartResponses];
+
+export type PostApiSandboxesByIdSetupProvidersData = {
+    body: SetupProvidersBody;
+    path: {
+        /**
+         * Sandbox instance ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/setup-providers';
+};
+
+export type PostApiSandboxesByIdSetupProvidersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to set up providers
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdSetupProvidersResponses = {
+    /**
+     * Provider auth configured
+     */
+    200: SetupProvidersResponse;
+};
+
+export type PostApiSandboxesByIdSetupProvidersResponse = PostApiSandboxesByIdSetupProvidersResponses[keyof PostApiSandboxesByIdSetupProvidersResponses];
 
 export type PostApiSandboxesPrewarmData = {
     body: PrewarmSandboxBody;

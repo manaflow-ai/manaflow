@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/karlorz/devsh/internal/auth"
@@ -30,7 +31,8 @@ Examples:
   devsh start .                  # Create VM, sync current directory
   devsh start ./my-project       # Create VM, sync specific directory
   devsh start --snapshot=snap_x  # Create from specific snapshot
-  devsh start -i                 # Create VM and open VS Code`,
+  devsh start -i                 # Create VM and open VS Code
+  devsh start --no-auth          # Skip automatic provider auth setup`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		normalized, err := provider.NormalizeProvider(flagProvider)
@@ -51,6 +53,26 @@ Examples:
 			return fmt.Errorf("unsupported provider: %s", selected)
 		}
 	},
+}
+
+// setupProviderAuthIfNeeded calls SetupProviders on the www API unless --no-auth is set.
+func setupProviderAuthIfNeeded(cmd *cobra.Command, ctx context.Context, client *vm.Client, instanceID string) {
+	noAuth, _ := cmd.Flags().GetBool("no-auth")
+	if noAuth {
+		return
+	}
+
+	fmt.Println("Setting up provider auth...")
+	result, err := client.SetupProviders(ctx, instanceID)
+	if err != nil {
+		fmt.Printf("Warning: provider auth setup failed: %v\n", err)
+		return
+	}
+	if len(result.Providers) > 0 {
+		fmt.Printf("  Providers: %s\n", strings.Join(result.Providers, ", "))
+	} else {
+		fmt.Println("  No provider keys configured (add API keys in web UI)")
+	}
 }
 
 func runStartMorph(cmd *cobra.Command, args []string) error {
@@ -123,6 +145,9 @@ func runStartMorph(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Set up provider auth (Claude + Codex)
+	setupProviderAuthIfNeeded(cmd, ctx, client, instance.ID)
+
 	// Save as last used instance
 	state.SetLastInstance(instance.ID, teamSlug)
 
@@ -131,7 +156,7 @@ func runStartMorph(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// Fall back to raw URLs if token generation fails
 		fmt.Printf("Warning: could not generate auth token: %v\n", err)
-		fmt.Println("\n✓ VM is ready!")
+		fmt.Println("\nVM is ready!")
 		fmt.Printf("  ID:       %s\n", instance.ID)
 		fmt.Printf("  VS Code:  %s\n", instance.VSCodeURL)
 		fmt.Printf("  VNC:      %s\n", instance.VNCURL)
@@ -149,7 +174,7 @@ func runStartMorph(cmd *cobra.Command, args []string) error {
 	}
 
 	// Output results with authenticated URLs
-	fmt.Println("\n✓ VM is ready!")
+	fmt.Println("\nVM is ready!")
 	fmt.Printf("  ID:       %s\n", instance.ID)
 	fmt.Printf("  VS Code:  %s\n", codeAuthURL)
 	fmt.Printf("  VNC:      %s\n", vncAuthURL)
@@ -211,10 +236,28 @@ func runStartPveLxc(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Warning: sync is not supported for pve-lxc yet (skipping sync of %s)\n", syncPath)
 	}
 
+	// Set up provider auth via www API (requires authentication)
+	noAuth, _ := cmd.Flags().GetBool("no-auth")
+	if !noAuth {
+		// PVE LXC path needs a www client for the setup-providers endpoint
+		teamSlug, teamErr := auth.GetTeamSlug()
+		if teamErr != nil {
+			fmt.Printf("Warning: provider auth setup skipped (not authenticated): %v\n", teamErr)
+		} else {
+			wwwClient, wwwErr := vm.NewClient()
+			if wwwErr != nil {
+				fmt.Printf("Warning: provider auth setup skipped: %v\n", wwwErr)
+			} else {
+				wwwClient.SetTeamSlug(teamSlug)
+				setupProviderAuthIfNeeded(cmd, ctx, wwwClient, instance.ID)
+			}
+		}
+	}
+
 	// Save as last used instance (team slug not applicable for PVE LXC)
 	_ = state.SetLastInstance(instance.ID, "")
 
-	fmt.Println("\n✓ VM is ready!")
+	fmt.Println("\nVM is ready!")
 	fmt.Printf("  ID:       %s\n", instance.ID)
 	if instance.VSCodeURL != "" {
 		fmt.Printf("  VS Code:  %s\n", instance.VSCodeURL)
@@ -240,5 +283,6 @@ func runStartPveLxc(cmd *cobra.Command, args []string) error {
 func init() {
 	startCmd.Flags().String("snapshot", "", "Snapshot ID to create from")
 	startCmd.Flags().BoolP("interactive", "i", false, "Open VS Code in browser after creation")
+	startCmd.Flags().Bool("no-auth", false, "Skip automatic provider auth setup")
 	rootCmd.AddCommand(startCmd)
 }

@@ -4438,7 +4438,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             raise RuntimeError(
                 "bun not found on host; install bun or rerun with --no-bump-ide-deps."
             )
-        ide_channel = getattr(args, "ide_deps_channel", "stable")
+        # Support both --ide-deps-channel flag and IDE_DEPS_CHANNEL env var
+        ide_channel = os.environ.get("IDE_DEPS_CHANNEL") or getattr(args, "ide_deps_channel", "stable")
         console.always(
             f"Bumping IDE deps (channel: {ide_channel}) (bun run bump-ide-deps)..."
         )
@@ -4698,6 +4699,27 @@ def main() -> None:
     else:
         print("[git-diff] Disabled (full archive upload)")
         set_git_diff_mode(False)
+
+    # Pre-flight check: validate MCP server script syntax before building snapshot
+    print("[pre-flight] Validating MCP server script syntax...")
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["bun", "test", "packages/shared/src/agent-memory-protocol.test.ts"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print("[pre-flight] ERROR: MCP server script validation failed!")
+            print(result.stdout)
+            print(result.stderr)
+            sys.exit(1)
+        print("[pre-flight] MCP server script validation passed")
+    except subprocess.TimeoutExpired:
+        print("[pre-flight] WARNING: MCP server script validation timed out, continuing...")
+    except FileNotFoundError:
+        print("[pre-flight] WARNING: bun not found, skipping MCP server script validation")
 
     # Validate update mode arguments
     if getattr(args, "update", False):

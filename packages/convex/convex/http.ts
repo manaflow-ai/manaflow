@@ -73,6 +73,8 @@ import {
   createOrchestrationTask,
   updateOrchestrationTask,
   getSpawnConfig as orchestrationGetSpawnConfig,
+  pullOrchestrationState,
+  getOrchestrationResults,
 } from "./orchestration_http";
 
 const http = httpRouter();
@@ -448,6 +450,18 @@ http.route({
   path: "/api/orchestration/spawn-config",
   method: "GET",
   handler: orchestrationGetSpawnConfig,
+});
+
+http.route({
+  path: "/api/orchestration/pull",
+  method: "GET",
+  handler: pullOrchestrationState,
+});
+
+http.route({
+  path: "/api/orchestration/results",
+  method: "GET",
+  handler: getOrchestrationResults,
 });
 
 export default http;

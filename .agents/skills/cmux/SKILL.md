@@ -92,9 +92,18 @@ devsh task list --archived        # List archived tasks
 devsh task create "Add tests"     # Create task with prompt only
 devsh task create --repo owner/repo --agent claude-code "Fix bug"
 devsh task create --repo owner/repo --agent claude-code --agent opencode/gpt-4o "Compare solutions"
+devsh task create --cloud-workspace --repo owner/repo --agent claude-code "Long-running workspace"
 devsh task show <task-id>         # Get task details and runs
 devsh task stop <task-id>         # Stop/archive task
 devsh task memory <task-run-id>   # View agent memory for a task run
+```
+
+#### Cloud Workspaces
+
+Use `--cloud-workspace` to create tasks that appear in the "Workspaces" section of the web UI instead of "In Progress". Cloud workspaces are designed for long-running development environments.
+
+```bash
+devsh task create --cloud-workspace --repo owner/repo --agent claude-code "Set up dev environment"
 ```
 
 ### Agent Memory

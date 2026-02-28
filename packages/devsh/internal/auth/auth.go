@@ -20,10 +20,11 @@ import (
 // envLoaded tracks whether we've already loaded .env file
 var envLoaded bool
 
-// loadEnvFile loads environment variables from a .env file if it exists.
-// Only loads in dev mode and only once per process.
-// Walks up from current directory to find .env file.
-func loadEnvFile() {
+// LoadEnvFile loads environment variables from a .env file if it exists.
+// Only loads once per process. Walks up from current directory to find .env file.
+// Variables already set in the environment are not overwritten.
+// Call this early in main() for dev builds so all packages can read .env values.
+func LoadEnvFile() {
 	if envLoaded {
 		return
 	}
@@ -221,7 +222,7 @@ func (c Config) Validate() error {
 func GetConfig() Config {
 	// In dev mode, load .env file to populate environment variables
 	if buildMode == "dev" {
-		loadEnvFile()
+		LoadEnvFile()
 	}
 
 	// Get mode-specific defaults

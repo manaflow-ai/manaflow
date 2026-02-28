@@ -340,6 +340,9 @@ const convexSchema = defineSchema({
     ),
     // Auto-discovered git repos in the sandbox (for custom environments where user clones repos)
     discoveredRepos: v.optional(v.array(v.string())), // GitHub repos found in sandbox (e.g., ["owner/repo"])
+    // Orchestration head agent fields (Phase 1)
+    isOrchestrationHead: v.optional(v.boolean()), // Whether this run is an orchestration head agent
+    orchestrationId: v.optional(v.string()), // Unique orchestration ID for this head agent session
   })
     .index("by_task", ["taskId", "createdAt"])
     .index("by_parent", ["parentRunId"])

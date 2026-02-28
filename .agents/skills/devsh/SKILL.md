@@ -87,6 +87,7 @@ Tasks are the same as in the web app dashboard. CLI and web sync through Convex.
 - `devsh task list` - List active tasks
 - `devsh task list --archived` - List archived tasks
 - `devsh task create --repo owner/repo --agent claude-code "prompt"` - Create task
+- `devsh task create --cloud-workspace ...` - Create as cloud workspace (appears in Workspaces section)
 - `devsh task show <task-id>` - Get task details and runs
 - `devsh task stop <task-id>` - Stop/archive task
 - `devsh task memory <task-run-id>` - View agent memory for a task run

@@ -17,7 +17,7 @@ import {
  *      the request will be routed to platform Bedrock proxy
  * 3. No fallback - users must provide credentials to use Claude agents
  */
-function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
+export function createApplyClaudeApiKeys(): NonNullable<AgentConfig["applyApiKeys"]> {
   return async (keys): Promise<Partial<EnvironmentResult>> => {
     // Base env vars to unset (prevent conflicts)
     const unsetEnv = [...CLAUDE_KEY_ENV_VARS_TO_UNSET];

@@ -1286,3 +1286,73 @@ export const listTasksWithDependencyInfo = authQuery({
     return enrichedTasks;
   },
 });
+
+// ============================================================================
+// Internal Queries for Orchestration HTTP Pull API (Phase 1)
+// ============================================================================
+
+/**
+ * Get orchestration state for head agents to sync local PLAN.json.
+ * Returns all tasks for the team, optionally filtered by orchestrationId.
+ *
+ * Used by the pull orchestration state HTTP action.
+ */
+export const getOrchestrationStateInternal = internalQuery({
+  args: {
+    teamId: v.string(),
+    orchestrationId: v.optional(v.string()),
+    taskRunId: v.optional(v.id("taskRuns")),
+  },
+  handler: async (ctx, { teamId, orchestrationId, taskRunId }) => {
+    // If taskRunId provided, fetch tasks associated with that run
+    if (taskRunId) {
+      const tasks = await ctx.db
+        .query("orchestrationTasks")
+        .withIndex("by_task_run", (q) => q.eq("taskRunId", taskRunId))
+        .collect();
+      return tasks;
+    }
+
+    // Otherwise, fetch all tasks for the team
+    const allTasks = await ctx.db
+      .query("orchestrationTasks")
+      .withIndex("by_team_status", (q) => q.eq("teamId", teamId))
+      .collect();
+
+    // Filter by orchestrationId if provided (stored in metadata)
+    if (orchestrationId) {
+      return allTasks.filter((task) => {
+        const metadata = task.metadata as Record<string, unknown> | undefined;
+        return metadata?.orchestrationId === orchestrationId;
+      });
+    }
+
+    return allTasks;
+  },
+});
+
+/**
+ * Get messages for a specific task run.
+ * Used by the pull orchestration state HTTP action.
+ */
+export const getMessagesForTaskRunInternal = internalQuery({
+  args: {
+    taskRunId: v.id("taskRuns"),
+    includeRead: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { taskRunId, includeRead = false }) => {
+    if (includeRead) {
+      return ctx.db
+        .query("agentOrchestrateMessages")
+        .withIndex("by_task_run", (q) => q.eq("taskRunId", taskRunId))
+        .collect();
+    }
+
+    return ctx.db
+      .query("agentOrchestrateMessages")
+      .withIndex("by_task_run_unread", (q) =>
+        q.eq("taskRunId", taskRunId).eq("read", false)
+      )
+      .collect();
+  },
+});

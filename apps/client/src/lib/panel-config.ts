@@ -1,4 +1,17 @@
+import type { LucideIcon } from "lucide-react";
+import { MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Brain } from "lucide-react";
+
 export type PanelType = "chat" | "workspace" | "terminal" | "browser" | "gitDiff" | "memory";
+
+/**
+ * All available panel types. When adding a new panel:
+ * 1. Add to PanelType union above
+ * 2. Add to this array
+ * 3. Add to PANEL_LABELS
+ * 4. Add to PANEL_ICON_COMPONENTS
+ * 5. Handle in TaskPanelFactory.tsx switch statement
+ */
+export const ALL_PANEL_TYPES: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff", "memory"];
 
 export type LayoutMode =
   | "single-panel"    // Single full-width panel
@@ -54,6 +67,7 @@ export const PANEL_LABELS: Record<PanelType, string> = {
   memory: "Memory",
 };
 
+/** @deprecated Use PANEL_ICON_COMPONENTS instead */
 export const PANEL_ICONS: Record<PanelType, string> = {
   chat: "MessageSquare",
   workspace: "Code2",
@@ -61,6 +75,19 @@ export const PANEL_ICONS: Record<PanelType, string> = {
   browser: "Globe2",
   gitDiff: "GitCompare",
   memory: "Brain",
+};
+
+/**
+ * Single source of truth for panel icons.
+ * Use this instead of duplicating icon mappings in components.
+ */
+export const PANEL_ICON_COMPONENTS: Record<PanelType, LucideIcon> = {
+  chat: MessageSquare,
+  workspace: Code2,
+  terminal: TerminalSquare,
+  browser: Globe2,
+  gitDiff: GitCompare,
+  memory: Brain,
 };
 
 export const LAYOUT_LABELS: Record<LayoutMode, string> = {
@@ -161,7 +188,6 @@ export function getCurrentLayoutPanels(config: PanelConfig): LayoutPanels {
 }
 
 export function getAvailablePanels(config: PanelConfig): PanelType[] {
-  const allPanels: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff", "memory"];
   const currentLayout = getCurrentLayoutPanels(config);
 
   // Check all positions (including inactive) to prevent duplicates within current layout
@@ -172,7 +198,7 @@ export function getAvailablePanels(config: PanelConfig): PanelType[] {
     currentLayout.bottomRight,
   ].filter((p): p is PanelType => p !== null));
 
-  return allPanels.filter(panel => !usedPanels.has(panel));
+  return ALL_PANEL_TYPES.filter(panel => !usedPanels.has(panel));
 }
 
 /**

@@ -463,3 +463,267 @@ export const getSpawnConfig = httpAction(async (ctx, req) => {
     );
   }
 });
+
+// ============================================================================
+// Orchestration State Pull API (Phase 1 - Bi-directional Sync)
+// ============================================================================
+
+/**
+ * Response type for orchestration state pull API.
+ * Returns aggregated state for head agents to sync local PLAN.json.
+ */
+export interface OrchestrationStateUpdate {
+  orchestrationId: string;
+  tasks: Array<{
+    id: string;
+    status: string;
+    result?: string;
+    errorMessage?: string;
+    completedAt?: number;
+    assignedAgentName?: string;
+    assignedSandboxId?: string;
+  }>;
+  messages: Array<{
+    id: string;
+    from: string;
+    to: string;
+    type: string;
+    message: string;
+    timestamp: number;
+    read: boolean;
+  }>;
+  completedCount: number;
+  pendingCount: number;
+  failedCount: number;
+  runningCount: number;
+}
+
+/**
+ * HTTP action to pull orchestration state updates for head agents.
+ *
+ * Head agents can call this to get:
+ * - Current status of all sub-agent tasks
+ * - Unread messages from the mailbox
+ * - Aggregated completion counts
+ *
+ * Authenticates via task-run JWT only (X-Task-Run-JWT header).
+ * GET /api/orchestration/pull?orchestrationId=...&taskRunId=...
+ */
+export const pullOrchestrationState = httpAction(async (ctx, req) => {
+  const taskRunJwt = req.headers.get("x-task-run-jwt");
+
+  if (!taskRunJwt) {
+    return jsonResponse(
+      {
+        code: 401,
+        message: "Unauthorized: Missing X-Task-Run-JWT header",
+      },
+      401
+    );
+  }
+
+  // Parse query params
+  const url = new URL(req.url);
+  const orchestrationId = url.searchParams.get("orchestrationId") || undefined;
+  const taskRunId = url.searchParams.get("taskRunId") || undefined;
+
+  // Verify the JWT
+  let teamId: string;
+  let taskRunIdFromToken: string | undefined;
+
+  try {
+    const tokenPayload = await verifyTaskRunToken(
+      taskRunJwt,
+      env.CMUX_TASK_RUN_JWT_SECRET
+    );
+    teamId = tokenPayload.teamId;
+    taskRunIdFromToken = tokenPayload.taskRunId;
+  } catch (error) {
+    console.error("[orchestration_http.pullOrchestrationState] Failed to verify JWT", error);
+    return jsonResponse({ code: 401, message: "Unauthorized: Invalid task-run JWT" }, 401);
+  }
+
+  // Use taskRunId from params or from JWT
+  const effectiveTaskRunId = taskRunId || taskRunIdFromToken;
+
+  try {
+    // Fetch orchestration tasks for this team
+    const tasks = await ctx.runQuery(
+      internal.orchestrationQueries.getOrchestrationStateInternal,
+      {
+        teamId,
+        orchestrationId,
+        taskRunId: effectiveTaskRunId as Id<"taskRuns"> | undefined,
+      }
+    );
+
+    // Fetch messages for this task run (if available)
+    let messages: OrchestrationStateUpdate["messages"] = [];
+    if (effectiveTaskRunId) {
+      const rawMessages = await ctx.runQuery(
+        internal.orchestrationQueries.getMessagesForTaskRunInternal,
+        { taskRunId: effectiveTaskRunId as Id<"taskRuns"> }
+      );
+      messages = rawMessages.map((m) => ({
+        id: m.messageId,
+        from: m.senderName,
+        to: m.recipientName || "*",
+        type: m.messageType,
+        message: m.content,
+        timestamp: m.timestamp,
+        read: m.read,
+      }));
+    }
+
+    // Calculate counts
+    const completedCount = tasks.filter((t) => t.status === "completed").length;
+    const pendingCount = tasks.filter((t) => t.status === "pending").length;
+    const failedCount = tasks.filter((t) => t.status === "failed").length;
+    const runningCount = tasks.filter((t) => t.status === "running" || t.status === "assigned").length;
+
+    const response: OrchestrationStateUpdate = {
+      orchestrationId: orchestrationId || "default",
+      tasks: tasks.map((t) => ({
+        id: t._id,
+        status: t.status,
+        result: t.result,
+        errorMessage: t.errorMessage,
+        completedAt: t.completedAt,
+        assignedAgentName: t.assignedAgentName,
+        assignedSandboxId: t.assignedSandboxId,
+      })),
+      messages,
+      completedCount,
+      pendingCount,
+      failedCount,
+      runningCount,
+    };
+
+    return jsonResponse(response);
+  } catch (error) {
+    console.error("[orchestration_http.pullOrchestrationState] Failed to pull state", error);
+    return jsonResponse(
+      { code: 500, message: "Failed to pull orchestration state" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// Orchestration Results API (Phase 2 - Results Aggregation)
+// ============================================================================
+
+/**
+ * Response type for orchestration results API.
+ * Returns aggregated results from all sub-agents.
+ */
+export interface OrchestrationResults {
+  orchestrationId: string;
+  status: "running" | "completed" | "failed" | "partial";
+  totalTasks: number;
+  completedTasks: number;
+  results: Array<{
+    taskId: string;
+    agentName?: string;
+    status: string;
+    prompt: string;
+    result?: string;
+    errorMessage?: string;
+    taskRunId?: string;
+  }>;
+}
+
+/**
+ * HTTP action to get aggregated results from all sub-agents.
+ *
+ * Authenticates via task-run JWT only (X-Task-Run-JWT header).
+ * GET /api/orchestration/results?orchestrationId=...
+ */
+export const getOrchestrationResults = httpAction(async (ctx, req) => {
+  const taskRunJwt = req.headers.get("x-task-run-jwt");
+
+  if (!taskRunJwt) {
+    return jsonResponse(
+      {
+        code: 401,
+        message: "Unauthorized: Missing X-Task-Run-JWT header",
+      },
+      401
+    );
+  }
+
+  // Parse query params
+  const url = new URL(req.url);
+  const orchestrationId = url.searchParams.get("orchestrationId");
+
+  if (!orchestrationId) {
+    return jsonResponse(
+      { code: 400, message: "Missing required query param: orchestrationId" },
+      400
+    );
+  }
+
+  // Verify the JWT
+  let teamId: string;
+
+  try {
+    const tokenPayload = await verifyTaskRunToken(
+      taskRunJwt,
+      env.CMUX_TASK_RUN_JWT_SECRET
+    );
+    teamId = tokenPayload.teamId;
+  } catch (error) {
+    console.error("[orchestration_http.getOrchestrationResults] Failed to verify JWT", error);
+    return jsonResponse({ code: 401, message: "Unauthorized: Invalid task-run JWT" }, 401);
+  }
+
+  try {
+    // Fetch orchestration tasks
+    const tasks = await ctx.runQuery(
+      internal.orchestrationQueries.getOrchestrationStateInternal,
+      { teamId, orchestrationId }
+    );
+
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter((t) => t.status === "completed").length;
+    const failedTasks = tasks.filter((t) => t.status === "failed").length;
+
+    // Determine overall status
+    let status: OrchestrationResults["status"];
+    if (totalTasks === 0) {
+      status = "completed";
+    } else if (completedTasks === totalTasks) {
+      status = "completed";
+    } else if (failedTasks > 0 && completedTasks + failedTasks === totalTasks) {
+      status = "failed";
+    } else if (completedTasks > 0 || failedTasks > 0) {
+      status = "partial";
+    } else {
+      status = "running";
+    }
+
+    const response: OrchestrationResults = {
+      orchestrationId,
+      status,
+      totalTasks,
+      completedTasks,
+      results: tasks.map((t) => ({
+        taskId: t._id,
+        agentName: t.assignedAgentName,
+        status: t.status,
+        prompt: t.prompt,
+        result: t.result,
+        errorMessage: t.errorMessage,
+        taskRunId: t.taskRunId,
+      })),
+    };
+
+    return jsonResponse(response);
+  } catch (error) {
+    console.error("[orchestration_http.getOrchestrationResults] Failed to get results", error);
+    return jsonResponse(
+      { code: 500, message: "Failed to get orchestration results" },
+      500
+    );
+  }
+});
