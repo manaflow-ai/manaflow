@@ -1218,7 +1218,7 @@ const convexSchema = defineSchema({
   // Provider-specific info for devbox instances (maps our ID to provider details)
   devboxInfo: defineTable({
     devboxId: v.string(), // Our friendly ID (cr_xxxxxxxx)
-    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona")), // Provider name (extensible for future providers)
+    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona"), v.literal("vercel")), // Provider name (extensible for future providers)
     providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
     snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
     createdAt: v.number(),
@@ -1241,6 +1241,15 @@ const convexSchema = defineSchema({
     lastPausedAt: v.optional(v.number()),
     stoppedAt: v.optional(v.number()),
     gpu: v.optional(v.string()), // GPU config used (e.g., "T4", "A100", "H100:2")
+  }).index("by_instanceId", ["instanceId"]),
+
+  // Vercel Sandbox instance activity tracking (for managing instance lifecycle)
+  vercelInstanceActivity: defineTable({
+    instanceId: v.string(), // Vercel sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+    runtime: v.optional(v.string()), // Runtime used (e.g., "node24", "python3.13")
   }).index("by_instanceId", ["instanceId"]),
 
   // Prewarmed Morph instances for fast task startup.

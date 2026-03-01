@@ -20,6 +20,9 @@ const (
 
 	// Modal preset IDs from packages/shared/src/modal-templates.json
 	modalDefaultPresetID = "cmux-devbox-gpu"
+
+	// Vercel preset IDs from packages/shared/src/vercel-templates.json
+	vercelDefaultPresetID = "vercel-sandbox-node24"
 )
 
 var (
@@ -36,6 +39,7 @@ var (
 	startFlagSize     string
 	startFlagImage    string
 	startFlagTimeout  int
+	startFlagRuntime  string
 )
 
 // sizePreset defines a machine size preset (cpu, memory, disk).
@@ -68,13 +72,18 @@ var startCmd = &cobra.Command{
 	Short:   "Create a new sandbox",
 	Long: `Create a new sandbox and optionally sync files or clone a git repo.
 
+Providers (--provider):
+  e2b         Docker sandboxes (default)
+  modal       GPU sandboxes
+  vercel      Vercel Sandbox (fast microVMs with Node.js/Python runtimes)
+
 Size presets (--size):
   small       2 vCPU,  8 GB RAM,  20 GB disk
   medium      4 vCPU, 16 GB RAM,  40 GB disk
   large       8 vCPU, 32 GB RAM,  80 GB disk
   xlarge     16 vCPU, 64 GB RAM, 160 GB disk
 
-GPU options (--gpu):
+GPU options (--gpu, uses Modal provider):
   T4          16GB VRAM  - inference, fine-tuning small models
   L4          24GB VRAM  - inference, image generation
   A10G        24GB VRAM  - training medium models
@@ -87,6 +96,11 @@ GPU options (--gpu):
   H200        141GB VRAM - maximum memory capacity
   B200        192GB VRAM - latest gen, frontier models
 
+Vercel Sandbox runtimes (--runtime, uses Vercel provider):
+  node24      Node.js 24 (default)
+  node22      Node.js 22 LTS
+  python3.13  Python 3.13
+
 Individual resource flags (--cpu, --memory, --disk) override --size values.
 
 Examples:
@@ -97,6 +111,8 @@ Examples:
   cloudrouter start --gpu B200               # Sandbox with B200 GPU
   cloudrouter start --gpu A100               # Sandbox with A100 GPU
   cloudrouter start --gpu H100:2             # Sandbox with 2x H100 GPUs
+  cloudrouter start -p vercel .              # Vercel Sandbox with Node.js 24
+  cloudrouter start -p vercel --runtime python3.13 .  # Vercel Sandbox with Python
   cloudrouter start .                        # Sync current directory
   cloudrouter start https://github.com/u/r   # Clone git repo`,
 	Args: cobra.MaximumNArgs(1),
@@ -186,6 +202,11 @@ Examples:
 			provider = "modal"
 		}
 
+		// If --runtime is specified without --provider, default to vercel
+		if startFlagRuntime != "" && provider == "" {
+			provider = "vercel"
+		}
+
 		// Apply --size preset (individual flags override preset values)
 		if startFlagSize != "" {
 			preset, ok := sizePresets[strings.ToLower(startFlagSize)]
@@ -208,7 +229,36 @@ Examples:
 		if templateID == "" {
 			templates, err := client.ListTemplates(teamSlug, provider)
 			if err == nil {
-				if provider == "modal" {
+				if provider == "vercel" {
+					// For Vercel, pick a runtime-specific template
+					if startFlagRuntime != "" {
+						runtimeLower := strings.ToLower(startFlagRuntime)
+						for _, t := range templates {
+							if t.Provider == "vercel" && t.Runtime != "" && strings.ToLower(t.Runtime) == runtimeLower {
+								templateID = t.ID
+								break
+							}
+						}
+					}
+					// Fallback to default vercel template
+					if templateID == "" {
+						for _, t := range templates {
+							if t.Provider == "vercel" && t.ID == vercelDefaultPresetID {
+								templateID = t.ID
+								break
+							}
+						}
+					}
+					// Still nothing? Use first vercel template
+					if templateID == "" {
+						for _, t := range templates {
+							if t.Provider == "vercel" {
+								templateID = t.ID
+								break
+							}
+						}
+					}
+				} else if provider == "modal" {
 					// For Modal, pick a GPU template if --gpu is specified
 					if startFlagGPU != "" {
 						gpuLower := strings.ToLower(startFlagGPU)
@@ -250,8 +300,11 @@ Examples:
 
 			// Fallback to template name if the template list endpoint isn't
 			// available (or isn't returning the expected schema yet).
-			if templateID == "" && provider != "modal" {
+			if templateID == "" && provider != "modal" && provider != "vercel" {
 				templateID = defaultTemplateName
+			}
+			if templateID == "" && provider == "vercel" {
+				templateID = vercelDefaultPresetID
 			}
 		}
 
@@ -279,6 +332,9 @@ Examples:
 		}
 		if startFlagImage != "" {
 			createReq.Image = startFlagImage
+		}
+		if startFlagRuntime != "" {
+			createReq.Runtime = startFlagRuntime
 		}
 
 		resp, err := client.CreateInstance(createReq)
@@ -347,7 +403,7 @@ Examples:
 			jupyterAuthURL = resp.JupyterURL
 		}
 
-		// Build type label: "Docker" for e2b, "GPU (type)" for modal
+		// Build type label: "Docker" for e2b, "GPU (type)" for modal, "Vercel (runtime)" for vercel
 		typeLabel := "Docker"
 		if resp.Provider == "modal" {
 			if resp.GPU != "" {
@@ -355,6 +411,12 @@ Examples:
 			} else {
 				typeLabel = "GPU"
 			}
+		} else if resp.Provider == "vercel" {
+			runtime := startFlagRuntime
+			if runtime == "" {
+				runtime = "node24"
+			}
+			typeLabel = fmt.Sprintf("Vercel (%s)", runtime)
 		}
 
 		fmt.Printf("Created sandbox: %s\n", resp.DevboxID)
@@ -399,11 +461,12 @@ func init() {
 	startCmd.Flags().StringVar(&startFlagGit, "git", "", "Git repository URL to clone (or user/repo shorthand)")
 	startCmd.Flags().StringVarP(&startFlagBranch, "branch", "b", "", "Git branch to clone")
 
-	// Provider selection (internal: e2b = Docker, modal = GPU)
-	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal")
+	// Provider selection (internal: e2b = Docker, modal = GPU, vercel = Vercel Sandbox)
+	startCmd.Flags().StringVarP(&startFlagProvider, "provider", "p", "", "Sandbox provider: e2b (default), modal, vercel")
 
 	// GPU and resource options
 	startCmd.Flags().StringVar(&startFlagGPU, "gpu", "", "GPU type (T4, L4, A10G, L40S, A100, H100, H200, B200)")
+	startCmd.Flags().StringVar(&startFlagRuntime, "runtime", "", "Vercel Sandbox runtime (node24, node22, python3.13)")
 	startCmd.Flags().StringVar(&startFlagSize, "size", "", "Machine size preset: small, medium, large, xlarge")
 	startCmd.Flags().Float64Var(&startFlagCPU, "cpu", 0, "CPU cores (overrides --size)")
 	startCmd.Flags().IntVar(&startFlagMemory, "memory", 0, "Memory in MiB (overrides --size)")
