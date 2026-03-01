@@ -18,8 +18,15 @@ import {
   MODAL_TEMPLATE_PRESETS,
   isModalGpuGated,
 } from "@cmux/shared/modal-templates";
+import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 
 type SandboxProvider = "e2b" | "modal";
+
+const ALLOWED_CLOUDROUTER_EVENTS = new Set<string>([
+  "cloudrouter_login_succeeded",
+  "cloudrouter_sandbox_created",
+  "cloudrouter_workspace_opened",
+]);
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -27,6 +34,41 @@ const JSON_HEADERS = {
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+}
+
+function sanitizeTelemetryProperties(
+  input: unknown
+): Record<string, string | number | boolean | null> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const output: Record<string, string | number | boolean | null> = {};
+  const entries = Object.entries(input);
+  const maxProperties = 25;
+
+  for (const [key, value] of entries) {
+    if (Object.keys(output).length >= maxProperties) {
+      break;
+    }
+    if (!key || key.length > 64) {
+      continue;
+    }
+
+    if (typeof value === "string") {
+      output[key] = value.length > 300 ? value.slice(0, 300) : value;
+      continue;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      output[key] = value;
+      continue;
+    }
+    if (value === null) {
+      output[key] = null;
+    }
+  }
+
+  return output;
 }
 
 /**
@@ -838,6 +880,49 @@ export const getConfig = httpAction(async (ctx) => {
       gpuOptions: ["T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", "H200", "B200"],
     },
   });
+});
+
+// ============================================================================
+// POST /api/v2/devbox/telemetry - Capture Cloudrouter CLI telemetry
+// ============================================================================
+export const captureTelemetry = httpAction(async (ctx, req) => {
+  const contentTypeError = verifyContentType(req);
+  if (contentTypeError) return contentTypeError;
+
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  let body: {
+    event?: string;
+    properties?: unknown;
+  };
+
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ code: 400, message: "Invalid JSON body" }, 400);
+  }
+
+  const event = typeof body.event === "string" ? body.event : "";
+  if (!event) {
+    return jsonResponse({ code: 400, message: "event is required" }, 400);
+  }
+  if (!ALLOWED_CLOUDROUTER_EVENTS.has(event)) {
+    return jsonResponse({ code: 400, message: "Unsupported telemetry event" }, 400);
+  }
+
+  const properties = sanitizeTelemetryProperties(body.properties);
+  capturePosthogEvent({
+    distinctId: identity!.subject,
+    event,
+    properties: {
+      source: "cloudrouter_cli",
+      ...properties,
+    },
+  });
+  await drainPosthogEvents();
+
+  return jsonResponse({ captured: true });
 });
 
 // ============================================================================

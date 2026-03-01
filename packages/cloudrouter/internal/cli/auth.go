@@ -16,7 +16,23 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to cloudrouter (opens browser)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.Login()
+		if err := auth.Login(); err != nil {
+			return err
+		}
+
+		teamSlug := ""
+		if profile, err := auth.FetchUserProfile(); err == nil && profile != nil {
+			if profile.TeamSlug != "" {
+				teamSlug = profile.TeamSlug
+			} else if profile.TeamID != "" {
+				teamSlug = profile.TeamID
+			}
+		}
+
+		captureTeamEvent(teamSlug, "cloudrouter_login_succeeded", map[string]interface{}{
+			"auth_flow": "stack_cli",
+		})
+		return nil
 	},
 }
 
