@@ -92,6 +92,10 @@ Tasks are the same as in the web app dashboard. CLI and web sync through Convex.
 - `devsh task stop <task-id>` - Stop/archive task
 - `devsh task memory <task-run-id>` - View agent memory for a task run
 
+Notes:
+- `devsh task create` uses a positional prompt argument. `--prompt` is not a valid flag.
+- For automation, prefer `--json` and poll with `devsh task show <task-id>` or `devsh task list` after creation.
+
 ### Task Workflow: Branches and Pull Requests
 
 **Important:** Each task run automatically creates a new branch. Changes are NOT made to your existing branch.

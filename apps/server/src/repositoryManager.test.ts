@@ -20,6 +20,9 @@ const REPOS: RepoCase[] = [
 ];
 
 const TEST_BASE = path.join(tmpdir(), `cmux-repo-tests-${Date.now()}`);
+const describeSequential =
+  (describe as typeof describe & { sequential?: typeof describe }).sequential ??
+  describe;
 
 async function gitDirExists(dir: string): Promise<boolean> {
   try {
@@ -35,7 +38,7 @@ async function getHeadBranch(cwd: string): Promise<string> {
   return stdout.trim();
 }
 
-describe.sequential("RepositoryManager branch behavior (no fallbacks)", () => {
+describeSequential("RepositoryManager branch behavior (no fallbacks)", () => {
   beforeAll(async () => {
     try {
       const { stdout } = await exec("which git");

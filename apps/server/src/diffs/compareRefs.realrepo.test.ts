@@ -1,7 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { getGitDiff } from "./gitDiff";
 
-describe.sequential.skip("getGitDiff - real repo (cmux PR 259)", () => {
+const describeSequential =
+  (describe as typeof describe & { sequential?: typeof describe }).sequential ??
+  describe;
+
+describeSequential.skip("getGitDiff - real repo (cmux PR 259)", () => {
   it("reads +2/-0 for README.md on PR branch", async () => {
     // Skip this test in CI because it requires Convex auth
     // TODO: Create a proper test setup for public repo testing

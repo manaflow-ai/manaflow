@@ -107,13 +107,7 @@ describe("DockerVSCodeInstance", () => {
       containerMappings.clear();
     });
 
-    it(
-      "updates mapping status on container start and stop",
-      {
-        skip: true, // TODO: re-enable after docker outage is fixed
-        timeout: 15000,
-      },
-      async () => {
+    it.skip("updates mapping status on container start and stop", async () => {
         if (!dockerAvailable) {
           console.warn("Docker not available, skipping test");
           return;
@@ -177,7 +171,6 @@ describe("DockerVSCodeInstance", () => {
 
         await new Promise((r) => setTimeout(r, 2500));
         expect(containerMappings.get("cmux-test")?.status).toBe("stopped");
-      }
-    );
+      });
   });
 });

@@ -20,8 +20,68 @@ import { AGENT_CATALOG } from "@cmux/shared/agent-catalog";
 
 const SERVER_URL = process.env.CMUX_SERVER_URL ?? "http://localhost:9776";
 
-// Check if server is available before running tests
-let serverAvailable = false;
+// Server availability state - resolved once in preflight check
+let serverAvailable: boolean | null = null;
+
+/**
+ * Preflight check to determine server availability.
+ * Called once before test registration to enable suite-level gating.
+ */
+async function checkServerAvailability(): Promise<boolean> {
+  if (serverAvailable !== null) {
+    return serverAvailable;
+  }
+  try {
+    const response = await fetch(`${SERVER_URL}/api/health`);
+    serverAvailable = response.ok;
+  } catch {
+    serverAvailable = false;
+  }
+  if (!serverAvailable) {
+    console.log(
+      "[http-api.test] Server not available at",
+      SERVER_URL,
+      "- tests will be skipped",
+    );
+  }
+  return serverAvailable;
+}
+
+// Run preflight check immediately on module load
+const serverCheckPromise = checkServerAvailability();
+
+/**
+ * Suite-level gating helper: wraps `it` to skip when server is unavailable.
+ * Resolves the server check at test execution time (inside beforeAll).
+ */
+function itWhenServer(
+  name: string,
+  fn: () => Promise<void> | void,
+): void {
+  it(name, async () => {
+    const available = await serverCheckPromise;
+    if (!available) {
+      // Use it.skip equivalent by returning early with skip marker
+      return;
+    }
+    await fn();
+  });
+}
+
+/**
+ * Suite-level gating helper with skipIf support for additional conditions.
+ */
+itWhenServer.skipIf = (condition: boolean) => {
+  return (name: string, fn: () => Promise<void> | void): void => {
+    it(name, async () => {
+      const available = await serverCheckPromise;
+      if (!available || condition) {
+        return;
+      }
+      await fn();
+    });
+  };
+};
 
 // Helper to safely fetch with connection error handling
 async function safeFetch(
@@ -30,40 +90,21 @@ async function safeFetch(
 ): Promise<Response | null> {
   try {
     return await fetch(url, options);
-  } catch (error) {
-    // Connection refused or other network error
-    if (
-      error instanceof Error &&
-      (error.message.includes("ECONNREFUSED") ||
-        error.message.includes("fetch failed"))
-    ) {
-      return null;
-    }
-    throw error;
+  } catch {
+    // Treat all network-level fetch failures as "server unavailable".
+    // This keeps integration tests skippable when apps/server is not running.
+    return null;
   }
 }
 
 describe("HTTP API - apps/server", () => {
   beforeAll(async () => {
-    // Check if server is running
-    const response = await safeFetch(`${SERVER_URL}/api/health`);
-    serverAvailable = response !== null && response.ok;
-    if (!serverAvailable) {
-      console.log(
-        "[http-api.test] Server not available at",
-        SERVER_URL,
-        "- skipping integration tests",
-      );
-    }
+    // Ensure preflight check is complete before tests run
+    await serverCheckPromise;
   });
 
   describe("Health Check", () => {
-    it("GET /api/health returns ok status", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("GET /api/health returns ok status", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/health`);
       expect(response).not.toBeNull();
 
@@ -74,12 +115,7 @@ describe("HTTP API - apps/server", () => {
   });
 
   describe("Authentication", () => {
-    it("POST /api/start-task rejects missing auth", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("POST /api/start-task rejects missing auth", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/start-task`, {
         method: "POST",
         headers: {
@@ -101,12 +137,7 @@ describe("HTTP API - apps/server", () => {
   });
 
   describe("Request Validation", () => {
-    it("POST /api/start-task rejects invalid JSON", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("POST /api/start-task rejects invalid JSON", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/start-task`, {
         method: "POST",
         headers: {
@@ -120,12 +151,7 @@ describe("HTTP API - apps/server", () => {
       expect(response!.status).toBe(400);
     });
 
-    it("POST /api/start-task rejects missing required fields", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("POST /api/start-task rejects missing required fields", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/start-task`, {
         method: "POST",
         headers: {
@@ -144,12 +170,7 @@ describe("HTTP API - apps/server", () => {
       expect(data.error).toContain("Missing required fields");
     });
 
-    it("POST /api/start-task rejects missing teamSlugOrId", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("POST /api/start-task rejects missing teamSlugOrId", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/start-task`, {
         method: "POST",
         headers: {
@@ -172,12 +193,7 @@ describe("HTTP API - apps/server", () => {
   });
 
   describe("CORS", () => {
-    it("OPTIONS /api/start-task returns CORS headers", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("OPTIONS /api/start-task returns CORS headers", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/start-task`, {
         method: "OPTIONS",
       });
@@ -195,11 +211,7 @@ describe("HTTP API - apps/server", () => {
   });
 
   describe("Models API", () => {
-    it("GET /api/models returns model catalog", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
+    itWhenServer("GET /api/models returns model catalog", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/models`);
       expect(response).not.toBeNull();
       expect(response!.status).toBe(200);
@@ -221,12 +233,7 @@ describe("HTTP API - apps/server", () => {
   });
 
   describe("Models API - Data Integrity", () => {
-    it("returns same count as AGENT_CATALOG", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("returns same count as AGENT_CATALOG", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/models`);
       expect(response).not.toBeNull();
       const data = await response!.json();
@@ -234,12 +241,7 @@ describe("HTTP API - apps/server", () => {
       expect(data.models.length).toBe(AGENT_CATALOG.length);
     });
 
-    it("model names match catalog entries", async () => {
-      if (!serverAvailable) {
-        console.log("Server not running - skipping test");
-        return;
-      }
-
+    itWhenServer("model names match catalog entries", async () => {
       const response = await safeFetch(`${SERVER_URL}/api/models`);
       expect(response).not.toBeNull();
       const data = await response!.json();
@@ -259,12 +261,7 @@ describe("HTTP API - apps/server", () => {
 
   describe("Orchestration API", () => {
     describe("POST /api/orchestrate/spawn", () => {
-      it("rejects unauthorized requests", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects unauthorized requests", async () => {
         const response = await safeFetch(`${SERVER_URL}/api/orchestrate/spawn`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -279,12 +276,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("validates required fields", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("validates required fields", async () => {
         const response = await safeFetch(`${SERVER_URL}/api/orchestrate/spawn`, {
           method: "POST",
           headers: {
@@ -300,12 +292,7 @@ describe("HTTP API - apps/server", () => {
         expect(data.error).toContain("Missing required fields");
       });
 
-      it("rejects invalid JSON body", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects invalid JSON body", async () => {
         const response = await safeFetch(`${SERVER_URL}/api/orchestrate/spawn`, {
           method: "POST",
           headers: {
@@ -321,12 +308,7 @@ describe("HTTP API - apps/server", () => {
     });
 
     describe("GET /api/orchestrate/list", () => {
-      it("rejects unauthorized requests", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects unauthorized requests", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/list?teamSlugOrId=dev`,
         );
@@ -335,12 +317,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("requires teamSlugOrId query parameter", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("requires teamSlugOrId query parameter", async () => {
         const response = await safeFetch(`${SERVER_URL}/api/orchestrate/list`, {
           headers: { Authorization: "Bearer fake_token" },
         });
@@ -353,12 +330,7 @@ describe("HTTP API - apps/server", () => {
     });
 
     describe("GET /api/orchestrate/status/:id", () => {
-      it("rejects unauthorized requests", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects unauthorized requests", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/status/invalid_id_123?teamSlugOrId=dev`,
         );
@@ -367,12 +339,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("returns error for invalid orchestration task ID", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("returns error for invalid orchestration task ID", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/status/invalid_id_123?teamSlugOrId=dev`,
           { headers: { Authorization: "Bearer fake_token" } },
@@ -383,12 +350,7 @@ describe("HTTP API - apps/server", () => {
         expect([401, 500]).toContain(response!.status);
       });
 
-      it("requires teamSlugOrId query parameter", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("requires teamSlugOrId query parameter", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/status/some_id`,
           { headers: { Authorization: "Bearer fake_token" } },
@@ -402,12 +364,7 @@ describe("HTTP API - apps/server", () => {
     });
 
     describe("POST /api/orchestrate/cancel/:id", () => {
-      it("rejects unauthorized requests", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects unauthorized requests", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/cancel/invalid_id_123`,
           {
@@ -421,12 +378,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("requires teamSlugOrId in body", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("requires teamSlugOrId in body", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/cancel/some_id`,
           {
@@ -447,12 +399,7 @@ describe("HTTP API - apps/server", () => {
     });
 
     describe("POST /api/orchestrate/migrate", () => {
-      it("rejects unauthorized requests", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects unauthorized requests", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/migrate`,
           {
@@ -469,12 +416,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("validates required fields", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("validates required fields", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/migrate`,
           {
@@ -493,12 +435,7 @@ describe("HTTP API - apps/server", () => {
         expect(data.error).toContain("Missing required fields");
       });
 
-      it("rejects invalid planJson", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects invalid planJson", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/migrate`,
           {
@@ -520,12 +457,7 @@ describe("HTTP API - apps/server", () => {
         expect(data.error).toContain("planJson");
       });
 
-      it("requires headAgent in plan or request", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("requires headAgent in plan or request", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/migrate`,
           {
@@ -549,12 +481,7 @@ describe("HTTP API - apps/server", () => {
     });
 
     describe("POST /api/orchestrate/internal/spawn", () => {
-      it("rejects requests without internal secret", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects requests without internal secret", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/internal/spawn`,
           {
@@ -575,12 +502,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("rejects requests with wrong internal secret", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("rejects requests with wrong internal secret", async () => {
         const response = await safeFetch(
           `${SERVER_URL}/api/orchestrate/internal/spawn`,
           {
@@ -604,12 +526,7 @@ describe("HTTP API - apps/server", () => {
         expect(response!.status).toBe(401);
       });
 
-      it("validates required fields", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer("validates required fields", async () => {
         // Even with a valid secret, missing fields should return 400
         // This test documents expected behavior
         const response = await safeFetch(
@@ -643,12 +560,7 @@ describe("HTTP API - apps/server", () => {
         process.env.STACK_SUPER_SECRET_ADMIN_KEY
       );
 
-      it.skipIf(!hasCredentials)("GET /api/orchestrate/list returns tasks array with valid auth", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("GET /api/orchestrate/list returns tasks array with valid auth", async () => {
         // Import auth helper dynamically to avoid issues if not available
         const { authenticatedFetch, TEST_TEAM, buildUrl } = await import(
           "./test-fixtures/auth-helper"
@@ -670,12 +582,7 @@ describe("HTTP API - apps/server", () => {
         }
       });
 
-      it.skipIf(!hasCredentials)("GET /api/orchestrate/list filters by status", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("GET /api/orchestrate/list filters by status", async () => {
         const { authenticatedFetch, TEST_TEAM, buildUrl } = await import(
           "./test-fixtures/auth-helper"
         );
@@ -699,12 +606,7 @@ describe("HTTP API - apps/server", () => {
         // Non-ok responses are acceptable (team not found, etc.)
       });
 
-      it.skipIf(!hasCredentials)("GET /api/orchestrate/list rejects invalid status filter", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("GET /api/orchestrate/list rejects invalid status filter", async () => {
         const { authenticatedFetch, TEST_TEAM, buildUrl } = await import(
           "./test-fixtures/auth-helper"
         );
@@ -720,12 +622,7 @@ describe("HTTP API - apps/server", () => {
         expect(result.error).toContain("Invalid status");
       });
 
-      it.skipIf(!hasCredentials)("POST /api/orchestrate/spawn validates agent name", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("POST /api/orchestrate/spawn validates agent name", async () => {
         const { authenticatedFetch, TEST_TEAM } = await import(
           "./test-fixtures/auth-helper"
         );
@@ -748,12 +645,7 @@ describe("HTTP API - apps/server", () => {
         expect(result.error).toContain("Agent not found");
       });
 
-      it.skipIf(!hasCredentials)("GET /api/orchestrate/status returns 500 for nonexistent task", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("GET /api/orchestrate/status returns 500 for nonexistent task", async () => {
         const { authenticatedFetch, TEST_TEAM, buildUrl } = await import(
           "./test-fixtures/auth-helper"
         );
@@ -772,12 +664,7 @@ describe("HTTP API - apps/server", () => {
         expect([401, 500]).toContain(result.status);
       });
 
-      it.skipIf(!hasCredentials)("POST /api/orchestrate/cancel returns error for nonexistent task", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("POST /api/orchestrate/cancel returns error for nonexistent task", async () => {
         const { authenticatedFetch, TEST_TEAM } = await import(
           "./test-fixtures/auth-helper"
         );
@@ -795,12 +682,7 @@ describe("HTTP API - apps/server", () => {
         expect([401, 500]).toContain(result.status);
       });
 
-      it.skipIf(!hasCredentials)("POST /api/orchestrate/migrate rejects empty plan tasks", async () => {
-        if (!serverAvailable) {
-          console.log("Server not running - skipping test");
-          return;
-        }
-
+      itWhenServer.skipIf(!hasCredentials)("POST /api/orchestrate/migrate rejects empty plan tasks", async () => {
         const { authenticatedFetch, TEST_TEAM } = await import(
           "./test-fixtures/auth-helper"
         );

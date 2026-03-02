@@ -191,14 +191,39 @@ function clearWorkspace(workspacePath: string) {
 }
 
 function cloneRepository(config: HydrateConfig) {
-  const { workspacePath, cloneUrl, maskedCloneUrl, depth } = config;
+  const { workspacePath, cloneUrl, maskedCloneUrl, depth, baseBranch } = config;
 
-  log(`Cloning ${maskedCloneUrl || cloneUrl} with depth=${depth}`);
+  if (baseBranch) {
+    // Validate branch name before using it in shell commands
+    validateBranchName(baseBranch);
+    log(`Cloning ${maskedCloneUrl || cloneUrl} with depth=${depth} on branch=${baseBranch}`);
+  } else {
+    log(`Cloning ${maskedCloneUrl || cloneUrl} with depth=${depth}`);
+  }
 
-  const { exitCode, stderr } = exec(
-    `git clone --depth ${depth} "${cloneUrl}" "${workspacePath}"`,
-    { throwOnError: false }
-  );
+  let cloneCommand = `git clone --depth ${depth}`;
+  if (baseBranch) {
+    cloneCommand += ` --branch "${baseBranch}"`;
+  }
+  cloneCommand += ` "${cloneUrl}" "${workspacePath}"`;
+
+  let { exitCode, stderr } = exec(cloneCommand, { throwOnError: false });
+
+  // If target branch does not exist remotely, retry with default branch
+  if (exitCode !== 0 && baseBranch) {
+    const missingBranchError =
+      stderr.includes(`Remote branch ${baseBranch} not found`) ||
+      stderr.includes(`Could not find remote branch ${baseBranch}`);
+
+    if (missingBranchError) {
+      log(`Clone with branch '${baseBranch}' failed, falling back to default branch`, "debug");
+      clearWorkspace(workspacePath);
+      ({ exitCode, stderr } = exec(
+        `git clone --depth ${depth} "${cloneUrl}" "${workspacePath}"`,
+        { throwOnError: false }
+      ));
+    }
+  }
 
   if (exitCode !== 0) {
     log(`Clone failed: ${stderr}`, "error");

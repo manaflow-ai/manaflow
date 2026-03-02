@@ -36,9 +36,12 @@ function randomSuffix(): string {
 
 const skipDockerTests =
   process.env.CMUX_SKIP_DOCKER_TESTS === "1" || process.platform === "darwin";
+const describeSequential =
+  (describe as typeof describe & { sequential?: typeof describe }).sequential ??
+  describe;
 const describeDockerTests = skipDockerTests
-  ? describe.sequential.skip
-  : describe.sequential;
+  ? describeSequential.skip
+  : describeSequential;
 
 describeDockerTests("stopContainersForRuns (docker E2E)", () => {
   const containers: string[] = [];
