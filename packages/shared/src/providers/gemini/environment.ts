@@ -8,6 +8,7 @@ import {
   getMemorySeedFiles,
   getMemoryProtocolInstructions,
   getProjectContextFile,
+  getCrossToolSymlinkCommands,
 } from "../../agent-memory-protocol";
 
 type GeminiModelSettings = {
@@ -206,6 +207,11 @@ export async function getGeminiEnvironment(
   startupCommands.push(getMemoryStartupCommand());
   files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
 
+  // Create cross-tool symlinks for shared instructions
+  // If Claude's CLAUDE.md exists, link it to ~/.gemini/GEMINI.md
+  // This allows all tools to share the same instructions at user-level paths
+  startupCommands.push(...getCrossToolSymlinkCommands());
+
   // Inject GitHub Projects context if task is linked to a project item (Phase 5)
   if (ctx.githubProjectContext) {
     files.push(
@@ -217,13 +223,16 @@ export async function getGeminiEnvironment(
     );
   }
 
-  // Add GEMINI.md with memory protocol instructions for the project
+  // Add GEMINI.md with memory protocol instructions as fallback
+  // This is created at user-level ~/.gemini/GEMINI.md (not in workspace)
+  // If Claude's CLAUDE.md exists, the symlink from getCrossToolSymlinkCommands()
+  // will override this file, ensuring all tools share the same instructions
   const geminiMdContent = `# cmux Project Instructions
 
 ${getMemoryProtocolInstructions()}
 `;
   files.push({
-    destinationPath: "/root/workspace/GEMINI.md",
+    destinationPath: "$HOME/.gemini/GEMINI.md",
     contentBase64: Buffer.from(geminiMdContent).toString("base64"),
     mode: "644",
   });

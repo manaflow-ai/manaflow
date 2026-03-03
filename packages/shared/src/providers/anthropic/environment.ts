@@ -11,6 +11,7 @@ import {
   getMemorySeedFiles,
   getMemoryProtocolInstructions,
   getProjectContextFile,
+  getCrossToolSymlinkCommands,
 } from "../../agent-memory-protocol";
 
 export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
@@ -365,6 +366,11 @@ ${getMemoryProtocolInstructions()}
     contentBase64: Buffer.from(claudeMdContent).toString("base64"),
     mode: "644",
   });
+
+  // Create cross-tool symlinks for shared instructions
+  // This allows Codex and Gemini to read the same CLAUDE.md via symlinks
+  // at their native user-level paths (~/.codex/AGENTS.md, ~/.gemini/GEMINI.md)
+  startupCommands.push(...getCrossToolSymlinkCommands());
 
   return {
     files,

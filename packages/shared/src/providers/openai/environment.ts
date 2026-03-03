@@ -7,6 +7,7 @@ import {
   getMemorySeedFiles,
   getMemoryProtocolInstructions,
   getProjectContextFile,
+  getCrossToolSymlinkCommands,
 } from "../../agent-memory-protocol";
 
 /**
@@ -287,6 +288,11 @@ touch /root/lifecycle/codex-done.txt /root/lifecycle/done.txt
   // Add agent memory protocol support
   startupCommands.push(getMemoryStartupCommand());
   files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
+
+  // Create cross-tool symlinks for shared instructions
+  // If Claude's CLAUDE.md exists, link it to ~/.codex/AGENTS.md
+  // This allows all tools to share the same instructions
+  startupCommands.push(...getCrossToolSymlinkCommands());
 
   // Inject GitHub Projects context if task is linked to a project item (Phase 5)
   if (ctx.githubProjectContext) {

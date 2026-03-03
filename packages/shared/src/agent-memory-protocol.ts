@@ -526,6 +526,25 @@ export function getMemoryStartupCommand(): string {
 }
 
 /**
+ * Get startup commands to create cross-tool instruction symlinks.
+ *
+ * Master file: ~/.claude/CLAUDE.md (created by Claude environment)
+ * Symlinks:
+ *   - ~/.codex/AGENTS.md -> ~/.claude/CLAUDE.md (for Codex CLI)
+ *   - ~/.gemini/GEMINI.md -> ~/.claude/CLAUDE.md (for Gemini CLI)
+ *
+ * This enables all tools to share the same instructions without polluting
+ * the git repository. Each tool reads from its native user-level path.
+ */
+export function getCrossToolSymlinkCommands(): string[] {
+  return [
+    "mkdir -p ~/.codex ~/.gemini",
+    "[ -f ~/.claude/CLAUDE.md ] && ln -sf ~/.claude/CLAUDE.md ~/.codex/AGENTS.md || true",
+    "[ -f ~/.claude/CLAUDE.md ] && ln -sf ~/.claude/CLAUDE.md ~/.gemini/GEMINI.md || true",
+  ];
+}
+
+/**
  * Generate the memory sync bash script that reads memory files and POSTs them to Convex.
  * This script is called by provider stop hooks before crown/complete.
  *
