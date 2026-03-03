@@ -11,6 +11,7 @@ import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { TaskRunWithChildren } from "@/types/task";
 import { Skeleton } from "@heroui/react";
 import { useClipboard } from "@mantine/hooks";
+import { ErrorBoundary } from "@sentry/react";
 import {
   useMutation,
   useQueries,
@@ -94,6 +95,40 @@ type RepoDiffTarget = {
   baseRef?: string;
   headRef?: string;
 };
+
+function isValidHttpsUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeGithubOwner(owner: unknown): string | null {
+  if (typeof owner !== "string") {
+    return null;
+  }
+  const trimmedOwner = owner.trim();
+  if (!trimmedOwner) {
+    return null;
+  }
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(trimmedOwner)) {
+    return null;
+  }
+  if (trimmedOwner.startsWith("-") || trimmedOwner.endsWith("-")) {
+    return null;
+  }
+  return trimmedOwner;
+}
+
+function openHttpsUrlInNewTab(url: string | null | undefined): boolean {
+  if (!url || !isValidHttpsUrl(url)) {
+    return false;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+  return true;
+}
 
 function AdditionsAndDeletions({
   repos,
@@ -257,7 +292,7 @@ function AdditionsAndDeletions({
   );
 }
 
-export function TaskDetailHeader({
+function TaskDetailHeaderContent({
   task,
   taskRuns,
   selectedRun,
@@ -284,6 +319,19 @@ export function TaskDetailHeader({
     setAgentMenuOpen(open);
   }, []);
   const taskTitle = task?.pullRequestTitle || task?.text;
+  const githubProjectOwner = useMemo(
+    () => normalizeGithubOwner(task?.githubProjectOwner),
+    [task?.githubProjectOwner],
+  );
+  const githubProjectUrl = useMemo(() => {
+    if (!githubProjectOwner) {
+      return null;
+    }
+    const pathPrefix =
+      task?.githubProjectOwnerType === "organization" ? "orgs" : "users";
+    const candidateUrl = `https://github.com/${pathPrefix}/${githubProjectOwner}/projects`;
+    return isValidHttpsUrl(candidateUrl) ? candidateUrl : null;
+  }, [githubProjectOwner, task?.githubProjectOwnerType]);
   const handleCopyBranch = () => {
     if (selectedRun?.newBranch) {
       clipboard.copy(selectedRun.newBranch);
@@ -633,20 +681,16 @@ export function TaskDetailHeader({
             </span>
           )}
 
-          {task?.githubProjectOwner && (
+          {githubProjectOwner && githubProjectUrl && (
             <a
-              href={
-                task.githubProjectOwnerType === "organization"
-                  ? `https://github.com/orgs/${task.githubProjectOwner}/projects`
-                  : `https://github.com/users/${task.githubProjectOwner}/projects`
-              }
+              href={githubProjectUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:hover:bg-violet-900/50 transition-colors select-none shrink-0"
-              title={`GitHub Project: ${task.githubProjectOwner}`}
+              title={`GitHub Project: ${githubProjectOwner}`}
             >
               <FolderKanban className="w-3 h-3" />
-              {task.githubProjectOwner}
+              {githubProjectOwner}
             </a>
           )}
 
@@ -750,6 +794,24 @@ export function TaskDetailHeader({
   );
 }
 
+function TaskDetailHeaderErrorFallback() {
+  return (
+    <div className="relative bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70">
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        Header failed to render.
+      </p>
+    </div>
+  );
+}
+
+export function TaskDetailHeader(props: TaskDetailHeaderProps) {
+  return (
+    <ErrorBoundary fallback={<TaskDetailHeaderErrorFallback />}>
+      <TaskDetailHeaderContent {...props} />
+    </ErrorBoundary>
+  );
+}
+
 function SocketActions({
   selectedRun,
   taskRunId,
@@ -827,9 +889,10 @@ function SocketActions({
   ) => {
     prs.forEach((pr) => {
       // Open GitHub URL directly in new tab if available
-      if (pr.url) {
-        window.open(pr.url, '_blank', 'noopener,noreferrer');
-      } else if (pr.repoFullName && pr.number) {
+      if (openHttpsUrlInNewTab(pr.url)) {
+        return;
+      }
+      if (pr.repoFullName && pr.number) {
         // Fallback to internal viewer if URL not available
         const [owner = "", repo = ""] = pr.repoFullName.split("/", 2);
         navigate({
@@ -1190,9 +1253,10 @@ function SocketActions({
                   disabled={!hasPrTarget}
                   onClick={() => {
                     // Open GitHub URL directly in new tab if available
-                    if (pr?.url) {
-                      window.open(pr.url, '_blank', 'noopener,noreferrer');
-                    } else if (pr?.repoFullName && pr?.number) {
+                    if (openHttpsUrlInNewTab(pr?.url)) {
+                      return;
+                    }
+                    if (pr?.repoFullName && pr?.number) {
                       // Fallback to internal viewer if URL not available
                       const [owner = "", repo = ""] =
                         pr.repoFullName.split("/", 2);

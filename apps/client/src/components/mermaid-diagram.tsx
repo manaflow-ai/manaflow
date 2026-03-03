@@ -1,41 +1,44 @@
 import { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 
-let lastTheme: "dark" | "default" | null = null;
-
-function initMermaid(isDark: boolean) {
-  const theme = isDark ? "dark" : "default";
-  // Re-initialize when theme changes
-  if (lastTheme === theme) {
-    return;
-  }
-  mermaid.initialize({
-    startOnLoad: false,
-    theme,
-    securityLevel: "strict",
-    fontFamily: "ui-sans-serif, system-ui, -apple-system, sans-serif",
-    fontSize: 14,
-    flowchart: {
-      useMaxWidth: false,
-      htmlLabels: true,
-      curve: "basis",
-      padding: 20,
-      nodeSpacing: 40,
-      rankSpacing: 60,
-    },
-  });
-  lastTheme = theme;
-}
-
 interface MermaidDiagramProps {
   chart: string;
   className?: string;
 }
 
+function getThemeFromDocument(): "dark" | "default" {
+  if (typeof document === "undefined") {
+    return "default";
+  }
+  return document.documentElement.classList.contains("dark") ? "dark" : "default";
+}
+
 export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const lastThemeRef = useRef<"dark" | "default" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"dark" | "default">(() => getThemeFromDocument());
   const renderIdRef = useRef(0);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    mountedRef.current = true;
+
+    const observer = new MutationObserver(() => {
+      const nextTheme = getThemeFromDocument();
+      setTheme((currentTheme) =>
+        currentTheme === nextTheme ? currentTheme : nextTheme
+      );
+    });
+
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+
+    return () => {
+      mountedRef.current = false;
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -43,8 +46,24 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
       return;
     }
 
-    const isDark = document.documentElement.classList.contains("dark");
-    initMermaid(isDark);
+    if (lastThemeRef.current !== theme) {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme,
+        securityLevel: "strict",
+        fontFamily: "ui-sans-serif, system-ui, -apple-system, sans-serif",
+        fontSize: 14,
+        flowchart: {
+          useMaxWidth: false,
+          htmlLabels: true,
+          curve: "basis",
+          padding: 20,
+          nodeSpacing: 40,
+          rankSpacing: 60,
+        },
+      });
+      lastThemeRef.current = theme;
+    }
 
     const currentRenderId = ++renderIdRef.current;
     const renderDiagram = async () => {
@@ -52,12 +71,18 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
         const id = `mermaid-${Date.now()}-${currentRenderId}`;
         const { svg } = await mermaid.render(id, chart);
         // Only update if this is still the latest render
-        if (currentRenderId === renderIdRef.current && container) {
-          container.innerHTML = svg;
+        const latestContainer = containerRef.current;
+        if (
+          currentRenderId === renderIdRef.current &&
+          mountedRef.current &&
+          latestContainer &&
+          latestContainer.isConnected
+        ) {
+          latestContainer.innerHTML = svg;
           setError(null);
         }
       } catch (err) {
-        if (currentRenderId === renderIdRef.current) {
+        if (currentRenderId === renderIdRef.current && mountedRef.current) {
           console.error("[MermaidDiagram] Failed to render:", err);
           setError(err instanceof Error ? err.message : "Failed to render diagram");
         }
@@ -65,7 +90,7 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
     };
 
     void renderDiagram();
-  }, [chart]);
+  }, [chart, theme]);
 
   if (error) {
     return (

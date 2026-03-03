@@ -1,6 +1,8 @@
 import type { Doc } from "@cmux/convex/dataModel";
 import type { TaskRunWithChildren } from "@/types/task";
+import { ErrorBoundary } from "@sentry/react";
 import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { MermaidDiagram } from "./mermaid-diagram";
 import { FileText } from "lucide-react";
@@ -9,6 +11,22 @@ import type { Components } from "react-markdown";
 export interface TaskRunSummaryPanelProps {
   task?: Doc<"tasks"> | null;
   selectedRun?: TaskRunWithChildren | null;
+}
+
+function TaskRunSummaryPanelErrorFallback() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <FileText className="size-8 text-neutral-300 dark:text-neutral-600" />
+      <div>
+        <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+          Summary failed to render
+        </p>
+        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+          Check the content format and try again.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function extractExecutionSummary(prDescription: string): string | null {
@@ -22,7 +40,7 @@ function extractExecutionSummary(prDescription: string): string | null {
   return prDescription.trim() || null;
 }
 
-export function TaskRunSummaryPanel({
+function TaskRunSummaryPanelContent({
   task,
   selectedRun,
 }: TaskRunSummaryPanelProps) {
@@ -103,11 +121,20 @@ export function TaskRunSummaryPanel({
       >
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeSanitize]}
           components={markdownComponents}
         >
           {content}
         </ReactMarkdown>
       </div>
     </div>
+  );
+}
+
+export function TaskRunSummaryPanel(props: TaskRunSummaryPanelProps) {
+  return (
+    <ErrorBoundary fallback={<TaskRunSummaryPanelErrorFallback />}>
+      <TaskRunSummaryPanelContent {...props} />
+    </ErrorBoundary>
   );
 }

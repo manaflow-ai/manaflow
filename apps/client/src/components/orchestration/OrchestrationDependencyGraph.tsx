@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { Users } from "lucide-react";
 import { STATUS_CONFIG, type TaskStatus } from "./status-config";
 import type { OrchestrationTaskWithDeps } from "./OrchestrationDashboard";
@@ -14,13 +14,20 @@ interface TaskNode {
   indexInLevel: number;
 }
 
-function truncatePrompt(prompt: string, maxLen = 48): string {
+function truncatePrompt(prompt: string | null | undefined, maxLen = 48): string {
+  if (!prompt) {
+    return "Untitled task";
+  }
   const firstLine = prompt.split("\n")[0] ?? prompt;
   const clean = firstLine.trim();
   if (clean.length <= maxLen) {
     return clean;
   }
   return `${clean.slice(0, maxLen)}...`;
+}
+
+function isDependencyTaskId(depId: unknown): depId is string {
+  return typeof depId === "string" && depId.length > 0;
 }
 
 /**
@@ -56,8 +63,11 @@ function computeLevels(tasks: OrchestrationTaskWithDeps[]): TaskNode[] {
     }
     let maxDepLevel = 0;
     for (const depId of task.dependencies) {
-      if (taskMap.has(depId as string)) {
-        maxDepLevel = Math.max(maxDepLevel, getLevel(depId as string) + 1);
+      if (!isDependencyTaskId(depId)) {
+        continue;
+      }
+      if (taskMap.has(depId)) {
+        maxDepLevel = Math.max(maxDepLevel, getLevel(depId) + 1);
       }
     }
     levels.set(id, maxDepLevel);
@@ -160,7 +170,10 @@ function computeEdges(
     if (!toPos) continue;
 
     for (const depId of deps) {
-      const fromPos = nodePositions.get(depId as string);
+      if (!isDependencyTaskId(depId)) {
+        continue;
+      }
+      const fromPos = nodePositions.get(depId);
       if (!fromPos) continue;
 
       edges.push({
@@ -178,6 +191,7 @@ export function OrchestrationDependencyGraph({
   tasks,
   loading,
 }: OrchestrationDependencyGraphProps) {
+  const markerId = useId().replace(/:/g, "-");
   const { nodes, nodePositions, edges, canvasWidth, canvasHeight, hasDeps } = useMemo(() => {
     if (!tasks || tasks.length === 0) {
       return { nodes: [], nodePositions: new Map<string, { x: number; y: number }>(), edges: [], canvasWidth: 0, canvasHeight: 0, hasDeps: false };
@@ -271,7 +285,7 @@ export function OrchestrationDependencyGraph({
             >
               <defs>
                 <marker
-                  id="arrowhead"
+                  id={markerId}
                   markerWidth="8"
                   markerHeight="6"
                   refX="7"
@@ -295,7 +309,7 @@ export function OrchestrationDependencyGraph({
                     fill="none"
                     className="stroke-neutral-300 dark:stroke-neutral-600"
                     strokeWidth={1.5}
-                    markerEnd="url(#arrowhead)"
+                    markerEnd={`url(#${markerId})`}
                   />
                 );
               })}

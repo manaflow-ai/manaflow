@@ -269,10 +269,18 @@ function PreviewPage() {
 
   // Terminal state - default open if preview URL is not available
   const [isTerminalVisible, setIsTerminalVisible] = useState(() => !previewUrl);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Update terminal visibility when preview URL changes
   useEffect(() => {
-    if (!previewUrl) {
+    if (mountedRef.current && !previewUrl) {
       setIsTerminalVisible(true);
     }
   }, [previewUrl]);
@@ -391,6 +399,12 @@ function PreviewEmptyState({
   const hasRunningPorts = selectedRun?.networking?.some(
     (s) => s.status === "running"
   );
+  const handleDetectPreviewPorts = useCallback(() => {
+    if (!sandboxId) {
+      return;
+    }
+    refreshPorts.mutate();
+  }, [sandboxId, refreshPorts]);
 
   return (
     <div className="text-center max-w-sm">
@@ -404,11 +418,11 @@ function PreviewEmptyState({
           Dev server may not have started yet, or ports have not been detected.
         </p>
       )}
-      {selectedRun && sandboxId && (
+      {selectedRun && (
         <button
           type="button"
-          onClick={() => refreshPorts.mutate()}
-          disabled={refreshPorts.isPending}
+          onClick={handleDetectPreviewPorts}
+          disabled={refreshPorts.isPending || !sandboxId}
           className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700 transition-colors"
         >
           {refreshPorts.isPending ? "Detecting..." : "Detect preview ports"}
