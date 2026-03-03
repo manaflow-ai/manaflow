@@ -20,16 +20,18 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
+      - name: Build and publish
         run: |
-          # Remove root bun.lock to prevent npm from trying to resolve workspace:* protocol
-          rm -f ../../bun.lock
+          # Copy package to temp directory outside workspace to avoid workspace:* resolution
+          TEMP_DIR=$(mktemp -d)
+          cp -r . "$TEMP_DIR/"
+          cd "$TEMP_DIR"
+
+          # Install dependencies and build
           npm install --legacy-peer-deps
+          npm run build
 
-      - name: Build
-        run: npm run build
-
-      - name: Publish to npm
-        run: npm publish --access public
+          # Publish to npm
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
