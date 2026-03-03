@@ -3,6 +3,7 @@ import { TaskRunTerminalPane } from "@/components/TaskRunTerminalPane";
 import { TaskRunMemoryPanel } from "@/components/TaskRunMemoryPanel";
 import { FloatingPane } from "@/components/floating-pane";
 import { TaskDetailHeader } from "@/components/task-detail-header";
+import { AgentTeamPanel } from "@/components/dashboard/AgentTeamPanel";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
@@ -467,6 +468,18 @@ function TaskDetailPage() {
   }, [search.runId, taskRunIndex, taskRuns]);
 
   const selectedRunId = selectedRun?._id ?? null;
+  const selectedRunChildren = useQuery(
+    api.taskRuns.listChildRuns,
+    selectedRunId
+      ? {
+          teamSlugOrId,
+          parentRunId: selectedRunId,
+        }
+      : "skip"
+  );
+  const shouldRenderAgentTeamPanel =
+    Boolean(selectedRunId) &&
+    (selectedRunChildren === undefined || selectedRunChildren.length > 0);
 
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspace = useQuery(
@@ -925,6 +938,14 @@ function TaskDetailPage() {
           config={panelConfig}
           onChange={handlePanelConfigChange}
         />
+        {shouldRenderAgentTeamPanel && selectedRunId ? (
+          <div className="px-1 pb-1">
+            <AgentTeamPanel
+              teamSlugOrId={teamSlugOrId}
+              parentRunId={selectedRunId}
+            />
+          </div>
+        ) : null}
         <div className="relative flex flex-1 min-h-0 w-full h-full p-1">
           {expandedPanel ? (
             <div
