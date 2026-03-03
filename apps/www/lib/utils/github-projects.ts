@@ -277,6 +277,32 @@ export interface ProjectV2Item {
   fieldValues: Record<string, string | number | null>;
 }
 
+// Raw GraphQL response types (before flattening)
+
+interface RawProjectV2ItemFieldValue {
+  text?: string;
+  number?: number;
+  date?: string;
+  name?: string; // SingleSelectValue
+  title?: string; // IterationValue
+  field?: { name?: string };
+}
+
+interface RawProjectV2ItemContent {
+  id?: string;
+  title?: string;
+  number?: number;
+  state?: string;
+  url?: string;
+  body?: string;
+}
+
+interface RawProjectV2ItemNode {
+  id: string;
+  content: RawProjectV2ItemContent | null;
+  fieldValues: { nodes: (RawProjectV2ItemFieldValue | null)[] };
+}
+
 // Client functions
 
 /**
@@ -294,16 +320,34 @@ function createGitHubAppOctokit(installationId?: number): Octokit {
 }
 
 /**
+ * Create an authenticated Octokit instance using user's OAuth token.
+ * Required for user-owned Projects v2 (GitHub Apps cannot access these).
+ */
+function createUserOctokit(userOAuthToken: string): Octokit {
+  return new Octokit({ auth: userOAuthToken });
+}
+
+/**
  * List projects for a user or organization
+ *
+ * IMPORTANT: For user-owned projects, userOAuthToken with "project" scope is required.
+ * GitHub Apps cannot access user-owned Projects v2 (platform limitation).
+ * Organization projects can use either GitHub App or OAuth token.
  */
 export async function listProjects(
   owner: string,
   ownerType: "user" | "organization",
   installationId: number,
-  options?: { first?: number }
+  options?: { first?: number; userOAuthToken?: string }
 ): Promise<ProjectV2Node[]> {
-  const octokit = createGitHubAppOctokit(installationId);
   const first = options?.first ?? 20;
+
+  // For user-owned projects, prefer OAuth token if available (required for private projects)
+  // GitHub Apps cannot access user-owned Projects v2
+  const octokit =
+    ownerType === "user" && options?.userOAuthToken
+      ? createUserOctokit(options.userOAuthToken)
+      : createGitHubAppOctokit(installationId);
 
   const query =
     ownerType === "organization"
@@ -325,9 +369,12 @@ export async function listProjects(
  */
 export async function getProjectFields(
   projectId: string,
-  installationId: number
+  installationId: number,
+  options?: { userOAuthToken?: string }
 ): Promise<ProjectV2Field[]> {
-  const octokit = createGitHubAppOctokit(installationId);
+  const octokit = options?.userOAuthToken
+    ? createUserOctokit(options.userOAuthToken)
+    : createGitHubAppOctokit(installationId);
 
   const result = await octokit.graphql<{
     node: { fields: { nodes: ProjectV2Field[] } };
@@ -337,14 +384,80 @@ export async function getProjectFields(
 }
 
 /**
+ * Get project items with pagination
+ */
+export async function getProjectItems(
+  projectId: string,
+  installationId: number,
+  options?: { first?: number; after?: string; userOAuthToken?: string }
+): Promise<{ items: ProjectV2Item[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> {
+  const first = options?.first ?? 50;
+
+  const octokit = options?.userOAuthToken
+    ? createUserOctokit(options.userOAuthToken)
+    : createGitHubAppOctokit(installationId);
+
+  const result = await octokit.graphql<{
+    node: {
+      items: {
+        nodes: RawProjectV2ItemNode[];
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      };
+    };
+  }>(PROJECT_QUERIES.getProjectItems, {
+    projectId,
+    first,
+    after: options?.after ?? null,
+  });
+
+  const rawItems: RawProjectV2ItemNode[] = result.node?.items?.nodes ?? [];
+  const items: ProjectV2Item[] = rawItems.map((raw) => {
+    const fieldValues: Record<string, string | number | null> = {};
+    for (const fv of raw.fieldValues.nodes) {
+      if (!fv) continue; // GitHub GraphQL nodes arrays can contain nulls
+      const fieldName = fv.field?.name;
+      if (!fieldName) continue;
+      if (fv.text !== undefined) fieldValues[fieldName] = fv.text;
+      else if (fv.number !== undefined) fieldValues[fieldName] = fv.number;
+      else if (fv.date !== undefined) fieldValues[fieldName] = fv.date;
+      else if (fv.name !== undefined) fieldValues[fieldName] = fv.name; // SingleSelect
+      else if (fv.title !== undefined) fieldValues[fieldName] = fv.title; // Iteration
+    }
+
+    return {
+      id: raw.id,
+      content: raw.content
+        ? {
+            id: raw.content.id ?? "",
+            title: raw.content.title ?? "",
+            number: raw.content.number,
+            state: raw.content.state,
+            url: raw.content.url,
+            body: raw.content.body,
+          }
+        : null,
+      fieldValues,
+    };
+  });
+
+  return {
+    items,
+    pageInfo: result.node?.items?.pageInfo ?? { hasNextPage: false, endCursor: null },
+  };
+}
+
+/**
  * Add an issue or PR to a project
  */
 export async function addItemToProject(
   projectId: string,
   contentId: string,
-  installationId: number
+  installationId: number,
+  options?: { userOAuthToken?: string }
 ): Promise<string | null> {
-  const octokit = createGitHubAppOctokit(installationId);
+  const octokit = options?.userOAuthToken
+    ? createUserOctokit(options.userOAuthToken)
+    : createGitHubAppOctokit(installationId);
 
   const result = await octokit.graphql<{
     addProjectV2ItemById: { item: { id: string } | null };
@@ -360,9 +473,12 @@ export async function createDraftIssue(
   projectId: string,
   title: string,
   body: string | undefined,
-  installationId: number
+  installationId: number,
+  options?: { userOAuthToken?: string }
 ): Promise<string | null> {
-  const octokit = createGitHubAppOctokit(installationId);
+  const octokit = options?.userOAuthToken
+    ? createUserOctokit(options.userOAuthToken)
+    : createGitHubAppOctokit(installationId);
 
   const result = await octokit.graphql<{
     addProjectV2DraftIssue: { projectItem: { id: string } | null };
@@ -384,9 +500,12 @@ export async function updateItemField(
   itemId: string,
   fieldId: string,
   value: Record<string, string | number>,
-  installationId: number
+  installationId: number,
+  options?: { userOAuthToken?: string }
 ): Promise<string | null> {
-  const octokit = createGitHubAppOctokit(installationId);
+  const octokit = options?.userOAuthToken
+    ? createUserOctokit(options.userOAuthToken)
+    : createGitHubAppOctokit(installationId);
 
   const result = await octokit.graphql<{
     updateProjectV2ItemFieldValue: { projectV2Item: { id: string } | null };

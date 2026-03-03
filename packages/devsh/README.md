@@ -541,9 +541,15 @@ devsh project import ./plan.md --project-id PVT_xxx --installation-id 12345 --dr
 
 **GitHub App Permission Requirements:**
 
-The GitHub App must have the "Projects (beta): Read and write" permission to create draft issues in **user-owned projects**. For organization projects, "Organization projects: Read and write" is required.
+GitHub Apps **cannot access user-owned Projects v2** - this is a GitHub platform limitation. Only organization projects work with GitHub App authentication.
 
-If you see "Resource not accessible by integration" errors, the GitHub App lacks project permissions. **Workaround:** Use the `gh` CLI directly:
+For organization projects, the GitHub App requires "Organization projects: Read and write" permission.
+
+If you see "Resource not accessible by integration" errors:
+1. Make sure you're using an **organization** project (not a user project)
+2. Verify the GitHub App has "Organization projects" permission
+
+**Workaround for user projects:** Use the `gh` CLI directly (requires OAuth token with `project` scope):
 
 ```bash
 # Create draft issues manually with gh CLI

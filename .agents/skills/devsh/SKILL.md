@@ -151,6 +151,20 @@ Memory types: `knowledge`, `daily`, `tasks`, `mailbox`
 ### Agent Management
 - `devsh agent list` - List available coding agents
 
+### GitHub Projects (v2)
+Import markdown plans into GitHub Projects as draft issues. **Note:** Only organization projects work - user-owned projects don't work with GitHub Apps.
+
+- `devsh project import <file> --project-id <id> --installation-id <id>` - Import plan as draft issues
+- `devsh project import <file> --project-id <id> --dry-run` - Preview without importing
+
+```bash
+# Get project ID
+gh project list --owner <org> --format json | jq '.projects[].id'
+
+# Import plan (H2 sections become draft issues)
+devsh project import ./plan.md --project-id PVT_xxx --installation-id 12345
+```
+
 ### Browser Automation
 - `devsh computer snapshot <id>` - Get accessibility tree
 - `devsh computer open <id> <url>` - Navigate browser
