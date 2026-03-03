@@ -142,6 +142,7 @@ describe("getOpenAIEnvironment", () => {
     );
     expect(toml).toContain('notify = ["/root/lifecycle/codex-notify.sh"]');
     expect(toml).toContain('sandbox_mode = "danger-full-access"');
+    expect(toml).toContain('ask_for_approval = "never"');
     expect(toml).toContain("[notice.model_migrations]");
     expect(toml).toContain('"gpt-5-codex" = "gpt-5.3-codex"');
     expect(toml).toContain('"gpt-5" = "gpt-5.3-codex"');
@@ -193,6 +194,7 @@ host_secret = "should-not-leak"
       expect(toml).not.toContain("host_secret");
       expect(toml).not.toContain("approval_mode");
       expect(toml).toContain('sandbox_mode = "danger-full-access"');
+      expect(toml).toContain('ask_for_approval = "never"');
 
       // Verify instructions.md does NOT contain host instructions
       const instructionsFile = result.files?.find(
@@ -423,5 +425,37 @@ foo = "bar"
     expect(result.startupCommands?.some((cmd) =>
       cmd.includes("mkdir -p") && cmd.includes("/root/lifecycle/memory")
     )).toBe(true);
+  });
+
+  it("persists Codex thread_id from notify payload for explicit resume", async () => {
+    const result = await getOpenAIEnvironment({} as never);
+    const notifyFile = result.files?.find(
+      (file) => file.destinationPath === "/root/lifecycle/codex-notify.sh"
+    );
+    expect(notifyFile).toBeDefined();
+
+    const notifyScript = Buffer.from(
+      notifyFile!.contentBase64,
+      "base64"
+    ).toString("utf-8");
+
+    expect(notifyScript).toContain("THREAD_ID=$(echo \"$1\" | jq -r '.thread_id // empty'");
+    expect(notifyScript).toContain("codex-session-id.txt");
+  });
+
+  it("creates codex-resume helper script", async () => {
+    const result = await getOpenAIEnvironment({} as never);
+    const resumeFile = result.files?.find(
+      (file) => file.destinationPath === "/root/lifecycle/codex-resume.sh"
+    );
+    expect(resumeFile).toBeDefined();
+
+    const resumeScript = Buffer.from(
+      resumeFile!.contentBase64,
+      "base64"
+    ).toString("utf-8");
+
+    expect(resumeScript).toContain('SESSION_ID_FILE="/root/lifecycle/codex-session-id.txt"');
+    expect(resumeScript).toContain('exec codex resume "$THREAD_ID"');
   });
 });

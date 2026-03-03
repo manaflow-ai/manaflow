@@ -59,6 +59,7 @@ export function applyCodexApiKeys(
 const FILTERED_CONFIG_KEYS = ["model", "model_reasoning_effort"] as const;
 const CODEX_NOTIFY_LINE = `notify = ["/root/lifecycle/codex-notify.sh"]`;
 const CODEX_SANDBOX_MODE_LINE = `sandbox_mode = "danger-full-access"`;
+const CODEX_ASK_FOR_APPROVAL_LINE = `ask_for_approval = "never"`;
 
 // Strip top-level keys that are controlled by cmux CLI args
 // Matches: key = "value" or key = 'value' or key = bareword (entire line)
@@ -76,7 +77,8 @@ export function stripFilteredConfigKeys(toml: string): string {
 function ensureCodexDefaults(toml: string): string {
   const hasNotify = /(^|\n)\s*notify\s*=/.test(toml);
   const hasSandboxMode = /(^|\n)\s*sandbox_mode\s*=/.test(toml);
-  if (hasNotify && hasSandboxMode) {
+  const hasAskForApproval = /(^|\n)\s*ask_for_approval\s*=/.test(toml);
+  if (hasNotify && hasSandboxMode && hasAskForApproval) {
     return toml;
   }
 
@@ -86,6 +88,9 @@ function ensureCodexDefaults(toml: string): string {
   }
   if (!hasSandboxMode) {
     defaults.push(CODEX_SANDBOX_MODE_LINE);
+  }
+  if (!hasAskForApproval) {
+    defaults.push(CODEX_ASK_FOR_APPROVAL_LINE);
   }
 
   return toml ? `${defaults.join("\n")}\n${toml}` : defaults.join("\n");
@@ -199,6 +204,11 @@ export async function getOpenAIEnvironment(
   const notifyScript = `#!/usr/bin/env sh
 set -eu
 echo "$1" >> /root/lifecycle/codex-turns.jsonl
+# Extract thread_id from Codex JSON payload and persist for explicit resume.
+THREAD_ID=$(echo "$1" | jq -r '.thread_id // empty' 2>/dev/null || true)
+if [ -n "$THREAD_ID" ]; then
+  echo "$THREAD_ID" > /root/lifecycle/codex-session-id.txt
+fi
 # Sync memory files to Convex (best-effort, idempotent upsert)
 /root/lifecycle/memory/sync.sh >> /root/lifecycle/memory-sync.log 2>&1 || true
 touch /root/lifecycle/codex-done.txt /root/lifecycle/done.txt
@@ -206,6 +216,26 @@ touch /root/lifecycle/codex-done.txt /root/lifecycle/done.txt
   files.push({
     destinationPath: "/root/lifecycle/codex-notify.sh",
     contentBase64: Buffer.from(notifyScript).toString("base64"),
+    mode: "755",
+  });
+
+  const resumeScript = `#!/usr/bin/env sh
+set -eu
+SESSION_ID_FILE="/root/lifecycle/codex-session-id.txt"
+
+if [ -f "$SESSION_ID_FILE" ]; then
+  THREAD_ID="$(cat "$SESSION_ID_FILE")"
+  if [ -n "$THREAD_ID" ]; then
+    exec codex resume "$THREAD_ID"
+  fi
+fi
+
+echo "No session to resume"
+exit 1
+`;
+  files.push({
+    destinationPath: "/root/lifecycle/codex-resume.sh",
+    contentBase64: Buffer.from(resumeScript).toString("base64"),
     mode: "755",
   });
 
@@ -287,7 +317,14 @@ touch /root/lifecycle/codex-done.txt /root/lifecycle/done.txt
 
   // Add agent memory protocol support
   startupCommands.push(getMemoryStartupCommand());
-  files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
+  files.push(
+    ...getMemorySeedFiles(
+      ctx.taskRunId,
+      ctx.previousKnowledge,
+      ctx.previousMailbox,
+      ctx.orchestrationOptions
+    )
+  );
 
   // Create cross-tool symlinks for shared instructions
   // If Claude's CLAUDE.md exists, link it to ~/.codex/AGENTS.md
