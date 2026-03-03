@@ -540,6 +540,19 @@ export function createMemoryMcpServer(config?: Partial<MemoryMcpConfig>) {
           required: ["taskId", "status"],
         },
       },
+      {
+        name: "pull_orchestration_updates",
+        description: "Sync local orchestration state (PLAN.json) with the server. Fetches latest task statuses, messages, and aggregated progress. Requires CMUX_TASK_RUN_JWT environment variable.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            orchestrationId: {
+              type: "string",
+              description: "The orchestration ID to sync. Uses CMUX_ORCHESTRATION_ID env var if not provided.",
+            },
+          },
+        },
+      },
     ],
   }));
 
@@ -817,6 +830,148 @@ export function createMemoryMcpServer(config?: Partial<MemoryMcpConfig>) {
           return { content: [{ type: "text", text: `Plan task ${taskId} updated to status: ${status}` }] };
         }
         return { content: [{ type: "text", text: `Failed to update plan task` }] };
+      }
+
+      case "pull_orchestration_updates": {
+        const { orchestrationId: argOrchId } = args as { orchestrationId?: string };
+        const orchestrationId = argOrchId ?? process.env.CMUX_ORCHESTRATION_ID;
+        const jwt = process.env.CMUX_TASK_RUN_JWT;
+        const apiBaseUrl = process.env.CMUX_API_BASE_URL ?? "https://cmux.sh";
+
+        if (!orchestrationId) {
+          return {
+            content: [{
+              type: "text",
+              text: "No orchestration ID provided. Pass orchestrationId parameter or set CMUX_ORCHESTRATION_ID env var.",
+            }],
+          };
+        }
+
+        if (!jwt) {
+          return {
+            content: [{
+              type: "text",
+              text: "CMUX_TASK_RUN_JWT environment variable not set. This tool requires JWT authentication.",
+            }],
+          };
+        }
+
+        try {
+          // Fetch orchestration tasks from server
+          const url = `${apiBaseUrl}/api/v1/cmux/orchestration/${orchestrationId}/sync`;
+          const response = await fetch(url, {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${jwt}`,
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            return {
+              content: [{
+                type: "text",
+                text: `Failed to fetch orchestration updates: ${response.status} ${errorText}`,
+              }],
+            };
+          }
+
+          const serverData = await response.json() as {
+            tasks: OrchestrationTask[];
+            messages: MailboxMessage[];
+            aggregatedStatus: {
+              total: number;
+              completed: number;
+              running: number;
+              failed: number;
+              pending: number;
+            };
+          };
+
+          // Update local PLAN.json with server data
+          let plan = readPlan();
+          if (!plan) {
+            plan = {
+              version: 1,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              status: "running",
+              headAgent: agentName,
+              orchestrationId,
+              tasks: [],
+            };
+          }
+
+          // Merge server tasks into local plan
+          for (const serverTask of serverData.tasks) {
+            const localTask = plan.tasks.find((t) => t.id === serverTask.id);
+            if (localTask) {
+              // Update existing task
+              localTask.status = serverTask.status;
+              localTask.taskRunId = serverTask.taskRunId;
+              localTask.result = serverTask.result;
+              localTask.errorMessage = serverTask.errorMessage;
+              localTask.startedAt = serverTask.startedAt;
+              localTask.completedAt = serverTask.completedAt;
+            } else {
+              // Add new task from server
+              plan.tasks.push(serverTask);
+            }
+          }
+
+          // Update plan status based on aggregated status
+          const agg = serverData.aggregatedStatus;
+          if (agg.failed > 0) {
+            plan.status = "failed";
+          } else if (agg.completed === agg.total && agg.total > 0) {
+            plan.status = "completed";
+          } else if (agg.running > 0) {
+            plan.status = "running";
+          } else {
+            plan.status = "pending";
+          }
+
+          writePlan(plan);
+
+          // Update mailbox with new messages
+          const mailbox = readMailbox();
+          for (const msg of serverData.messages) {
+            if (!mailbox.messages.find((m) => m.id === msg.id)) {
+              mailbox.messages.push(msg);
+            }
+          }
+          writeMailbox(mailbox);
+
+          // Append sync event
+          appendEvent({
+            timestamp: new Date().toISOString(),
+            event: "orchestration_synced",
+            message: `Synced ${serverData.tasks.length} tasks, ${serverData.messages.length} messages`,
+            metadata: serverData.aggregatedStatus,
+          });
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                synced: true,
+                orchestrationId,
+                tasks: serverData.tasks.length,
+                messages: serverData.messages.length,
+                aggregatedStatus: serverData.aggregatedStatus,
+              }, null, 2),
+            }],
+          };
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{
+              type: "text",
+              text: `Error syncing orchestration updates: ${errorMsg}`,
+            }],
+          };
+        }
       }
 
       default:

@@ -736,6 +736,39 @@ export type OrchestrationSummary = {
     }>;
 };
 
+export type OrchestrationSyncResponse = {
+    tasks: Array<{
+        id: string;
+        prompt: string;
+        agentName: string;
+        status: string;
+        taskRunId?: string;
+        dependsOn?: Array<string>;
+        priority?: number;
+        result?: string;
+        errorMessage?: string;
+        createdAt: string;
+        startedAt?: string;
+        completedAt?: string;
+    }>;
+    messages: Array<{
+        id: string;
+        from: string;
+        to: string;
+        type?: 'handoff' | 'request' | 'status';
+        message: string;
+        timestamp: string;
+        read?: boolean;
+    }>;
+    aggregatedStatus: {
+        total: number;
+        completed: number;
+        running: number;
+        failed: number;
+        pending: number;
+    };
+};
+
 export type PveLxcResumeTaskRunResponse = {
     resumed: true;
 };
@@ -3105,6 +3138,42 @@ export type GetApiOrchestrateMetricsResponses = {
 };
 
 export type GetApiOrchestrateMetricsResponse = GetApiOrchestrateMetricsResponses[keyof GetApiOrchestrateMetricsResponses];
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncData = {
+    body?: never;
+    path: {
+        /**
+         * Orchestration ID
+         */
+        orchestrationId: string;
+    };
+    query?: never;
+    url: '/api/v1/cmux/orchestration/{orchestrationId}/sync';
+};
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Orchestration not found
+     */
+    404: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponses = {
+    /**
+     * Orchestration state retrieved successfully
+     */
+    200: OrchestrationSyncResponse;
+};
+
+export type GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponse = GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponses[keyof GetApiV1CmuxOrchestrationByOrchestrationIdSyncResponses];
 
 export type PostApiPveLxcTaskRunsByTaskRunIdResumeData = {
     body: PveLxcResumeTaskRunBody;
