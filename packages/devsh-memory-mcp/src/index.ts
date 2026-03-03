@@ -634,6 +634,32 @@ export function createMemoryMcpServer(config?: Partial<MemoryMcpConfig>) {
           },
         },
       },
+      {
+        name: "cancel_agent",
+        description: "Cancel a running or pending sub-agent. The agent will stop and its status will be set to cancelled.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            orchestrationTaskId: {
+              type: "string",
+              description: "The orchestration task ID to cancel",
+            },
+            cascade: {
+              type: "boolean",
+              description: "Also cancel dependent tasks (default: false)",
+            },
+          },
+          required: ["orchestrationTaskId"],
+        },
+      },
+      {
+        name: "get_orchestration_summary",
+        description: "Get a summary of the current orchestration including task counts by status, active agents, and recent completions.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
     ],
   }));
 
@@ -1388,6 +1414,194 @@ export function createMemoryMcpServer(config?: Partial<MemoryMcpConfig>) {
             content: [{
               type: "text",
               text: `Error listing agents: ${errorMsg}`,
+            }],
+          };
+        }
+      }
+
+      case "cancel_agent": {
+        const { orchestrationTaskId, cascade = false } = args as {
+          orchestrationTaskId: string;
+          cascade?: boolean;
+        };
+
+        const jwt = process.env.CMUX_TASK_RUN_JWT;
+        const apiBaseUrl = process.env.CMUX_API_BASE_URL ?? "https://cmux.sh";
+
+        if (!jwt) {
+          return {
+            content: [{
+              type: "text",
+              text: "CMUX_TASK_RUN_JWT environment variable not set. This tool requires JWT authentication.",
+            }],
+          };
+        }
+
+        try {
+          const url = `${apiBaseUrl}/api/orchestrate/cancel/${orchestrationTaskId}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "X-Task-Run-JWT": jwt,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ cascade }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            return {
+              content: [{
+                type: "text",
+                text: `Failed to cancel agent: ${response.status} ${errorText}`,
+              }],
+            };
+          }
+
+          const result = await response.json() as { ok: boolean; cancelledCount?: number };
+
+          // Append cancel event
+          appendEvent({
+            timestamp: new Date().toISOString(),
+            event: "agent_cancelled",
+            message: `Cancelled agent ${orchestrationTaskId}${cascade ? ` (cascade: ${result.cancelledCount} total)` : ""}`,
+            taskRunId: orchestrationTaskId,
+          });
+
+          // Update local PLAN.json
+          const plan = readPlan();
+          if (plan) {
+            const task = plan.tasks.find((t) => t.id === orchestrationTaskId);
+            if (task) {
+              task.status = "cancelled";
+              task.completedAt = new Date().toISOString();
+              writePlan(plan);
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                orchestrationTaskId,
+                cancelled: true,
+                cascade,
+                cancelledCount: result.cancelledCount ?? 1,
+              }, null, 2),
+            }],
+          };
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{
+              type: "text",
+              text: `Error cancelling agent: ${errorMsg}`,
+            }],
+          };
+        }
+      }
+
+      case "get_orchestration_summary": {
+        const jwt = process.env.CMUX_TASK_RUN_JWT;
+        const apiBaseUrl = process.env.CMUX_API_BASE_URL ?? "https://cmux.sh";
+        const orchestrationId = process.env.CMUX_ORCHESTRATION_ID;
+
+        if (!jwt) {
+          return {
+            content: [{
+              type: "text",
+              text: "CMUX_TASK_RUN_JWT environment variable not set. This tool requires JWT authentication.",
+            }],
+          };
+        }
+
+        if (!orchestrationId) {
+          return {
+            content: [{
+              type: "text",
+              text: "CMUX_ORCHESTRATION_ID environment variable not set.",
+            }],
+          };
+        }
+
+        try {
+          // Get sync data which includes aggregated status
+          const url = `${apiBaseUrl}/api/v1/cmux/orchestration/${orchestrationId}/sync`;
+          const response = await fetch(url, {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${jwt}`,
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            return {
+              content: [{
+                type: "text",
+                text: `Failed to get orchestration summary: ${response.status} ${errorText}`,
+              }],
+            };
+          }
+
+          const data = await response.json() as {
+            tasks: Array<{
+              id: string;
+              prompt: string;
+              agentName: string;
+              status: string;
+              result?: string;
+              errorMessage?: string;
+            }>;
+            aggregatedStatus: {
+              total: number;
+              completed: number;
+              running: number;
+              failed: number;
+              pending: number;
+            };
+          };
+
+          // Build summary
+          const activeAgents = data.tasks
+            .filter((t) => t.status === "running")
+            .map((t) => t.agentName);
+
+          const recentCompletions = data.tasks
+            .filter((t) => t.status === "completed" || t.status === "failed")
+            .slice(-5)
+            .map((t) => ({
+              id: t.id,
+              status: t.status,
+              prompt: t.prompt.slice(0, 50) + (t.prompt.length > 50 ? "..." : ""),
+              result: t.result?.slice(0, 100),
+              error: t.errorMessage?.slice(0, 100),
+            }));
+
+          const summary = {
+            orchestrationId,
+            status: data.aggregatedStatus,
+            activeAgents,
+            activeAgentCount: activeAgents.length,
+            recentCompletions,
+            allTasksComplete: data.aggregatedStatus.pending === 0 && data.aggregatedStatus.running === 0,
+            hasFailures: data.aggregatedStatus.failed > 0,
+          };
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify(summary, null, 2),
+            }],
+          };
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{
+              type: "text",
+              text: `Error getting orchestration summary: ${errorMsg}`,
             }],
           };
         }

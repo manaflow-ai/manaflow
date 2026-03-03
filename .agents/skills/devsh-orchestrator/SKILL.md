@@ -447,6 +447,8 @@ When running as a head agent with MCP, you can use these tools programmatically 
 | `get_agent_status` | Get status of a spawned agent by task ID |
 | `list_spawned_agents` | List all agents in current orchestration |
 | `wait_for_agent` | Wait for an agent to reach terminal state |
+| `cancel_agent` | Cancel a running or pending agent |
+| `get_orchestration_summary` | Get dashboard-style summary of all tasks |
 | `pull_orchestration_updates` | Sync local PLAN.json with server |
 | `send_message` | Send message to another agent |
 | `get_my_messages` | Get messages addressed to this agent |
@@ -499,6 +501,31 @@ const result = await wait_for_agent({
   timeout: 300000  // optional - max wait in ms (default: 5 minutes)
 });
 // Returns: { status, result, errorMessage }
+```
+
+### cancel_agent
+
+Cancel a running or pending agent.
+
+```typescript
+const result = await cancel_agent({
+  orchestrationTaskId: "ns7abc123",
+  cascade: true  // optional - also cancel dependent tasks
+});
+// Returns: { ok, cancelled, cancelledCount }
+```
+
+### get_orchestration_summary
+
+Get a dashboard-style summary of the orchestration.
+
+```typescript
+const summary = await get_orchestration_summary();
+// Returns: {
+//   orchestrationId, status: { total, completed, running, failed, pending },
+//   activeAgents, activeAgentCount, recentCompletions,
+//   allTasksComplete, hasFailures
+// }
 ```
 
 ### pull_orchestration_updates
