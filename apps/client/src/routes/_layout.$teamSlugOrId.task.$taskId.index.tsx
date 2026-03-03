@@ -479,7 +479,8 @@ function TaskDetailPage() {
   );
   const shouldRenderAgentTeamPanel =
     Boolean(selectedRunId) &&
-    (selectedRunChildren === undefined || selectedRunChildren.length > 0);
+    selectedRunChildren != null &&
+    selectedRunChildren.length > 0;
 
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspace = useQuery(

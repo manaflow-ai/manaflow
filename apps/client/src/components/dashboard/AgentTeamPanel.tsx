@@ -23,7 +23,7 @@ interface AgentTeamPanelProps {
   parentRunId: Id<"taskRuns">;
 }
 
-type ChildRun = (typeof api.taskRuns.listChildRuns._returnType)[number];
+type ChildRun = NonNullable<typeof api.taskRuns.listChildRuns._returnType>[number];
 type RunStatus = ChildRun["status"];
 
 const STATUS_CONFIG: Record<
@@ -153,6 +153,8 @@ export function AgentTeamPanel({
   });
 
   const isLoading = status === undefined || children === undefined;
+  // null means parent run not found or unauthorized
+  const isNotFound = status === null || children === null;
 
   const sortedChildren = useMemo(
     () =>
@@ -188,6 +190,11 @@ export function AgentTeamPanel({
 
     return Array.from(links.values());
   }, [sortedChildren]);
+
+  // Parent run not found or unauthorized - hide panel entirely
+  if (isNotFound) {
+    return null;
+  }
 
   if (isLoading) {
     return (

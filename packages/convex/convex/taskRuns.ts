@@ -2651,13 +2651,13 @@ export const listChildRuns = authQuery({
     parentRunId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Verify parent run exists and user has access
+    // Verify parent run exists and belongs to the team.
+    // Returns null (not throw) so React useQuery() doesn't crash the error boundary.
     const parentRun = await ctx.db.get(args.parentRunId);
-    if (!parentRun || parentRun.teamId !== teamId || parentRun.userId !== userId) {
-      throw new Error("Parent task run not found or unauthorized");
+    if (!parentRun || parentRun.teamId !== teamId) {
+      return null;
     }
 
     const children = await ctx.db
@@ -2665,10 +2665,8 @@ export const listChildRuns = authQuery({
       .withIndex("by_parent", (q) => q.eq("parentRunId", args.parentRunId))
       .collect();
 
-    // Filter by team/user access
-    return children.filter(
-      (run) => run.teamId === teamId && run.userId === userId
-    );
+    // Filter by team access (same as getByTask pattern)
+    return children.filter((run) => run.teamId === teamId);
   },
 });
 
@@ -2682,11 +2680,12 @@ export const getParentRun = authQuery({
     runId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
+    // Throws for invalid/unauthorized run - safe because this query is only called
+    // from the HTTP handler (cmux_http.ts) which has try/catch for 404 mapping.
     const run = await ctx.db.get(args.runId);
-    if (!run || run.teamId !== teamId || run.userId !== userId) {
+    if (!run || run.teamId !== teamId) {
       throw new Error("Task run not found or unauthorized");
     }
 
@@ -2695,8 +2694,8 @@ export const getParentRun = authQuery({
     }
 
     const parentRun = await ctx.db.get(run.parentRunId);
-    if (!parentRun || parentRun.teamId !== teamId || parentRun.userId !== userId) {
-      return null; // Parent exists but user doesn't have access
+    if (!parentRun || parentRun.teamId !== teamId) {
+      return null; // Parent exists but not accessible
     }
 
     return parentRun;
@@ -2713,13 +2712,13 @@ export const getChildRunsStatus = authQuery({
     parentRunId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Verify parent run exists and user has access
+    // Verify parent run exists and belongs to the team.
+    // Returns null (not throw) so React useQuery() doesn't crash the error boundary.
     const parentRun = await ctx.db.get(args.parentRunId);
-    if (!parentRun || parentRun.teamId !== teamId || parentRun.userId !== userId) {
-      throw new Error("Parent task run not found or unauthorized");
+    if (!parentRun || parentRun.teamId !== teamId) {
+      return null;
     }
 
     const children = await ctx.db
@@ -2727,9 +2726,9 @@ export const getChildRunsStatus = authQuery({
       .withIndex("by_parent", (q) => q.eq("parentRunId", args.parentRunId))
       .collect();
 
-    // Filter by team/user access and count by status
+    // Filter by team access (same as getByTask pattern)
     const accessibleChildren = children.filter(
-      (run) => run.teamId === teamId && run.userId === userId
+      (run) => run.teamId === teamId
     );
 
     const statusCounts: Record<string, number> = {

@@ -2571,6 +2571,10 @@ async function handleListChildRuns(ctx: ActionCtx, req: Request): Promise<Respon
       parentRunId: runId as Id<"taskRuns">,
     });
 
+    if (children === null) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
     return jsonResponse({
       children: children.map((c) => ({
         id: c._id,
@@ -2587,9 +2591,6 @@ async function handleListChildRuns(ctx: ActionCtx, req: Request): Promise<Respon
   } catch (err) {
     console.error("[cmux.taskRuns.listChildren] Error:", err);
     const message = err instanceof Error ? err.message : "Failed to list child runs";
-    if (message.includes("not found") || message.includes("unauthorized")) {
-      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
-    }
     return jsonResponse({ code: 500, message }, 500);
   }
 }
@@ -2658,13 +2659,14 @@ async function handleGetChildRunsStatus(ctx: ActionCtx, req: Request): Promise<R
       parentRunId: runId as Id<"taskRuns">,
     });
 
+    if (status === null) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
     return jsonResponse(status);
   } catch (err) {
     console.error("[cmux.taskRuns.getChildStatus] Error:", err);
     const message = err instanceof Error ? err.message : "Failed to get child status";
-    if (message.includes("not found") || message.includes("unauthorized")) {
-      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
-    }
     return jsonResponse({ code: 500, message }, 500);
   }
 }
