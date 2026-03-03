@@ -810,6 +810,12 @@ type CreateTaskOptions struct {
 	PRTitle          string
 	EnvironmentID    string
 	IsCloudWorkspace bool
+	// GitHub Projects v2 linkage (Phase 2)
+	GithubProjectId             string
+	GithubProjectItemId         string
+	GithubProjectInstallationId int
+	GithubProjectOwner          string
+	GithubProjectOwnerType      string
 }
 
 // TaskRunWithJWT represents a task run with its JWT for sandbox auth
@@ -950,6 +956,21 @@ func (c *Client) CreateTask(ctx context.Context, opts CreateTaskOptions) (*Creat
 	}
 	if opts.IsCloudWorkspace {
 		body["isCloudWorkspace"] = true
+	}
+	if opts.GithubProjectId != "" {
+		body["githubProjectId"] = opts.GithubProjectId
+	}
+	if opts.GithubProjectItemId != "" {
+		body["githubProjectItemId"] = opts.GithubProjectItemId
+	}
+	if opts.GithubProjectInstallationId != 0 {
+		body["githubProjectInstallationId"] = opts.GithubProjectInstallationId
+	}
+	if opts.GithubProjectOwner != "" {
+		body["githubProjectOwner"] = opts.GithubProjectOwner
+	}
+	if opts.GithubProjectOwnerType != "" {
+		body["githubProjectOwnerType"] = opts.GithubProjectOwnerType
 	}
 
 	resp, err := c.doRequest(ctx, "POST", "/api/v1/cmux/tasks", body)

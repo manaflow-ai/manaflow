@@ -1660,3 +1660,43 @@ export function getMemorySeedFiles(
 
   return files;
 }
+
+/**
+ * GitHub Projects v2 context file for sandbox agents (Phase 5).
+ *
+ * When a task is linked to a GitHub Project item, this file is injected at
+ * `/root/lifecycle/project-context.json` so agents can read their project
+ * context and reference the item when producing execution summaries.
+ */
+export function getProjectContextFile(context: {
+  projectId: string;
+  projectItemId: string;
+  installationId: number;
+  owner: string;
+  ownerType: string;
+  taskRunJwt: string;
+  callbackUrl: string;
+}): AuthFile {
+  const Buffer = globalThis.Buffer;
+  const content = JSON.stringify(
+    {
+      githubProjectId: context.projectId,
+      githubProjectItemId: context.projectItemId,
+      githubProjectInstallationId: context.installationId,
+      githubProjectOwner: context.owner,
+      githubProjectOwnerType: context.ownerType,
+      syncAuth: {
+        jwt: context.taskRunJwt,
+        callbackUrl: context.callbackUrl,
+      },
+    },
+    null,
+    2,
+  );
+
+  return {
+    destinationPath: "/root/lifecycle/project-context.json",
+    contentBase64: Buffer.from(content).toString("base64"),
+    mode: "644",
+  };
+}

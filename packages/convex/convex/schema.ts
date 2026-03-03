@@ -178,6 +178,12 @@ const convexSchema = defineSchema({
     latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     /** Denormalized: ID of the selected task run (crowned run, or latest non-archived run) */
     selectedTaskRunId: v.optional(v.id("taskRuns")),
+    // GitHub Projects v2 linkage (Phase 2: Task <-> Project Linkage)
+    githubProjectId: v.optional(v.string()), // Project node ID (PVT_xxx)
+    githubProjectItemId: v.optional(v.string()), // Project item node ID (PVTI_xxx)
+    githubProjectInstallationId: v.optional(v.number()), // GitHub App installation ID
+    githubProjectOwner: v.optional(v.string()), // Project owner login (org or user)
+    githubProjectOwnerType: v.optional(v.string()), // "organization" or "user"
   })
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
@@ -191,7 +197,8 @@ const convexSchema = defineSchema({
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
     .index("by_team_preview", ["teamId", "isPreview"])
     .index("by_linked_cloud_task_run", ["linkedFromCloudTaskRunId"])
-    .index("by_crown_status", ["crownEvaluationStatus", "updatedAt"]),
+    .index("by_crown_status", ["crownEvaluationStatus", "updatedAt"])
+    .index("by_github_project_item", ["githubProjectItemId"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),

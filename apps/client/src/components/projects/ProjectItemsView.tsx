@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Loader2,
   ChevronDown,
+  Play,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -184,6 +185,7 @@ interface ProjectItemsViewProps {
   endCursor: string | null;
   onLoadMore: (cursor: string) => void;
   isLoadingMore: boolean;
+  onDispatchItem?: (item: ProjectItem) => void;
 }
 
 export function ProjectItemsView({
@@ -198,6 +200,7 @@ export function ProjectItemsView({
   endCursor,
   onLoadMore,
   isLoadingMore,
+  onDispatchItem,
 }: ProjectItemsViewProps) {
   if (isLoading) {
     return (
@@ -256,6 +259,11 @@ export function ProjectItemsView({
               <th className="text-right py-2 px-4 font-medium text-neutral-500 dark:text-neutral-400">
                 Updated
               </th>
+              {onDispatchItem && (
+                <th className="text-right py-2 px-4 font-medium text-neutral-500 dark:text-neutral-400">
+                  Actions
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -303,6 +311,19 @@ export function ProjectItemsView({
                       ? getTimeAgo(new Date(item.fieldValues["Updated"] as string))
                       : "-"}
                   </td>
+                  {onDispatchItem && (
+                    <td className="py-2 px-4 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onDispatchItem(item)}
+                        className="h-7 px-2"
+                      >
+                        <Play className="h-3.5 w-3.5 mr-1" />
+                        Dispatch
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

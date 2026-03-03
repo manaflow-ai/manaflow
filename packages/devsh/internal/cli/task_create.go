@@ -26,6 +26,13 @@ var (
 	taskCreatePRTitle        string
 	taskCreateEnv            string
 	taskCreateCloudWorkspace bool
+	// GitHub Projects v2 linkage
+	taskCreateGHProjectId             string
+	taskCreateGHProjectItemId         string
+	taskCreateGHProjectInstallationId int
+	taskCreateGHProjectOwner          string
+	taskCreateGHProjectOwnerType      string
+	taskCreateFromProjectItem         string // convenience: auto-fetch item content as prompt
 )
 
 var taskCreateCmd = &cobra.Command{
@@ -40,6 +47,7 @@ Use --realtime to use socket.io for real-time feedback (same as web app flow).
 Use --local to create a local workspace with codex-style worktrees (requires local server).
 Use --env to specify a custom environment (if omitted, auto-selects latest for repo).
 Use --cloud-workspace to create a cloud workspace (prompt is optional, defaults to empty).
+Use --from-project-item to create a task from a GitHub Project item (auto-fetches title+body as prompt).
 
 Examples:
   devsh task create "Add unit tests for auth module"
@@ -52,17 +60,14 @@ Examples:
   devsh task create --repo owner/repo --agent claude-code --local "Local worktree mode"
   devsh task create --repo owner/repo --env env_abc123 --agent claude-code "With custom environment"
   devsh task create --repo owner/repo --cloud-workspace --agent claude-code "Create as cloud workspace"
-  devsh task create --repo owner/repo --cloud-workspace  # No prompt (interactive TUI session)`,
+  devsh task create --repo owner/repo --cloud-workspace  # No prompt (interactive TUI session)
+  devsh task create --repo owner/repo --agent claude-code --gh-project-id PVT_xxx --gh-project-item-id PVTI_xxx --gh-project-installation-id 12345 --gh-project-owner my-org --gh-project-owner-type organization "From project item"
+  devsh task create --from-project-item PVTI_xxx --gh-project-id PVT_xxx --gh-project-installation-id 12345 --gh-project-owner my-org --gh-project-owner-type organization --repo owner/repo --agent claude-code`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var prompt string
 		if len(args) > 0 {
 			prompt = args[0]
-		}
-
-		// Prompt is required unless --cloud-workspace is specified
-		if strings.TrimSpace(prompt) == "" && !taskCreateCloudWorkspace {
-			return fmt.Errorf("prompt is required (or use --cloud-workspace for interactive TUI session)")
 		}
 
 		// Use longer timeout for sandbox provisioning
@@ -90,6 +95,79 @@ Examples:
 			return fmt.Errorf("failed to create client: %w", err)
 		}
 		client.SetTeamSlug(teamSlug)
+
+		// --from-project-item: fetch item content and auto-populate linkage fields
+		if taskCreateFromProjectItem != "" {
+			if taskCreateGHProjectId == "" {
+				return fmt.Errorf("--gh-project-id is required with --from-project-item")
+			}
+			if taskCreateGHProjectInstallationId <= 0 {
+				return fmt.Errorf("--gh-project-installation-id is required with --from-project-item")
+			}
+
+			if !flagJSON {
+				fmt.Printf("Fetching project item %s...\n", taskCreateFromProjectItem)
+			}
+
+			// Paginate through all project items to find the target
+			var found *vm.ProjectItem
+			var after string
+			for {
+				items, err := client.GetProjectItems(ctx, vm.GetProjectItemsOptions{
+					ProjectID:      taskCreateGHProjectId,
+					InstallationID: taskCreateGHProjectInstallationId,
+					First:          100,
+					After:          after,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to fetch project items: %w", err)
+				}
+
+				for i := range items.Items {
+					if items.Items[i].ID == taskCreateFromProjectItem {
+						found = &items.Items[i]
+						break
+					}
+				}
+				if found != nil {
+					break
+				}
+				if !items.PageInfo.HasNextPage || items.PageInfo.EndCursor == nil {
+					break
+				}
+				after = *items.PageInfo.EndCursor
+			}
+			if found == nil {
+				return fmt.Errorf("project item %s not found in project %s", taskCreateFromProjectItem, taskCreateGHProjectId)
+			}
+
+			// Auto-populate linkage fields
+			taskCreateGHProjectItemId = found.ID
+
+			// Auto-compose prompt from item title + body (only if no prompt given)
+			if strings.TrimSpace(prompt) == "" && found.Content != nil {
+				var b strings.Builder
+				b.WriteString(found.Content.Title)
+				if found.Content.Body != nil && strings.TrimSpace(*found.Content.Body) != "" {
+					b.WriteString("\n\n")
+					b.WriteString(*found.Content.Body)
+				}
+				prompt = b.String()
+			}
+
+			if !flagJSON {
+				title := "(untitled)"
+				if found.Content != nil {
+					title = found.Content.Title
+				}
+				fmt.Printf("Dispatching from project item: %s\n", title)
+			}
+		}
+
+		// Prompt is required unless --cloud-workspace is specified
+		if strings.TrimSpace(prompt) == "" && !taskCreateCloudWorkspace {
+			return fmt.Errorf("prompt is required (or use --cloud-workspace for interactive TUI session, or --from-project-item to auto-compose)")
+		}
 
 		// Upload images (if any) to Convex storage and attach to the task.
 		var uploadedImages []vm.TaskImage
@@ -146,14 +224,19 @@ Examples:
 		}
 
 		opts := vm.CreateTaskOptions{
-			Prompt:           prompt,
-			Repository:       taskCreateRepo,
-			BaseBranch:       taskCreateBranch,
-			Agents:           taskCreateAgents,
-			Images:           uploadedImages,
-			PRTitle:          taskCreatePRTitle,
-			EnvironmentID:    environmentID,
-			IsCloudWorkspace: taskCreateCloudWorkspace,
+			Prompt:                      prompt,
+			Repository:                  taskCreateRepo,
+			BaseBranch:                  taskCreateBranch,
+			Agents:                      taskCreateAgents,
+			Images:                      uploadedImages,
+			PRTitle:                     taskCreatePRTitle,
+			EnvironmentID:               environmentID,
+			IsCloudWorkspace:            taskCreateCloudWorkspace,
+			GithubProjectId:             taskCreateGHProjectId,
+			GithubProjectItemId:         taskCreateGHProjectItemId,
+			GithubProjectInstallationId: taskCreateGHProjectInstallationId,
+			GithubProjectOwner:          taskCreateGHProjectOwner,
+			GithubProjectOwnerType:      taskCreateGHProjectOwnerType,
 		}
 
 		// Create task and task runs (with JWTs)
@@ -435,5 +518,12 @@ func init() {
 	taskCreateCmd.Flags().BoolVar(&taskCreateLocal, "local", false, "Use local workspace mode (codex-style worktrees)")
 	taskCreateCmd.Flags().StringVar(&taskCreatePRTitle, "pr-title", "", "Optional pull request title to save on the task")
 	taskCreateCmd.Flags().BoolVar(&taskCreateCloudWorkspace, "cloud-workspace", false, "Create as a cloud workspace (appears in Workspaces section)")
+	// GitHub Projects v2 linkage flags
+	taskCreateCmd.Flags().StringVar(&taskCreateGHProjectId, "gh-project-id", "", "GitHub Project node ID (PVT_xxx)")
+	taskCreateCmd.Flags().StringVar(&taskCreateGHProjectItemId, "gh-project-item-id", "", "GitHub Project item node ID (PVTI_xxx)")
+	taskCreateCmd.Flags().IntVar(&taskCreateGHProjectInstallationId, "gh-project-installation-id", 0, "GitHub App installation ID for the project")
+	taskCreateCmd.Flags().StringVar(&taskCreateGHProjectOwner, "gh-project-owner", "", "GitHub Project owner login (org or user)")
+	taskCreateCmd.Flags().StringVar(&taskCreateGHProjectOwnerType, "gh-project-owner-type", "", "GitHub Project owner type (organization or user)")
+	taskCreateCmd.Flags().StringVar(&taskCreateFromProjectItem, "from-project-item", "", "Create task from a GitHub Project item (auto-fetches title+body as prompt; requires --gh-project-id and --gh-project-installation-id)")
 	taskCmd.AddCommand(taskCreateCmd)
 }

@@ -732,6 +732,12 @@ export const create = authMutation({
     ),
     environmentId: v.optional(v.id("environments")),
     isCloudWorkspace: v.optional(v.boolean()),
+    // GitHub Projects v2 linkage
+    githubProjectId: v.optional(v.string()),
+    githubProjectItemId: v.optional(v.string()),
+    githubProjectInstallationId: v.optional(v.number()),
+    githubProjectOwner: v.optional(v.string()),
+    githubProjectOwnerType: v.optional(v.string()),
     // Optional: create task runs atomically with the task
     selectedAgents: v.optional(v.array(v.string())),
   },
@@ -742,6 +748,18 @@ export const create = authMutation({
       const environment = await ctx.db.get(args.environmentId);
       if (!environment || environment.teamId !== teamId) {
         throw new Error("Environment not found");
+      }
+    }
+    // Validate GitHub project linkage belongs to this team
+    if (args.githubProjectInstallationId != null) {
+      const connection = await ctx.db
+        .query("providerConnections")
+        .withIndex("by_installationId", (q) =>
+          q.eq("installationId", args.githubProjectInstallationId as number),
+        )
+        .first();
+      if (!connection || connection.teamId !== teamId) {
+        throw new Error("GitHub installation not found or does not belong to team");
       }
     }
     const now = Date.now();
@@ -762,6 +780,11 @@ export const create = authMutation({
       teamId,
       environmentId: args.environmentId,
       isCloudWorkspace: args.isCloudWorkspace,
+      githubProjectId: args.githubProjectId,
+      githubProjectItemId: args.githubProjectItemId,
+      githubProjectInstallationId: args.githubProjectInstallationId,
+      githubProjectOwner: args.githubProjectOwner,
+      githubProjectOwnerType: args.githubProjectOwnerType,
     });
 
     // If selectedAgents provided, create task runs atomically
@@ -1755,6 +1778,37 @@ export const listInternal = internalQuery({
 });
 
 /**
+ * Look up a task by its linked GitHub Project item ID.
+ * Used by Phase 4 (bi-directional status sync) and head agent task dispatch.
+ */
+export const getByGithubProjectItem = internalQuery({
+  args: {
+    githubProjectItemId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return ctx.db
+      .query("tasks")
+      .withIndex("by_github_project_item", (q) =>
+        q.eq("githubProjectItemId", args.githubProjectItemId),
+      )
+      .first();
+  },
+});
+
+/**
+ * Get a task by ID (internal, no auth).
+ * Used by githubProjectSync action to read project linkage fields.
+ */
+export const getInternal = internalQuery({
+  args: {
+    id: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    return ctx.db.get(args.id);
+  },
+});
+
+/**
  * Internal mutation to create a task (without task runs).
  * Task runs are created separately via taskRuns.createInternal to get JWTs.
  * Used by CLI HTTP API for task create endpoint.
@@ -1772,8 +1826,26 @@ export const createInternal = internalMutation({
     projectFullName: v.optional(v.string()),
     baseBranch: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
+    // GitHub Projects v2 linkage
+    githubProjectId: v.optional(v.string()),
+    githubProjectItemId: v.optional(v.string()),
+    githubProjectInstallationId: v.optional(v.number()),
+    githubProjectOwner: v.optional(v.string()),
+    githubProjectOwnerType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Validate GitHub project linkage belongs to this team
+    if (args.githubProjectInstallationId != null) {
+      const connection = await ctx.db
+        .query("providerConnections")
+        .withIndex("by_installationId", (q) =>
+          q.eq("installationId", args.githubProjectInstallationId as number),
+        )
+        .first();
+      if (!connection || connection.teamId !== args.teamId) {
+        throw new Error("GitHub installation not found or does not belong to team");
+      }
+    }
     const now = Date.now();
     const taskId = await ctx.db.insert("tasks", {
       text: args.text,
@@ -1789,6 +1861,11 @@ export const createInternal = internalMutation({
       lastActivityAt: now,
       userId: args.userId,
       teamId: args.teamId,
+      githubProjectId: args.githubProjectId,
+      githubProjectItemId: args.githubProjectItemId,
+      githubProjectInstallationId: args.githubProjectInstallationId,
+      githubProjectOwner: args.githubProjectOwner,
+      githubProjectOwnerType: args.githubProjectOwnerType,
       // Note: isCloudWorkspace is NOT set so tasks appear in "In progress"
       // category in the UI (same as normal web app tasks)
     });

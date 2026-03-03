@@ -641,6 +641,21 @@ export async function spawnAgent(
         previousKnowledge: previousKnowledge ?? undefined,
         previousMailbox: previousMailbox ?? undefined,
         orchestrationOptions: options.orchestrationOptions,
+        // GitHub Projects v2 context (Phase 5: Sandbox Project Integration)
+        githubProjectContext:
+          task?.githubProjectId &&
+          task?.githubProjectItemId &&
+          task?.githubProjectInstallationId &&
+          task?.githubProjectOwner &&
+          task?.githubProjectOwnerType
+            ? {
+                projectId: task.githubProjectId,
+                projectItemId: task.githubProjectItemId,
+                installationId: task.githubProjectInstallationId,
+                owner: task.githubProjectOwner,
+                ownerType: task.githubProjectOwnerType,
+              }
+            : undefined,
       });
       envVars = {
         ...envVars,

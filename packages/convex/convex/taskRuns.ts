@@ -676,6 +676,16 @@ export const updateStatus = internalMutation({
         userId: run.userId,
         type: args.status === "completed" ? "run_completed" : "run_failed",
       });
+
+      // Schedule GitHub Project status sync if task has project linkage
+      const task = await ctx.db.get(run.taskId);
+      if (task?.githubProjectId && task?.githubProjectItemId && task?.githubProjectInstallationId) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.githubProjectSync.syncStatusToProject,
+          { taskId: run.taskId },
+        );
+      }
     }
   },
 });

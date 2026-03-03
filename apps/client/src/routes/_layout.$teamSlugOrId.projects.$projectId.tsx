@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { DispatchFromProjectDialog } from "@/components/projects/DispatchFromProjectDialog";
 import { PlanImportDialog } from "@/components/projects/PlanImportDialog";
 import { ProjectItemsView } from "@/components/projects/ProjectItemsView";
 import { FloatingPane } from "@/components/floating-pane";
@@ -34,6 +35,8 @@ function ProjectDetailPage() {
   const { teamSlugOrId, projectId } = Route.useParams();
   const { installationId, owner, ownerType } = Route.useSearch();
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
+  const [dispatchItem, setDispatchItem] = useState<ProjectItem | null>(null);
 
   // Accumulated items from pagination
   const [allItems, setAllItems] = useState<ProjectItem[]>([]);
@@ -180,6 +183,10 @@ function ProjectDetailPage() {
           endCursor={pageInfo.endCursor}
           onLoadMore={handleLoadMore}
           isLoadingMore={isLoadingMore}
+          onDispatchItem={(item) => {
+            setDispatchItem(item);
+            setDispatchDialogOpen(true);
+          }}
         />
       </div>
 
@@ -206,6 +213,17 @@ function ProjectDetailPage() {
             }
           });
         }}
+      />
+
+      <DispatchFromProjectDialog
+        open={dispatchDialogOpen}
+        onOpenChange={setDispatchDialogOpen}
+        teamSlugOrId={teamSlugOrId}
+        installationId={installationId}
+        projectId={projectId}
+        owner={owner}
+        ownerType={ownerType}
+        item={dispatchItem}
       />
     </FloatingPane>
   );

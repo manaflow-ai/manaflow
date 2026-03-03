@@ -1945,6 +1945,12 @@ export const createTask = httpAction(async (ctx, req) => {
       fileName?: string;
       altText: string;
     }>;
+    // GitHub Projects v2 linkage (Phase 2)
+    githubProjectId?: string;
+    githubProjectItemId?: string;
+    githubProjectInstallationId?: number;
+    githubProjectOwner?: string;
+    githubProjectOwnerType?: string;
   };
 
   try {
@@ -2022,6 +2028,12 @@ export const createTask = httpAction(async (ctx, req) => {
             altText: string;
           }>
         | undefined,
+      // GitHub Projects v2 linkage
+      githubProjectId: body.githubProjectId,
+      githubProjectItemId: body.githubProjectItemId,
+      githubProjectInstallationId: body.githubProjectInstallationId,
+      githubProjectOwner: body.githubProjectOwner,
+      githubProjectOwnerType: body.githubProjectOwnerType,
     });
 
     // Save PR title when provided (helps auto-PR later)

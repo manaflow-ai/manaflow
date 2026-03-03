@@ -7,6 +7,7 @@ import {
   getMemoryStartupCommand,
   getMemorySeedFiles,
   getMemoryProtocolInstructions,
+  getProjectContextFile,
 } from "../../agent-memory-protocol";
 
 type GeminiModelSettings = {
@@ -204,6 +205,17 @@ export async function getGeminiEnvironment(
   // Add agent memory protocol support
   startupCommands.push(getMemoryStartupCommand());
   files.push(...getMemorySeedFiles(ctx.taskRunId, ctx.previousKnowledge, ctx.previousMailbox, ctx.orchestrationOptions));
+
+  // Inject GitHub Projects context if task is linked to a project item (Phase 5)
+  if (ctx.githubProjectContext) {
+    files.push(
+      getProjectContextFile({
+        ...ctx.githubProjectContext,
+        taskRunJwt: ctx.taskRunJwt,
+        callbackUrl: ctx.callbackUrl,
+      }),
+    );
+  }
 
   // Add GEMINI.md with memory protocol instructions for the project
   const geminiMdContent = `# cmux Project Instructions

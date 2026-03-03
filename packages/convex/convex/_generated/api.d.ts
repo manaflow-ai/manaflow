@@ -38,6 +38,7 @@ import type * as e2b_actions from "../e2b_actions.js";
 import type * as environmentSnapshots from "../environmentSnapshots.js";
 import type * as environments from "../environments.js";
 import type * as github from "../github.js";
+import type * as githubProjectSync from "../githubProjectSync.js";
 import type * as github_app from "../github_app.js";
 import type * as github_check_runs from "../github_check_runs.js";
 import type * as github_commit_statuses from "../github_commit_statuses.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   environmentSnapshots: typeof environmentSnapshots;
   environments: typeof environments;
   github: typeof github;
+  githubProjectSync: typeof githubProjectSync;
   github_app: typeof github_app;
   github_check_runs: typeof github_check_runs;
   github_commit_statuses: typeof github_commit_statuses;
