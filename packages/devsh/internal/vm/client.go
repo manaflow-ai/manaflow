@@ -750,12 +750,17 @@ type Task struct {
 type TaskRun struct {
 	ID             string `json:"id"`
 	Agent          string `json:"agent"`
+	AgentName      string `json:"agentName"` // Alias for Agent (API returns agentName)
 	Status         string `json:"status"`
 	VSCodeURL      string `json:"vscodeUrl"`
 	PullRequestURL string `json:"pullRequestUrl"`
 	CreatedAt      int64  `json:"createdAt"`
 	CompletedAt    int64  `json:"completedAt"`
 	ExitCode       *int   `json:"exitCode,omitempty"`
+	// PTY session info for terminal attachment
+	PtySessionID string `json:"ptySessionId,omitempty"`
+	PtyBackend   string `json:"ptyBackend,omitempty"` // "cmux-pty" or "tmux"
+	SandboxID    string `json:"sandboxId,omitempty"`
 }
 
 // TaskImage represents a task image stored in Convex.
@@ -1775,6 +1780,31 @@ type MemorySnapshot struct {
 // GetTaskRunMemoryResult represents the result of getting task run memory
 type GetTaskRunMemoryResult struct {
 	Memory []MemorySnapshot `json:"memory"`
+}
+
+// GetTaskRunWithPty gets a task run with PTY session info for terminal attachment
+func (c *Client) GetTaskRunWithPty(ctx context.Context, taskRunID string) (*TaskRun, error) {
+	if c.teamSlug == "" {
+		return nil, fmt.Errorf("team slug not set")
+	}
+
+	path := fmt.Sprintf("/api/v1/cmux/task-runs/%s?teamSlugOrId=%s", taskRunID, c.teamSlug)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, readErrorBody(resp.Body))
+	}
+
+	var result TaskRun
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
 }
 
 // GetTaskRunMemory gets memory snapshots for a specific task run

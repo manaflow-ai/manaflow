@@ -193,8 +193,9 @@ export async function getOpenAIEnvironment(
   startupCommands.push("mkdir -p ~/.codex");
   // Ensure notify sink starts clean for this run; write JSONL under /root/lifecycle
   startupCommands.push("mkdir -p /root/lifecycle");
+  // Clear stale session state from prior runs to prevent cross-run resume bugs
   startupCommands.push(
-    "rm -f /root/workspace/.cmux/tmp/codex-turns.jsonl /root/workspace/codex-turns.jsonl /root/workspace/logs/codex-turns.jsonl /tmp/codex-turns.jsonl /tmp/cmux/codex-turns.jsonl /root/lifecycle/codex-turns.jsonl || true"
+    "rm -f /root/workspace/.cmux/tmp/codex-turns.jsonl /root/workspace/codex-turns.jsonl /root/workspace/logs/codex-turns.jsonl /tmp/codex-turns.jsonl /tmp/cmux/codex-turns.jsonl /root/lifecycle/codex-turns.jsonl /root/lifecycle/codex-session-id.txt /root/lifecycle/codex-done.txt || true"
   );
 
   // Add a small notify handler script that appends the payload to JSONL and marks completion

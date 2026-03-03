@@ -17,6 +17,7 @@ import {
 import type {
   WorkerCreateTerminal,
   WorkerSyncFiles,
+  WorkerTerminalCreated,
   WorkerTerminalFailed,
 } from "@cmux/shared/worker-schemas";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
@@ -1540,7 +1541,7 @@ exit $EXIT_CODE
       workerSocket.emit(
         "worker:create-terminal",
         terminalCreationCommand,
-        (result) => {
+        (result: { error: Error | null; data: WorkerTerminalCreated | null }) => {
           clearTimeout(timeout);
           serverLogger.info(
             `[AgentSpawner] Got response from worker:create-terminal at ${new Date().toISOString()}:`,
@@ -1551,6 +1552,32 @@ exit $EXIT_CODE
             return;
           }
           serverLogger.info("Terminal created successfully", result);
+
+          // Store PTY session info in Convex for terminal reconnection
+          if (result.data && taskRunId) {
+            const ptyData = result.data;
+            const ptySessionId = ptyData.ptySessionId || ptyData.terminalId;
+            const ptyBackend = ptyData.ptyBackend || "tmux";
+            getConvex()
+              .mutation(api.taskRuns.updatePtySession, {
+                teamSlugOrId,
+                id: taskRunId,
+                ptySessionId,
+                ptyBackend,
+              })
+              .then(() => {
+                serverLogger.info(
+                  `[AgentSpawner] Stored PTY session info: ${ptyBackend}/${ptySessionId}`
+                );
+              })
+              .catch((err) => {
+                serverLogger.warn(
+                  `[AgentSpawner] Failed to store PTY session info:`,
+                  err
+                );
+              });
+          }
+
           resolve(result.data);
         }
       );

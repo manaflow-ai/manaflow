@@ -2759,3 +2759,60 @@ export const getChildRunsStatus = authQuery({
     };
   },
 });
+
+/**
+ * Update PTY session info for terminal attachment/reconnection.
+ * Called by agentSpawner when terminal is created.
+ */
+export const updatePtySession = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    ptySessionId: v.string(),
+    ptyBackend: v.union(v.literal("cmux-pty"), v.literal("tmux")),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      ptySessionId: args.ptySessionId,
+      ptyBackend: args.ptyBackend,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Get running task runs for a team with PTY session info.
+ * Used by VSCode extension for terminal reconnection on reload.
+ */
+export const getRunningWithPty = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user_status_created", (q) =>
+        q.eq("teamId", teamId).eq("userId", ctx.identity.subject).eq("status", "running")
+      )
+      .collect();
+
+    // Return only runs with PTY session info
+    return runs
+      .filter((run) => run.ptySessionId)
+      .map((run) => ({
+        _id: run._id,
+        taskId: run.taskId,
+        agentName: run.agentName,
+        ptySessionId: run.ptySessionId,
+        ptyBackend: run.ptyBackend,
+        vscode: run.vscode,
+      }));
+  },
+});
