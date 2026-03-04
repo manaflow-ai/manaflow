@@ -1554,28 +1554,38 @@ exit $EXIT_CODE
           serverLogger.info("Terminal created successfully", result);
 
           // Store PTY session info in Convex for terminal reconnection
+          // Use runWithAuth to preserve auth context in async callback
+          // Only persist when the worker explicitly confirms the backend used
           if (result.data && taskRunId) {
             const ptyData = result.data;
-            const ptySessionId = ptyData.ptySessionId || ptyData.terminalId;
-            const ptyBackend = ptyData.ptyBackend || "tmux";
-            getConvex()
-              .mutation(api.taskRuns.updatePtySession, {
-                teamSlugOrId,
-                id: taskRunId,
-                ptySessionId,
-                ptyBackend,
-              })
-              .then(() => {
+            const ptySessionId = ptyData.ptySessionId;
+            const ptyBackend = ptyData.ptyBackend;
+            // Skip if worker didn't report PTY session info (avoid wrong defaults)
+            if (ptySessionId && ptyBackend) {
+              // Capture taskRunId for TypeScript narrowing in async closure
+              const capturedTaskRunId = taskRunId;
+              runWithAuth(capturedAuthToken, capturedAuthHeaderJson, async () => {
+                await getConvex()
+                  .mutation(api.taskRuns.updatePtySession, {
+                    teamSlugOrId,
+                    id: capturedTaskRunId,
+                    ptySessionId,
+                    ptyBackend,
+                  });
                 serverLogger.info(
                   `[AgentSpawner] Stored PTY session info: ${ptyBackend}/${ptySessionId}`
                 );
-              })
-              .catch((err) => {
+              }).catch((err) => {
                 serverLogger.warn(
                   `[AgentSpawner] Failed to store PTY session info:`,
                   err
                 );
               });
+            } else {
+              serverLogger.info(
+                `[AgentSpawner] Worker did not report PTY session info, skipping persistence`
+              );
+            }
           }
 
           resolve(result.data);

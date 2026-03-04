@@ -78,8 +78,21 @@ function ensureCodexDefaults(toml: string): string {
   const hasNotify = /(^|\n)\s*notify\s*=/.test(toml);
   const hasSandboxMode = /(^|\n)\s*sandbox_mode\s*=/.test(toml);
   const hasAskForApproval = /(^|\n)\s*ask_for_approval\s*=/.test(toml);
+
+  // Always force ask_for_approval to "never" for unattended runs
+  // Even if user has a different value in their host config, we override it
+  // Handles double-quoted, single-quoted, and bare TOML values
+  let result = toml;
+  if (hasAskForApproval) {
+    // Replace the entire ask_for_approval line with our required value
+    result = result.replace(
+      /(^|\n)\s*ask_for_approval\s*=\s*.*/g,
+      `$1${CODEX_ASK_FOR_APPROVAL_LINE}`
+    );
+  }
+
   if (hasNotify && hasSandboxMode && hasAskForApproval) {
-    return toml;
+    return result;
   }
 
   const defaults: string[] = [];
@@ -93,7 +106,7 @@ function ensureCodexDefaults(toml: string): string {
     defaults.push(CODEX_ASK_FOR_APPROVAL_LINE);
   }
 
-  return toml ? `${defaults.join("\n")}\n${toml}` : defaults.join("\n");
+  return result ? `${defaults.join("\n")}\n${result}` : defaults.join("\n");
 }
 
 // Target model for migrations - change this when a new latest model is released

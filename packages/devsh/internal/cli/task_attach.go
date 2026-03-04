@@ -4,8 +4,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"time"
 
 	"github.com/karlorz/devsh/internal/auth"
@@ -21,18 +19,17 @@ var taskAttachCmd = &cobra.Command{
 This command connects to the PTY session of a running task, allowing you
 to observe the agent's TUI (Terminal UI) in real-time.
 
-For tmux-based sessions, this opens an interactive tmux attach session.
-For cmux-pty sessions, this streams the terminal output to your console.
+Uses WebSocket connection to the cmux-pty server for interactive terminal access.
 
 Examples:
-  devsh task attach p17erbkc77h59gcv...
-  devsh task attach <task-run-id> --follow`,
+  devsh task attach p17erbkc77h59gcv...`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		taskRunID := args[0]
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+		// Use a short timeout for the API lookup only, not the interactive session
+		apiCtx, apiCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer apiCancel()
 
 		teamSlug, err := auth.GetTeamSlug()
 		if err != nil {
@@ -46,7 +43,7 @@ Examples:
 		client.SetTeamSlug(teamSlug)
 
 		// Get task run with PTY info
-		taskRun, err := client.GetTaskRunWithPty(ctx, taskRunID)
+		taskRun, err := client.GetTaskRunWithPty(apiCtx, taskRunID)
 		if err != nil {
 			return fmt.Errorf("failed to get task run: %w", err)
 		}
@@ -55,11 +52,7 @@ Examples:
 			return fmt.Errorf("task run is not running (status: %s)", taskRun.Status)
 		}
 
-		if taskRun.PtySessionID == "" {
-			return fmt.Errorf("no PTY session found for this task run")
-		}
-
-		// Get sandbox ID from vscode URL or container name
+		// Get sandbox ID from vscode container info
 		sandboxID := taskRun.SandboxID
 		if sandboxID == "" {
 			return fmt.Errorf("no sandbox ID found for this task run")
@@ -67,39 +60,81 @@ Examples:
 
 		fmt.Printf("Attaching to task run %s...\n", taskRunID)
 		fmt.Printf("  Agent:    %s\n", taskRun.AgentName)
-		fmt.Printf("  Backend:  %s\n", taskRun.PtyBackend)
-		fmt.Printf("  Session:  %s\n", taskRun.PtySessionID)
 		fmt.Printf("  Sandbox:  %s\n", sandboxID)
+		if taskRun.PtySessionID != "" {
+			fmt.Printf("  Backend:  %s\n", taskRun.PtyBackend)
+			fmt.Printf("  Session:  %s\n", taskRun.PtySessionID)
+		}
 		fmt.Println()
 
-		// For tmux backend, use tmux attach
-		if taskRun.PtyBackend == "tmux" {
-			return attachTmux(ctx, client, sandboxID, taskRun.PtySessionID)
+		// Get instance info for WebSocket URL
+		instance, err := client.GetInstance(apiCtx, sandboxID)
+		if err != nil {
+			return fmt.Errorf("failed to get sandbox instance: %w", err)
 		}
 
-		// For cmux-pty backend, we would need WebSocket connection
-		// For now, fall back to tmux attach since cmux-pty also creates tmux session as fallback
-		fmt.Println("Note: cmux-pty WebSocket attach not yet implemented, using tmux fallback")
-		return attachTmux(ctx, client, sandboxID, "cmux")
+		if instance.WorkerURL == "" {
+			return fmt.Errorf("sandbox worker URL not available")
+		}
+
+		// Generate auth token for WebSocket connection
+		token, err := getAuthToken(apiCtx, client, sandboxID)
+		if err != nil {
+			return fmt.Errorf("failed to generate auth token: %w", err)
+		}
+
+		// Determine session ID to attach to
+		sessionID := taskRun.PtySessionID
+		backend := taskRun.PtyBackend
+
+		// Handle tmux backend - requires SSH access, not WebSocket
+		if backend == "tmux" {
+			fmt.Println("This task uses tmux backend (not cmux-pty WebSocket).")
+			fmt.Println()
+			fmt.Println("To attach, SSH into the sandbox and run:")
+			fmt.Printf("  tmux attach -t %s\n", sessionID)
+			fmt.Println()
+			fmt.Println("Or use the VSCode terminal in your browser.")
+			return nil
+		}
+
+		if sessionID == "" {
+			// No PTY session stored - try to find one from the cmux-pty server
+			fmt.Println("No PTY session ID stored, listing available sessions...")
+			sessions, listErr := client.ListPtySessions(apiCtx, sandboxID)
+			if listErr != nil {
+				return fmt.Errorf("failed to list PTY sessions: %w", listErr)
+			}
+			if len(sessions) == 0 {
+				return fmt.Errorf("no PTY sessions found in sandbox")
+			}
+			if len(sessions) > 1 {
+				fmt.Printf("  Warning: %d sessions found, attaching to most recent.\n", len(sessions))
+				fmt.Println("  Use 'devsh pty <sandbox-id> --session=<id>' for a specific session.")
+			}
+			// Pick the most recently created session (likely the agent)
+			best := sessions[0]
+			for _, s := range sessions[1:] {
+				if s.CreatedAt > best.CreatedAt {
+					best = s
+				}
+			}
+			sessionID = best.ID
+			fmt.Printf("  Session: %s\n\n", sessionID)
+		}
+
+		// Build WebSocket URL to the PTY session
+		wsURL, err := buildPtyWebSocketURL(instance.WorkerURL, sessionID, token)
+		if err != nil {
+			return fmt.Errorf("failed to build WebSocket URL: %w", err)
+		}
+
+		fmt.Println("Connected. Press Ctrl+C to detach.")
+		fmt.Println()
+
+		// Run interactive PTY session (no timeout - runs until user detaches)
+		return runPtySession(wsURL)
 	},
-}
-
-func attachTmux(ctx context.Context, client *vm.Client, sandboxID, sessionName string) error {
-	// Execute tmux attach in the sandbox
-	// This requires an interactive PTY, so we use devsh exec with PTY mode
-	command := fmt.Sprintf("tmux attach -t %s", sessionName)
-
-	fmt.Printf("Running: devsh exec %s %q\n", sandboxID, command)
-	fmt.Println("Press Ctrl+B then D to detach from tmux session")
-	fmt.Println()
-
-	// Use os/exec to run devsh exec interactively
-	execCmd := exec.CommandContext(ctx, "devsh", "exec", sandboxID, command)
-	execCmd.Stdin = os.Stdin
-	execCmd.Stdout = os.Stdout
-	execCmd.Stderr = os.Stderr
-
-	return execCmd.Run()
 }
 
 func init() {

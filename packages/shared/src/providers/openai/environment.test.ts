@@ -335,6 +335,84 @@ foo = "bar"
     }
   });
 
+  it("forces ask_for_approval to never even when host config has different value", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "cmux-openai-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = homeDir;
+
+    try {
+      await mkdir(join(homeDir, ".codex"), { recursive: true });
+      // Host config has ask_for_approval set to "on-request" which would block unattended runs
+      await writeFile(
+        join(homeDir, ".codex/config.toml"),
+        `ask_for_approval = "on-request"
+approval_mode = "full"
+
+[some_section]
+foo = "bar"
+`,
+        "utf-8"
+      );
+
+      const result = await getOpenAIEnvironment({ useHostConfig: true } as never);
+
+      const toml = decodeConfigToml(result);
+      // ask_for_approval MUST be "never" for unattended runs, regardless of host config
+      expect(toml).toContain('ask_for_approval = "never"');
+      expect(toml).not.toContain('ask_for_approval = "on-request"');
+      // Other host settings should be preserved
+      expect(toml).toContain('approval_mode = "full"');
+      expect(toml).toContain("[some_section]");
+    } finally {
+      process.env.HOME = previousHome;
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("forces ask_for_approval override for single-quoted and bare TOML values", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "cmux-openai-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = homeDir;
+
+    try {
+      await mkdir(join(homeDir, ".codex"), { recursive: true });
+      // Test single-quoted value
+      await writeFile(
+        join(homeDir, ".codex/config.toml"),
+        `ask_for_approval = 'on-request'
+
+[some_section]
+foo = "bar"
+`,
+        "utf-8"
+      );
+
+      let result = await getOpenAIEnvironment({ useHostConfig: true } as never);
+      let toml = decodeConfigToml(result);
+      expect(toml).toContain('ask_for_approval = "never"');
+      expect(toml).not.toContain("'on-request'");
+
+      // Test bare value
+      await writeFile(
+        join(homeDir, ".codex/config.toml"),
+        `ask_for_approval = unless-allow-listed
+
+[some_section]
+foo = "bar"
+`,
+        "utf-8"
+      );
+
+      result = await getOpenAIEnvironment({ useHostConfig: true } as never);
+      toml = decodeConfigToml(result);
+      expect(toml).toContain('ask_for_approval = "never"');
+      expect(toml).not.toContain("unless-allow-listed");
+    } finally {
+      process.env.HOME = previousHome;
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("includes memory protocol in instructions.md", async () => {
     const result = await getOpenAIEnvironment({} as never);
     const instructionsFile = result.files?.find(
