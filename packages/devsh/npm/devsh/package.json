@@ -1,6 +1,6 @@
 {
   "name": "devsh",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Cloud VMs for development - spawn isolated dev environments instantly",
   "keywords": [
     "cli",
@@ -34,11 +34,11 @@
     "postinstall": "node lib/postinstall.js"
   },
   "optionalDependencies": {
-    "devsh-darwin-arm64": "0.1.2",
-    "devsh-darwin-x64": "0.1.2",
-    "devsh-linux-arm64": "0.1.2",
-    "devsh-linux-x64": "0.1.2",
-    "devsh-win32-x64": "0.1.2"
+    "devsh-darwin-arm64": "0.1.3",
+    "devsh-darwin-x64": "0.1.3",
+    "devsh-linux-arm64": "0.1.3",
+    "devsh-linux-x64": "0.1.3",
+    "devsh-win32-x64": "0.1.3"
   },
   "engines": {
     "node": ">=16"

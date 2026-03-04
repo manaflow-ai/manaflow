@@ -30,8 +30,28 @@ LDFLAGS := -s -w \
            -X '$(AUTH_PKG).ConvexSiteURL=$(CONVEX_SITE_URL)' \
            -X '$(AUTH_PKG).ServerURL=$(CMUX_SERVER_URL)'
 
-.PHONY: build clean test install install-dev install-prod fmt lint run deps build-all build-npm \
+.PHONY: help build clean test install install-dev install-prod fmt lint run deps build-all build-npm \
         npm-version npm-publish npm-publish-dry npm-publish-devsh npm-publish-devsh-dry
+
+help:
+	@echo "devsh Makefile targets"
+	@echo ""
+	@echo "Build and install:"
+	@echo "  make build                     Build devsh binary"
+	@echo "  make install-dev               Build dev mode binary and install to ~/.local/bin/devsh"
+	@echo "  make build-prod                Build production binary (requires STACK_* and CMUX_* env vars)"
+	@echo "  make install-prod              Build production binary and install to ~/.local/bin/devsh"
+	@echo ""
+	@echo "npm publish:"
+	@echo "  Required order:"
+	@echo "    1) make npm-version VERSION=x.y.z"
+	@echo "    2) make npm-publish-dry"
+	@echo "    3) make npm-publish"
+	@echo ""
+	@echo "From repo root (recommended wrapper targets):"
+	@echo "  1) cd packages/devsh && make npm-version VERSION=x.y.z"
+	@echo "  2) make devsh-npm-republish-prod-dry DEVSH_NPM_VERSION=x.y.z"
+	@echo "  3) make devsh-npm-republish-prod DEVSH_NPM_VERSION=x.y.z"
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/devsh ./cmd/devsh

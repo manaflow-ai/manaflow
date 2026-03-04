@@ -161,6 +161,11 @@ make install-devsh-dev
 # Production build (production API URLs from .env.production)
 make install-devsh-prod
 
+# Publish devsh to npm (usual order)
+cd packages/devsh && make npm-version VERSION=x.y.z
+make devsh-npm-republish-prod-dry DEVSH_NPM_VERSION=x.y.z
+make devsh-npm-republish-prod DEVSH_NPM_VERSION=x.y.z
+
 # Usage
 devsh start -p pve-lxc          # Create sandbox
 devsh exec <sandbox-id> "cmd"   # Execute command

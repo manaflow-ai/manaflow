@@ -668,6 +668,35 @@ make build
 make build-race
 ```
 
+## Publishing to npm (Maintainers)
+
+Usual sequence: bump npm version first, then publish.
+
+```bash
+# 1) Bump version in all devsh npm package.json files
+cd packages/devsh
+make npm-version VERSION=x.y.z
+
+# 2) Dry-run publish
+make npm-publish-dry
+
+# 3) Live publish
+make npm-publish
+```
+
+From repo root, use the production wrapper targets:
+
+```bash
+# 1) Bump package versions
+cd packages/devsh && make npm-version VERSION=x.y.z
+
+# 2) Dry-run publish using .env.production
+make devsh-npm-republish-prod-dry DEVSH_NPM_VERSION=x.y.z
+
+# 3) Live publish using .env.production
+make devsh-npm-republish-prod DEVSH_NPM_VERSION=x.y.z
+```
+
 ## Testing Browser Automation
 
 The browser automation commands use a worker daemon running inside the VM that wraps `agent-browser` (Vercel's CLI tool) and connects to Chrome via CDP.

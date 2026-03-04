@@ -1,6 +1,6 @@
 {
   "name": "devsh-darwin-arm64",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "devsh CLI binary for macOS ARM64 (Apple Silicon)",
   "os": ["darwin"],
   "cpu": ["arm64"],
