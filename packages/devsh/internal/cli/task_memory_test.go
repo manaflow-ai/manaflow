@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -207,26 +208,28 @@ func TestTaskMemoryMetadataDisplay(t *testing.T) {
 	}
 }
 
-// TestTaskIDParsing tests task ID vs task run ID detection
-func TestTaskIDParsing(t *testing.T) {
+// TestFatalAPIError tests the isFatalAPIError helper for ID resolution fallback
+func TestFatalAPIError(t *testing.T) {
 	tests := []struct {
-		id           string
-		isTaskID     bool
-		description  string
+		err         error
+		wantFatal   bool
+		description string
 	}{
-		{"p17abc123def456", true, "task ID starts with p"},
-		{"ns7abc123def456", false, "task run ID starts with ns"},
-		{"jn7abc123def456", false, "task run ID starts with jn"},
-		{"abc123def456789", false, "unknown prefix is not task ID"},
+		{fmt.Errorf("API error (404): Task not found"), false, "404 error - not fatal, fall back"},
+		{fmt.Errorf("API error (500): Internal error"), false, "500 error - not fatal, fall back"},
+		{fmt.Errorf("API error (401): Unauthorized"), true, "401 error - fatal auth error"},
+		{fmt.Errorf("API error (403): Forbidden"), true, "403 error - fatal auth error"},
+		{nil, false, "nil error"},
+		{fmt.Errorf("network error: connection refused"), true, "connection refused - fatal network error"},
+		{fmt.Errorf("dial tcp: no such host"), true, "no such host - fatal network error"},
+		{fmt.Errorf("context deadline exceeded"), true, "timeout - fatal"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.description, func(t *testing.T) {
-			// Same logic as task_memory.go
-			isTaskID := strings.HasPrefix(tt.id, "p")
-
-			if isTaskID != tt.isTaskID {
-				t.Errorf("ID %q: isTaskID = %v, want %v", tt.id, isTaskID, tt.isTaskID)
+			got := isFatalAPIError(tt.err)
+			if got != tt.wantFatal {
+				t.Errorf("isFatalAPIError(%v) = %v, want %v", tt.err, got, tt.wantFatal)
 			}
 		})
 	}
