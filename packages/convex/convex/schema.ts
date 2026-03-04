@@ -350,6 +350,9 @@ const convexSchema = defineSchema({
     // Orchestration head agent fields (Phase 1)
     isOrchestrationHead: v.optional(v.boolean()), // Whether this run is an orchestration head agent
     orchestrationId: v.optional(v.string()), // Unique orchestration ID for this head agent session
+    // PTY session tracking for terminal attachment/reconnection
+    ptySessionId: v.optional(v.string()), // cmux-pty session ID or tmux session name
+    ptyBackend: v.optional(v.union(v.literal("cmux-pty"), v.literal("tmux"))), // Which backend manages the terminal
   })
     .index("by_task", ["taskId", "createdAt"])
     .index("by_parent", ["parentRunId"])

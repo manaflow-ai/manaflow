@@ -28,8 +28,6 @@ function createCodexConfig(spec: CodexModelSpec): AgentConfig {
       spec.model,
       "--sandbox",
       "danger-full-access",
-      "--ask-for-approval",
-      "never",
       ...reasoningArgs,
       "$PROMPT",
     ],

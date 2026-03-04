@@ -135,6 +135,9 @@ export const WorkerTerminalExitSchema = z.object({
 export const WorkerTerminalCreatedSchema = z.object({
   workerId: z.string(),
   terminalId: z.string(),
+  // PTY session info for terminal attachment/reconnection
+  ptySessionId: z.string().optional(), // cmux-pty session ID (if using cmux-pty backend)
+  ptyBackend: z.enum(["cmux-pty", "tmux"]).optional(), // Which backend manages the terminal
 });
 
 export const WorkerTerminalClosedSchema = z.object({

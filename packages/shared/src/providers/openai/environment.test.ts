@@ -142,6 +142,7 @@ describe("getOpenAIEnvironment", () => {
     );
     expect(toml).toContain('notify = ["/root/lifecycle/codex-notify.sh"]');
     expect(toml).toContain('sandbox_mode = "danger-full-access"');
+    expect(toml).toContain('ask_for_approval = "never"');
     expect(toml).toContain("[notice.model_migrations]");
     expect(toml).toContain('"gpt-5-codex" = "gpt-5.3-codex"');
     expect(toml).toContain('"gpt-5" = "gpt-5.3-codex"');
@@ -193,6 +194,7 @@ host_secret = "should-not-leak"
       expect(toml).not.toContain("host_secret");
       expect(toml).not.toContain("approval_mode");
       expect(toml).toContain('sandbox_mode = "danger-full-access"');
+      expect(toml).toContain('ask_for_approval = "never"');
 
       // Verify instructions.md does NOT contain host instructions
       const instructionsFile = result.files?.find(
@@ -333,6 +335,84 @@ foo = "bar"
     }
   });
 
+  it("forces ask_for_approval to never even when host config has different value", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "cmux-openai-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = homeDir;
+
+    try {
+      await mkdir(join(homeDir, ".codex"), { recursive: true });
+      // Host config has ask_for_approval set to "on-request" which would block unattended runs
+      await writeFile(
+        join(homeDir, ".codex/config.toml"),
+        `ask_for_approval = "on-request"
+approval_mode = "full"
+
+[some_section]
+foo = "bar"
+`,
+        "utf-8"
+      );
+
+      const result = await getOpenAIEnvironment({ useHostConfig: true } as never);
+
+      const toml = decodeConfigToml(result);
+      // ask_for_approval MUST be "never" for unattended runs, regardless of host config
+      expect(toml).toContain('ask_for_approval = "never"');
+      expect(toml).not.toContain('ask_for_approval = "on-request"');
+      // Other host settings should be preserved
+      expect(toml).toContain('approval_mode = "full"');
+      expect(toml).toContain("[some_section]");
+    } finally {
+      process.env.HOME = previousHome;
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("forces ask_for_approval override for single-quoted and bare TOML values", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "cmux-openai-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = homeDir;
+
+    try {
+      await mkdir(join(homeDir, ".codex"), { recursive: true });
+      // Test single-quoted value
+      await writeFile(
+        join(homeDir, ".codex/config.toml"),
+        `ask_for_approval = 'on-request'
+
+[some_section]
+foo = "bar"
+`,
+        "utf-8"
+      );
+
+      let result = await getOpenAIEnvironment({ useHostConfig: true } as never);
+      let toml = decodeConfigToml(result);
+      expect(toml).toContain('ask_for_approval = "never"');
+      expect(toml).not.toContain("'on-request'");
+
+      // Test bare value
+      await writeFile(
+        join(homeDir, ".codex/config.toml"),
+        `ask_for_approval = unless-allow-listed
+
+[some_section]
+foo = "bar"
+`,
+        "utf-8"
+      );
+
+      result = await getOpenAIEnvironment({ useHostConfig: true } as never);
+      toml = decodeConfigToml(result);
+      expect(toml).toContain('ask_for_approval = "never"');
+      expect(toml).not.toContain("unless-allow-listed");
+    } finally {
+      process.env.HOME = previousHome;
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("includes memory protocol in instructions.md", async () => {
     const result = await getOpenAIEnvironment({} as never);
     const instructionsFile = result.files?.find(
@@ -423,5 +503,42 @@ foo = "bar"
     expect(result.startupCommands?.some((cmd) =>
       cmd.includes("mkdir -p") && cmd.includes("/root/lifecycle/memory")
     )).toBe(true);
+  });
+
+  it("persists Codex thread id from notify payload for explicit resume", async () => {
+    const result = await getOpenAIEnvironment({} as never);
+    const notifyFile = result.files?.find(
+      (file) => file.destinationPath === "/root/lifecycle/codex-notify.sh"
+    );
+    expect(notifyFile).toBeDefined();
+
+    const notifyScript = Buffer.from(
+      notifyFile!.contentBase64,
+      "base64"
+    ).toString("utf-8");
+
+    expect(notifyScript).toContain(
+      "THREAD_ID=$(printf '%s' \"$1\" | jq -r '.thread_id // .\"thread-id\" // empty'"
+    );
+    expect(notifyScript).toContain(
+      "THREAD_ID=$(printf '%s' \"$1\" | grep -oE '\"thread-id\":\"[^\"]+\"|\"thread_id\":\"[^\"]+\"'"
+    );
+    expect(notifyScript).toContain("codex-session-id.txt");
+  });
+
+  it("creates codex-resume helper script", async () => {
+    const result = await getOpenAIEnvironment({} as never);
+    const resumeFile = result.files?.find(
+      (file) => file.destinationPath === "/root/lifecycle/codex-resume.sh"
+    );
+    expect(resumeFile).toBeDefined();
+
+    const resumeScript = Buffer.from(
+      resumeFile!.contentBase64,
+      "base64"
+    ).toString("utf-8");
+
+    expect(resumeScript).toContain('SESSION_ID_FILE="/root/lifecycle/codex-session-id.txt"');
+    expect(resumeScript).toContain('exec codex resume "$THREAD_ID"');
   });
 });

@@ -17,6 +17,7 @@ import {
 import type {
   WorkerCreateTerminal,
   WorkerSyncFiles,
+  WorkerTerminalCreated,
   WorkerTerminalFailed,
 } from "@cmux/shared/worker-schemas";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
@@ -1540,7 +1541,7 @@ exit $EXIT_CODE
       workerSocket.emit(
         "worker:create-terminal",
         terminalCreationCommand,
-        (result) => {
+        (result: { error: Error | null; data: WorkerTerminalCreated | null }) => {
           clearTimeout(timeout);
           serverLogger.info(
             `[AgentSpawner] Got response from worker:create-terminal at ${new Date().toISOString()}:`,
@@ -1551,6 +1552,42 @@ exit $EXIT_CODE
             return;
           }
           serverLogger.info("Terminal created successfully", result);
+
+          // Store PTY session info in Convex for terminal reconnection
+          // Use runWithAuth to preserve auth context in async callback
+          // Only persist when the worker explicitly confirms the backend used
+          if (result.data && taskRunId) {
+            const ptyData = result.data;
+            const ptySessionId = ptyData.ptySessionId;
+            const ptyBackend = ptyData.ptyBackend;
+            // Skip if worker didn't report PTY session info (avoid wrong defaults)
+            if (ptySessionId && ptyBackend) {
+              // Capture taskRunId for TypeScript narrowing in async closure
+              const capturedTaskRunId = taskRunId;
+              runWithAuth(capturedAuthToken, capturedAuthHeaderJson, async () => {
+                await getConvex()
+                  .mutation(api.taskRuns.updatePtySession, {
+                    teamSlugOrId,
+                    id: capturedTaskRunId,
+                    ptySessionId,
+                    ptyBackend,
+                  });
+                serverLogger.info(
+                  `[AgentSpawner] Stored PTY session info: ${ptyBackend}/${ptySessionId}`
+                );
+              }).catch((err) => {
+                serverLogger.warn(
+                  `[AgentSpawner] Failed to store PTY session info:`,
+                  err
+                );
+              });
+            } else {
+              serverLogger.info(
+                `[AgentSpawner] Worker did not report PTY session info, skipping persistence`
+              );
+            }
+          }
+
           resolve(result.data);
         }
       );

@@ -9,17 +9,26 @@ import { RepositoryManager } from "./repositoryManager";
 const exec = promisify(execCb);
 
 interface RepoCase {
+  name: string;
   url: string;
   defaultBranch: string;
 }
 
-const REPOS: RepoCase[] = [
-  { url: "https://github.com/sindresorhus/is.git", defaultBranch: "main" },
-  { url: "https://github.com/tj/commander.js.git", defaultBranch: "master" },
-  { url: "https://github.com/stack-auth/stack-auth.git", defaultBranch: "dev" },
+interface RepoSpec {
+  name: string;
+  defaultBranch: string;
+  extraBranches?: string[];
+}
+
+const REPO_SPECS: RepoSpec[] = [
+  { name: "repo-main", defaultBranch: "main" },
+  { name: "repo-master", defaultBranch: "master" },
+  // Include "main" as an additional branch while keeping "dev" as the default.
+  { name: "repo-dev", defaultBranch: "dev", extraBranches: ["main"] },
 ];
 
 const TEST_BASE = path.join(tmpdir(), `cmux-repo-tests-${Date.now()}`);
+let REPOS: RepoCase[] = [];
 const describeSequential =
   (describe as typeof describe & { sequential?: typeof describe }).sequential ??
   describe;
@@ -38,6 +47,48 @@ async function getHeadBranch(cwd: string): Promise<string> {
   return stdout.trim();
 }
 
+async function createLocalBareRepo(
+  fixturesDir: string,
+  spec: RepoSpec
+): Promise<RepoCase> {
+  const seedPath = path.join(fixturesDir, `${spec.name}-seed`);
+  const barePath = path.join(fixturesDir, `${spec.name}.git`);
+
+  await fs.mkdir(seedPath, { recursive: true });
+  await exec(`git init --bare "${barePath}"`);
+
+  await exec(`git init`, { cwd: seedPath });
+  await exec(`git config user.email "test@example.com"`, { cwd: seedPath });
+  await exec(`git config user.name "cmux-test"`, { cwd: seedPath });
+  await exec(`git checkout -b ${spec.defaultBranch}`, { cwd: seedPath });
+
+  await fs.writeFile(path.join(seedPath, "README.md"), `# ${spec.name}\n`, "utf8");
+  await exec(`git add README.md`, { cwd: seedPath });
+  await exec(`git commit -m "initial commit"`, { cwd: seedPath });
+  await exec(`git remote add origin "${barePath}"`, { cwd: seedPath });
+  await exec(`git push -u origin ${spec.defaultBranch}`, { cwd: seedPath });
+
+  for (const branch of spec.extraBranches ?? []) {
+    await exec(`git checkout -b ${branch}`, { cwd: seedPath });
+    await fs.writeFile(path.join(seedPath, `${branch}.txt`), `${branch}\n`, "utf8");
+    await exec(`git add ${branch}.txt`, { cwd: seedPath });
+    await exec(`git commit -m "add ${branch}"`, { cwd: seedPath });
+    await exec(`git push -u origin ${branch}`, { cwd: seedPath });
+    await exec(`git checkout ${spec.defaultBranch}`, { cwd: seedPath });
+  }
+
+  // Ensure remote default branch is deterministic for default branch detection tests.
+  await exec(`git symbolic-ref HEAD refs/heads/${spec.defaultBranch}`, {
+    cwd: barePath,
+  });
+
+  return {
+    name: spec.name,
+    url: barePath,
+    defaultBranch: spec.defaultBranch,
+  };
+}
+
 describeSequential("RepositoryManager branch behavior (no fallbacks)", () => {
   beforeAll(async () => {
     try {
@@ -48,6 +99,12 @@ describeSequential("RepositoryManager branch behavior (no fallbacks)", () => {
       process.env.GIT_PATH = "git";
     }
     await fs.mkdir(TEST_BASE, { recursive: true });
+    const fixturesDir = path.join(TEST_BASE, "fixtures");
+    await fs.mkdir(fixturesDir, { recursive: true });
+    REPOS = [];
+    for (const spec of REPO_SPECS) {
+      REPOS.push(await createLocalBareRepo(fixturesDir, spec));
+    }
   });
 
   afterAll(async () => {
@@ -87,13 +144,7 @@ describeSequential("RepositoryManager branch behavior (no fallbacks)", () => {
     const mgr = RepositoryManager.getInstance({ fetchDepth: 1 });
 
     for (const repo of REPOS) {
-      const projectDir = path.join(
-        TEST_BASE,
-        repo.url
-          .split("/")
-          .pop()!
-          .replace(/\.git$/, "")
-      );
+      const projectDir = path.join(TEST_BASE, repo.name);
       const originPath = path.join(projectDir, "origin");
       await fs.mkdir(projectDir, { recursive: true });
 
@@ -159,9 +210,7 @@ describeSequential("RepositoryManager branch behavior (no fallbacks)", () => {
 
   it("handles non-default 'main' branch for stack-auth and can create worktree from it", async () => {
     const mgr = RepositoryManager.getInstance({ fetchDepth: 1 });
-    const repo = REPOS.find((r) =>
-      r.url.includes("stack-auth/stack-auth.git")
-    )!;
+    const repo = REPOS.find((r) => r.name === "repo-dev")!;
     const projectDir = path.join(TEST_BASE, "stack-auth-main-case");
     const originPath = path.join(projectDir, "origin");
     await fs.mkdir(projectDir, { recursive: true });
@@ -197,13 +246,13 @@ describeSequential("RepositoryManager branch behavior (no fallbacks)", () => {
 
       await mgr.ensureRepository(repo.url, originPath);
       const detected = await mgr.getDefaultBranch(originPath);
-      expect([repo.defaultBranch, "develop"]).toContain(detected);
+      expect(detected).toBe(repo.defaultBranch);
     }
   }, 120_000);
 
   it("worktreeExists correctly identifies exact path matches", async () => {
     const mgr = RepositoryManager.getInstance({ fetchDepth: 1 });
-    const repo = REPOS[0]; // sindresorhus/is
+    const repo = REPOS[0]; // repo-main
     const projectDir = path.join(TEST_BASE, "worktree-exists-test");
     const originPath = path.join(projectDir, "origin");
     const worktreesDir = path.join(projectDir, "worktrees");

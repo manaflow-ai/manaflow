@@ -2416,15 +2416,20 @@ export const taskActionRouter = httpAction(async (ctx, req) => {
 
 // ============================================================================
 // GET /api/v1/cmux/task-runs/{id}/* - Unified task run GET router
-// Handles: /memory, /children, /parent, /children/status
+// Handles: base (task run details), /memory, /children, /parent, /children/status
 // ============================================================================
 export const taskRunGetRouter = httpAction(async (ctx, req) => {
   const url = new URL(req.url);
   const pathParts = url.pathname.split("/").filter(Boolean);
   // pathParts: ["api", "v1", "cmux", "task-runs", "{id}", "{action}", ...]
 
-  if (pathParts.length < 6) {
+  if (pathParts.length < 5) {
     return jsonResponse({ code: 400, message: "Invalid path" }, 400);
+  }
+
+  // Base path: GET /api/v1/cmux/task-runs/{id} - returns task run details
+  if (pathParts.length === 5) {
+    return handleGetTaskRun(ctx, req);
   }
 
   const action = pathParts[5]; // memory, children, parent
@@ -2443,6 +2448,96 @@ export const taskRunGetRouter = httpAction(async (ctx, req) => {
 
   return jsonResponse({ code: 404, message: "Unknown action" }, 404);
 });
+
+// GET /api/v1/cmux/task-runs/{taskRunId} - Get task run details with PTY info
+async function handleGetTaskRun(ctx: ActionCtx, req: Request): Promise<Response> {
+  const { identity, error } = await getAuthenticatedUser(ctx);
+  if (error) return error;
+
+  const url = new URL(req.url);
+  const teamSlugOrId = url.searchParams.get("teamSlugOrId");
+
+  if (!teamSlugOrId) {
+    return jsonResponse(
+      { code: 400, message: "teamSlugOrId query parameter is required" },
+      400
+    );
+  }
+
+  // Parse path: /api/v1/cmux/task-runs/{taskRunId}
+  const pathParts = url.pathname.split("/").filter(Boolean);
+  // pathParts: ["api", "v1", "cmux", "task-runs", "{taskRunId}"]
+  const taskRunId = pathParts[4];
+
+  if (!taskRunId) {
+    return jsonResponse({ code: 400, message: "Task run ID is required" }, 400);
+  }
+
+  // Validate taskRunId format - Convex IDs are alphanumeric without underscores
+  const isValidConvexIdFormat = /^[a-z][a-z0-9]*$/i.test(taskRunId);
+  if (!isValidConvexIdFormat) {
+    return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+  }
+
+  try {
+    const userId = identity!.subject;
+    const teamId = await resolveTeamIdForHttp(ctx, teamSlugOrId);
+
+    if (!teamId) {
+      return jsonResponse(
+        { code: 404, message: `Team not found: ${teamSlugOrId}` },
+        404
+      );
+    }
+
+    // Verify the task run belongs to this user/team
+    const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+      id: taskRunId as Id<"taskRuns">,
+    });
+
+    if (!taskRun || taskRun.teamId !== teamId || taskRun.userId !== userId) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
+
+    // Extract sandbox ID from vscode container info
+    const sandboxId = taskRun.vscode?.containerName ?? undefined;
+
+    // Return task run details with PTY session info
+    return jsonResponse({
+      id: taskRun._id,
+      taskId: taskRun.taskId,
+      status: taskRun.status,
+      agentName: taskRun.agentName,
+      prompt: taskRun.prompt,
+      summary: taskRun.summary,
+      createdAt: taskRun.createdAt,
+      updatedAt: taskRun.updatedAt,
+      completedAt: taskRun.completedAt,
+      exitCode: taskRun.exitCode,
+      errorMessage: taskRun.errorMessage,
+      // PTY session info for terminal attachment
+      ptySessionId: taskRun.ptySessionId,
+      ptyBackend: taskRun.ptyBackend,
+      // Sandbox info
+      sandboxId,
+      vscode: taskRun.vscode
+        ? {
+            provider: taskRun.vscode.provider,
+            status: taskRun.vscode.status,
+            url: taskRun.vscode.url,
+            vncUrl: taskRun.vscode.vncUrl,
+            xtermUrl: taskRun.vscode.xtermUrl,
+          }
+        : undefined,
+    });
+  } catch (err) {
+    console.error("[cmux.getTaskRun] Error:", err);
+    return jsonResponse(
+      { code: 500, message: "Failed to get task run" },
+      500
+    );
+  }
+}
 
 // GET /api/v1/cmux/task-runs/{taskRunId}/memory - Get memory for a task run
 async function handleGetTaskRunMemory(ctx: ActionCtx, req: Request): Promise<Response> {
