@@ -14,3 +14,9 @@
  * ```
  */
 export const DEFAULT_BRANCH_PREFIX = "dev/";
+
+/**
+ * Maximum total length for generated branch names (prefix + slug + separator + id).
+ * Ensures branch names stay manageable regardless of workspace prefix or task description length.
+ */
+export const MAX_BRANCH_NAME_LENGTH = 60;

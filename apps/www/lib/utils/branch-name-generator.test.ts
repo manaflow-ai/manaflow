@@ -228,3 +228,252 @@ describe("getPRTitleFromTaskDescription", () => {
     expect(title).toBe("Refactor auth module");
   });
 });
+
+// ── MAX_BRANCH_NAME_LENGTH ENFORCEMENT TESTS ──
+
+describe("Branch name length enforcement (60 char limit)", () => {
+  const MAX_BRANCH_NAME_LENGTH = 60;
+
+  describe("toKebabCase", () => {
+    it("enforces 50 char limit on kebab conversion", () => {
+      const veryLongInput =
+        "This is an extremely long input that should be truncated by toKebabCase";
+      const result = toKebabCase(veryLongInput);
+      expect(result.length).toBeLessThanOrEqual(50);
+    });
+
+    it("handles special characters and converts to valid kebab", () => {
+      const input = "Add @#$%^ special & chars!!!";
+      const result = toKebabCase(input);
+      expect(result).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    });
+
+    it("converts camelCase correctly", () => {
+      const result = toKebabCase("myAwesomeFeature");
+      expect(result).toBe("my-awesome-feature");
+    });
+
+    it("handles acronyms", () => {
+      const result = toKebabCase("HTTPServer");
+      expect(result).toBe("http-server");
+    });
+
+    it("removes trailing hyphens", () => {
+      const result = toKebabCase("fix-bug-");
+      expect(result).toBe("fix-bug");
+    });
+
+    it("removes duplicate hyphens", () => {
+      const result = toKebabCase("fix---bug");
+      expect(result).toBe("fix-bug");
+    });
+
+    it("handles empty input gracefully", () => {
+      const result = toKebabCase("");
+      expect(result).toBe("");
+    });
+
+    it("handles all-special-character input", () => {
+      const result = toKebabCase("@#$%^&*()");
+      expect(result).toBe("");
+    });
+  });
+
+  describe("generateRandomId", () => {
+    it("always produces exactly 5 characters", () => {
+      for (let i = 0; i < 20; i++) {
+        const id = generateRandomId();
+        expect(id).toHaveLength(5);
+        expect(id).toMatch(/^[a-z0-9]{5}$/);
+      }
+    });
+  });
+
+  describe("generateBranchName", () => {
+    it("never exceeds 60 chars regardless of input length", () => {
+      const testInputs = [
+        "Fix auth",
+        "Fix authentication bug",
+        "Fix a very long authentication bug that involves multiple systems",
+        "This is an extremely long input that should be truncated",
+        "Add feature with very long description name",
+      ];
+
+      testInputs.forEach((input) => {
+        const result = generateBranchName(input);
+        expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      });
+    });
+
+    it("produces short names for short inputs without unnecessary truncation", () => {
+      const result = generateBranchName("Fix bug");
+      expect(result).toMatch(/^dev\/fix-bug-[a-z0-9]{5}$/);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+    });
+
+    it("produces correct names with default prefix", () => {
+      const result = generateBranchName("Fix auth");
+      expect(result).toMatch(new RegExp(`^${DEFAULT_BRANCH_PREFIX}fix-auth-[a-z0-9]{5}$`));
+    });
+
+    it("handles custom prefix that is long", () => {
+      const longPrefix = "my-very-long-prefix/";
+      const result = generateBranchName("Fix bug", longPrefix);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      expect(result).toMatch(/^my-very-long-prefix\/.*-[a-z0-9]{5}$/);
+    });
+
+    it("handles custom prefix with empty prefix", () => {
+      const result = generateBranchName("Fix auth", "");
+      expect(result).toMatch(/^fix-auth-[a-z0-9]{5}$/);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+    });
+
+    it("includes random ID suffix which is always 5 chars", () => {
+      const result = generateBranchName("Fix bug");
+      const parts = result.split("-");
+      const randomId = parts[parts.length - 1];
+      expect(randomId).toHaveLength(5);
+      expect(randomId).toMatch(/^[a-z0-9]{5}$/);
+    });
+
+    it("removes trailing hyphens after truncation", () => {
+      // Test that if kebab case ends with hyphen, separator is empty
+      const result = generateBranchName("Fix-");
+      expect(result).not.toMatch(/-{2}/); // No double hyphens
+      expect(result).toMatch(/^dev\/fix-[a-z0-9]{5}$/);
+    });
+
+    it("handles special characters in input", () => {
+      const result = generateBranchName("Fix @#$% bug!!!!");
+      expect(result).toMatch(/^dev\/fix-bug-[a-z0-9]{5}$/);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+    });
+  });
+
+  describe("generateBranchNamesFromBase", () => {
+    it("never exceeds 60 chars when base name is already long", () => {
+      const longBaseName = "dev/" + "a".repeat(50);
+      const results = generateBranchNamesFromBase(longBaseName, 3);
+      results.forEach((name) => {
+        expect(name.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      });
+    });
+
+    it("respects 60 char limit with custom IDs", () => {
+      const baseName = "dev/my-long-feature-name";
+      const customIds = ["abc12", "def34", "ghi56"];
+      const results = customIds.map((id) =>
+        generateBranchNamesFromBase(baseName, 1, id)[0],
+      );
+      results.forEach((name) => {
+        expect(name.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+        expect(name).toMatch(/-[a-z0-9]{5}$/);
+      });
+    });
+
+    it("generates multiple unique branch names", () => {
+      const results = generateBranchNamesFromBase("dev/fix-bug", 3);
+      expect(results).toHaveLength(3);
+      const unique = new Set(results);
+      expect(unique.size).toBe(3);
+    });
+
+    it("uses provided firstId as first branch", () => {
+      const results = generateBranchNamesFromBase("dev/test", 2, "first");
+      expect(results[0]).toBe("dev/test-first");
+    });
+
+    it("handles base names without trailing hyphen", () => {
+      const result = generateBranchNamesFromBase("dev/fix-bug", 1, "xyz12");
+      expect(result[0]).toBe("dev/fix-bug-xyz12");
+    });
+
+    it("handles base names with trailing hyphen", () => {
+      const result = generateBranchNamesFromBase("dev/fix-bug-", 1, "xyz12");
+      expect(result[0]).toBe("dev/fix-bug-xyz12");
+    });
+  });
+
+  describe("generateUniqueBranchNamesFromTitle", () => {
+    it("never exceeds 60 chars with default prefix", () => {
+      const inputs = [
+        "Fix auth",
+        "Implement very long feature with many words",
+        "Add a super duper long feature that might exceed limit",
+      ];
+
+      inputs.forEach((title) => {
+        const results = generateUniqueBranchNamesFromTitle(title, 3);
+        results.forEach((name) => {
+          expect(name.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+        });
+      });
+    });
+
+    it("never exceeds 60 chars with custom long prefix", () => {
+      const longPrefix = "my-very-long-prefix-indeed/";
+      const results = generateUniqueBranchNamesFromTitle(
+        "Fix auth",
+        2,
+        longPrefix,
+      );
+      results.forEach((name) => {
+        expect(name.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+        expect(name).toContain(longPrefix);
+      });
+    });
+
+    it("generates requested number of unique names", () => {
+      const results = generateUniqueBranchNamesFromTitle("Fix bug", 5);
+      expect(results).toHaveLength(5);
+      const unique = new Set(results);
+      expect(unique.size).toBe(5);
+    });
+
+    it("handles empty prefix", () => {
+      const results = generateUniqueBranchNamesFromTitle("Fix auth", 2, "");
+      results.forEach((name) => {
+        expect(name).toMatch(/^fix-auth-[a-z0-9]{5}$/);
+        expect(name.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      });
+    });
+  });
+
+  describe("Edge cases", () => {
+    it("handles long slug with reasonable prefix", () => {
+      // Using a reasonable prefix that allows the total to fit within 60 chars
+      const reasonablePrefix = "dev/";
+      const longSlug = "very-long-feature-name-that-is-quite-extensive";
+      const result = generateBranchName(longSlug, reasonablePrefix);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      expect(result).toMatch(/-[a-z0-9]{5}$/);
+    });
+
+    it("handles empty string input", () => {
+      const result = generateBranchName("", DEFAULT_BRANCH_PREFIX);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      expect(result).toMatch(/^dev\/-[a-z0-9]{5}$/);
+    });
+
+    it("handles whitespace-only input", () => {
+      const result = generateBranchName("   ", DEFAULT_BRANCH_PREFIX);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+    });
+
+    it("handles input with only special characters", () => {
+      const result = generateBranchName("@#$%^&*()", DEFAULT_BRANCH_PREFIX);
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      expect(result).toMatch(/^dev\/-[a-z0-9]{5}$/);
+    });
+
+    it("handles mixed camelCase, spaces, and special chars", () => {
+      const result = generateBranchName(
+        "Fix MyAuthBug @@@",
+        DEFAULT_BRANCH_PREFIX,
+      );
+      expect(result.length).toBeLessThanOrEqual(MAX_BRANCH_NAME_LENGTH);
+      expect(result).toMatch(/^dev\/.*-[a-z0-9]{5}$/);
+    });
+  });
+});

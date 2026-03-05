@@ -34,14 +34,21 @@ export function generateRandomId(): string {
   return result;
 }
 
-import { DEFAULT_BRANCH_PREFIX as _DEFAULT_BRANCH_PREFIX } from "@cmux/shared";
+import { DEFAULT_BRANCH_PREFIX as _DEFAULT_BRANCH_PREFIX, MAX_BRANCH_NAME_LENGTH as _MAX_BRANCH_NAME_LENGTH } from "@cmux/shared";
 export const DEFAULT_BRANCH_PREFIX = _DEFAULT_BRANCH_PREFIX;
+export const MAX_BRANCH_NAME_LENGTH = _MAX_BRANCH_NAME_LENGTH;
+
+function truncateBaseBranchName(baseBranchName: string): string {
+  const maxBaseLength = MAX_BRANCH_NAME_LENGTH - 1 - 5;
+  return baseBranchName.substring(0, maxBaseLength).replace(/-+$/g, "");
+}
 
 export function generateBranchName(prTitle: string, branchPrefix: string = DEFAULT_BRANCH_PREFIX): string {
   const kebabTitle = toKebabCase(prTitle);
+  const baseBranchName = truncateBaseBranchName(`${branchPrefix}${kebabTitle}`);
   const randomId = generateRandomId();
-  const separator = kebabTitle.endsWith("-") ? "" : "-";
-  return `${branchPrefix}${kebabTitle}${separator}${randomId}`;
+  const separator = baseBranchName.length > 0 ? "-" : "";
+  return `${baseBranchName}${separator}${randomId}`;
 }
 
 export const prGenerationSchema = z.object({
@@ -331,7 +338,8 @@ export function generateBranchNamesFromBase(
   count: number,
   firstId?: string
 ): string[] {
-  const separator = baseBranchName.endsWith("-") ? "" : "-";
+  const truncatedBaseBranchName = truncateBaseBranchName(baseBranchName);
+  const separator = truncatedBaseBranchName.length > 0 ? "-" : "";
   const ids = new Set<string>();
   if (firstId) {
     ids.add(firstId);
@@ -339,7 +347,9 @@ export function generateBranchNamesFromBase(
   while (ids.size < count) {
     ids.add(generateRandomId());
   }
-  return Array.from(ids).map((id) => `${baseBranchName}${separator}${id}`);
+  return Array.from(ids).map(
+    (id) => `${truncatedBaseBranchName}${separator}${id}`
+  );
 }
 
 export function generateUniqueBranchNamesFromTitle(

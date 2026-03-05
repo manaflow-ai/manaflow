@@ -194,8 +194,14 @@ function generateRandomId(): string {
   return result;
 }
 
-import { DEFAULT_BRANCH_PREFIX as _DEFAULT_BRANCH_PREFIX } from "@cmux/shared";
+import { DEFAULT_BRANCH_PREFIX as _DEFAULT_BRANCH_PREFIX, MAX_BRANCH_NAME_LENGTH as _MAX_BRANCH_NAME_LENGTH } from "@cmux/shared";
 export const DEFAULT_BRANCH_PREFIX = _DEFAULT_BRANCH_PREFIX;
+export const MAX_BRANCH_NAME_LENGTH = _MAX_BRANCH_NAME_LENGTH;
+
+function truncateBaseBranchName(baseBranchName: string): string {
+  const maxBaseLength = MAX_BRANCH_NAME_LENGTH - 1 - 5;
+  return baseBranchName.substring(0, maxBaseLength).replace(/-+$/g, "");
+}
 
 /**
  * Generate branch names instantly from the task description (no API call).
@@ -207,8 +213,10 @@ export function generateBranchNamesFromDescription(
   branchPrefix: string = DEFAULT_BRANCH_PREFIX
 ): string[] {
   const kebab = toKebabCase(taskDescription);
-  const base = `${branchPrefix}${kebab || "feature-update"}`;
-  const separator = base.endsWith("-") ? "" : "-";
+  const base = truncateBaseBranchName(
+    `${branchPrefix}${kebab || "feature-update"}`
+  );
+  const separator = base.length > 0 ? "-" : "";
 
   const ids = new Set<string>();
   while (ids.size < count) {
