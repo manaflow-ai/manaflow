@@ -2158,6 +2158,11 @@ async function handleGetTask(
       images: task.images,
     });
   } catch (err) {
+    // Check if error is due to invalid ID format (Convex validation error)
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("Invalid ID") || errorMessage.includes("not a valid ID")) {
+      return jsonResponse({ code: 404, message: "Task not found" }, 404);
+    }
     console.error("[cmux.tasks.get] Error:", err);
     return jsonResponse({ code: 500, message: "Failed to get task" }, 500);
   }
@@ -2525,6 +2530,11 @@ async function handleGetTaskRun(ctx: ActionCtx, req: Request): Promise<Response>
         : undefined,
     });
   } catch (err) {
+    // Check if error is due to invalid ID format (Convex validation error)
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("Invalid ID") || errorMessage.includes("not a valid ID")) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
     console.error("[cmux.getTaskRun] Error:", err);
     return jsonResponse(
       { code: 500, message: "Failed to get task run" },
@@ -2628,6 +2638,11 @@ async function handleGetTaskRunMemory(ctx: ActionCtx, req: Request): Promise<Res
 
     return jsonResponse({ memory });
   } catch (err) {
+    // Check if error is due to invalid ID format (Convex validation error)
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("Invalid ID") || errorMessage.includes("not a valid ID")) {
+      return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+    }
     console.error("[cmux.taskRunMemory] Error:", err);
     return jsonResponse(
       { code: 500, message: "Failed to get task run memory" },
