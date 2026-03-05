@@ -1393,9 +1393,17 @@ export const getOrchestrationStateInternal = internalQuery({
       .withIndex("by_team_status", (q) => q.eq("teamId", teamId))
       .collect();
 
-    // Filter by orchestrationId if provided (stored in metadata)
+    // Filter by orchestrationId if provided
+    // Check both:
+    // 1. Task's own _id (for CLI-spawned tasks where _id is the orchestrationId)
+    // 2. metadata.orchestrationId (for MCP-spawned tasks grouped by parent orchestrationId)
     if (orchestrationId) {
       return allTasks.filter((task) => {
+        // Match if orchestrationId is the task's own ID
+        if (task._id === orchestrationId) {
+          return true;
+        }
+        // Match if orchestrationId is stored in metadata (for grouped tasks)
         const metadata = task.metadata as Record<string, unknown> | undefined;
         return metadata?.orchestrationId === orchestrationId;
       });
