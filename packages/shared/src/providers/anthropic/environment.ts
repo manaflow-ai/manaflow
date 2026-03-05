@@ -217,6 +217,62 @@ exit 0`;
     mode: "755",
   });
 
+  // Plan hook script - captures ExitPlanMode and syncs to GitHub Projects
+  // Receives JSON on stdin with tool_input containing plan file path
+  const planHookScript = `#!/bin/bash
+# Claude Code plan hook - syncs plans to GitHub Projects
+# This script is called when ExitPlanMode tool is used
+
+LOG_FILE="/root/lifecycle/claude-hook.log"
+INPUT=$(cat)
+
+echo "[CMUX Plan Hook] Script started at $(date)" >> "$LOG_FILE"
+echo "[CMUX Plan Hook] Input: $INPUT" >> "$LOG_FILE"
+
+# Only sync if we have the required env vars and a linked project
+if [ -z "\${CMUX_TASK_RUN_JWT}" ] || [ -z "\${CMUX_CALLBACK_URL}" ]; then
+  echo "[CMUX Plan Hook] Missing env vars, skipping sync" >> "$LOG_FILE"
+  exit 0
+fi
+
+# Extract plan file path from tool_input (if available)
+# ExitPlanMode doesn't pass the plan file path directly, so we look for plan files
+PLAN_DIR="/root/.claude/plans"
+if [ ! -d "$PLAN_DIR" ]; then
+  echo "[CMUX Plan Hook] No plans directory found" >> "$LOG_FILE"
+  exit 0
+fi
+
+# Find the most recently modified plan file
+PLAN_FILE=$(ls -t "$PLAN_DIR"/*.md 2>/dev/null | head -1)
+if [ -z "$PLAN_FILE" ] || [ ! -f "$PLAN_FILE" ]; then
+  echo "[CMUX Plan Hook] No plan files found" >> "$LOG_FILE"
+  exit 0
+fi
+
+echo "[CMUX Plan Hook] Found plan file: $PLAN_FILE" >> "$LOG_FILE"
+
+# Read plan content
+PLAN_CONTENT=$(cat "$PLAN_FILE" | head -c 50000)  # Limit to 50KB
+
+# Send to plan sync endpoint (best-effort, non-blocking)
+(
+  curl -s -X POST "\${CMUX_CALLBACK_URL}/api/integrations/github-projects/plan-sync" \\
+    -H "Content-Type: application/json" \\
+    -H "x-cmux-token: \${CMUX_TASK_RUN_JWT}" \\
+    -d "$(jq -n --arg content "$PLAN_CONTENT" --arg file "$PLAN_FILE" '{planContent: $content, planFile: $file}')" \\
+    >> "$LOG_FILE" 2>&1 || true
+  echo "[CMUX Plan Hook] Sync request sent" >> "$LOG_FILE"
+) &
+
+exit 0`;
+
+  files.push({
+    destinationPath: `${claudeLifecycleDir}/plan-hook.sh`,
+    contentBase64: Buffer.from(planHookScript).toString("base64"),
+    mode: "755",
+  });
+
   // Check if user has provided an OAuth token (preferred) or API key
   const hasOAuthToken =
     ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN &&
@@ -254,6 +310,19 @@ exit 0`;
             {
               type: "command",
               command: `${claudeLifecycleDir}/stop-hook.sh`,
+            },
+          ],
+        },
+      ],
+      // Plan mode hook: captures plans when ExitPlanMode is called
+      // Syncs plan content to GitHub Projects if project is linked
+      PostToolUse: [
+        {
+          matcher: "ExitPlanMode",
+          hooks: [
+            {
+              type: "command",
+              command: `${claudeLifecycleDir}/plan-hook.sh`,
             },
           ],
         },

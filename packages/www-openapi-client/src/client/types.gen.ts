@@ -2126,6 +2126,37 @@ export type PatchApiIntegrationsGithubProjectsItemsFieldResponses = {
 
 export type PatchApiIntegrationsGithubProjectsItemsFieldResponse = PatchApiIntegrationsGithubProjectsItemsFieldResponses[keyof PatchApiIntegrationsGithubProjectsItemsFieldResponses];
 
+export type PostApiIntegrationsGithubProjectsPlanSyncData = {
+    body: {
+        planContent: string;
+        planFile?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/projects/plan-sync';
+};
+
+export type PostApiIntegrationsGithubProjectsPlanSyncErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiIntegrationsGithubProjectsPlanSyncResponses = {
+    /**
+     * OK
+     */
+    200: {
+        success: boolean;
+        itemsCreated: number;
+        projectId: string | null;
+        error?: string;
+    };
+};
+
+export type PostApiIntegrationsGithubProjectsPlanSyncResponse = PostApiIntegrationsGithubProjectsPlanSyncResponses[keyof PostApiIntegrationsGithubProjectsPlanSyncResponses];
+
 export type GetApiIntegrationsGithubFrameworkDetectionData = {
     body?: never;
     path?: never;
