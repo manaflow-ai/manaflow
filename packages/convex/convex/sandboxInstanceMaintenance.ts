@@ -344,6 +344,8 @@ export const pauseOldSandboxInstances = internalAction({
 
     let totalSuccess = 0;
     let totalFailure = 0;
+    let totalSkipped = 0;
+    let cloudWorkspaceSkipped = 0;
 
     for (const config of providerConfigs) {
       const thresholdMs =
@@ -424,6 +426,17 @@ export const pauseOldSandboxInstances = internalAction({
 
           const results = await Promise.allSettled(
             batch.map(async (instance) => {
+              const devboxRecord = await ctx.runQuery(
+                internal.devboxInstances.getByProviderInstanceIdInternal,
+                { providerInstanceId: instance.id }
+              );
+              if (devboxRecord) {
+                console.log(
+                  `[sandboxMaintenance:pause] Skipping cloud workspace: ${instance.id}`
+                );
+                return { skipped: true as const, reason: "cloud_workspace" as const };
+              }
+
               const ageHours =
                 instance.created > 0
                   ? Math.floor(
@@ -444,13 +457,20 @@ export const pauseOldSandboxInstances = internalAction({
               });
 
               console.log(`[sandboxMaintenance:pause] Paused ${instance.id}`);
-              return instance.id;
+              return { skipped: false as const };
             })
           );
 
           for (const result of results) {
             if (result.status === "fulfilled") {
-              totalSuccess++;
+              if (result.value.skipped) {
+                totalSkipped++;
+                if (result.value.reason === "cloud_workspace") {
+                  cloudWorkspaceSkipped++;
+                }
+              } else {
+                totalSuccess++;
+              }
             } else {
               totalFailure++;
               console.error(
@@ -469,7 +489,7 @@ export const pauseOldSandboxInstances = internalAction({
     }
 
     console.log(
-      `[sandboxMaintenance:pause] Finished: ${totalSuccess} paused, ${totalFailure} failed`
+      `[sandboxMaintenance:pause] Finished: ${totalSuccess} paused, ${totalSkipped} skipped (${cloudWorkspaceSkipped} cloud workspaces), ${totalFailure} failed`
     );
   },
 });
@@ -494,6 +514,7 @@ export const stopOldSandboxInstances = internalAction({
     let totalSuccess = 0;
     let totalFailure = 0;
     let totalSkipped = 0;
+    let cloudWorkspaceSkipped = 0;
 
     for (const config of providerConfigs) {
       if (!config.available || !config.client) {
@@ -543,6 +564,17 @@ export const stopOldSandboxInstances = internalAction({
 
           const results = await Promise.allSettled(
             batch.map(async (instance) => {
+              const devboxRecord = await ctx.runQuery(
+                internal.devboxInstances.getByProviderInstanceIdInternal,
+                { providerInstanceId: instance.id }
+              );
+              if (devboxRecord) {
+                console.log(
+                  `[sandboxMaintenance:stop] Skipping cloud workspace: ${instance.id}`
+                );
+                return { skipped: true as const, reason: "cloud_workspace" as const };
+              }
+
               const activity = activities[instance.id];
 
               // Already stopped?
@@ -602,6 +634,9 @@ export const stopOldSandboxInstances = internalAction({
             if (result.status === "fulfilled") {
               if (result.value.skipped) {
                 totalSkipped++;
+                if (result.value.reason === "cloud_workspace") {
+                  cloudWorkspaceSkipped++;
+                }
               } else {
                 totalSuccess++;
               }
@@ -623,7 +658,7 @@ export const stopOldSandboxInstances = internalAction({
     }
 
     console.log(
-      `[sandboxMaintenance:stop] Finished: ${totalSuccess} stopped, ${totalSkipped} skipped, ${totalFailure} failed`
+      `[sandboxMaintenance:stop] Finished: ${totalSuccess} stopped, ${totalSkipped} skipped (${cloudWorkspaceSkipped} cloud workspaces), ${totalFailure} failed`
     );
   },
 });

@@ -83,6 +83,8 @@ export const pauseOldMorphInstances = internalAction({
 
     let successCount = 0;
     let failureCount = 0;
+    let skippedCount = 0;
+    let cloudWorkspaceSkipped = 0;
 
     // Process instances in batches to balance speed and rate limiting
     for (let i = 0; i < staleActiveInstances.length; i += BATCH_SIZE) {
@@ -93,6 +95,17 @@ export const pauseOldMorphInstances = internalAction({
 
       const results = await Promise.allSettled(
         batch.map(async (instance) => {
+          const devboxRecord = await ctx.runQuery(
+            internal.devboxInstances.getByProviderInstanceIdInternal,
+            { providerInstanceId: instance.id }
+          );
+          if (devboxRecord) {
+            console.log(
+              `[morphInstanceMaintenance] Skipping cloud workspace: ${instance.id}`
+            );
+            return { skipped: true as const, reason: "cloud_workspace" as const };
+          }
+
           const ageHours = Math.floor(
             (now - instance.created * 1000) / MILLISECONDS_PER_HOUR
           );
@@ -122,7 +135,7 @@ export const pauseOldMorphInstances = internalAction({
           }
 
           console.log(`[morphInstanceMaintenance] Paused ${instance.id}`);
-          return instance.id;
+          return { skipped: false as const };
         })
       );
 
@@ -130,7 +143,14 @@ export const pauseOldMorphInstances = internalAction({
         const result = results[j];
         const instance = batch[j];
         if (result.status === "fulfilled") {
-          successCount++;
+          if (result.value.skipped) {
+            skippedCount++;
+            if (result.value.reason === "cloud_workspace") {
+              cloudWorkspaceSkipped++;
+            }
+          } else {
+            successCount++;
+          }
         } else {
           failureCount++;
           console.error(
@@ -142,7 +162,7 @@ export const pauseOldMorphInstances = internalAction({
     }
 
     console.log(
-      `[morphInstanceMaintenance] Finished: ${successCount} paused, ${failureCount} failed`
+      `[morphInstanceMaintenance] Finished: ${successCount} paused, ${skippedCount} skipped (${cloudWorkspaceSkipped} cloud workspaces), ${failureCount} failed`
     );
   },
 });
@@ -214,6 +234,7 @@ export const stopOldMorphInstances = internalAction({
     let successCount = 0;
     let failureCount = 0;
     let skippedCount = 0;
+    let cloudWorkspaceSkippedCount = 0;
 
     // Process instances in batches
     for (let i = 0; i < pausedInstances.length; i += STOP_BATCH_SIZE) {
@@ -224,6 +245,21 @@ export const stopOldMorphInstances = internalAction({
 
       const results = await Promise.allSettled(
         batch.map(async (instance) => {
+          const devboxRecord = await ctx.runQuery(
+            internal.devboxInstances.getByProviderInstanceIdInternal,
+            { providerInstanceId: instance.id }
+          );
+          if (devboxRecord) {
+            console.log(
+              `[morphInstanceMaintenance:stop] Skipping cloud workspace: ${instance.id}`
+            );
+            return {
+              skipped: true as const,
+              reason: "cloud_workspace" as const,
+              instanceId: instance.id,
+            };
+          }
+
           // Get activity record to check last resume time
           const activity = await ctx.runQuery(
             internal.morphInstances.getActivityInternal,
@@ -285,6 +321,9 @@ export const stopOldMorphInstances = internalAction({
         if (result.status === "fulfilled") {
           if (result.value.skipped) {
             skippedCount++;
+            if (result.value.reason === "cloud_workspace") {
+              cloudWorkspaceSkippedCount++;
+            }
           } else {
             successCount++;
           }
@@ -299,7 +338,7 @@ export const stopOldMorphInstances = internalAction({
     }
 
     console.log(
-      `[morphInstanceMaintenance:stop] Finished: ${successCount} stopped, ${skippedCount} skipped, ${failureCount} failed`
+      `[morphInstanceMaintenance:stop] Finished: ${successCount} stopped, ${skippedCount} skipped (${cloudWorkspaceSkippedCount} cloud workspaces), ${failureCount} failed`
     );
   },
 });
