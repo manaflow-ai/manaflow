@@ -195,7 +195,7 @@ function RunTreeNode({
         </span>
       </div>
 
-      {isLoading ? (
+      {isLoading && isExpanded ? (
         <div style={{ marginLeft: indentPx + 14 }}>
           <Skeleton className="h-9 w-full" />
         </div>
