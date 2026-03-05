@@ -13,7 +13,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
 import { getTeamId } from "../_shared/team";
 
@@ -277,6 +277,7 @@ export const upsertPlan = authMutation({
         status: v.string(),
         dependsOn: v.optional(v.array(v.string())),
         priority: v.optional(v.number()),
+        orchestrationTaskId: v.optional(v.string()),
       })
     ),
   },
@@ -440,6 +441,7 @@ export const updatePlanInternal = internalMutation({
         status: v.string(),
         dependsOn: v.optional(v.array(v.string())),
         priority: v.optional(v.number()),
+        orchestrationTaskId: v.optional(v.string()),
       })
     ),
   },
@@ -512,6 +514,219 @@ export const updateProgressInternal = internalMutation({
       totalTasks: args.totalTasks,
       completedTasks: args.completedTasks,
       failedTasks: args.failedTasks,
+      status,
+      updatedAt: now,
+    });
+  },
+});
+
+// ============================================================================
+// Dispatch & Live Tracking
+// ============================================================================
+
+/**
+ * Dispatch a project plan by creating orchestration tasks for each plan task.
+ * Two-pass: create tasks first, then wire dependencies using planTaskId->orchestrationTaskId mapping.
+ * Requires authentication and team membership.
+ */
+export const dispatchPlan = authMutation({
+  args: {
+    projectId: v.id("projects"),
+  },
+  handler: async (ctx, { projectId }) => {
+    const userId = ctx.identity.subject;
+    const project = await ctx.db.get(projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Verify user has access to project's team
+    const teamId = await getTeamId(ctx, project.teamId);
+
+    if (!project.plan?.tasks || project.plan.tasks.length === 0) {
+      throw new Error("No plan tasks to dispatch");
+    }
+
+    const now = Date.now();
+    const planTasks = project.plan.tasks;
+
+    // Pass 1: Create orchestration tasks (without dependencies)
+    const planToOrchMap = new Map<string, Id<"orchestrationTasks">>();
+
+    for (const planTask of planTasks) {
+      const orchTaskId = await ctx.db.insert("orchestrationTasks", {
+        teamId,
+        userId,
+        prompt: planTask.prompt,
+        priority: planTask.priority ?? 5,
+        status: "pending",
+        assignedAgentName: planTask.agentName,
+        metadata: {
+          agentName: planTask.agentName,
+          projectId: projectId as string,
+          planTaskId: planTask.id,
+          orchestrationId: project.plan.orchestrationId,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      planToOrchMap.set(planTask.id, orchTaskId);
+    }
+
+    // Pass 2: Wire dependencies
+    for (const planTask of planTasks) {
+      if (!planTask.dependsOn?.length) continue;
+
+      const orchTaskId = planToOrchMap.get(planTask.id);
+      if (!orchTaskId) continue;
+
+      const depIds: Id<"orchestrationTasks">[] = [];
+      for (const depPlanId of planTask.dependsOn) {
+        const depOrchId = planToOrchMap.get(depPlanId);
+        if (depOrchId) {
+          depIds.push(depOrchId);
+        }
+      }
+
+      if (depIds.length > 0) {
+        await ctx.db.patch(orchTaskId, {
+          dependencies: depIds,
+          updatedAt: now,
+        });
+
+        // Batch-fetch all dependencies and update dependents in parallel
+        const deps = await Promise.all(depIds.map((id) => ctx.db.get(id)));
+        await Promise.all(
+          depIds.map((depId, i) => {
+            const dep = deps[i];
+            if (!dep) return;
+            return ctx.db.patch(depId, {
+              dependents: [...(dep.dependents ?? []), orchTaskId],
+              updatedAt: now,
+            });
+          })
+        );
+      }
+    }
+
+    // Update plan tasks with orchestrationTaskId
+    const updatedPlanTasks = planTasks.map((t) => ({
+      ...t,
+      orchestrationTaskId: planToOrchMap.get(t.id)?.toString(),
+    }));
+
+    await ctx.db.patch(projectId, {
+      plan: {
+        ...project.plan,
+        tasks: updatedPlanTasks,
+        updatedAt: new Date(now).toISOString(),
+      },
+      status: "active",
+      runningTasks: 0,
+      totalTasks: planTasks.length,
+      completedTasks: 0,
+      failedTasks: 0,
+      updatedAt: now,
+    });
+
+    return { dispatched: planTasks.length };
+  },
+});
+
+/**
+ * Get live orchestration tasks for a project.
+ * Reads the project plan, extracts orchestrationTaskIds, and batch-fetches them.
+ * Uses Convex reactive queries for real-time updates.
+ */
+export const getOrchestrationTasksForProject = authQuery({
+  args: {
+    projectId: v.id("projects"),
+  },
+  handler: async (ctx, { projectId }) => {
+    const project = await ctx.db.get(projectId);
+    if (!project) return [];
+
+    // Verify user has access to project's team
+    await getTeamId(ctx, project.teamId);
+
+    if (!project.plan?.tasks) return [];
+
+    // Extract orchestration task IDs
+    const orchTaskIds = project.plan.tasks
+      .map((t) => t.orchestrationTaskId)
+      .filter((id): id is string => id != null);
+
+    if (orchTaskIds.length === 0) return [];
+
+    // Batch fetch orchestration tasks
+    const tasks = await Promise.all(
+      orchTaskIds.map((id) => ctx.db.get(id as Id<"orchestrationTasks">))
+    );
+
+    return tasks.filter((t): t is NonNullable<typeof t> => t != null);
+  },
+});
+
+/**
+ * Sync plan task status from orchestration task updates.
+ * Called when an orchestration task changes status.
+ * Updates the corresponding plan task and recalculates progress metrics.
+ */
+export const syncPlanStatusFromOrchestration = internalMutation({
+  args: {
+    orchestrationTaskId: v.id("orchestrationTasks"),
+  },
+  handler: async (ctx, { orchestrationTaskId }) => {
+    const orchTask = await ctx.db.get(orchestrationTaskId);
+    if (!orchTask) return;
+
+    // Check if this task has project metadata
+    const metadata = orchTask.metadata as Record<string, unknown> | undefined;
+    const projectIdStr = metadata?.projectId as string | undefined;
+    const planTaskId = metadata?.planTaskId as string | undefined;
+
+    if (!projectIdStr || !planTaskId) return;
+
+    const project = await ctx.db.get(projectIdStr as Id<"projects">);
+    if (!project?.plan?.tasks) return;
+
+    const now = Date.now();
+
+    // Update the matching plan task's status
+    const updatedTasks = project.plan.tasks.map((t) => {
+      if (t.id === planTaskId) {
+        return { ...t, status: orchTask.status };
+      }
+      return t;
+    });
+
+    // Calculate progress metrics
+    const totalTasks = updatedTasks.length;
+    const completedTasks = updatedTasks.filter((t) => t.status === "completed").length;
+    const failedTasks = updatedTasks.filter((t) => t.status === "failed").length;
+    const runningTasks = updatedTasks.filter(
+      (t) => t.status === "running" || t.status === "assigned"
+    ).length;
+
+    // Determine project status
+    let status = project.status;
+    if (totalTasks > 0 && completedTasks === totalTasks) {
+      status = "completed";
+    } else if (totalTasks > 0 && completedTasks + failedTasks === totalTasks) {
+      // All done but some failed - keep active for review
+      status = "active";
+    }
+
+    await ctx.db.patch(project._id, {
+      plan: {
+        ...project.plan,
+        tasks: updatedTasks,
+        updatedAt: new Date(now).toISOString(),
+      },
+      totalTasks,
+      completedTasks,
+      failedTasks,
+      runningTasks,
       status,
       updatedAt: now,
     });

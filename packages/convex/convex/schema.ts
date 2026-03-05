@@ -1652,11 +1652,14 @@ const convexSchema = defineSchema({
             status: v.string(),
             dependsOn: v.optional(v.array(v.string())),
             priority: v.optional(v.number()),
+            orchestrationTaskId: v.optional(v.string()),
           })
         ),
         updatedAt: v.string(), // ISO timestamp
       })
     ),
+    // Count of currently running/assigned orchestration tasks
+    runningTasks: v.optional(v.number()),
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),

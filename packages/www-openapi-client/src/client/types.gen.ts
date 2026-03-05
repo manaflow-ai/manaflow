@@ -811,6 +811,10 @@ export type PlanTask = {
      * Task priority
      */
     priority?: number;
+    /**
+     * Linked orchestration task ID
+     */
+    orchestrationTaskId?: string;
 };
 
 /**
@@ -1000,6 +1004,10 @@ export type ProjectProgress = {
      * Last update timestamp (ISO)
      */
     lastUpdated: string;
+};
+
+export type DispatchPlanRequest = {
+    [key: string]: unknown;
 };
 
 export type RecommendedAction = {
@@ -3752,6 +3760,51 @@ export type GetApiProjectsByProjectIdProgressResponses = {
 };
 
 export type GetApiProjectsByProjectIdProgressResponse = GetApiProjectsByProjectIdProgressResponses[keyof GetApiProjectsByProjectIdProgressResponses];
+
+export type PostApiProjectsByProjectIdDispatchData = {
+    body: DispatchPlanRequest;
+    path: {
+        /**
+         * Project ID
+         */
+        projectId: string;
+    };
+    query?: never;
+    url: '/api/projects/{projectId}/dispatch';
+};
+
+export type PostApiProjectsByProjectIdDispatchErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Project not found
+     */
+    404: unknown;
+    /**
+     * No plan tasks to dispatch
+     */
+    422: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiProjectsByProjectIdDispatchResponses = {
+    /**
+     * Plan dispatched successfully
+     */
+    200: {
+        /**
+         * Number of tasks dispatched
+         */
+        dispatched: number;
+    };
+};
+
+export type PostApiProjectsByProjectIdDispatchResponse = PostApiProjectsByProjectIdDispatchResponses[keyof PostApiProjectsByProjectIdDispatchResponses];
 
 export type GetApiVaultRecommendationsData = {
     body?: never;

@@ -23,6 +23,10 @@ import {
   Users,
   Loader2,
   ChevronDown,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Play,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -40,6 +44,7 @@ export interface PlanTask {
   status: string;
   dependsOn?: string[];
   priority?: number;
+  orchestrationTaskId?: string;
 }
 
 export interface Plan {
@@ -49,11 +54,19 @@ export interface Plan {
   tasks: PlanTask[];
 }
 
+interface TaskStatusInfo {
+  status: string;
+  result?: string;
+  errorMessage?: string;
+}
+
 interface PlanEditorProps {
   plan?: Plan;
   availableAgents?: string[];
   onSave?: (plan: Plan) => Promise<void>;
   className?: string;
+  readOnly?: boolean;
+  taskStatuses?: Map<string, TaskStatusInfo>;
 }
 
 // ============================================================================
@@ -169,6 +182,27 @@ interface TaskCardProps {
   onDelete: () => void;
   onStartConnection: () => void;
   onEndConnection: () => void;
+  readOnly?: boolean;
+  statusInfo?: TaskStatusInfo;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
+    completed: { icon: CheckCircle2, color: "text-green-500", label: "Completed" },
+    running: { icon: Play, color: "text-blue-500", label: "Running" },
+    assigned: { icon: Loader2, color: "text-blue-400", label: "Assigned" },
+    pending: { icon: Clock, color: "text-amber-500", label: "Pending" },
+    failed: { icon: XCircle, color: "text-red-500", label: "Failed" },
+  };
+  const c = config[status] ?? config.pending;
+  const Icon = c.icon;
+
+  return (
+    <span className={clsx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", c.color)}>
+      <Icon className={clsx("size-3", status === "running" || status === "assigned" ? "animate-spin" : "")} />
+      {c.label}
+    </span>
+  );
 }
 
 function TaskCard({
@@ -182,6 +216,8 @@ function TaskCard({
   onDelete,
   onStartConnection,
   onEndConnection,
+  readOnly,
+  statusInfo,
 }: TaskCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editPrompt, setEditPrompt] = useState(task.prompt);
@@ -211,40 +247,43 @@ function TaskCard({
       {/* Header */}
       <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2 dark:border-neutral-800">
         <div className="flex items-center gap-2">
-          <GripVertical className="size-4 cursor-grab text-neutral-400" />
+          {!readOnly && <GripVertical className="size-4 cursor-grab text-neutral-400" />}
           <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
             {task.agentName.split("/")[1] ?? task.agentName}
           </span>
+          {statusInfo && <StatusBadge status={statusInfo.status} />}
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartConnection();
-            }}
-            className="rounded p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            title="Create dependency"
-          >
-            <Link2 className="size-3.5 text-neutral-500" />
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="rounded p-1 hover:bg-red-100 dark:hover:bg-red-900/30"
-            title="Delete task"
-          >
-            <Trash2 className="size-3.5 text-red-500" />
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onStartConnection();
+              }}
+              className="rounded p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              title="Create dependency"
+            >
+              <Link2 className="size-3.5 text-neutral-500" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="rounded p-1 hover:bg-red-100 dark:hover:bg-red-900/30"
+              title="Delete task"
+            >
+              <Trash2 className="size-3.5 text-red-500" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
       <div className="p-3">
-        {isEditing ? (
+        {!readOnly && isEditing ? (
           <div className="space-y-2">
             <textarea
               value={editPrompt}
@@ -264,13 +303,31 @@ function TaskCard({
           </div>
         ) : (
           <p
-            className="line-clamp-2 cursor-text text-xs text-neutral-700 dark:text-neutral-300"
+            className={clsx(
+              "line-clamp-2 text-xs text-neutral-700 dark:text-neutral-300",
+              !readOnly && "cursor-text"
+            )}
             onClick={(e) => {
+              if (readOnly) return;
               e.stopPropagation();
               setIsEditing(true);
             }}
           >
-            {task.prompt || "Click to add prompt..."}
+            {task.prompt || (readOnly ? "(no prompt)" : "Click to add prompt...")}
+          </p>
+        )}
+
+        {/* Error message for failed tasks */}
+        {statusInfo?.errorMessage && (
+          <p className="mt-2 text-[10px] text-red-500 line-clamp-2">
+            {statusInfo.errorMessage}
+          </p>
+        )}
+
+        {/* Result for completed tasks */}
+        {statusInfo?.result && (
+          <p className="mt-2 text-[10px] text-green-600 dark:text-green-400 line-clamp-2">
+            {statusInfo.result}
           </p>
         )}
 
@@ -283,8 +340,8 @@ function TaskCard({
         )}
       </div>
 
-      {/* Agent selector (when selected) */}
-      {isSelected && (
+      {/* Agent selector (when selected and not readOnly) */}
+      {isSelected && !readOnly && (
         <div className="border-t border-neutral-100 px-3 py-2 dark:border-neutral-800">
           <Dropdown.Root>
             <Dropdown.Trigger className="flex w-full items-center justify-between rounded border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800">
@@ -310,7 +367,7 @@ function TaskCard({
       )}
 
       {/* Connection target overlay */}
-      {isConnecting && (
+      {isConnecting && !readOnly && (
         <button
           type="button"
           onClick={(e) => {
@@ -337,6 +394,8 @@ export function PlanEditor({
   availableAgents = DEFAULT_AGENTS,
   onSave,
   className,
+  readOnly,
+  taskStatuses,
 }: PlanEditorProps) {
   const markerId = useId().replace(/:/g, "-");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -511,14 +570,18 @@ export function PlanEditor({
           <span className="rounded border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">{tasks.length} tasks</span>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={addTask}>
-            <Plus className="mr-1 size-4" />
-            Add Task
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-            <Upload className="mr-1 size-4" />
-            Import
-          </Button>
+          {!readOnly && (
+            <Button variant="outline" size="sm" onClick={addTask}>
+              <Plus className="mr-1 size-4" />
+              Add Task
+            </Button>
+          )}
+          {!readOnly && (
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="mr-1 size-4" />
+              Import
+            </Button>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -530,7 +593,7 @@ export function PlanEditor({
             <Download className="mr-1 size-4" />
             Export
           </Button>
-          {onSave && (
+          {onSave && !readOnly && (
             <Button size="sm" onClick={handleSave} disabled={isSaving || tasks.length === 0}>
               {isSaving ? (
                 <Loader2 className="mr-1 size-4 animate-spin" />
@@ -544,36 +607,38 @@ export function PlanEditor({
       </div>
 
       {/* Plan metadata */}
-      <div className="flex items-center gap-4 border-b border-neutral-100 px-4 py-2 dark:border-neutral-800">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-neutral-500">Head Agent:</label>
-          <Dropdown.Root>
-            <Dropdown.Trigger className="flex items-center gap-1 rounded border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800">
-              {headAgent}
-              <ChevronDown className="size-3" />
-            </Dropdown.Trigger>
-            <Dropdown.Portal>
-              <Dropdown.Positioner>
-                <Dropdown.Popup>
-                  {availableAgents.map((agent) => (
-                    <Dropdown.Item key={agent} onClick={() => setHeadAgent(agent)}>
-                      <span className="px-2 py-1 text-xs">{agent}</span>
-                    </Dropdown.Item>
-                  ))}
-                </Dropdown.Popup>
-              </Dropdown.Positioner>
-            </Dropdown.Portal>
-          </Dropdown.Root>
+      {!readOnly && (
+        <div className="flex items-center gap-4 border-b border-neutral-100 px-4 py-2 dark:border-neutral-800">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-neutral-500">Head Agent:</label>
+            <Dropdown.Root>
+              <Dropdown.Trigger className="flex items-center gap-1 rounded border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800">
+                {headAgent}
+                <ChevronDown className="size-3" />
+              </Dropdown.Trigger>
+              <Dropdown.Portal>
+                <Dropdown.Positioner>
+                  <Dropdown.Popup>
+                    {availableAgents.map((agent) => (
+                      <Dropdown.Item key={agent} onClick={() => setHeadAgent(agent)}>
+                        <span className="px-2 py-1 text-xs">{agent}</span>
+                      </Dropdown.Item>
+                    ))}
+                  </Dropdown.Popup>
+                </Dropdown.Positioner>
+              </Dropdown.Portal>
+            </Dropdown.Root>
+          </div>
+          <div className="flex-1">
+            <input
+              value={description}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDescription(e.target.value)}
+              placeholder="Plan description..."
+              className="h-7 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-neutral-800 dark:bg-neutral-950 dark:placeholder:text-neutral-400"
+            />
+          </div>
         </div>
-        <div className="flex-1">
-          <input
-            value={description}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDescription(e.target.value)}
-            placeholder="Plan description..."
-            className="h-7 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-neutral-800 dark:bg-neutral-950 dark:placeholder:text-neutral-400"
-          />
-        </div>
-      </div>
+      )}
 
       {/* Connection mode indicator */}
       {connectingFromId && (
@@ -603,12 +668,14 @@ export function PlanEditor({
               No tasks yet
             </p>
             <p className="mb-4 text-sm">
-              Click &quot;Add Task&quot; to start building your plan
+              {readOnly ? "No tasks in this plan" : "Click \"Add Task\" to start building your plan"}
             </p>
-            <Button onClick={addTask}>
-              <Plus className="mr-1 size-4" />
-              Add First Task
-            </Button>
+            {!readOnly && (
+              <Button onClick={addTask}>
+                <Plus className="mr-1 size-4" />
+                Add First Task
+              </Button>
+            )}
           </div>
         ) : (
           <div
@@ -677,6 +744,8 @@ export function PlanEditor({
                   onDelete={() => deleteTask(task.id)}
                   onStartConnection={() => startConnection(task.id)}
                   onEndConnection={() => endConnection(task.id)}
+                  readOnly={readOnly}
+                  statusInfo={taskStatuses?.get(task.id)}
                 />
               );
             })}

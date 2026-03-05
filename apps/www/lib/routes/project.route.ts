@@ -43,6 +43,7 @@ const PlanTaskSchema = z
     status: z.string().openapi({ description: "Task status" }),
     dependsOn: z.array(z.string()).optional().openapi({ description: "Task IDs this depends on" }),
     priority: z.number().optional().openapi({ description: "Task priority" }),
+    orchestrationTaskId: z.string().optional().openapi({ description: "Linked orchestration task ID" }),
   })
   .openapi("PlanTask");
 
@@ -528,6 +529,84 @@ projectRouter.openapi(
         return c.text("Project not found", 404);
       }
       return c.text("Failed to get progress", 500);
+    }
+  }
+);
+
+/**
+ * POST /api/projects/:projectId/dispatch
+ * Dispatch a project plan (create orchestration tasks for each plan task).
+ */
+projectRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/projects/{projectId}/dispatch",
+    tags: ["Projects"],
+    summary: "Dispatch project plan",
+    description: "Create orchestration tasks for each plan task and start execution.",
+    request: {
+      params: z.object({
+        projectId: z.string().openapi({ description: "Project ID" }),
+      }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({}).openapi("DispatchPlanRequest"),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              dispatched: z.number().openapi({ description: "Number of tasks dispatched" }),
+            }),
+          },
+        },
+        description: "Plan dispatched successfully",
+      },
+      401: { description: "Unauthorized" },
+      404: { description: "Project not found" },
+      422: { description: "No plan tasks to dispatch" },
+      500: { description: "Server error" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { projectId } = c.req.valid("param");
+
+    try {
+      const convex = getConvex({ accessToken });
+
+      // Verify project exists and user has access
+      const project = await convex.query(api.projectQueries.getProject, {
+        projectId: projectId as Id<"projects">,
+      });
+
+      if (!project) {
+        return c.text("Project not found", 404);
+      }
+
+      await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: project.teamId });
+
+      const result = await convex.mutation(api.projectQueries.dispatchPlan, {
+        projectId: projectId as Id<"projects">,
+      });
+
+      return c.json(result);
+    } catch (error) {
+      console.error("[projects] Failed to dispatch plan:", error);
+      if (error instanceof Error && error.message.includes("No plan tasks")) {
+        return c.text("No plan tasks to dispatch", 422);
+      }
+      return c.text("Failed to dispatch plan", 500);
     }
   }
 );
