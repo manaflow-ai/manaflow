@@ -83,6 +83,7 @@ import type * as projectQueries from "../projectQueries.js";
 import type * as providerOverrides from "../providerOverrides.js";
 import type * as pveLxcInstances from "../pveLxcInstances.js";
 import type * as pve_lxc_actions from "../pve_lxc_actions.js";
+import type * as resultAggregation from "../resultAggregation.js";
 import type * as sandboxInstanceMaintenance from "../sandboxInstanceMaintenance.js";
 import type * as sandboxInstances from "../sandboxInstances.js";
 import type * as screenshots_http from "../screenshots_http.js";
@@ -192,6 +193,7 @@ declare const fullApi: ApiFromModules<{
   providerOverrides: typeof providerOverrides;
   pveLxcInstances: typeof pveLxcInstances;
   pve_lxc_actions: typeof pve_lxc_actions;
+  resultAggregation: typeof resultAggregation;
   sandboxInstanceMaintenance: typeof sandboxInstanceMaintenance;
   sandboxInstances: typeof sandboxInstances;
   screenshots_http: typeof screenshots_http;

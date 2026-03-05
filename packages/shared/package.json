@@ -185,6 +185,10 @@
     "./node/obsidian-reader": {
       "import": "./src/obsidian-reader.ts",
       "types": "./src/obsidian-reader.ts"
+    },
+    "./agent-memory-protocol": {
+      "import": "./src/agent-memory-protocol.ts",
+      "types": "./src/agent-memory-protocol.ts"
     }
   },
   "peerDependencies": {
