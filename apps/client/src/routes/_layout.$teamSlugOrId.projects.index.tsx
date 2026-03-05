@@ -116,6 +116,13 @@ function ProjectsPage() {
             <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
               View and manage roadmaps and project boards
             </p>
+            <Link
+              to="/$teamSlugOrId/projects/dashboard"
+              params={{ teamSlugOrId }}
+              className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 mt-1 inline-block"
+            >
+              Or view cmux Projects Dashboard →
+            </Link>
           </div>
           <div className="flex gap-2">
             {/* Organization selector - show when multiple org connections available */}
