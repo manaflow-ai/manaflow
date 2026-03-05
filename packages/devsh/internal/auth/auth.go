@@ -381,11 +381,28 @@ func StoreRefreshToken(token string) error {
 }
 
 // GetRefreshToken retrieves the Stack Auth refresh token.
-// In dev mode, it first checks for DEVSH_REFRESH_TOKEN environment variable
-// to allow bypassing the browser-based auth flow.
+// Priority order:
+// 1. Mode-specific env var (DEVSH_DEV_REFRESH_TOKEN or DEVSH_PROD_REFRESH_TOKEN)
+// 2. Generic env var (DEVSH_REFRESH_TOKEN, DEVBOX_REFRESH_TOKEN)
+// 3. File-based credentials (credentials_dev.json or credentials_prod.json)
 func GetRefreshToken() (string, error) {
-	// Dev mode bypass: check environment variable first
-	// Support both new (DEVSH_) and legacy (DEVBOX_) env var names
+	cfg := GetConfig()
+
+	// 1. Check mode-specific env var first (preferred for CI)
+	modeEnvVar := "DEVSH_PROD_REFRESH_TOKEN"
+	if cfg.IsDev {
+		modeEnvVar = "DEVSH_DEV_REFRESH_TOKEN"
+	}
+	if modeToken := os.Getenv(modeEnvVar); modeToken != "" {
+		if err := ValidateRefreshTokenFormat(modeToken); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s may be invalid: %v\n", modeEnvVar, err)
+			// Fall through to try other sources
+		} else {
+			return modeToken, nil
+		}
+	}
+
+	// 2. Check generic env vars (legacy support)
 	if devToken := os.Getenv("DEVSH_REFRESH_TOKEN"); devToken != "" {
 		if err := ValidateRefreshTokenFormat(devToken); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: DEVSH_REFRESH_TOKEN may be invalid: %v\n", err)
@@ -403,6 +420,7 @@ func GetRefreshToken() (string, error) {
 		}
 	}
 
+	// 3. File-based credentials
 	if runtime.GOOS == "darwin" {
 		return getFromKeychain()
 	}
