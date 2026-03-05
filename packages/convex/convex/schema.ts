@@ -1577,6 +1577,7 @@ const convexSchema = defineSchema({
   })
     .index("by_team_priority", ["teamId", "priority", "status"])
     .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_team_status_priority", ["teamId", "status", "priority"])
     .index("by_assigned_agent", ["assignedAgentName", "status"])
     .index("by_parent", ["parentTaskId", "createdAt"])
     .index("by_task_run", ["taskRunId"]),

@@ -95,7 +95,7 @@ export const listPendingTasks = authQuery({
 
     return ctx.db
       .query("orchestrationTasks")
-      .withIndex("by_team_status", (q) =>
+      .withIndex("by_team_status_priority", (q) =>
         q.eq("teamId", teamId).eq("status", "pending")
       )
       .order("asc")
@@ -265,7 +265,7 @@ export const getReadyTasks = authQuery({
 
     const pendingTasks = await ctx.db
       .query("orchestrationTasks")
-      .withIndex("by_team_status", (q) =>
+      .withIndex("by_team_status_priority", (q) =>
         q.eq("teamId", teamId).eq("status", "pending")
       )
       .order("asc")
@@ -1140,7 +1140,7 @@ export const getReadyTasksInternal = internalQuery({
   handler: async (ctx, { teamId, limit = 10 }) => {
     const pendingTasks = await ctx.db
       .query("orchestrationTasks")
-      .withIndex("by_team_status", (q) =>
+      .withIndex("by_team_status_priority", (q) =>
         q.eq("teamId", teamId).eq("status", "pending")
       )
       .order("asc")
