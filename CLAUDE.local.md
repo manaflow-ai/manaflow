@@ -190,3 +190,32 @@ When working on PVE-LXC sandbox features, use `apps/edge-router-pvelxc/`. Deploy
 ```bash
 cd apps/edge-router-pvelxc && bun run deploy
 ```
+
+## External Knowledge Sharing (Obsidian + GitHub)
+This repository requires structured external knowledge sharing for major technical direction updates.
+
+### Default Target
+- Local-first vault path: `~/Documents/obsidian_vault`.
+- Trends project notes path: `5️⃣-Projects/GitHub/trends/`.
+- If local vault is unavailable, use `obsidian-gh-knowledge` configured default repository (config-driven fallback).
+
+### When To Update Shared Knowledge
+Update notes when any of the following changes land:
+- Architecture or pipeline direction changes.
+- Agent/governance/dev-cycle rule changes.
+- Major API surface or workflow behavior changes.
+- Significant migration strategy or workspace isolation changes.
+
+### Note Hygiene Rules
+- Include date, concise decision summary, and affected repo-relative paths.
+- Link related PR/commit IDs when available.
+- Never include secrets, tokens, credentials, or private environment values.
+- Keep operational facts in shared notes; keep volatile TODOs in local task trackers.
+
+## What Not To Put In This File
+- No phase-by-phase completion ledgers.
+- No temporary pending migration queues.
+- No large UI mockups or long architecture diagrams.
+- No duplicated deep config examples better maintained in `config/*` or implementation docs.
+
+Keep this file short, stable, and execution-oriented.
