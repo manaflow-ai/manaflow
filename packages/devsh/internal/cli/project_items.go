@@ -30,7 +30,7 @@ Examples:
   devsh project items --project-id PVT_xxx --installation-id 12345
   devsh project items --project-id PVT_xxx --installation-id 12345 --first 20
   devsh project items --project-id PVT_xxx --installation-id 12345 --status "Backlog"
-  devsh project items --project-id PVT_xxx --installation-id 12345 --no-linked-task
+  devsh project items --project-id PVT_xxx --installation-id 12345 --status Backlog --no-linked-task
   devsh project items --project-id PVT_xxx --installation-id 12345 --json`,
 	RunE: runProjectItems,
 }
@@ -62,6 +62,8 @@ func runProjectItems(cmd *cobra.Command, args []string) error {
 		InstallationID: projectItemsInstallationID,
 		First:          projectItemsFirst,
 		After:          projectItemsAfter,
+		Status:         projectItemsStatus,
+		NoLinkedTask:   projectItemsNoLinkedTask,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to get project items: %w", err)

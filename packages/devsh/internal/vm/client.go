@@ -1305,6 +1305,8 @@ type GetProjectItemsOptions struct {
 	InstallationID int
 	First          int
 	After          string
+	Status         string // Filter by Status field value (e.g., "Backlog", "In Progress")
+	NoLinkedTask   bool   // Only return items without a linked task
 }
 
 // GetProjectItemsResult contains project items with pagination info.
@@ -1340,6 +1342,12 @@ func (c *Client) GetProjectItems(ctx context.Context, opts GetProjectItemsOption
 	query.Set("first", fmt.Sprintf("%d", first))
 	if after := strings.TrimSpace(opts.After); after != "" {
 		query.Set("after", after)
+	}
+	if status := strings.TrimSpace(opts.Status); status != "" {
+		query.Set("status", status)
+	}
+	if opts.NoLinkedTask {
+		query.Set("noLinkedTask", "true")
 	}
 
 	path := "/api/integrations/github/projects/items?" + query.Encode()

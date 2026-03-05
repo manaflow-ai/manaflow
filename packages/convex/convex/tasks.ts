@@ -1796,6 +1796,25 @@ export const getByGithubProjectItem = internalQuery({
 });
 
 /**
+ * Check if a GitHub Project item has a linked task.
+ * Public query for use by CLI and frontend to filter unlinked items.
+ */
+export const hasLinkedTask = authQuery({
+  args: {
+    githubProjectItemId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db
+      .query("tasks")
+      .withIndex("by_github_project_item", (q) =>
+        q.eq("githubProjectItemId", args.githubProjectItemId),
+      )
+      .first();
+    return task !== null;
+  },
+});
+
+/**
  * Get a task by ID (internal, no auth).
  * Used by githubProjectSync action to read project linkage fields.
  */

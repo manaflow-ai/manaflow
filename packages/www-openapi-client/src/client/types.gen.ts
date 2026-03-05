@@ -2319,6 +2319,14 @@ export type GetApiIntegrationsGithubProjectsItemsData = {
          * Pagination cursor
          */
         after?: string;
+        /**
+         * Filter by Status field value (e.g., 'Backlog', 'In Progress')
+         */
+        status?: string;
+        /**
+         * Only return items without a linked task
+         */
+        noLinkedTask?: boolean | null;
     };
     url: '/api/integrations/github/projects/items';
 };

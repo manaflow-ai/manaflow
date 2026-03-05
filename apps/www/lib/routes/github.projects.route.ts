@@ -474,6 +474,8 @@ const ProjectItemsQuery = z
     projectId: z.string().min(1).openapi({ description: "GitHub Project node ID" }),
     first: z.coerce.number().optional().default(50).openapi({ description: "Number of items to fetch" }),
     after: z.string().optional().openapi({ description: "Pagination cursor" }),
+    status: z.string().optional().openapi({ description: "Filter by Status field value (e.g., 'Backlog', 'In Progress')" }),
+    noLinkedTask: z.coerce.boolean().optional().openapi({ description: "Only return items without a linked task" }),
   })
   .openapi("ProjectItemsQuery");
 
@@ -817,7 +819,7 @@ githubProjectsRouter.openapi(
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
     if (!accessToken) return c.text("Unauthorized", 401);
 
-    const { team, installationId, projectId, first, after } = c.req.valid("query");
+    const { team, installationId, projectId, first, after, status, noLinkedTask } = c.req.valid("query");
 
     // Verify team membership
     const convex = getConvex({ accessToken });
@@ -833,6 +835,34 @@ githubProjectsRouter.openapi(
       return c.json({ items: [], pageInfo: { hasNextPage: false, endCursor: null } });
     }
 
+    // Helper to filter items by status and linked task
+    const filterItems = async <T extends { id: string; fieldValues: Record<string, unknown> }>(
+      items: T[],
+    ): Promise<T[]> => {
+      let filtered = items;
+
+      // Filter by status if specified
+      if (status) {
+        filtered = filtered.filter((item) => {
+          const itemStatus = item.fieldValues?.Status;
+          return typeof itemStatus === "string" && itemStatus === status;
+        });
+      }
+
+      // Filter out items with linked tasks if requested
+      if (noLinkedTask && filtered.length > 0) {
+        const itemIds = filtered.map((item) => item.id);
+        const linkedTaskResults = await Promise.all(
+          itemIds.map((itemId) =>
+            convex.query(api.tasks.hasLinkedTask, { githubProjectItemId: itemId }),
+          ),
+        );
+        filtered = filtered.filter((_, index) => !linkedTaskResults[index]);
+      }
+
+      return filtered;
+    };
+
     try {
       const userOAuthToken =
         target.accountType === "User"
@@ -845,16 +875,18 @@ githubProjectsRouter.openapi(
         const fallback = await getProjectItemsViaGhCli(projectId, first, after);
         if (fallback.items.length > 0) {
           // Transform CLI fallback items to match ProjectV2Item shape
-          return c.json({
-            items: fallback.items.map((item) => ({
+          const transformedItems = fallback.items.map((item) => ({
+            id: item.id,
+            content: {
               id: item.id,
-              content: {
-                id: item.id,
-                title: item.title,
-                url: item.url ?? undefined,
-              },
-              fieldValues: item.fieldValues,
-            })),
+              title: item.title,
+              url: item.url ?? undefined,
+            },
+            fieldValues: item.fieldValues,
+          }));
+          const filteredItems = await filterItems(transformedItems);
+          return c.json({
+            items: filteredItems,
             pageInfo: {
               hasNextPage: fallback.hasNextPage,
               endCursor: fallback.endCursor,
@@ -869,7 +901,11 @@ githubProjectsRouter.openapi(
         after,
         userOAuthToken,
       });
-      return c.json(result);
+      const filteredItems = await filterItems(result.items);
+      return c.json({
+        items: filteredItems,
+        pageInfo: result.pageInfo,
+      });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       if (target.accountType === "User") {
@@ -878,16 +914,18 @@ githubProjectsRouter.openapi(
           console.warn(
             `[github.projects] Primary project-items API failed for ${projectId}, served via gh CLI fallback`,
           );
-          return c.json({
-            items: fallback.items.map((item) => ({
+          const transformedItems = fallback.items.map((item) => ({
+            id: item.id,
+            content: {
               id: item.id,
-              content: {
-                id: item.id,
-                title: item.title,
-                url: item.url ?? undefined,
-              },
-              fieldValues: item.fieldValues,
-            })),
+              title: item.title,
+              url: item.url ?? undefined,
+            },
+            fieldValues: item.fieldValues,
+          }));
+          const filteredItems = await filterItems(transformedItems);
+          return c.json({
+            items: filteredItems,
             pageInfo: {
               hasNextPage: fallback.hasNextPage,
               endCursor: fallback.endCursor,
