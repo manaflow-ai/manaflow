@@ -77,7 +77,7 @@ export default function Navbar() {
             </a>
             <a
               href="https://cmux.sh"
-              className="bg-neutral-900 dark:bg-white text-white dark:text-black pl-2.5 pr-3 py-1.5 rounded-lg text-sm font-medium hover:bg-neutral-700 dark:hover:bg-neutral-200 transition-colors flex items-center gap-1.5"
+              className="bg-neutral-900 dark:bg-white text-white dark:text-black px-3 py-1.5 rounded-full text-sm font-medium hover:bg-neutral-800 dark:hover:bg-neutral-200 transition flex items-center gap-1.5"
             >
               <svg className="w-4 h-4 shrink-0" viewBox="4 2 16 20" fill="none">
                 <defs>
