@@ -87,6 +87,23 @@ export type CreateBook = {
     genre: 'fiction' | 'non-fiction' | 'science' | 'history' | 'biography';
 };
 
+export type DaemonTicketResponse = {
+    ticket: string;
+    direct_url: string;
+    direct_tls_pins: Array<string>;
+    session_id: string;
+    attachment_id: string;
+    expires_at: string;
+};
+
+export type DaemonTicketBody = {
+    server_id: string;
+    team_id: string;
+    session_id?: string;
+    attachment_id?: string;
+    capabilities?: Array<string>;
+};
+
 export type DevServerResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -409,6 +426,11 @@ export type MobileHeartbeatBody = {
     status: 'online' | 'offline' | 'unknown';
     lastSeenAt?: number;
     lastWorkspaceSyncAt?: number;
+    directConnect?: {
+        directPort: number;
+        directTlsPins: Array<string>;
+        ticketSecret: string;
+    };
     workspaces: Array<{
         workspaceId: string;
         taskId?: string;
@@ -1171,6 +1193,33 @@ export type PostApiBooksByIdReturnResponses = {
 };
 
 export type PostApiBooksByIdReturnResponse = PostApiBooksByIdReturnResponses[keyof PostApiBooksByIdReturnResponses];
+
+export type PostApiDaemonTicketData = {
+    body: DaemonTicketBody;
+    path?: never;
+    query?: never;
+    url: '/api/daemon-ticket';
+};
+
+export type PostApiDaemonTicketErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Machine connection unavailable
+     */
+    404: unknown;
+};
+
+export type PostApiDaemonTicketResponses = {
+    /**
+     * Direct daemon ticket minted
+     */
+    200: DaemonTicketResponse;
+};
+
+export type PostApiDaemonTicketResponse = PostApiDaemonTicketResponses[keyof PostApiDaemonTicketResponses];
 
 export type PostApiDevServerStartData = {
     /**
