@@ -1181,6 +1181,85 @@ const convexSchema = defineSchema({
     .index("by_team_user", ["teamId", "userId"]) // Get unread runs for a user in a team
     .index("by_task_user", ["taskId", "userId"]), // Get unread runs for a task
 
+  mobileMachines: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    machineId: v.string(),
+    displayName: v.string(),
+    tailscaleHostname: v.optional(v.string()),
+    tailscaleIPs: v.array(v.string()),
+    status: v.union(
+      v.literal("online"),
+      v.literal("offline"),
+      v.literal("unknown")
+    ),
+    lastSeenAt: v.number(),
+    lastWorkspaceSyncAt: v.optional(v.number()),
+  })
+    .index("by_machineId", ["machineId"])
+    .index("by_team_user_machine", ["teamId", "userId", "machineId"])
+    .index("by_team_user_last_seen", ["teamId", "userId", "lastSeenAt"]),
+
+  mobileWorkspaces: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    workspaceId: v.string(),
+    machineId: v.string(),
+    taskId: v.optional(v.string()),
+    taskRunId: v.optional(v.string()),
+    title: v.string(),
+    preview: v.optional(v.string()),
+    phase: v.string(),
+    tmuxSessionName: v.string(),
+    lastActivityAt: v.number(),
+    latestEventSeq: v.number(),
+    lastEventAt: v.optional(v.number()),
+  })
+    .index("by_workspaceId", ["workspaceId"])
+    .index("by_team_user_workspace", ["teamId", "userId", "workspaceId"])
+    .index("by_machine_last_activity", ["machineId", "lastActivityAt"])
+    .index("by_team_user_last_activity", ["teamId", "userId", "lastActivityAt"]),
+
+  mobileWorkspaceEvents: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    workspaceId: v.string(),
+    eventSeq: v.number(),
+    kind: v.string(),
+    preview: v.optional(v.string()),
+    createdAt: v.number(),
+    shouldNotify: v.boolean(),
+  })
+    .index("by_workspace_event", ["workspaceId", "eventSeq"])
+    .index("by_team_user_created", ["teamId", "userId", "createdAt"])
+    .index("by_team_user_notify", ["teamId", "userId", "shouldNotify", "createdAt"]),
+
+  mobileUserWorkspaceState: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    workspaceId: v.string(),
+    lastReadEventSeq: v.number(),
+    pinned: v.optional(v.boolean()),
+    archived: v.optional(v.boolean()),
+    updatedAt: v.number(),
+  })
+    .index("by_team_user_workspace", ["teamId", "userId", "workspaceId"])
+    .index("by_team_user_updated", ["teamId", "userId", "updatedAt"]),
+
+  devicePushTokens: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    token: v.string(),
+    environment: v.union(v.literal("development"), v.literal("production")),
+    platform: v.string(),
+    bundleId: v.string(),
+    deviceId: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_token", ["token"])
+    .index("by_team_user_updated", ["teamId", "userId", "updatedAt"])
+    .index("by_team_user_device", ["teamId", "userId", "deviceId"]),
+
   // Track Morph instance activity for cleanup cron decisions
   morphInstanceActivity: defineTable({
     instanceId: v.string(), // Morph instance ID (morphvm_xxx)
