@@ -42,6 +42,13 @@ declare global {
           }>;
         install: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      app: {
+        getProtocolStatus: () =>
+          Promise<
+            | { ok: true; isPackaged: boolean; isDefaultProtocolClient: boolean }
+            | { ok: false; error: string }
+          >;
+      };
     };
   }
 }

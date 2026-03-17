@@ -13,6 +13,7 @@ type IframeEntry = {
   url: string;
   lastUsed: number;
   isVisible: boolean;
+  pinned: boolean;
   allow?: string;
   sandbox?: string;
 };
@@ -212,6 +213,7 @@ class PersistentIframeManager {
       url,
       lastUsed: Date.now(),
       isVisible: false,
+      pinned: false,
       allow: options?.allow,
       sandbox: options?.sandbox,
     };
@@ -480,6 +482,15 @@ class PersistentIframeManager {
     this.iframes.delete(key);
   }
 
+  setPinned(key: string, pinned: boolean): void {
+    const entry = this.iframes.get(key);
+    if (!entry) {
+      return;
+    }
+    entry.pinned = pinned;
+    this.cleanupOldIframes();
+  }
+
   /**
    * Clean up old iframes
    */
@@ -488,7 +499,12 @@ class PersistentIframeManager {
 
     const sorted = Array.from(this.iframes.entries())
       .filter(([, entry]) => !entry.isVisible)
-      .sort(([, a], [, b]) => a.lastUsed - b.lastUsed);
+      .sort(([, a], [, b]) => {
+        if (a.pinned !== b.pinned) {
+          return a.pinned ? 1 : -1;
+        }
+        return a.lastUsed - b.lastUsed;
+      });
 
     const toRemove = sorted.slice(
       0,

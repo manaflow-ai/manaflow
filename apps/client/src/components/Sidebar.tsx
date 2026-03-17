@@ -1,6 +1,8 @@
+import { env } from "@/client-env";
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useWarmLocalWorkspaces } from "@/hooks/useWarmLocalWorkspaces";
 import {
   disableDragPointerEvents,
   restoreDragPointerEvents,
@@ -22,7 +24,6 @@ import {
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
-import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 import { SidebarWorkspacesSection } from "./sidebar/SidebarWorkspacesSection";
@@ -45,6 +46,7 @@ interface SidebarNavItem {
 interface SidebarNavItemWithBadge extends SidebarNavItem {
   showBadge?: boolean;
   hidden?: boolean;
+  onboardingKey?: string;
 }
 
 const navItems: SidebarNavItemWithBadge[] = [
@@ -74,12 +76,14 @@ const navItems: SidebarNavItemWithBadge[] = [
     },
     exact: true,
     icon: Server,
+    onboardingKey: "environments-link",
   },
   {
     label: "Settings",
     to: "/$teamSlugOrId/settings",
     exact: true,
     icon: Settings,
+    onboardingKey: "settings-link",
   },
 ];
 
@@ -105,8 +109,16 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   const { expandTaskIds } = useExpandTasks();
 
-  // Fetch pinned items
-  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+  // Fetch pinned items (exclude local workspaces in web mode)
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
+
+  useWarmLocalWorkspaces({
+    teamSlugOrId,
+    tasks,
+    pinnedTasks: pinnedData,
+    enabled: !env.NEXT_PUBLIC_WEB_MODE,
+  });
 
   // Fetch unread notification count
   const unreadCount = useQuery(api.taskNotifications.getUnreadCount, {
@@ -223,6 +235,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
+      data-onboarding="sidebar"
       className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 w-[75vw] snap-start snap-always md:w-auto md:snap-align-none"
       style={
         {
@@ -271,7 +284,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             {navItems
               .filter((item) => !item.hidden)
               .map((item) => (
-              <li key={item.label}>
+              <li
+                key={item.label}
+                {...(item.onboardingKey && { "data-onboarding": item.onboardingKey })}
+              >
                 <SidebarNavLink
                   to={item.to}
                   params={{ teamSlugOrId }}
@@ -285,20 +301,18 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             ))}
           </ul>
 
-          {isElectron && (
-            <div className="mt-4 flex flex-col">
-              <SidebarSectionLink
-                to="/$teamSlugOrId/prs"
-                params={{ teamSlugOrId }}
-                exact
-              >
-                Pull requests
-              </SidebarSectionLink>
-              <div className="ml-2 pt-px">
-                <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
-              </div>
+          <div className="mt-4 flex flex-col">
+            <SidebarSectionLink
+              to="/$teamSlugOrId/prs"
+              params={{ teamSlugOrId }}
+              exact
+            >
+              Pull requests
+            </SidebarSectionLink>
+            <div className="ml-2 pt-px">
+              <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
             </div>
-          )}
+          </div>
 
           <div className="mt-2 flex flex-col gap-0.5">
             <SidebarWorkspacesSection teamSlugOrId={teamSlugOrId} />
@@ -354,18 +368,6 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             </div>
           </div>
 
-          <div className="mt-2 flex flex-col gap-0.5">
-            <SidebarSectionLink
-              to="/$teamSlugOrId/previews"
-              params={{ teamSlugOrId }}
-              exact
-            >
-              Previews
-            </SidebarSectionLink>
-          </div>
-          <div className="ml-2 pt-px">
-            <SidebarPreviewList teamSlugOrId={teamSlugOrId} />
-          </div>
         </div>
       </nav>
 

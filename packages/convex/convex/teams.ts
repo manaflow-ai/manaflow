@@ -131,6 +131,27 @@ export const getByTeamIdInternal = internalQuery({
       .withIndex("by_teamId", (q) => q.eq("teamId", teamId))
       .first();
     if (!team) return null;
-    return { uuid: team.teamId, slug: team.slug ?? null } as const;
+    return {
+      uuid: team.teamId,
+      slug: team.slug ?? null,
+      displayName: team.displayName ?? null,
+      name: team.name ?? null,
+    } as const;
+  },
+});
+
+// Internal helper to fetch team memberships by userId (used by HTTP handlers)
+export const getMembershipsByUserIdInternal = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const memberships = await ctx.db
+      .query("teamMemberships")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return memberships.map(m => ({
+      teamId: m.teamId,
+      userId: m.userId,
+      role: m.role,
+    }));
   },
 });

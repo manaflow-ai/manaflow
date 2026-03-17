@@ -35,7 +35,7 @@ const tutorialSections: TutorialSection[] = [
     id: "orientation",
     title: "Get oriented",
     intro:
-      "Understand the cmux workspace, vocabulary, and how the agent command center fits into your development cadence.",
+      "Understand the Manaflow workspace, vocabulary, and how the agent command center fits into your development cadence.",
     steps: [
       {
         id: "workspace-tour",
@@ -48,7 +48,7 @@ const tutorialSections: TutorialSection[] = [
           "Command palette (⌘K) jumps across runs, opens VS Code capsules, or starts new tasks instantly.",
         ],
         placeholders: [
-          "Screenshot: cmux workspace layout",
+          "Screenshot: Manaflow workspace layout",
           "Video: 90-second UI flythrough",
         ],
       },
@@ -77,7 +77,7 @@ const tutorialSections: TutorialSection[] = [
     id: "repositories",
     title: "Connect repositories",
     intro:
-      "cmux works with GitHub, GitLab, and direct archives. Bring repositories in with branch policies and verification defaults.",
+      "Manaflow works with GitHub, GitLab, and direct archives. Bring repositories in with branch policies and verification defaults.",
     steps: [
       {
         id: "import",
@@ -98,7 +98,7 @@ const tutorialSections: TutorialSection[] = [
         id: "sync",
         title: "Sync source and dependencies",
         description:
-          "Choose whether cmux clones full history or shallow copies. Configure dependency install hooks (npm, pnpm, poetry, cargo) that run inside every container.",
+          "Choose whether Manaflow clones full history or shallow copies. Configure dependency install hooks (npm, pnpm, poetry, cargo) that run inside every container.",
         callouts: [
           "Cache warmers let you pre-bake Docker layers with dependencies for faster spins.",
           "Optional yolo mode uses snapshot commits for throwaway experiments.",
@@ -167,7 +167,7 @@ const tutorialSections: TutorialSection[] = [
         id: "local",
         title: "Local Docker",
         description:
-          "Ideal for iterative work. cmux launches ephemeral containers on your machine, mounts the repo, and opens a dedicated VS Code window per agent.",
+          "Ideal for iterative work. Manaflow launches ephemeral containers on your machine, mounts the repo, and opens a dedicated VS Code window per agent.",
         callouts: [
           "Great for low-latency debugging with local databases or services.",
           "Supports GPU passthrough if your laptop or workstation has available resources.",
@@ -182,7 +182,7 @@ const tutorialSections: TutorialSection[] = [
         id: "managed",
         title: "Managed cloud",
         description:
-          "Launch agents in cmux-managed infrastructure. Autoscale based on queue length, mirror logs back in real time, and archive runs for compliance.",
+          "Launch agents in Manaflow-managed infrastructure. Autoscale based on queue length, mirror logs back in real time, and archive runs for compliance.",
         callouts: [
           "Regions in US, EU, and APAC with data residency controls.",
           "Role-based access determines who can view logs or pull artifacts.",
@@ -197,7 +197,7 @@ const tutorialSections: TutorialSection[] = [
         id: "byo",
         title: "Bring your own environment",
         description:
-          "Connect cmux to Kubernetes, ECS, Render, or bare metal. We deploy agents into your network while respecting your IAM and secrets policies.",
+          "Connect Manaflow to Kubernetes, ECS, Render, or bare metal. We deploy agents into your network while respecting your IAM and secrets policies.",
         callouts: [
           "Supports sealed secrets, HashiCorp Vault, or Doppler for key delivery.",
           "Network policies ensure agents only touch resources you authorize.",
@@ -323,7 +323,7 @@ const tutorialSections: TutorialSection[] = [
         id: "launch",
         title: "Start the run",
         description:
-          "Pick agents, execution mode, environment, and repo branch. Preview diffs cmux expects agents to touch and confirm before launching.",
+          "Pick agents, execution mode, environment, and repo branch. Preview diffs Manaflow expects agents to touch and confirm before launching.",
         callouts: [
           "Trigger preflight checks to ensure dependencies, credentials, and environment readiness.",
           "Set autonomy level: step-by-step, collaborative, or fully autonomous.",
@@ -422,7 +422,7 @@ const tutorialSections: TutorialSection[] = [
         id: "checklists",
         title: "Work through verification checklists",
         description:
-          "cmux auto-generates criteria from your templates. Mark items as you validate tests, security scans, documentation, and QA steps.",
+          "Manaflow auto-generates criteria from your templates. Mark items as you validate tests, security scans, documentation, and QA steps.",
         callouts: [
           "Attach supporting artifacts (videos, console logs, screenshots).",
           "Request rework with contextual prompts that agent personas understand.",
@@ -437,7 +437,7 @@ const tutorialSections: TutorialSection[] = [
         id: "handoff",
         title: "Promote to PR or deployment",
         description:
-          "Push branches, open pull requests, or trigger CI/CD pipelines directly. cmux packages diff summaries and approval notes automatically.",
+          "Push branches, open pull requests, or trigger CI/CD pipelines directly. Manaflow packages diff summaries and approval notes automatically.",
         callouts: [
           "Supports GitHub, GitLab, Bitbucket, and custom git remotes.",
           "Attach release notes or migration guides as part of the handoff.",
@@ -494,7 +494,7 @@ const tutorialSections: TutorialSection[] = [
         id: "support",
         title: "Engage support or community",
         description:
-          "Open a ticket with manaflow, jump into the cmux Discord, or schedule a pairing session directly from the product.",
+          "Open a ticket with Manaflow, jump into the Manaflow Discord, or schedule a pairing session directly from the product.",
         callouts: [
           "Enterprise SLAs surface priority channels.",
           "Community Discord has topic-based rooms for agents, environments, and prompt design.",
@@ -514,9 +514,9 @@ const tutorialSections: TutorialSection[] = [
 ];
 
 export const metadata: Metadata = {
-  title: "cmux tutorial — orchestrate, verify, and ship with multi-agent precision",
+  title: "Manaflow tutorial — orchestrate, verify, and ship with multi-agent precision",
   description:
-    "Detailed tutorial for cmux covering repository setup, agent selection, execution modes, environment templates, API keys, task launch, agent consoles, and verification best practices.",
+    "Detailed tutorial for Manaflow covering repository setup, agent selection, execution modes, environment templates, API keys, task launch, agent consoles, and verification best practices.",
 };
 
 
@@ -553,14 +553,14 @@ export default async function TutorialPage() {
 
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-12 sm:px-6">
         <div className="inline-flex items-center gap-2 self-start rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.3em] text-neutral-300">
-          cmux tutorial
+          Manaflow tutorial
         </div>
         <div className="space-y-4">
           <h1 className="text-4xl font-semibold text-white sm:text-5xl">
-            Master the cmux workflow from intake to verification
+            Master the Manaflow workflow from intake to verification
           </h1>
           <p className="max-w-3xl text-sm text-neutral-300 sm:text-base">
-            Use this playbook to set up repositories, choose agents, configure execution modes, and guide teams through verification-ready deployments. Each section highlights where to add your own screenshots, walkthroughs, and resources as you operationalize cmux.
+            Use this playbook to set up repositories, choose agents, configure execution modes, and guide teams through verification-ready deployments. Each section highlights where to add your own screenshots, walkthroughs, and resources as you operationalize Manaflow.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">

@@ -505,31 +505,35 @@ export function TaskTimeline({
       {/* Task Comments (chronological) */}
       {taskComments && taskComments.length > 0 ? (
         <div className="space-y-2 pt-2">
-          {taskComments.map((c) => (
-            <TaskMessage
-              key={c._id}
-              authorName={
-                c.userId === "cmux"
-                  ? "cmux"
-                  : user?.displayName ||
-                    user?.primaryEmail?.split("@")[0] ||
-                    "User"
-              }
-              avatar={
-                c.userId === "cmux" ? (
-                  <CmuxLogoMark height={20} label="cmux" />
-                ) : undefined
-              }
-              authorImageUrl={
-                c.userId === "cmux" ? undefined : user?.profileImageUrl || ""
-              }
-              authorAlt={
-                c.userId === "cmux" ? "cmux" : user?.primaryEmail || "User"
-              }
-              timestamp={c.createdAt}
-              content={c.content}
-            />
-          ))}
+          {taskComments.map((c) => {
+            const isSystemAuthor =
+              c.userId === "manaflow" || c.userId === "cmux";
+            return (
+              <TaskMessage
+                key={c._id}
+                authorName={
+                  isSystemAuthor
+                    ? "Manaflow"
+                    : user?.displayName ||
+                      user?.primaryEmail?.split("@")[0] ||
+                      "User"
+                }
+                avatar={
+                  isSystemAuthor ? (
+                    <CmuxLogoMark height={20} label="Manaflow" />
+                  ) : undefined
+                }
+                authorImageUrl={
+                  isSystemAuthor ? undefined : user?.profileImageUrl || ""
+                }
+                authorAlt={
+                  isSystemAuthor ? "Manaflow" : user?.primaryEmail || "User"
+                }
+                timestamp={c.createdAt}
+                content={c.content}
+              />
+            );
+          })}
         </div>
       ) : null}
     </div>

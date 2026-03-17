@@ -14,13 +14,27 @@ crons.daily(
   internal.morphInstanceMaintenance.pauseOldMorphInstances
 );
 
-// Delete old Morph snapshots no longer needed
-// Runs daily at 5 AM Pacific Time (13:00 UTC)
-// Preserves: preset snapshots, active environment snapshots,
-// and environment version snapshots < 14 days old
+// Stop (delete) Morph instances that have been paused for more than 2 weeks
+// Runs daily at 13:00 UTC (~5-6 AM Pacific depending on DST)
+crons.daily(
+  "stop old morph instances",
+  { hourUTC: 13, minuteUTC: 0 },
+  internal.morphInstanceMaintenance.stopOldMorphInstances
+);
+
+// Clean up stale warm pool entries daily at 11:30 UTC
+crons.daily(
+  "cleanup warm pool",
+  { hourUTC: 11, minuteUTC: 30 },
+  internal.warmPoolMaintenance.cleanupWarmPool
+);
+
+// Delete old Morph snapshots no longer needed after stale paused instances are removed.
+// Preserves preset snapshots, active environment snapshots, and historical
+// environment version snapshots that may still be restorable by users.
 crons.daily(
   "delete old morph snapshots",
-  { hourUTC: 13, minuteUTC: 0 },
+  { hourUTC: 14, minuteUTC: 0 },
   internal.morphSnapshotMaintenance.deleteOldMorphSnapshots
 );
 

@@ -16,8 +16,8 @@ describe.skipIf(shouldSkip)("detectFrameworkAndPackageManager", () => {
     expect(result.devScript).toBe("pnpm run dev");
   }, 30000);
 
-  it("detects manaflow-ai/cmux as bun (no dev script in package.json)", async () => {
-    const result = await detectFrameworkAndPackageManager("manaflow-ai/cmux", GITHUB_TOKEN);
+  it("detects manaflow-ai/manaflow as bun (no dev script in package.json)", async () => {
+    const result = await detectFrameworkAndPackageManager("manaflow-ai/manaflow", GITHUB_TOKEN);
 
     expect(result.packageManager).toBe("bun");
     expect(result.maintenanceScript).toBe("bun install");

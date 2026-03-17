@@ -4,6 +4,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSocket } from "@/contexts/socket/use-socket";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
@@ -85,20 +86,89 @@ function VSCodeComponent() {
     teamSlugOrId,
     id: taskRunId,
   });
+  const { socket } = useSocket();
 
-  const workspaceUrl = getWorkspaceUrl(
-    taskRun?.vscode?.workspaceUrl,
-    taskRun?.vscode?.provider,
-    localServeWeb.data?.baseUrl
+  // Query for linked local workspace to trigger sync
+  const linkedLocalWorkspace = useQuery(
+    api.tasks.getLinkedLocalWorkspace,
+    { teamSlugOrId, cloudTaskRunId: taskRunId }
   );
-  const disablePreflight = taskRun?.vscode?.workspaceUrl
-    ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
-    : false;
+
+  // Query workspace settings for auto-sync preference
+  const workspaceSettings = useQuery(api.workspaceSettings.get, { teamSlugOrId });
+  const autoSyncEnabled = workspaceSettings?.autoSyncEnabled ?? true;
+
+  // Debug logging for sync trigger
+  console.log("[VSCode route] Sync debug:", {
+    autoSyncEnabled,
+    hasSocket: !!socket,
+    linkedLocalWorkspace: linkedLocalWorkspace === undefined ? "loading" : linkedLocalWorkspace,
+    worktreePath: linkedLocalWorkspace?.task?.worktreePath,
+  });
+
+  // Trigger sync when viewing a cloud task that has a linked local workspace
+  // This restores the sync session after page refresh or server restart
+  useEffect(() => {
+    if (!autoSyncEnabled || !socket) {
+      return;
+    }
+
+    const localWorkspacePath = linkedLocalWorkspace?.task?.worktreePath;
+    if (!localWorkspacePath) {
+      return;
+    }
+
+    console.log(
+      "[VSCode route] Triggering local-cloud sync:",
+      localWorkspacePath,
+      "->",
+      taskRunId
+    );
+
+    socket.emit(
+      "trigger-local-cloud-sync",
+      {
+        localWorkspacePath,
+        cloudTaskRunId: taskRunId,
+      },
+      (response: { success: boolean; error?: string }) => {
+        if (!response.success) {
+          console.error("[VSCode route] Failed to trigger sync:", response.error);
+        } else {
+          console.log("[VSCode route] Sync triggered successfully");
+        }
+      }
+    );
+  }, [autoSyncEnabled, socket, linkedLocalWorkspace?.task?.worktreePath, taskRunId]);
+
+  // Extract stable values from taskRun to avoid re-renders when unrelated fields change
+  const rawWorkspaceUrl = taskRun?.vscode?.workspaceUrl;
+  const vsCodeProvider = taskRun?.vscode?.provider;
+  const vsCodeStatusMessage = taskRun?.vscode?.statusMessage;
+  const taskRunStatus = taskRun?.status;
+  const taskRunErrorMessage = taskRun?.errorMessage;
+  const localServeWebBaseUrl = localServeWeb.data?.baseUrl;
+
+  // Check if the task run failed (e.g., Docker pull failed)
+  const hasTaskRunFailed = taskRunStatus === "failed";
+
+  // Memoize the workspace URL to prevent unnecessary recalculations
+  const workspaceUrl = useMemo(
+    () => getWorkspaceUrl(rawWorkspaceUrl, vsCodeProvider, localServeWebBaseUrl),
+    [rawWorkspaceUrl, vsCodeProvider, localServeWebBaseUrl]
+  );
+
+  const disablePreflight = useMemo(
+    () => (rawWorkspaceUrl ? shouldUseServerIframePreflight(rawWorkspaceUrl) : false),
+    [rawWorkspaceUrl]
+  );
+
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
-  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
+  const isLocalWorkspace = vsCodeProvider === "other";
   const webviewActions = useWebviewActions({ persistKey });
 
+  // Track iframe status - use state for rendering but with stable callback
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
   const prevWorkspaceUrlRef = useRef<string | null>(null);
@@ -115,6 +185,14 @@ function VSCodeComponent() {
       prevWorkspaceUrlRef.current = workspaceUrl;
     }
   }, [workspaceUrl]);
+
+  // Stable callback for status changes - setIframeStatus is already stable
+  const handleStatusChange = useCallback(
+    (status: PersistentIframeStatus) => {
+      setIframeStatus(status);
+    },
+    []
+  );
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
@@ -134,9 +212,13 @@ function VSCodeComponent() {
   const loadingFallback = useMemo(
     () =>
       isLocalWorkspace ? null : (
-        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+        <WorkspaceLoadingIndicator
+          variant="vscode"
+          status="loading"
+          loadingDescription={vsCodeStatusMessage}
+        />
       ),
-    [isLocalWorkspace]
+    [isLocalWorkspace, vsCodeStatusMessage]
   );
   const errorFallback = useMemo(
     () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
@@ -191,7 +273,7 @@ function VSCodeComponent() {
               fallbackClassName="bg-neutral-50 dark:bg-black"
               errorFallback={errorFallback}
               errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-              onStatusChange={setIframeStatus}
+              onStatusChange={handleStatusChange}
               loadTimeoutMs={60_000}
             />
           ) : (
@@ -199,7 +281,12 @@ function VSCodeComponent() {
           )}
           {!hasWorkspace && !isLocalWorkspace ? (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+              <WorkspaceLoadingIndicator
+                variant="vscode"
+                status={hasTaskRunFailed ? "error" : "loading"}
+                loadingDescription={vsCodeStatusMessage}
+                errorDescription={taskRunErrorMessage ?? undefined}
+              />
             </div>
           ) : null}
           {taskRun ? (

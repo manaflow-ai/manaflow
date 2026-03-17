@@ -18,7 +18,7 @@ export const githubSetup = httpAction(async (ctx, req) => {
   const state = url.searchParams.get("state");
   const base = env.BASE_APP_URL.replace(/\/$/, "");
   const toCmuxDeepLink = (team?: string | null) =>
-    `cmux://github-connect-complete${team ? `?team=${encodeURIComponent(team)}` : ""}`;
+    `manaflow://github-connect-complete${team ? `?team=${encodeURIComponent(team)}` : ""}`;
 
   if (!installationIdStr) {
     return new Response("missing params", { status: 400 });

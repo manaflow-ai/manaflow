@@ -112,7 +112,7 @@ async function main() {
     options.githubRepo ??
     process.env.GITHUB_REPO ??
     process.env.GITHUB_REPOSITORY ??
-    "manaflow-ai/cmux";
+    "manaflow-ai/manaflow";
 
   const githubBranchPrefix = options.githubBranchPrefix ?? "";
   const githubToken =

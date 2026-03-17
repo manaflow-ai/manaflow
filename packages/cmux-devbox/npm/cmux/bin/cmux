@@ -1,0 +1,97 @@
+#!/usr/bin/env node
+
+const { spawn } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const PLATFORMS = {
+  "darwin-arm64": "cmux-darwin-arm64",
+  "darwin-x64": "cmux-darwin-x64",
+  "linux-arm64": "cmux-linux-arm64",
+  "linux-x64": "cmux-linux-x64",
+  "win32-x64": "cmux-win32-x64",
+};
+
+// Map platform to local directory name (for development)
+const LOCAL_DIRS = {
+  "darwin-arm64": "darwin-arm64",
+  "darwin-x64": "darwin-x64",
+  "linux-arm64": "linux-arm64",
+  "linux-x64": "linux-x64",
+  "win32-x64": "win32-x64",
+};
+
+function getBinaryPath() {
+  const platform = `${process.platform}-${process.arch}`;
+  const pkg = PLATFORMS[platform];
+  const localDir = LOCAL_DIRS[platform];
+
+  if (!pkg) {
+    console.error(`cmux: Unsupported platform: ${platform}`);
+    console.error(`Supported platforms: ${Object.keys(PLATFORMS).join(", ")}`);
+    process.exit(1);
+  }
+
+  const binName = process.platform === "win32" ? "cmux.exe" : "cmux";
+
+  // Try to find the platform-specific package from node_modules
+  try {
+    const pkgPath = require.resolve(`${pkg}/package.json`);
+    const pkgDir = path.dirname(pkgPath);
+    const binPath = path.join(pkgDir, "bin", binName);
+
+    if (fs.existsSync(binPath)) {
+      return binPath;
+    }
+  } catch (e) {
+    // Package not found in node_modules
+  }
+
+  // Try local development path (sibling directory)
+  const localBinPath = path.join(__dirname, "..", "..", localDir, "bin", binName);
+  if (fs.existsSync(localBinPath)) {
+    return localBinPath;
+  }
+
+  console.error(`cmux: Could not find binary for platform: ${platform}`);
+  console.error(`Make sure ${pkg} is installed.`);
+  console.error("");
+  console.error("Try reinstalling with:");
+  console.error("  npm install cmux");
+  process.exit(1);
+}
+
+function main() {
+  const binPath = getBinaryPath();
+  const args = process.argv.slice(2);
+
+  // Use spawn for better signal handling (especially for PTY)
+  const child = spawn(binPath, args, {
+    stdio: "inherit",
+    windowsHide: true,
+  });
+
+  child.on("error", (err) => {
+    console.error(`cmux: Failed to start: ${err.message}`);
+    process.exit(1);
+  });
+
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      // Re-raise the signal
+      process.kill(process.pid, signal);
+    } else {
+      process.exit(code ?? 0);
+    }
+  });
+
+  // Forward signals to child
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  for (const sig of signals) {
+    process.on(sig, () => {
+      child.kill(sig);
+    });
+  }
+}
+
+main();

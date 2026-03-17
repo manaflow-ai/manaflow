@@ -1,10 +1,12 @@
 import { FloatingPane } from "@/components/floating-pane";
+import { MessageSquareText } from "lucide-react";
 import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
 import type {
   DiffViewerControls,
   StreamFileState,
   StreamFileStatus,
 } from "@/components/heatmap-diff-viewer";
+import { MonacoGitDiffViewerWithSidebar } from "@/components/monaco/monaco-git-diff-viewer-with-sidebar";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useSocket } from "@/contexts/socket/use-socket";
@@ -19,7 +21,7 @@ import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/share
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import {
   Suspense,
@@ -330,6 +332,8 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const [isAiReviewActive, setIsAiReviewActive] = useState(false);
+  const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders. The data is prefetched in the loader.
@@ -346,6 +350,17 @@ function RunDiffPage() {
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
+
+  // Query for existing linked local workspace (to prevent creating duplicates)
+  const linkedLocalWorkspaceQuery = useRQ({
+    ...convexQuery(api.tasks.getLinkedLocalWorkspace, {
+      teamSlugOrId,
+      cloudTaskRunId: runId,
+    }),
+    enabled: Boolean(teamSlugOrId && runId),
+  });
+  const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data;
+
   const [streamStateByFile, setStreamStateByFile] = useState<
     Map<string, StreamFileState>
   >(() => new Map());
@@ -388,22 +403,6 @@ function RunDiffPage() {
     );
   }, [workspaceSettings]);
 
-  const handleHeatmapThresholdChange = useCallback(
-    (next: number) => {
-      if (next === heatmapThreshold) {
-        return;
-      }
-      setHeatmapThreshold(next);
-      void updateWorkspaceSettings({
-        teamSlugOrId,
-        heatmapThreshold: next,
-      }).catch((error) => {
-        console.error("Failed to update heatmap threshold:", error);
-      });
-    },
-    [heatmapThreshold, teamSlugOrId, updateWorkspaceSettings]
-  );
-
   const handleHeatmapColorsChange = useCallback(
     (next: HeatmapColorSettings) => {
       setHeatmapColors(next);
@@ -415,38 +414,6 @@ function RunDiffPage() {
       });
     },
     [teamSlugOrId, updateWorkspaceSettings]
-  );
-
-  const handleHeatmapModelChange = useCallback(
-    (next: HeatmapModelOptionValue) => {
-      if (next === heatmapModel) {
-        return;
-      }
-      setHeatmapModel(next);
-      void updateWorkspaceSettings({
-        teamSlugOrId,
-        heatmapModel: next,
-      }).catch((error) => {
-        console.error("Failed to update heatmap model:", error);
-      });
-    },
-    [heatmapModel, teamSlugOrId, updateWorkspaceSettings]
-  );
-
-  const handleHeatmapTooltipLanguageChange = useCallback(
-    (next: TooltipLanguageValue) => {
-      if (next === heatmapTooltipLanguage) {
-        return;
-      }
-      setHeatmapTooltipLanguage(next);
-      void updateWorkspaceSettings({
-        teamSlugOrId,
-        heatmapTooltipLanguage: next,
-      }).catch((error) => {
-        console.error("Failed to update heatmap tooltip language:", error);
-      });
-    },
-    [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
   );
 
   const runDiffContextQuery = useRQ({
@@ -903,8 +870,24 @@ function RunDiffPage() {
     [setStreamStateByFile]
   );
 
-  // Auto-trigger the simple review when diff data and settings are ready.
+  // Handler for toggling AI review - track when user first visits AI review
+  const handleToggleAiReview = useCallback(() => {
+    setIsAiReviewActive((prev) => {
+      const next = !prev;
+      if (next && !hasVisitedAiReview) {
+        setHasVisitedAiReview(true);
+      }
+      return next;
+    });
+  }, [hasVisitedAiReview]);
+
+  // Auto-trigger the simple review when diff data and settings are ready,
+  // but ONLY after user has visited the AI review tab (lazy loading).
   useEffect(() => {
+    // Don't start the review until user has visited AI review mode
+    if (!hasVisitedAiReview) {
+      return;
+    }
     if (!primaryRepo || !selectedRun?.newBranch) {
       return;
     }
@@ -937,6 +920,7 @@ function RunDiffPage() {
     diffQuery.dataUpdatedAt,
     diffQuery.isLoading,
     fileDiffsForReview,
+    hasVisitedAiReview,
     heatmapModel,
     heatmapTooltipLanguage,
     headRefForHeatmap,
@@ -949,10 +933,25 @@ function RunDiffPage() {
   ]);
 
   const taskRunId = selectedRun?._id ?? runId;
-
-  const navigate = useNavigate();
+  const baseBranch = task?.baseBranch ?? "main";
 
   const handleOpenLocalWorkspace = useCallback(() => {
+    // If query is still loading, don't allow creation to prevent duplicates
+    if (linkedLocalWorkspaceQuery.isLoading) {
+      toast.info("Checking for existing workspace...", {
+        description: "Please wait a moment and try again",
+      });
+      return;
+    }
+
+    // If a linked local workspace already exists, just show a message
+    if (linkedLocalWorkspace) {
+      toast.info("Local workspace already exists", {
+        description: "VS Code (Local) is available in the sidebar",
+      });
+      return;
+    }
+
     if (!socket) {
       toast.error("Socket not connected");
       return;
@@ -977,25 +976,16 @@ function RunDiffPage() {
         projectFullName: primaryRepo,
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
+        baseBranch,
+        linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
         if (response.success && response.workspacePath) {
-          toast.success("Workspace created successfully!", {
+          toast.success("Local workspace created!", {
             id: loadingToast,
-            description: `Opening workspace at ${response.workspacePath}`,
+            description: "VS Code (Local) is now available in the sidebar",
           });
-
-          // Navigate to the vscode view for this task run
-          if (response.taskRunId) {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
-              params: {
-                teamSlugOrId,
-                taskId,
-                runId: response.taskRunId,
-              },
-            });
-          }
+          // Don't navigate - the local VS Code entry will appear under the current task run
         } else {
           toast.error(response.error || "Failed to create workspace", {
             id: loadingToast,
@@ -1003,7 +993,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, baseBranch]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -1039,13 +1029,20 @@ function RunDiffPage() {
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
-            <div className="mb-2 px-3.5">
-              <div className="text-xs text-neutral-600 dark:text-neutral-300">
-                <span className="text-neutral-500 dark:text-neutral-400 select-none">
-                  Prompt:{" "}
-                </span>
-                <span className="font-medium">{task.text}</span>
-              </div>
+            <div className="px-2 py-1.5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(task.text);
+                  toast.success("Copied to clipboard");
+                }}
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[13px] font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                title="Copy description"
+              >
+                <MessageSquareText className="w-3.5 h-3.5" />
+                <span>Description</span>
+              </button>
+              <span className="text-xs text-neutral-500 dark:text-neutral-400">{task.text}</span>
             </div>
           )}
           <div className="bg-white dark:bg-neutral-900 flex-1 min-h-0 flex flex-col">
@@ -1068,14 +1065,14 @@ function RunDiffPage() {
               <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
                 Loading screenshots...
               </div>
-            ) : (
+            ) : screenshotSets.length > 0 ? (
               <RunScreenshotGallery
                 screenshotSets={screenshotSets}
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
-            )}
+            ) : null}
             <div
-              className="flex-1 min-h-0 mt-4"
+              className="flex-1 min-h-0"
               style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
             >
               <Suspense
@@ -1088,23 +1085,30 @@ function RunDiffPage() {
                 }
               >
                 {hasDiffSources ? (
-                  <RunDiffHeatmapReviewSection
-                    repoFullName={primaryRepo as string}
-                    additionalRepoFullNames={additionalRepos}
-                    withRepoPrefix={shouldPrefixDiffs}
-                    ref1={baseRef}
-                    ref2={headRef}
-                    onControlsChange={setDiffControls}
-                    streamStateByFile={deferredStreamStateByFile}
-                    heatmapThreshold={heatmapThreshold}
-                    heatmapColors={heatmapColors}
-                    heatmapModel={heatmapModel}
-                    heatmapTooltipLanguage={heatmapTooltipLanguage}
-                    onHeatmapThresholdChange={handleHeatmapThresholdChange}
-                    onHeatmapColorsChange={handleHeatmapColorsChange}
-                    onHeatmapModelChange={handleHeatmapModelChange}
-                    onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
-                  />
+                  isAiReviewActive ? (
+                    <RunDiffHeatmapReviewSection
+                      repoFullName={primaryRepo as string}
+                      additionalRepoFullNames={additionalRepos}
+                      withRepoPrefix={shouldPrefixDiffs}
+                      ref1={baseRef}
+                      ref2={headRef}
+                      onControlsChange={setDiffControls}
+                      streamStateByFile={deferredStreamStateByFile}
+                      heatmapThreshold={heatmapThreshold}
+                      heatmapColors={heatmapColors}
+                      onHeatmapColorsChange={handleHeatmapColorsChange}
+                      isHeatmapActive={isAiReviewActive}
+                      onToggleHeatmap={handleToggleAiReview}
+                    />
+                  ) : (
+                    <MonacoGitDiffViewerWithSidebar
+                      diffs={diffQuery.data ?? []}
+                      isLoading={diffQuery.isLoading}
+                      onControlsChange={setDiffControls}
+                      isHeatmapActive={isAiReviewActive}
+                      onToggleHeatmap={handleToggleAiReview}
+                    />
+                  )
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
                     Missing repo or branches to show diff.

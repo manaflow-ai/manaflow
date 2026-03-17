@@ -4,7 +4,8 @@ import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
 import type { MacDownloadUrls } from "@/lib/releases";
 import clsx from "clsx";
-import { Download, Globe } from "lucide-react";
+import { CmuxIcon } from "@/components/icons/cmux-icon";
+import { Download } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -32,7 +33,7 @@ const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
   x64: null,
 };
 
-const DEFAULT_GITHUB_URL = "https://github.com/manaflow-ai/cmux";
+const DEFAULT_GITHUB_URL = "https://github.com/manaflow-ai/manaflow";
 
 const compactNumberFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
@@ -58,7 +59,7 @@ const formatStarCount = (stars?: number | null): string => {
 export function SiteHeader({
   linkPrefix = "",
   showDownload = true,
-  fallbackUrl = "https://github.com/manaflow-ai/cmux/releases",
+  fallbackUrl = "https://github.com/manaflow-ai/manaflow/releases",
   latestVersion,
   macDownloadUrls,
   extraEndContent,
@@ -96,9 +97,9 @@ export function SiteHeader({
           isScrolled ? "py-3" : "py-4"
         )}
       >
-        <Link aria-label="cmux" href="/">
+        <Link aria-label="Manaflow" href="/">
           <div className="flex items-center gap-3">
-            <CmuxLogo height={36} label="cmux" showWordmark />
+            <CmuxLogo height={36} label="Manaflow" showWordmark />
           </div>
         </Link>
         <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
@@ -141,8 +142,8 @@ export function SiteHeader({
               className="hidden md:inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800"
               title={
                 latestVersion
-                  ? `Download cmux ${latestVersion} for macOS`
-                  : "Download cmux for macOS"
+                  ? `Download Manaflow ${latestVersion} for macOS`
+                  : "Download Manaflow for macOS"
               }
               urls={effectiveUrls}
             >
@@ -156,7 +157,7 @@ export function SiteHeader({
             rel="noopener noreferrer"
             target="_blank"
           >
-            <Globe className="h-4 w-4" aria-hidden />
+            <CmuxIcon className="h-4 w-4" aria-hidden />
             <span>Web</span>
           </a>
         </div>
@@ -175,8 +176,8 @@ function GithubRepoButton({
   const formattedStars = formatStarCount(stars);
   const ariaLabel =
     typeof stars === "number"
-      ? `View cmux on GitHub (${formattedStars} stars)`
-      : "View cmux on GitHub";
+      ? `View Manaflow on GitHub (${formattedStars} stars)`
+      : "View Manaflow on GitHub";
 
   return (
     <a

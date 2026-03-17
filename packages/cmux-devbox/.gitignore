@@ -1,0 +1,6 @@
+# Binaries
+cmux-devbox
+bin/
+
+# But include npm wrapper scripts (not actual binaries)
+!npm/cmux/bin/

@@ -104,16 +104,8 @@ export async function checkAllProvidersStatusWebMode(options: {
       const isCodexAgent = agent.name.startsWith("codex/");
 
       if (isClaudeAgent) {
-        const hasOAuthToken =
-          apiKeys.CLAUDE_CODE_OAUTH_TOKEN &&
-          apiKeys.CLAUDE_CODE_OAUTH_TOKEN.trim() !== "";
-        const hasApiKey =
-          apiKeys.ANTHROPIC_API_KEY && apiKeys.ANTHROPIC_API_KEY.trim() !== "";
-        if (!hasOAuthToken && !hasApiKey) {
-          missingRequirements.push(
-            "Claude OAuth Token or Anthropic API Key"
-          );
-        }
+        // Claude agents always available in web mode due to Vertex AI fallback
+        // (server-side VERTEX_PRIVATE_KEY handles auth when user key is missing)
       } else if (isCodexAgent) {
         const hasAuthJson =
           apiKeys.CODEX_AUTH_JSON && apiKeys.CODEX_AUTH_JSON.trim() !== "";

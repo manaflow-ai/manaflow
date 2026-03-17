@@ -68,7 +68,7 @@
         "cmux.ptyServerUrl": {
           "type": "string",
           "default": "http://localhost:39383",
-          "description": "URL of the PTY server"
+          "description": "URL of the cmux-pty server inside the sandbox"
         },
         "cmux.defaultShell": {
           "type": "string",

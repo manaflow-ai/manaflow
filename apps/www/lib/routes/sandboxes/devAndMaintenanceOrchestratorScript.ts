@@ -362,6 +362,14 @@ async function createWindows(): Promise<void> {
       devPtyId = session.id;
       console.log(`[ORCHESTRATOR] ${config.devWindowName} PTY created: ${session.id}`);
     }
+
+    // Wait for shells to fully initialize before sending commands
+    // The PTY is created but the shell needs time to start and show prompt
+    // Cloud environments may have longer initialization times (loading zshrc, plugins, etc.)
+    if (maintenancePtyId || devPtyId) {
+      console.log("[ORCHESTRATOR] Waiting for shells to initialize...");
+      await delay(3000);
+    }
   } else {
     // tmux backend: create windows in the cmux session
     await ensureTmuxSession();
@@ -407,57 +415,69 @@ async function runMaintenanceScript(): Promise<MaintenanceResult> {
 
     if (useCmuxPty && maintenancePtyId) {
       // cmux-pty backend: send command to PTY session
-      const command = `set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo $\{pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh\n`;
+      // Don't use exec zsh at the end - let the script run and keep the shell
+      const command = `set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo $\{pipestatus[1]} > '${config.maintenanceExitCodePath}'\n`;
+      console.log(`[MAINTENANCE] Sending command to PTY ${maintenancePtyId}: ${command.slice(0, 100)}...`);
       await sendPtyInput(maintenancePtyId, command);
+      console.log(`[MAINTENANCE] Command sent to PTY`);
     } else {
       // tmux backend: send command via tmux send-keys
       await runCommand(
-        `tmux send-keys -t cmux:${config.maintenanceWindowName} "set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.maintenanceExitCodePath}'; exec zsh" C-m`,
+        `tmux send-keys -t cmux:${config.maintenanceWindowName} "set +x; zsh '${config.maintenanceScriptPath}' 2>&1 | tee '${config.maintenanceErrorLogPath}'; echo \\\${pipestatus[1]} > '${config.maintenanceExitCodePath}'" C-m`,
       );
     }
 
     await delay(2000);
 
-    console.log("[MAINTENANCE] Waiting for script to complete...");
-    let attempts = 0;
-    const maxAttempts = 600;
-
-    while (attempts < maxAttempts) {
-      if (await fileExists(config.maintenanceExitCodePath)) {
-        break;
+    // Check PTY session status (non-fatal - the exit code check below is authoritative)
+    if (useCmuxPty && maintenancePtyId) {
+      const isAlive = await checkPtySessionAlive(maintenancePtyId);
+      if (!isAlive) {
+        console.warn(`[MAINTENANCE] WARN: PTY session check failed, but script may still be running`);
       }
-      await delay(1000);
-      attempts++;
     }
 
-    if (attempts >= maxAttempts) {
-      console.error("[MAINTENANCE] Script timed out after 10 minutes");
-      return {
-        exitCode: 124,
-        error: "Maintenance script timed out after 10 minutes",
-      };
-    }
+    // Wait a bit to see if the script exits early (error case)
+    // This allows quick failures to be caught while letting long-running scripts continue
+    console.log("[MAINTENANCE] Checking for early exit...");
+    await delay(5000);
 
-    const exitCodeText = (await readFile(config.maintenanceExitCodePath, "utf8")).trim();
-    await removeFile(config.maintenanceExitCodePath);
+    if (await fileExists(config.maintenanceExitCodePath)) {
+      // Script exited - check if it was an error
+      await delay(200); // Small delay to ensure file is fully written
 
-    const exitCode = Number.parseInt(exitCodeText, 10);
+      // Read exit code with retry to handle potential race conditions
+      let exitCodeText = "";
+      for (let readAttempt = 0; readAttempt < 3; readAttempt++) {
+        exitCodeText = (await readFile(config.maintenanceExitCodePath, "utf8")).trim();
+        if (exitCodeText.length > 0) break;
+        console.log(`[MAINTENANCE] Exit code file empty, retrying... (attempt ${readAttempt + 1})`);
+        await delay(200);
+      }
+      await removeFile(config.maintenanceExitCodePath);
 
-    if (Number.isNaN(exitCode)) {
-      console.error(`[MAINTENANCE] Invalid exit code value: ${exitCodeText}`);
-      return {
-        exitCode: 1,
-        error: "Maintenance script exit code missing or invalid",
-      };
-    }
+      const exitCode = Number.parseInt(exitCodeText, 10);
 
-    console.log(`[MAINTENANCE] Script completed with exit code ${exitCode}`);
+      if (Number.isNaN(exitCode)) {
+        console.error(`[MAINTENANCE] Invalid exit code value: "${exitCodeText}"`);
+        return {
+          exitCode: 1,
+          error: "Maintenance script exit code missing or invalid",
+        };
+      }
 
-    if (exitCode !== 0) {
-      const errorDetails = await readErrorLog(config.maintenanceErrorLogPath);
-      const errorMessage =
-        errorDetails || `Maintenance script failed with exit code ${exitCode}`;
-      return { exitCode, error: errorMessage };
+      if (exitCode !== 0) {
+        console.error(`[MAINTENANCE] Script exited early with code ${exitCode}`);
+        const errorDetails = await readErrorLog(config.maintenanceErrorLogPath);
+        const errorMessage =
+          errorDetails || `Maintenance script failed with exit code ${exitCode}`;
+        return { exitCode, error: errorMessage };
+      }
+
+      console.log(`[MAINTENANCE] Script completed successfully with exit code 0`);
+    } else {
+      // Script still running after 7 seconds - assume it's a long-running process (e.g., dev server)
+      console.log("[MAINTENANCE] Script still running (likely a long-running process) - continuing");
     }
 
     return { exitCode: 0, error: null };
@@ -483,7 +503,9 @@ async function startDevScript(): Promise<DevResult> {
     if (useCmuxPty && devPtyId) {
       // cmux-pty backend: send command to PTY session
       const command = `set +x; zsh '${config.devScriptPath}' 2>&1 | tee '${config.devErrorLogPath}'; echo $\{pipestatus[1]} > '${config.devExitCodePath}'\n`;
+      console.log(`[DEV] Sending command to PTY ${devPtyId}`);
       await sendPtyInput(devPtyId, command);
+      console.log(`[DEV] Command sent to PTY`);
 
       await delay(2000);
 

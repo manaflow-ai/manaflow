@@ -30,6 +30,16 @@ export const createScreenshotSet = internalMutation({
         description: v.optional(v.string()),
       })
     ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+        })
+      )
+    ),
   },
   handler: async (ctx, args): Promise<Id<"taskRunScreenshotSets">> => {
     const previewRun = await ctx.db.get(args.previewRunId);
@@ -46,11 +56,10 @@ export const createScreenshotSet = internalMutation({
       throw new Error("Task run not found for preview run");
     }
 
-    if (args.status === "completed" && args.images.length === 0) {
-      throw new Error(
-        "At least one screenshot is required for completed status"
-      );
-    }
+    // Allow completed status with 0 images - this can happen when:
+    // 1. The PR has no UI changes (hasUiChanges=false)
+    // 2. Screenshot collection failed but we still want to record the attempt
+    // The hasUiChanges field indicates whether UI changes were detected
 
     const screenshots = args.images.map((image) => ({
       storageId: image.storageId,
@@ -58,6 +67,13 @@ export const createScreenshotSet = internalMutation({
       fileName: image.fileName,
       commitSha: image.commitSha ?? args.commitSha,
       description: image.description,
+    }));
+
+    const videos = (args.videos ?? []).map((video) => ({
+      storageId: video.storageId,
+      mimeType: video.mimeType,
+      fileName: video.fileName,
+      description: video.description,
     }));
 
     const screenshotSetId: Id<"taskRunScreenshotSets"> = await ctx.runMutation(
@@ -69,30 +85,44 @@ export const createScreenshotSet = internalMutation({
         commitSha: args.commitSha,
         hasUiChanges: args.hasUiChanges,
         screenshots,
+        videos,
         error: args.error,
       }
     );
 
-    const primaryScreenshot = screenshots[0];
-    if (primaryScreenshot) {
-      await ctx.runMutation(internal.taskRuns.updateScreenshotMetadata, {
-        id: taskRun._id,
-        storageId: primaryScreenshot.storageId,
-        mimeType: primaryScreenshot.mimeType,
-        fileName: primaryScreenshot.fileName,
-        commitSha: primaryScreenshot.commitSha,
-        screenshotSetId,
-      });
-    } else if (args.status !== "completed") {
-      await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
-        id: taskRun._id,
-      });
-    }
-
+    // CRITICAL: Patch previewRun with screenshotSetId IMMEDIATELY after creating the set.
+    // This must happen before updateScreenshotMetadata because ctx.runMutation creates
+    // separate transactions - if updateScreenshotMetadata fails, we still want the
+    // previewRun to be linked to the screenshot set so the UI can display screenshots.
     await ctx.db.patch(args.previewRunId, {
       screenshotSetId,
       updatedAt: Date.now(),
     });
+
+    // Update taskRun metadata (non-critical - wrapped in try-catch)
+    const primaryScreenshot = screenshots[0];
+    try {
+      if (primaryScreenshot) {
+        await ctx.runMutation(internal.taskRuns.updateScreenshotMetadata, {
+          id: taskRun._id,
+          storageId: primaryScreenshot.storageId,
+          mimeType: primaryScreenshot.mimeType,
+          fileName: primaryScreenshot.fileName,
+          commitSha: primaryScreenshot.commitSha,
+          screenshotSetId,
+        });
+      } else if (args.status !== "completed") {
+        await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
+          id: taskRun._id,
+        });
+      }
+    } catch (error) {
+      // Log but don't fail - the screenshot set is already created and linked
+      console.error(
+        "[createScreenshotSet] Failed to update taskRun screenshot metadata:",
+        error
+      );
+    }
 
     return screenshotSetId;
   },
@@ -143,6 +173,14 @@ export const triggerGithubComment = internalAction({
 
     const { run: previewRun } = run;
 
+    // Skip GitHub comments for test preview runs
+    if (previewRun.stateReason === "Test preview run") {
+      console.log("[previewScreenshots] Skipping GitHub comment for test run", {
+        previewRunId: args.previewRunId,
+      });
+      return;
+    }
+
     if (!previewRun.screenshotSetId) {
       console.warn("[previewScreenshots] No screenshot set for run", {
         previewRunId: args.previewRunId,
@@ -171,8 +209,8 @@ export const triggerGithubComment = internalAction({
           teamId: previewRun.teamId,
         });
         const teamSlug = team?.slug ?? previewRun.teamId;
-        workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
-        devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
+        workspaceUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}`;
+        devServerUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}/run/${previewRun.taskRunId}/browser`;
 
         console.log("[previewScreenshots] Built workspace URLs", {
           previewRunId: args.previewRunId,
@@ -201,8 +239,6 @@ export const triggerGithubComment = internalAction({
         previewRunId: args.previewRunId,
         workspaceUrl,
         devServerUrl,
-        includePreviousRuns: true,
-        previewConfigId: previewRun.previewConfigId,
       });
 
       console.log("[previewScreenshots] GitHub comment updated successfully", {
@@ -226,8 +262,6 @@ export const triggerGithubComment = internalAction({
         previewRunId: args.previewRunId,
         workspaceUrl,
         devServerUrl,
-        includePreviousRuns: true,
-        previewConfigId: previewRun.previewConfigId,
       });
 
       console.log("[previewScreenshots] GitHub comment posted successfully", {
@@ -261,6 +295,16 @@ export const uploadAndComment = action({
           commitSha: v.string(),
           width: v.optional(v.number()),
           height: v.optional(v.number()),
+          description: v.optional(v.string()),
+        })
+      )
+    ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.string(),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
           description: v.optional(v.string()),
         })
       )
@@ -321,6 +365,18 @@ export const uploadAndComment = action({
       description: img.description,
     }));
 
+    const typedVideos: Array<{
+      storageId: Id<"_storage">;
+      mimeType: string;
+      fileName?: string;
+      description?: string;
+    }> = (args.videos ?? []).map((vid) => ({
+      storageId: vid.storageId as Id<"_storage">,
+      mimeType: vid.mimeType,
+      fileName: vid.fileName,
+      description: vid.description,
+    }));
+
     const screenshotSetId = await ctx.runMutation(
       internal.previewScreenshots.createScreenshotSet,
       {
@@ -330,6 +386,7 @@ export const uploadAndComment = action({
         error: args.error,
         hasUiChanges: args.hasUiChanges,
         images: typedImages,
+        videos: typedVideos,
       }
     );
 

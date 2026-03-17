@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import process from "node:process";
 
 const API_ROOT = "https://api.github.com";
-const DEFAULT_REPOS: RepoSlug[] = ["manaflow-ai/cmux", "stack-auth/stack-auth"];
+const DEFAULT_REPOS: RepoSlug[] = ["manaflow-ai/manaflow", "stack-auth/stack-auth"];
 const OUTPUT_DIR = resolve(process.cwd(), "data", "github");
 const OUTPUT_FILE = resolve(OUTPUT_DIR, "pr-ground-truth.json");
 const PER_PAGE = 100;

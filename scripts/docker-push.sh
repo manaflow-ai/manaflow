@@ -7,7 +7,7 @@ log() {
 }
 
 # Docker Hub repository
-REPO="lawrencecchen/cmux"
+REPO="manaflow/cmux"
 
 # Get version from argument or use 'latest'
 VERSION=${1:-latest}

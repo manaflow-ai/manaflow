@@ -1,0 +1,1482 @@
+import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
+import { Flame, PanelLeftClose, PanelLeft } from "lucide-react";
+import type { editor } from "monaco-editor";
+import {
+  memo,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import { useTheme } from "@/components/theme/use-theme";
+import { loaderInitPromise } from "@/lib/monaco-environment";
+import { isElectron } from "@/lib/electron";
+import { cn } from "@/lib/utils";
+import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+
+import { FileDiffHeaderWithViewed } from "../file-diff-header-with-viewed";
+import { kitties } from "../kitties";
+import type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
+import { DiffSidebarFilter } from "./diff-sidebar-filter";
+
+void loaderInitPromise;
+
+// ============================================================================
+// Types
+// ============================================================================
+
+type DiffEditorControls = {
+  updateCollapsedState: (collapsed: boolean) => void;
+  updateTargetMinHeight: (minHeight: number) => void;
+};
+
+type MonacoFileGroup = {
+  filePath: string;
+  oldPath?: string;
+  status: ReplaceDiffEntry["status"];
+  additions: number;
+  deletions: number;
+  oldContent: string;
+  newContent: string;
+  patch?: string;
+  isBinary: boolean;
+  contentOmitted: boolean;
+  language: string;
+  editorMetrics: EditorLayoutMetrics | null;
+};
+
+type CollapsedLayoutEstimate = {
+  visibleLineCount: number;
+  collapsedRegionCount: number;
+  hiddenLineCount: number;
+};
+
+type EditorLayoutMetrics = {
+  visibleLineCount: number;
+  limitedVisibleLineCount: number;
+  collapsedRegionCount: number;
+  editorMinHeight: number;
+  hiddenLineCount: number;
+};
+
+type DiffBlock =
+  | {
+      kind: "changed";
+      originalLength: number;
+      modifiedLength: number;
+    }
+  | {
+      kind: "unchanged";
+      originalLength: number;
+      modifiedLength: number;
+    };
+
+export type MonacoGitDiffViewerWithSidebarProps = GitDiffViewerProps & {
+  isHeatmapActive?: boolean;
+  onToggleHeatmap?: () => void;
+};
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const DEFAULT_MONACO_LINE_HEIGHT = 20;
+const MONACO_VERTICAL_PADDING = 0;
+const MIN_EDITOR_LINE_FALLBACK = 4;
+const HIDDEN_REGION_BASE_PLACEHOLDER_HEIGHT = 20;
+const HIDDEN_REGION_PER_LINE_HEIGHT = 0.6;
+const INTERSECTION_VISIBILITY_MARGIN_PX = 96;
+
+const HIDE_UNCHANGED_REGIONS_SETTINGS = {
+  revealLineCount: 2,
+  minimumLineCount: 6,
+  contextLineCount: 3,
+} as const;
+
+const DEFAULT_EDITOR_MIN_HEIGHT =
+  MIN_EDITOR_LINE_FALLBACK * DEFAULT_MONACO_LINE_HEIGHT;
+
+const newlinePattern = /\r?\n/;
+
+const LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  json: "json",
+  md: "markdown",
+  markdown: "markdown",
+  yml: "yaml",
+  yaml: "yaml",
+  py: "python",
+  rs: "rust",
+  go: "go",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  css: "css",
+  scss: "scss",
+  less: "less",
+  html: "html",
+  htm: "html",
+  sh: "shell",
+  bash: "shell",
+  zsh: "shell",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  cxx: "cpp",
+  hpp: "cpp",
+  m: "objective-c",
+  mm: "objective-c",
+  php: "php",
+  rb: "ruby",
+  sql: "sql",
+  toml: "toml",
+  ini: "ini",
+  conf: "ini",
+  xml: "xml",
+  vue: "vue",
+  svelte: "svelte",
+  dart: "dart",
+  scala: "scala",
+};
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+function debugGitDiffViewerLog(
+  message: string,
+  payload?: Record<string, unknown>
+) {
+  if (!isElectron && import.meta.env.PROD) {
+    return;
+  }
+  if (payload) {
+    console.info("[monaco-git-diff-viewer-with-sidebar]", message, payload);
+  } else {
+    console.info("[monaco-git-diff-viewer-with-sidebar]", message);
+  }
+}
+
+function splitContentIntoLines(content: string): string[] {
+  if (!content) {
+    return [""];
+  }
+
+  const parts = content.split(newlinePattern);
+  return parts.length > 0 ? parts : [""];
+}
+
+function computeDiffBlocks(
+  originalLines: readonly string[],
+  modifiedLines: readonly string[]
+): DiffBlock[] {
+  const originalLength = originalLines.length;
+  const modifiedLength = modifiedLines.length;
+
+  if (originalLength === 0 && modifiedLength === 0) {
+    return [];
+  }
+
+  const dp: Uint32Array[] = Array.from(
+    { length: originalLength + 1 },
+    () => new Uint32Array(modifiedLength + 1)
+  );
+
+  for (
+    let originalIndex = originalLength - 1;
+    originalIndex >= 0;
+    originalIndex -= 1
+  ) {
+    const currentRow = dp[originalIndex];
+    const nextRow = dp[originalIndex + 1];
+
+    for (
+      let modifiedIndex = modifiedLength - 1;
+      modifiedIndex >= 0;
+      modifiedIndex -= 1
+    ) {
+      if (originalLines[originalIndex] === modifiedLines[modifiedIndex]) {
+        currentRow![modifiedIndex] = nextRow![modifiedIndex + 1]! + 1;
+      } else {
+        currentRow![modifiedIndex] = Math.max(
+          nextRow![modifiedIndex]!,
+          currentRow![modifiedIndex + 1]!
+        );
+      }
+    }
+  }
+
+  type DiffSegmentType = "equal" | "insert" | "delete";
+
+  type DiffSegment = {
+    type: DiffSegmentType;
+    originalStart: number;
+    originalEnd: number;
+    modifiedStart: number;
+    modifiedEnd: number;
+  };
+
+  const segments: DiffSegment[] = [];
+  let currentSegment: DiffSegment | null = null;
+
+  const pushSegment = () => {
+    if (currentSegment) {
+      segments.push(currentSegment);
+      currentSegment = null;
+    }
+  };
+
+  let originalIndex = 0;
+  let modifiedIndex = 0;
+
+  while (originalIndex < originalLength || modifiedIndex < modifiedLength) {
+    const originalExhausted = originalIndex >= originalLength;
+    const modifiedExhausted = modifiedIndex >= modifiedLength;
+
+    if (
+      !originalExhausted &&
+      !modifiedExhausted &&
+      originalLines[originalIndex] === modifiedLines[modifiedIndex]
+    ) {
+      if (!currentSegment || currentSegment.type !== "equal") {
+        pushSegment();
+        currentSegment = {
+          type: "equal",
+          originalStart: originalIndex,
+          originalEnd: originalIndex,
+          modifiedStart: modifiedIndex,
+          modifiedEnd: modifiedIndex,
+        };
+      }
+
+      originalIndex += 1;
+      modifiedIndex += 1;
+      currentSegment.originalEnd = originalIndex;
+      currentSegment.modifiedEnd = modifiedIndex;
+      continue;
+    }
+
+    if (
+      modifiedExhausted ||
+      (!originalExhausted &&
+        dp[originalIndex + 1]![modifiedIndex]! >=
+          dp[originalIndex]![modifiedIndex + 1]!)
+    ) {
+      if (!currentSegment || currentSegment.type !== "delete") {
+        pushSegment();
+        currentSegment = {
+          type: "delete",
+          originalStart: originalIndex,
+          originalEnd: originalIndex,
+          modifiedStart: modifiedIndex,
+          modifiedEnd: modifiedIndex,
+        };
+      }
+
+      originalIndex += 1;
+      currentSegment.originalEnd = originalIndex;
+    } else {
+      if (!currentSegment || currentSegment.type !== "insert") {
+        pushSegment();
+        currentSegment = {
+          type: "insert",
+          originalStart: originalIndex,
+          originalEnd: originalIndex,
+          modifiedStart: modifiedIndex,
+          modifiedEnd: modifiedIndex,
+        };
+      }
+
+      modifiedIndex += 1;
+      currentSegment.modifiedEnd = modifiedIndex;
+    }
+  }
+
+  pushSegment();
+
+  const blocks: DiffBlock[] = [];
+  let pendingChange: Extract<DiffBlock, { kind: "changed" }> | null = null;
+
+  for (const segment of segments) {
+    const originalSpan = segment.originalEnd - segment.originalStart;
+    const modifiedSpan = segment.modifiedEnd - segment.modifiedStart;
+
+    if (segment.type === "equal") {
+      if (pendingChange) {
+        blocks.push(pendingChange);
+        pendingChange = null;
+      }
+
+      if (originalSpan > 0 || modifiedSpan > 0) {
+        blocks.push({
+          kind: "unchanged",
+          originalLength: originalSpan,
+          modifiedLength: modifiedSpan,
+        });
+      }
+
+      continue;
+    }
+
+    if (!pendingChange) {
+      pendingChange = {
+        kind: "changed",
+        originalLength: 0,
+        modifiedLength: 0,
+      };
+    }
+
+    pendingChange.originalLength += originalSpan;
+    pendingChange.modifiedLength += modifiedSpan;
+  }
+
+  if (pendingChange) {
+    blocks.push(pendingChange);
+  }
+
+  return blocks;
+}
+
+function estimateCollapsedLayout(
+  original: string,
+  modified: string
+): CollapsedLayoutEstimate {
+  const originalLines = splitContentIntoLines(original);
+  const modifiedLines = splitContentIntoLines(modified);
+  const blocks = computeDiffBlocks(originalLines, modifiedLines);
+
+  if (blocks.length === 0) {
+    return {
+      visibleLineCount: Math.max(
+        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount,
+        MIN_EDITOR_LINE_FALLBACK
+      ),
+      collapsedRegionCount: 0,
+      hiddenLineCount: 0,
+    };
+  }
+
+  const hasChange = blocks.some(
+    (block) =>
+      block.kind === "changed" &&
+      (block.originalLength > 0 || block.modifiedLength > 0)
+  );
+
+  if (!hasChange) {
+    const totalLines = Math.max(originalLines.length, modifiedLines.length);
+    const visibleLineCount = Math.min(
+      totalLines,
+      Math.max(
+        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount,
+        MIN_EDITOR_LINE_FALLBACK
+      )
+    );
+
+    return {
+      visibleLineCount,
+      collapsedRegionCount: 0,
+      hiddenLineCount: 0,
+    };
+  }
+
+  let visibleLineCount = 0;
+  let collapsedRegionCount = 0;
+  let hiddenLineCount = 0;
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index]!;
+
+    if (block.kind === "changed") {
+      visibleLineCount += Math.max(block.originalLength, block.modifiedLength);
+      continue;
+    }
+
+    const blockLength = Math.max(block.originalLength, block.modifiedLength);
+
+    if (blockLength === 0) {
+      continue;
+    }
+
+    const hasPreviousChange =
+      index > 0 && blocks[index - 1]?.kind === "changed";
+    const hasNextChange =
+      index < blocks.length - 1 && blocks[index + 1]?.kind === "changed";
+
+    let visibleBudget = 0;
+
+    if (hasPreviousChange) {
+      visibleBudget += HIDE_UNCHANGED_REGIONS_SETTINGS.contextLineCount;
+    }
+
+    if (hasNextChange) {
+      visibleBudget += HIDE_UNCHANGED_REGIONS_SETTINGS.contextLineCount;
+    }
+
+    if (!hasPreviousChange && !hasNextChange) {
+      visibleBudget = Math.max(
+        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount,
+        MIN_EDITOR_LINE_FALLBACK
+      );
+    } else {
+      visibleBudget = Math.max(
+        visibleBudget,
+        HIDE_UNCHANGED_REGIONS_SETTINGS.minimumLineCount
+      );
+    }
+
+    const displayedLines = Math.min(blockLength, visibleBudget);
+    visibleLineCount += displayedLines;
+
+    if (displayedLines < blockLength) {
+      collapsedRegionCount += 1;
+      hiddenLineCount += blockLength - displayedLines;
+    }
+  }
+
+  visibleLineCount = Math.max(visibleLineCount, MIN_EDITOR_LINE_FALLBACK);
+
+  return { visibleLineCount, collapsedRegionCount, hiddenLineCount };
+}
+
+function computeEditorLayoutMetrics(
+  original: string,
+  modified: string
+): EditorLayoutMetrics {
+  const { visibleLineCount, collapsedRegionCount, hiddenLineCount } =
+    estimateCollapsedLayout(original, modified);
+
+  const limitedVisibleLineCount = Math.min(
+    Math.max(visibleLineCount, MIN_EDITOR_LINE_FALLBACK),
+    120
+  );
+
+  const lineHeightPortion =
+    limitedVisibleLineCount * DEFAULT_MONACO_LINE_HEIGHT +
+    MONACO_VERTICAL_PADDING;
+
+  const placeholderPortion =
+    collapsedRegionCount * HIDDEN_REGION_BASE_PLACEHOLDER_HEIGHT +
+    hiddenLineCount * HIDDEN_REGION_PER_LINE_HEIGHT;
+
+  return {
+    visibleLineCount,
+    limitedVisibleLineCount,
+    collapsedRegionCount,
+    editorMinHeight: lineHeightPortion + placeholderPortion,
+    hiddenLineCount,
+  };
+}
+
+function guessMonacoLanguage(filePath: string): string {
+  const lastDot = filePath.lastIndexOf(".");
+  if (lastDot === -1 || lastDot === filePath.length - 1) {
+    return "plaintext";
+  }
+  const ext = filePath.slice(lastDot + 1).toLowerCase();
+  return LANGUAGE_BY_EXTENSION[ext] ?? "plaintext";
+}
+
+function createDiffEditorMount({
+  editorMinHeight,
+  getVisibilityTarget,
+  onReady,
+  onHeightSettled,
+}: {
+  editorMinHeight: number;
+  getVisibilityTarget?: () => Element | null;
+  onReady?: (args: {
+    diffEditor: editor.IStandaloneDiffEditor;
+    container: HTMLElement;
+    applyLayout: () => void;
+    controls: DiffEditorControls;
+  }) => void;
+  onHeightSettled?: (height: number) => void;
+}): DiffOnMount {
+  return (diffEditor, monacoInstance) => {
+    const originalEditor = diffEditor.getOriginalEditor();
+    const modifiedEditor = diffEditor.getModifiedEditor();
+    const container = diffEditor.getContainerDomNode() as HTMLElement | null;
+
+    if (!container) {
+      return;
+    }
+
+    // Explicitly enable word wrap on both sub-editors so long lines never
+    // overflow horizontally.  The top-level diffOptions.wordWrap doesn't
+    // always propagate reliably to both panes.
+    originalEditor.updateOptions({ wordWrap: "on" });
+    modifiedEditor.updateOptions({ wordWrap: "on" });
+
+    const disposables: Array<{ dispose: () => void }> = [];
+    const originalVisibility = container.style.visibility;
+    const originalTransform = container.style.transform;
+    let isContainerVisible = container.style.visibility !== "hidden";
+    let collapsedState = false;
+    let targetMinHeight = Math.max(editorMinHeight, DEFAULT_EDITOR_MIN_HEIGHT);
+    let resolvedContentHeight: number | null = null;
+
+    const hasResolvedHeight = () => resolvedContentHeight !== null;
+
+    const getEffectiveMinHeight = () => {
+      if (resolvedContentHeight !== null) {
+        return resolvedContentHeight;
+      }
+
+      return Math.max(targetMinHeight, DEFAULT_EDITOR_MIN_HEIGHT);
+    };
+
+    const applyTargetMinHeight = () => {
+      if (collapsedState) {
+        return;
+      }
+
+      if (hasResolvedHeight()) {
+        container.style.minHeight = "";
+      } else {
+        container.style.minHeight = `${getEffectiveMinHeight()}px`;
+      }
+      container.style.height = "";
+      container.style.overflow = "";
+    };
+
+    const updateResolvedContentHeight = (nextHeight: number) => {
+      const normalizedHeight = Math.max(nextHeight, DEFAULT_MONACO_LINE_HEIGHT);
+
+      if (resolvedContentHeight === normalizedHeight) {
+        return;
+      }
+
+      resolvedContentHeight = normalizedHeight;
+      applyTargetMinHeight();
+      onHeightSettled?.(normalizedHeight);
+    };
+
+    const parentElement = container.parentElement;
+    let layoutAnchor: HTMLElement | null = null;
+
+    if (parentElement) {
+      layoutAnchor = document.createElement("div");
+      layoutAnchor.dataset.monacoDiffLayoutAnchor = "true";
+      layoutAnchor.style.position = "absolute";
+      layoutAnchor.style.top = "0";
+      layoutAnchor.style.left = "0";
+      layoutAnchor.style.right = "0";
+      layoutAnchor.style.height = "1px";
+      layoutAnchor.style.pointerEvents = "none";
+      layoutAnchor.style.visibility = "hidden";
+
+      parentElement.insertBefore(layoutAnchor, container);
+
+      disposables.push({
+        dispose: () => {
+          if (layoutAnchor && layoutAnchor.parentElement === parentElement) {
+            parentElement.removeChild(layoutAnchor);
+          }
+        },
+      });
+    }
+
+    const computeHeight = (targetEditor: editor.IStandaloneCodeEditor) => {
+      const contentHeight = targetEditor.getContentHeight();
+      if (contentHeight > 0) {
+        return { height: contentHeight, measured: true };
+      }
+
+      const lineHeight = targetEditor.getOption(
+        monacoInstance.editor.EditorOption.lineHeight
+      );
+      const model = targetEditor.getModel();
+      const lineCount = model ? Math.max(1, model.getLineCount()) : 1;
+
+      return { height: lineCount * lineHeight, measured: false };
+    };
+
+    applyTargetMinHeight();
+
+    const applyLayout = () => {
+      const originalHeightInfo = computeHeight(originalEditor);
+      const modifiedHeightInfo = computeHeight(modifiedEditor);
+      const height = Math.max(
+        originalHeightInfo.height,
+        modifiedHeightInfo.height
+      );
+      const heightMatchesOriginal =
+        originalHeightInfo.height >= modifiedHeightInfo.height &&
+        originalHeightInfo.measured;
+      const heightMatchesModified =
+        modifiedHeightInfo.height >= originalHeightInfo.height &&
+        modifiedHeightInfo.measured;
+
+      if ((heightMatchesOriginal || heightMatchesModified) && height > 0) {
+        updateResolvedContentHeight(height);
+      }
+
+      const modifiedInfo = modifiedEditor.getLayoutInfo();
+      const originalInfo = originalEditor.getLayoutInfo();
+      const containerWidth =
+        container.clientWidth ||
+        container.getBoundingClientRect().width ||
+        modifiedInfo.width ||
+        originalInfo.width;
+
+      const enforcedHeight = Math.max(getEffectiveMinHeight(), height);
+
+      if (containerWidth > 0 && enforcedHeight > 0) {
+        diffEditor.layout({ width: containerWidth, height: enforcedHeight });
+      }
+
+      scheduleVisibilityEvaluation();
+    };
+
+    const showContainer = () => {
+      if (isContainerVisible) {
+        return;
+      }
+
+      isContainerVisible = true;
+      container.style.visibility = originalVisibility || "visible";
+      container.style.transform = originalTransform || "";
+    };
+
+    const hideContainer = () => {
+      if (!isContainerVisible) {
+        return;
+      }
+
+      isContainerVisible = false;
+      container.style.visibility = "hidden";
+      container.style.transform = "translateX(100000px)";
+    };
+
+    const updateCollapsedState = (collapsed: boolean) => {
+      collapsedState = collapsed;
+      if (collapsed) {
+        container.style.minHeight = "0px";
+        container.style.height = "0px";
+        container.style.overflow = "hidden";
+      } else {
+        applyTargetMinHeight();
+        applyLayout();
+      }
+    };
+
+    const updateTargetMinHeight = (nextTarget: number) => {
+      targetMinHeight = Math.max(nextTarget, DEFAULT_EDITOR_MIN_HEIGHT);
+      resolvedContentHeight = null;
+      if (!collapsedState) {
+        applyTargetMinHeight();
+        applyLayout();
+      }
+    };
+
+    const observer = new ResizeObserver(() => {
+      applyLayout();
+    });
+
+    if (observer) {
+      observer.observe(container);
+      disposables.push({ dispose: () => observer.disconnect() });
+    }
+
+    const intersectionAnchor = layoutAnchor ?? container;
+    const resolvedVisibilityTarget = getVisibilityTarget?.() ?? null;
+    const intersectionTarget =
+      resolvedVisibilityTarget ??
+      intersectionAnchor.closest("article") ??
+      intersectionAnchor;
+
+    let visibilityRafHandle: number | null = null;
+
+    const evaluateVisibility = () => {
+      if (!intersectionTarget) {
+        return;
+      }
+
+      const viewportHeight =
+        typeof window === "undefined"
+          ? 0
+          : window.innerHeight || document.documentElement.clientHeight || 0;
+
+      if (viewportHeight === 0) {
+        return;
+      }
+
+      const { top, bottom } = intersectionTarget.getBoundingClientRect();
+      const shouldHideEvaluated =
+        bottom < -INTERSECTION_VISIBILITY_MARGIN_PX ||
+        top > viewportHeight + INTERSECTION_VISIBILITY_MARGIN_PX;
+
+      if (shouldHideEvaluated) {
+        hideContainer();
+      } else {
+        showContainer();
+      }
+    };
+
+    const scheduleVisibilityEvaluation = () => {
+      if (typeof window === "undefined") {
+        evaluateVisibility();
+        return;
+      }
+
+      if (visibilityRafHandle !== null) {
+        return;
+      }
+
+      visibilityRafHandle = window.requestAnimationFrame(() => {
+        visibilityRafHandle = null;
+        evaluateVisibility();
+      });
+    };
+
+    const intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        const viewportHeight =
+          typeof window === "undefined"
+            ? 0
+            : window.innerHeight || document.documentElement.clientHeight || 0;
+
+        for (const entry of entries) {
+          if (entry.target !== intersectionTarget) {
+            continue;
+          }
+
+          const { top, bottom } = entry.boundingClientRect;
+          const isAboveViewport = bottom <= 0;
+          const isBelowViewport = top >= viewportHeight;
+          const beyondMargin =
+            bottom < -INTERSECTION_VISIBILITY_MARGIN_PX ||
+            top > viewportHeight + INTERSECTION_VISIBILITY_MARGIN_PX;
+          const shouldHide =
+            viewportHeight > 0 &&
+            (isAboveViewport || isBelowViewport) &&
+            beyondMargin;
+
+          if (shouldHide) {
+            hideContainer();
+          } else {
+            showContainer();
+
+            if (entry.isIntersecting || entry.intersectionRatio > 0) {
+              applyLayout();
+            }
+          }
+
+          scheduleVisibilityEvaluation();
+        }
+      },
+      {
+        threshold: 0,
+        rootMargin: `${INTERSECTION_VISIBILITY_MARGIN_PX}px 0px ${INTERSECTION_VISIBILITY_MARGIN_PX}px 0px`,
+      }
+    );
+
+    if (intersectionObserver) {
+      intersectionObserver.observe(intersectionTarget);
+      disposables.push({
+        dispose: () => intersectionObserver.unobserve(intersectionTarget),
+      });
+      disposables.push({ dispose: () => intersectionObserver.disconnect() });
+    }
+
+    const onScroll = () => {
+      scheduleVisibilityEvaluation();
+    };
+    const onResize = () => {
+      scheduleVisibilityEvaluation();
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+
+    disposables.push({
+      dispose: () => {
+        window.removeEventListener("scroll", onScroll);
+        window.removeEventListener("resize", onResize);
+
+        if (visibilityRafHandle !== null) {
+          window.cancelAnimationFrame(visibilityRafHandle);
+          visibilityRafHandle = null;
+        }
+      },
+    });
+
+    showContainer();
+    scheduleVisibilityEvaluation();
+    disposables.push({
+      dispose: () => {
+        isContainerVisible = true;
+        container.style.visibility = originalVisibility || "visible";
+        container.style.transform = originalTransform || "";
+      },
+    });
+
+    const onOriginalContentChange = originalEditor.onDidChangeModelContent(
+      () => {
+        applyLayout();
+      }
+    );
+
+    const onModifiedContentChange = modifiedEditor.onDidChangeModelContent(
+      () => {
+        applyLayout();
+      }
+    );
+
+    const onOriginalConfigChange = originalEditor.onDidChangeConfiguration(
+      (event) => {
+        if (event.hasChanged(monacoInstance.editor.EditorOption.lineHeight)) {
+          applyLayout();
+        }
+      }
+    );
+
+    const onModifiedConfigChange = modifiedEditor.onDidChangeConfiguration(
+      (event) => {
+        if (event.hasChanged(monacoInstance.editor.EditorOption.lineHeight)) {
+          applyLayout();
+        }
+      }
+    );
+
+    const onOriginalSizeChange = originalEditor.onDidContentSizeChange(() => {
+      applyLayout();
+    });
+
+    const onModifiedSizeChange = modifiedEditor.onDidContentSizeChange(() => {
+      applyLayout();
+    });
+
+    const onOriginalHiddenAreasChange = originalEditor.onDidChangeHiddenAreas(
+      () => {
+        applyLayout();
+      }
+    );
+
+    const onModifiedHiddenAreasChange = modifiedEditor.onDidChangeHiddenAreas(
+      () => {
+        applyLayout();
+      }
+    );
+
+    const onDidUpdateDiff = diffEditor.onDidUpdateDiff(() => {
+      applyLayout();
+    });
+
+    disposables.push(
+      onOriginalContentChange,
+      onModifiedContentChange,
+      onOriginalConfigChange,
+      onModifiedConfigChange,
+      onOriginalSizeChange,
+      onModifiedSizeChange,
+      onOriginalHiddenAreasChange,
+      onModifiedHiddenAreasChange,
+      onDidUpdateDiff
+    );
+
+    const disposeListener = diffEditor.onDidDispose(() => {
+      disposables.forEach((disposable) => {
+        try {
+          disposable.dispose();
+        } catch (error) {
+          console.error("Failed to dispose Monaco listener", error);
+        }
+      });
+    });
+
+    disposables.push(disposeListener);
+
+    applyLayout();
+
+    onReady?.({
+      diffEditor,
+      container,
+      applyLayout,
+      controls: {
+        updateCollapsedState,
+        updateTargetMinHeight,
+      },
+    });
+  };
+}
+
+// ============================================================================
+// Sub-components
+// ============================================================================
+
+type FileDiffRowClassNames = GitDiffViewerProps["classNames"] extends {
+  fileDiffRow?: infer T;
+}
+  ? T
+  : { button?: string; container?: string };
+
+interface MonacoFileDiffRowProps {
+  file: MonacoFileGroup;
+  isExpanded: boolean;
+  isViewed: boolean;
+  onToggle: () => void;
+  onToggleViewed: () => void;
+  editorTheme: string;
+  diffOptions: editor.IDiffEditorConstructionOptions;
+  classNames?: FileDiffRowClassNames;
+  anchorId?: string;
+}
+
+function MonacoFileDiffRow({
+  file,
+  isExpanded,
+  isViewed,
+  onToggle,
+  onToggleViewed,
+  editorTheme,
+  diffOptions,
+  classNames,
+  anchorId,
+}: MonacoFileDiffRowProps) {
+  const canRenderEditor =
+    !file.isBinary &&
+    !file.contentOmitted &&
+    file.status !== "deleted" &&
+    file.status !== "renamed";
+
+  const editorMinHeight = Math.max(
+    file.editorMetrics?.editorMinHeight ?? DEFAULT_EDITOR_MIN_HEIGHT,
+    DEFAULT_EDITOR_MIN_HEIGHT
+  );
+
+  const diffControlsRef = useRef<DiffEditorControls | null>(null);
+  const isExpandedRef = useRef(isExpanded);
+  const rowContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isHeightSettled, setIsHeightSettled] = useState(false);
+
+  useEffect(() => {
+    setIsHeightSettled(false);
+  }, [file.filePath, editorMinHeight]);
+
+  useEffect(() => {
+    isExpandedRef.current = isExpanded;
+    diffControlsRef.current?.updateCollapsedState(!isExpanded);
+  }, [isExpanded]);
+
+  useEffect(() => {
+    diffControlsRef.current?.updateTargetMinHeight(editorMinHeight);
+  }, [editorMinHeight]);
+
+  const handleHeightSettled = useCallback(() => {
+    setIsHeightSettled(true);
+  }, []);
+
+  const onEditorMount = useMemo(
+    () =>
+      createDiffEditorMount({
+        editorMinHeight,
+        getVisibilityTarget: () => rowContainerRef.current,
+        onReady: ({ controls }) => {
+          diffControlsRef.current = controls;
+          controls.updateTargetMinHeight(editorMinHeight);
+          controls.updateCollapsedState(!isExpandedRef.current);
+        },
+        onHeightSettled: handleHeightSettled,
+      }),
+    [editorMinHeight, handleHeightSettled]
+  );
+
+  return (
+    <div
+      id={anchorId}
+      ref={rowContainerRef}
+      className={cn(
+        "bg-white dark:bg-neutral-900",
+        classNames?.container
+      )}
+    >
+      <FileDiffHeaderWithViewed
+        filePath={file.filePath}
+        oldPath={file.oldPath}
+        status={file.status}
+        additions={file.additions}
+        deletions={file.deletions}
+        isExpanded={isExpanded}
+        isViewed={isViewed}
+        onToggle={onToggle}
+        onToggleViewed={onToggleViewed}
+        className={classNames?.button}
+      />
+
+      <div
+        className="overflow-hidden flex flex-col"
+        style={
+          isExpanded
+            ? isHeightSettled
+              ? undefined
+              : { minHeight: editorMinHeight }
+            : { minHeight: 0, height: 0 }
+        }
+        aria-hidden={!isExpanded}
+      >
+        {file.status === "renamed" ? (
+          <div className="grow space-y-2 bg-neutral-50 px-3 py-6 text-center text-xs text-neutral-500 dark:bg-neutral-900/50 dark:text-neutral-400 grid place-content-center">
+            <p className="select-none">File was renamed.</p>
+            {file.oldPath ? (
+              <p className="select-none font-mono text-[11px] text-neutral-600 dark:text-neutral-300">
+                {file.oldPath} → {file.filePath}
+              </p>
+            ) : null}
+          </div>
+        ) : file.isBinary ? (
+          <div className="grow bg-neutral-50 px-3 py-6 text-center text-xs text-neutral-500 dark:bg-neutral-900/50 dark:text-neutral-400 grid place-content-center">
+            Binary file not shown
+          </div>
+        ) : file.status === "deleted" ? (
+          <div className="grow bg-neutral-50 px-3 py-6 text-center text-xs text-neutral-500 dark:bg-neutral-900/50 dark:text-neutral-400 grid place-content-center">
+            File was deleted
+          </div>
+        ) : file.contentOmitted ? (
+          <div className="grow bg-neutral-50 px-3 py-6 text-center text-xs text-neutral-500 dark:bg-neutral-900/50 dark:text-neutral-400 grid place-content-center">
+            Diff content omitted due to size
+          </div>
+        ) : canRenderEditor ? (
+          <div
+            className="relative"
+            style={isHeightSettled ? undefined : { minHeight: editorMinHeight }}
+          >
+            <DiffEditor
+              language={file.language}
+              original={file.oldContent}
+              modified={file.newContent}
+              theme={editorTheme}
+              options={diffOptions}
+              onMount={onEditorMount}
+              keepCurrentModifiedModel={true}
+              keepCurrentOriginalModel={true}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const MemoMonacoFileDiffRow = memo(MonacoFileDiffRow, (prev, next) => {
+  const a = prev.file;
+  const b = next.file;
+  return (
+    prev.isExpanded === next.isExpanded &&
+    prev.isViewed === next.isViewed &&
+    prev.editorTheme === next.editorTheme &&
+    prev.anchorId === next.anchorId &&
+    a.filePath === b.filePath &&
+    a.oldPath === b.oldPath &&
+    a.status === b.status &&
+    a.additions === b.additions &&
+    a.deletions === b.deletions &&
+    a.isBinary === b.isBinary &&
+    a.contentOmitted === b.contentOmitted &&
+    a.language === b.language &&
+    a.oldContent === b.oldContent &&
+    a.newContent === b.newContent
+  );
+});
+
+// ============================================================================
+// Main Component
+// ============================================================================
+
+export function MonacoGitDiffViewerWithSidebar({
+  diffs,
+  isLoading,
+  onControlsChange,
+  classNames,
+  onFileToggle,
+  isHeatmapActive,
+  onToggleHeatmap,
+}: MonacoGitDiffViewerWithSidebarProps) {
+  const { theme } = useTheme();
+
+  const kitty = useMemo(() => {
+    return kitties[Math.floor(Math.random() * kitties.length)];
+  }, []);
+
+  // Sidebar collapsed state
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // All files expanded by default
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
+    () => new Set(diffs.map((diff) => diff.filePath))
+  );
+
+  // Viewed files state
+  const [viewedFiles, setViewedFiles] = useState<Set<string>>(() => new Set());
+
+  // Active path for sidebar navigation
+  const [activePath, setActivePath] = useState<string>(() => {
+    return diffs[0]?.filePath ?? "";
+  });
+
+  // Sync expanded files when diffs change (e.g., after loading)
+  useEffect(() => {
+    if (diffs.length > 0) {
+      setExpandedFiles((prev) => {
+        const newSet = new Set(prev);
+        for (const diff of diffs) {
+          // Add any new files to expanded set
+          if (!prev.has(diff.filePath)) {
+            newSet.add(diff.filePath);
+          }
+        }
+        return newSet;
+      });
+    }
+  }, [diffs]);
+
+  // Keyboard shortcut: F to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input/textarea
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setIsSidebarCollapsed((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const fileGroups: MonacoFileGroup[] = useMemo(
+    () =>
+      diffs.map((diff) => {
+        const oldContent = diff.oldContent ?? "";
+        const newContent = diff.newContent ?? "";
+        const shouldMeasure =
+          !diff.isBinary &&
+          !diff.contentOmitted &&
+          diff.status !== "deleted" &&
+          diff.status !== "renamed";
+
+        const editorMetrics = shouldMeasure
+          ? computeEditorLayoutMetrics(oldContent, newContent)
+          : null;
+
+        return {
+          filePath: diff.filePath,
+          oldPath: diff.oldPath,
+          status: diff.status,
+          additions: diff.additions,
+          deletions: diff.deletions,
+          oldContent,
+          newContent,
+          patch: diff.patch,
+          isBinary: diff.isBinary,
+          contentOmitted: diff.contentOmitted ?? false,
+          language: guessMonacoLanguage(diff.filePath),
+          editorMetrics,
+        };
+      }),
+    [diffs]
+  );
+
+  const expandAll = useCallback(() => {
+    debugGitDiffViewerLog("expandAll invoked", {
+      fileCount: fileGroups.length,
+    });
+    setExpandedFiles(new Set(fileGroups.map((f) => f.filePath)));
+  }, [fileGroups]);
+
+  const collapseAll = useCallback(() => {
+    debugGitDiffViewerLog("collapseAll invoked", {
+      fileCount: fileGroups.length,
+    });
+    setExpandedFiles(new Set());
+  }, [fileGroups]);
+
+  const toggleFile = useCallback(
+    (filePath: string) => {
+      setExpandedFiles((prev) => {
+        const next = new Set(prev);
+        const wasExpanded = next.has(filePath);
+        if (wasExpanded) {
+          next.delete(filePath);
+        } else {
+          next.add(filePath);
+        }
+        try {
+          onFileToggle?.(filePath, !wasExpanded);
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    },
+    [onFileToggle]
+  );
+
+  const handleToggleViewed = useCallback((filePath: string) => {
+    setViewedFiles((prev) => {
+      const next = new Set(prev);
+      const wasViewed = next.has(filePath);
+      if (wasViewed) {
+        next.delete(filePath);
+        // When un-viewing, expand the file
+        setExpandedFiles((expanded) => {
+          const updated = new Set(expanded);
+          updated.add(filePath);
+          return updated;
+        });
+      } else {
+        next.add(filePath);
+        // When marking as viewed, collapse the file
+        setExpandedFiles((expanded) => {
+          const updated = new Set(expanded);
+          updated.delete(filePath);
+          return updated;
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectFile = useCallback((filePath: string) => {
+    setActivePath(filePath);
+
+    // Scroll to the file
+    if (typeof window !== "undefined") {
+      const element = document.getElementById(filePath);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  }, []);
+
+  const totalAdditions = diffs.reduce((sum, diff) => sum + diff.additions, 0);
+  const totalDeletions = diffs.reduce((sum, diff) => sum + diff.deletions, 0);
+
+  const controlsHandlerRef = useRef<
+    | ((args: {
+        expandAll: () => void;
+        collapseAll: () => void;
+        totalAdditions: number;
+        totalDeletions: number;
+      }) => void)
+    | null
+  >(null);
+
+  useEffect(() => {
+    controlsHandlerRef.current = onControlsChange ?? null;
+  }, [onControlsChange]);
+
+  useEffect(() => {
+    controlsHandlerRef.current?.({
+      expandAll,
+      collapseAll,
+      totalAdditions,
+      totalDeletions,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalAdditions, totalDeletions, diffs.length]);
+
+  const editorTheme = theme === "dark" ? "cmux-dark" : "cmux-light";
+
+  const diffOptions = useMemo<editor.IDiffEditorConstructionOptions>(
+    () => ({
+      renderSideBySide: true,
+      enableSplitViewResizing: true,
+      automaticLayout: false,
+      readOnly: true,
+      originalEditable: false,
+      lineHeight: DEFAULT_MONACO_LINE_HEIGHT,
+      minimap: { enabled: false },
+      renderOverviewRuler: false,
+      wordWrap: "on",
+      scrollBeyondLastLine: false,
+      scrollbar: {
+        vertical: "hidden",
+        horizontal: "hidden",
+        handleMouseWheel: false,
+        alwaysConsumeMouseWheel: false,
+      },
+      hideUnchangedRegions: {
+        enabled: true,
+        ...HIDE_UNCHANGED_REGIONS_SETTINGS,
+      },
+    }),
+    []
+  );
+
+  use(loaderInitPromise);
+
+  // Loading state - show skeleton
+  if (isLoading) {
+    return (
+      <div className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
+        {/* Header bar skeleton */}
+        <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-neutral-200/80 dark:border-neutral-800/70">
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+            <div className="w-10 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+            <div className="w-6 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+          </div>
+        </div>
+
+        {/* Content area */}
+        <div className="flex flex-1 min-h-0">
+          {/* Sidebar skeleton */}
+          <div className="w-[280px] h-full border-r border-neutral-200/80 dark:border-neutral-800/70">
+            <div className="p-2">
+              <div className="h-8 bg-neutral-100 dark:bg-neutral-800 rounded-md animate-pulse" />
+            </div>
+            <div className="space-y-0.5 px-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-2 px-2 py-1">
+                  <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                  <div className="h-4 bg-neutral-100 dark:bg-neutral-800 rounded flex-1 animate-pulse" />
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Content skeleton */}
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-col">
+              {[1, 2].map((i) => (
+                <div key={i} className="border-b border-neutral-200/80 dark:border-neutral-800/70">
+                  <div className="flex items-center gap-2 px-4 py-3">
+                    <div className="w-4 h-4 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                    <div className="h-4 w-48 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                    <div className="ml-auto flex gap-2">
+                      <div className="h-4 w-8 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                      <div className="h-4 w-8 bg-neutral-100 dark:bg-neutral-800 rounded animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="h-32 bg-neutral-50 dark:bg-neutral-900/50 animate-pulse" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No diff detected - show header with empty state message
+  if (diffs.length === 0) {
+    return (
+      <div className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
+        {/* Header row - matching Description/Previews spacing */}
+        <div className="px-2 py-1.5 flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 text-[13px] font-medium text-neutral-600 dark:text-neutral-400">
+            <PanelLeft className="w-3.5 h-3.5" />
+            <span>Files</span>
+          </div>
+        </div>
+        <div className="grow flex flex-col items-center justify-center px-3 pb-3">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 py-1">
+            No diff detected
+          </p>
+          <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+            {kitty}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  // Has diffs - show full UI with sidebar
+  return (
+    <div className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
+      {/* Header bar */}
+      <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-neutral-200/80 dark:border-neutral-800/70">
+        <button
+          type="button"
+          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[13px] font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+          title={isSidebarCollapsed ? "Show files (F)" : "Hide files (F)"}
+        >
+          {isSidebarCollapsed ? (
+            <PanelLeft className="w-3.5 h-3.5" />
+          ) : (
+            <PanelLeftClose className="w-3.5 h-3.5" />
+          )}
+          <span>Files</span>
+        </button>
+        <div className="flex items-center gap-2 text-[11px] font-medium">
+          <span className="text-green-600 dark:text-green-400">+{totalAdditions}</span>
+          <span className="text-red-600 dark:text-red-400">−{totalDeletions}</span>
+        </div>
+        {onToggleHeatmap && (
+          <button
+            type="button"
+            onClick={onToggleHeatmap}
+            className="flex items-center gap-1.5 text-[11px] font-medium ml-auto text-neutral-500 dark:text-neutral-400"
+            title={isHeatmapActive ? "Switch to standard diff" : "Switch to heatmap diff"}
+          >
+            <Flame className="w-3 h-3" />
+            <span>Diff Heatmap</span>
+          </button>
+        )}
+      </div>
+
+      {/* Content area */}
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar */}
+        {!isSidebarCollapsed && (
+          <div className="flex-shrink-0 self-stretch border-r border-neutral-200/80 dark:border-neutral-800/70">
+            <DiffSidebarFilter
+              diffs={diffs}
+              viewedFiles={viewedFiles}
+              activePath={activePath}
+              onSelectFile={handleSelectFile}
+              onToggleViewed={handleToggleViewed}
+              className="sticky top-[var(--cmux-diff-header-offset,0px)] h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)]"
+            />
+          </div>
+        )}
+
+        {/* Main content */}
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-col">
+            {fileGroups.map((file) => (
+              <MemoMonacoFileDiffRow
+                key={`monaco:${file.filePath}`}
+                file={file}
+                isExpanded={expandedFiles.has(file.filePath)}
+                isViewed={viewedFiles.has(file.filePath)}
+                onToggle={() => toggleFile(file.filePath)}
+                onToggleViewed={() => handleToggleViewed(file.filePath)}
+                editorTheme={editorTheme}
+                diffOptions={diffOptions}
+                classNames={classNames?.fileDiffRow}
+                anchorId={file.filePath}
+              />
+            ))}
+            <div className="px-3 py-6 text-center">
+              <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+                You've reached the end of the diff!
+              </span>
+              <div className="grid place-content-center">
+                <pre className="mt-2 pb-12 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                  {kitty}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

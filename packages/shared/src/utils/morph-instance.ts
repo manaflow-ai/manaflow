@@ -4,6 +4,7 @@ const PROXY_DOMAINS = [
   "cmux.app",
   "cmux.sh",
   "cmux.dev",
+  "manaflow.com",
   "cmux.local",
   "cmux.localhost",
   "autobuild.app",
@@ -79,8 +80,9 @@ function parseCmuxProxyHost(hostname: string): MorphInstanceInfo | null {
       continue;
     }
 
-    if (subdomain.startsWith("cmux-")) {
-      const remainder = subdomain.slice("cmux-".length);
+    if (subdomain.startsWith("manaflow-") || subdomain.startsWith("cmux-")) {
+      const prefix = subdomain.startsWith("manaflow-") ? "manaflow-" : "cmux-";
+      const remainder = subdomain.slice(prefix.length);
       const segments = remainder.split("-").filter((segment) => segment.length > 0);
       if (segments.length < 2) {
         return null;

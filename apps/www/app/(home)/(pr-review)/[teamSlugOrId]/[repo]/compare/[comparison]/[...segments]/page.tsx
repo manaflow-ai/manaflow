@@ -228,7 +228,9 @@ function ComparisonHeader({
   headRef: string;
 }) {
   try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- use() in try/catch is valid for RSC error handling
     const comparison = use(promise);
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     const files = use(filesPromise);
     const totals = summarizeFiles(files);
     return (
@@ -384,7 +386,9 @@ function ComparisonDiffSection({
   comparisonDetails: ComparisonJobDetails;
 }) {
   try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- use() in try/catch is valid for RSC error handling
     const files = use(filesPromise);
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     const comparison = use(comparisonPromise);
     const repoFullName = `${githubOwner}/${repo}`;
     const commits = comparison.commits ?? [];

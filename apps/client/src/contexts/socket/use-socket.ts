@@ -46,8 +46,8 @@ function createSocketSuspender(socket: CmuxSocket): Suspender {
     resolve = res;
     // We'll only use the local 'rej' when timing out
     // Attach listeners once
-    socket.on("connect", onConnect as never);
-    socket.on("connect_error", onConnectError as never);
+    socket.on("connect", onConnect);
+    socket.on("connect_error", onConnectError);
     // Guard against hanging forever
     timeoutId = setTimeout(() => {
       if (settled) return;
@@ -65,8 +65,8 @@ function createSocketSuspender(socket: CmuxSocket): Suspender {
       clearTimeout(timeoutId);
       timeoutId = undefined;
     }
-    socket.off("connect", onConnect as never);
-    socket.off("connect_error", onConnectError as never);
+    socket.off("connect", onConnect);
+    socket.off("connect_error", onConnectError);
   };
 
   return { promise, cleanup };

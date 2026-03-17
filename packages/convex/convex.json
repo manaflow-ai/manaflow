@@ -5,7 +5,10 @@
       "ssh2",
       "node-ssh",
       "cpu-features",
-      "@octokit/request"
+      "@octokit/request",
+      "@cmux/e2b-client",
+      "e2b",
+      "modal"
     ],
     "nodeVersion": "22"
   }

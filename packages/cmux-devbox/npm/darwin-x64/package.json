@@ -1,0 +1,16 @@
+{
+  "name": "cmux-darwin-x64",
+  "version": "0.3.6",
+  "description": "cmux CLI binary for macOS x64 (Intel)",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manaflow-ai/manaflow.git",
+    "directory": "packages/cmux-devbox"
+  },
+  "license": "MIT",
+  "author": "Manaflow",
+  "files": ["bin"],
+  "preferUnplugged": true
+}

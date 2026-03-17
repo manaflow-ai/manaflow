@@ -7,6 +7,9 @@
 
 mod cli;
 
+// Re-export terminal emulation library
+use cmux_terminal::{DaFilter, VirtualTerminal};
+
 use std::{
     collections::HashMap,
     env,
@@ -19,7 +22,7 @@ use anyhow::{Context, Result};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Path, State, WebSocketUpgrade,
+        Path, Query, State, WebSocketUpgrade,
     },
     http::StatusCode,
     response::{Html, IntoResponse, Json},
@@ -182,6 +185,7 @@ impl IntoResponse for ServerError {
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct CreateSessionRequest {
     #[serde(default = "default_shell")]
     shell: String,
@@ -210,6 +214,115 @@ fn default_cols() -> u16 {
 }
 fn default_rows() -> u16 {
     24
+}
+
+// =============================================================================
+// Security: Shell and CWD Validation
+// =============================================================================
+
+/// Allowed shells for PTY sessions (whitelist to prevent command injection)
+const ALLOWED_SHELLS: &[&str] = &[
+    "/bin/sh",
+    "/bin/bash",
+    "/bin/zsh",
+    "/bin/fish",
+    "/bin/dash",
+    "/bin/ash",
+    "/usr/bin/sh",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/bin/fish",
+];
+
+/// Mapping from common shell names to their allowed absolute paths
+/// This allows clients to pass bare shell names like "bash" or "zsh"
+const SHELL_NAME_MAPPINGS: &[(&str, &str)] = &[
+    ("sh", "/bin/sh"),
+    ("bash", "/bin/bash"),
+    ("zsh", "/bin/zsh"),
+    ("fish", "/bin/fish"),
+    ("dash", "/bin/dash"),
+    ("ash", "/bin/ash"),
+];
+
+/// Allowed base directories for cwd (prevent path traversal)
+/// Note: Both with and without trailing slashes are checked
+const ALLOWED_CWD_PREFIXES: &[&str] = &[
+    "/home",
+    "/root",
+    "/tmp",
+    "/var/tmp",
+    "/workspace",
+    "/workspaces",
+    "/Users", // macOS home directories
+];
+
+/// Validate the shell path against whitelist
+fn validate_shell(shell: &str) -> Result<&'static str, &'static str> {
+    // First, check if the input is already an allowed absolute path
+    if ALLOWED_SHELLS.contains(&shell) {
+        // Return the matching static str from the whitelist
+        return Ok(ALLOWED_SHELLS.iter().find(|&&s| s == shell).unwrap());
+    }
+
+    // If not an absolute path, try to map common shell names to their paths
+    // This supports inputs like "bash", "zsh", "sh" without full paths
+    let shell_name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(shell);
+
+    for (name, path) in SHELL_NAME_MAPPINGS {
+        if shell_name == *name {
+            return Ok(path);
+        }
+    }
+
+    warn!(
+        "[security] Rejected shell: {} (not in whitelist or known mappings)",
+        shell
+    );
+    Err("Shell not in allowed list")
+}
+
+/// Validate and canonicalize the cwd path
+fn validate_cwd(cwd: &str) -> Result<String, &'static str> {
+    use std::path::Path;
+
+    let path = Path::new(cwd);
+
+    // Check for path traversal attempts in the raw input
+    let cwd_normalized = cwd.replace("\\", "/");
+    if cwd_normalized.contains("..") {
+        warn!("[security] Path traversal attempt in cwd: {}", cwd);
+        return Err("Path traversal not allowed");
+    }
+
+    // Path must be absolute
+    if !path.is_absolute() {
+        warn!("[security] Relative cwd path rejected: {}", cwd);
+        return Err("cwd must be an absolute path");
+    }
+
+    // Check against allowed prefixes
+    // This handles both exact matches (e.g., "/root") and paths with children (e.g., "/root/workspace")
+    let path_str = path.to_str().ok_or("Invalid cwd path encoding")?;
+    let is_allowed = ALLOWED_CWD_PREFIXES.iter().any(|prefix| {
+        // Exact match (e.g., cwd="/root" matches prefix="/root")
+        path_str == *prefix
+            // Path is under the prefix (e.g., cwd="/root/foo" starts with "/root/")
+            || path_str.starts_with(&format!("{}/", prefix))
+    });
+
+    if !is_allowed {
+        warn!(
+            "[security] cwd outside allowed directories: {} (allowed: {:?})",
+            cwd, ALLOWED_CWD_PREFIXES
+        );
+        return Err("cwd must be within allowed directories");
+    }
+
+    Ok(path_str.to_string())
 }
 
 impl Default for CreateSessionRequest {
@@ -334,6 +447,13 @@ struct PtySession {
     input_tx: std::sync::mpsc::SyncSender<Vec<u8>>, // Bounded channel for backpressure
     pid: u32,
     metadata: RwLock<Option<serde_json::Value>>,
+    /// DA (Device Attributes) filter to prevent feedback loops with nested terminals.
+    /// Filters DA1/DA2 queries and responses that can cause infinite loops when
+    /// running terminal emulators inside terminal emulators.
+    da_filter: Mutex<DaFilter>,
+    /// Virtual terminal emulator for tracking terminal state.
+    /// Provides server-side ANSI sequence parsing and grid-based storage.
+    terminal: Mutex<VirtualTerminal>,
 }
 
 impl PtySession {
@@ -367,11 +487,18 @@ impl PtySession {
     /// Uses a bounded channel for backpressure - if the PTY can't keep up,
     /// this will block (which is correct behavior for flow control).
     fn write_input(&self, data: &str) -> Result<()> {
+        self.write_input_bytes(data.as_bytes().to_vec())
+    }
+
+    fn write_input_bytes(&self, data: Vec<u8>) -> Result<()> {
         let len = data.len();
+        if len == 0 {
+            return Ok(());
+        }
         if len > 100 {
             info!("[session:{}] Queueing large input: {} bytes", self.id, len);
         }
-        self.input_tx.send(data.as_bytes().to_vec()).map_err(|e| {
+        self.input_tx.send(data).map_err(|e| {
             error!("[session:{}] Input channel send failed: {}", self.id, e);
             anyhow::anyhow!("PTY input channel closed")
         })?;
@@ -381,6 +508,8 @@ impl PtySession {
     fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         *self.cols.write() = cols;
         *self.rows.write() = rows;
+
+        // Resize PTY
         let inner = self.inner.lock();
         inner
             .master
@@ -391,6 +520,11 @@ impl PtySession {
                 pixel_height: 0,
             })
             .context("Failed to resize PTY")?;
+        drop(inner);
+
+        // Resize virtual terminal emulator
+        self.resize_terminal(rows as usize, cols as usize);
+
         Ok(())
     }
 
@@ -432,6 +566,31 @@ impl PtySession {
 
     fn set_metadata(&self, metadata: Option<serde_json::Value>) {
         *self.metadata.write() = metadata;
+    }
+
+    /// Process bytes through the virtual terminal emulator and collect responses.
+    fn process_terminal(&self, data: &[u8]) -> Vec<Vec<u8>> {
+        let mut terminal = self.terminal.lock();
+        terminal.process(data);
+        terminal.drain_responses()
+    }
+
+    /// Resize the virtual terminal emulator.
+    fn resize_terminal(&self, rows: usize, cols: usize) {
+        let mut terminal = self.terminal.lock();
+        terminal.resize(rows, cols);
+    }
+
+    /// Get the current terminal content as plain text lines.
+    fn get_terminal_content(&self) -> Vec<String> {
+        let terminal = self.terminal.lock();
+        terminal.get_lines()
+    }
+
+    /// Get the viewport content (visible area) as plain text lines.
+    fn get_terminal_viewport(&self) -> Vec<String> {
+        let terminal = self.terminal.lock();
+        terminal.viewport_lines()
     }
 }
 
@@ -668,7 +827,11 @@ async fn spawn_pty_reader(
 
         match result {
             Ok(0) => {
-                // EOF - flush any remaining buffer
+                // EOF - flush DaFilter and remaining buffer
+                {
+                    let mut filter = session.da_filter.lock();
+                    utf8_buffer.extend(filter.flush());
+                }
                 if !utf8_buffer.is_empty() {
                     let data = String::from_utf8_lossy(&utf8_buffer).to_string();
                     session.append_scrollback(&data);
@@ -684,8 +847,27 @@ async fn spawn_pty_reader(
                 read_count += 1;
                 total_bytes_read += n;
 
-                // Combine any leftover bytes from previous read with new data
-                utf8_buffer.extend_from_slice(&buf[..n]);
+                // Process through virtual terminal emulator for state tracking
+                let responses = session.process_terminal(&buf[..n]);
+                if !responses.is_empty() {
+                    for response in responses {
+                        if let Err(e) = session.write_input_bytes(response) {
+                            error!(
+                                "[reader:{}] Failed to send terminal response: {}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
+
+                // Apply DaFilter to raw bytes to remove DA query/response sequences
+                let filtered_bytes = {
+                    let mut filter = session.da_filter.lock();
+                    filter.filter(&buf[..n])
+                };
+
+                // Combine any leftover bytes from previous read with filtered data
+                utf8_buffer.extend_from_slice(&filtered_bytes);
 
                 // Find the last valid UTF-8 boundary
                 let valid_up_to = find_utf8_boundary(&utf8_buffer);
@@ -781,6 +963,14 @@ fn create_pty_session_inner(
     state: &AppState,
     request: &CreateSessionRequest,
 ) -> Result<(Arc<PtySession>, Box<dyn Read + Send>), ServerError> {
+    // Security: Validate shell against whitelist
+    let validated_shell = validate_shell(&request.shell)
+        .map_err(|e| ServerError::PtySpawnError(format!("Invalid shell: {}", e)))?;
+
+    // Security: Validate and sanitize cwd path
+    let validated_cwd = validate_cwd(&request.cwd)
+        .map_err(|e| ServerError::PtySpawnError(format!("Invalid cwd: {}", e)))?;
+
     let pty_system = native_pty_system();
 
     let pair = pty_system
@@ -792,11 +982,11 @@ fn create_pty_session_inner(
         })
         .map_err(|e| ServerError::PtySpawnError(e.to_string()))?;
 
-    let mut cmd = CommandBuilder::new(&request.shell);
-    cmd.cwd(&request.cwd);
+    let mut cmd = CommandBuilder::new(validated_shell);
+    cmd.cwd(&validated_cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    cmd.env("SHELL", &request.shell);
+    cmd.env("SHELL", validated_shell);
 
     if let Some(env) = &request.env {
         for (key, value) in env {
@@ -825,7 +1015,7 @@ fn create_pty_session_inner(
     let name = request
         .name
         .clone()
-        .unwrap_or_else(|| state.get_next_terminal_name(&request.shell));
+        .unwrap_or_else(|| state.get_next_terminal_name(validated_shell));
 
     let created_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -848,8 +1038,8 @@ fn create_pty_session_inner(
             master: pair.master,
             child,
         }),
-        shell: request.shell.clone(),
-        cwd: request.cwd.clone(),
+        shell: validated_shell.to_string(),
+        cwd: validated_cwd,
         name: RwLock::new(name),
         index: RwLock::new(index),
         created_at,
@@ -860,6 +1050,11 @@ fn create_pty_session_inner(
         input_tx,
         pid,
         metadata: RwLock::new(request.metadata.clone()),
+        da_filter: Mutex::new(DaFilter::new()),
+        terminal: Mutex::new(VirtualTerminal::new(
+            request.rows as usize,
+            request.cols as usize,
+        )),
     });
 
     Ok((session, reader))
@@ -1034,18 +1229,42 @@ async fn delete_session(
 async fn capture_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ServerError> {
     let sessions = state.sessions.read();
     let session = sessions
         .get(&session_id)
         .ok_or_else(|| ServerError::SessionNotFound(session_id.clone()))?;
 
-    let content = session.get_scrollback();
+    // Check if client wants processed terminal content
+    let processed = params
+        .get("processed")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let viewport_only = params.get("viewport").map(|v| v == "true").unwrap_or(false);
 
-    Ok(Json(serde_json::json!({
-        "content": content,
-        "length": content.len()
-    })))
+    if processed {
+        // Return ANSI-processed terminal content (plain text)
+        let lines = if viewport_only {
+            session.get_terminal_viewport()
+        } else {
+            session.get_terminal_content()
+        };
+        let content = lines.join("\n");
+        Ok(Json(serde_json::json!({
+            "content": content,
+            "lines": lines.len(),
+            "processed": true
+        })))
+    } else {
+        // Return raw scrollback (with ANSI sequences preserved)
+        let content = session.get_scrollback();
+        Ok(Json(serde_json::json!({
+            "content": content,
+            "length": content.len(),
+            "processed": false
+        })))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1107,6 +1326,82 @@ async fn send_input(
         "status": "ok",
         "bytes": request.data.len()
     })))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SignalRequest {
+    /// Signal number to send (e.g., 10 for SIGUSR1, 12 for SIGUSR2)
+    signum: i32,
+    /// Optional: only send to specific session. If not provided, sends to all sessions.
+    session_id: Option<String>,
+}
+
+/// Send a signal to PTY child processes.
+/// Used for theme change notifications (SIGUSR1) and other process-level signals.
+async fn send_signal(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SignalRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    // Convert signal number to Signal enum
+    let signal = Signal::try_from(request.signum).map_err(|_| {
+        ServerError::PtySpawnError(format!("Invalid signal number: {}", request.signum))
+    })?;
+
+    let sessions = state.sessions.read();
+    let mut sent_count = 0;
+    let mut errors = Vec::new();
+
+    // Determine which sessions to signal
+    let sessions_to_signal: Vec<_> = if let Some(session_id) = &request.session_id {
+        sessions
+            .get(session_id)
+            .map(|s| vec![s.clone()])
+            .unwrap_or_default()
+    } else {
+        sessions.values().cloned().collect()
+    };
+
+    drop(sessions);
+
+    for session in sessions_to_signal {
+        if session.is_alive() {
+            let pid = Pid::from_raw(session.pid as i32);
+            match kill(pid, signal) {
+                Ok(()) => {
+                    info!(
+                        "[signal] Sent {} to session {} (pid {})",
+                        signal, session.id, session.pid
+                    );
+                    sent_count += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        "[signal] Failed to send {} to session {} (pid {}): {}",
+                        signal, session.id, session.pid, e
+                    );
+                    errors.push(format!("{}: {}", session.id, e));
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(Json(serde_json::json!({
+            "status": "ok",
+            "signal": request.signum,
+            "sent_count": sent_count
+        })))
+    } else {
+        Ok(Json(serde_json::json!({
+            "status": "partial",
+            "signal": request.signum,
+            "sent_count": sent_count,
+            "errors": errors
+        })))
+    }
 }
 
 // =============================================================================
@@ -1591,6 +1886,7 @@ async fn run_server(host: &str, port: u16) -> Result<()> {
         .route("/sessions/:session_id/capture", get(capture_session))
         .route("/sessions/:session_id/resize", post(resize_session))
         .route("/sessions/:session_id/input", post(send_input))
+        .route("/signal", post(send_signal))
         // WebSocket endpoints
         .route("/ws", get(websocket_events))
         .route("/sessions/:session_id/ws", get(websocket_terminal))

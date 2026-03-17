@@ -70,22 +70,79 @@ export const upsertCommitStatusFromWebhook = internalMutation({
     };
 
 
+    // Use .take(2) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path (2 records): cleanup only when needed
     const existingRecords = await ctx.db
       .query("githubCommitStatuses")
       .withIndex("by_statusId", (q) => q.eq("statusId", statusId))
-      .collect();
+      .take(2);
 
-    if (existingRecords.length > 0) {
-      await ctx.db.patch(existingRecords[0]._id, statusDoc);
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        const recordTimestamp = record.updatedAt ?? record.createdAt ?? 0;
+        const existingTimestamp = existing?.updatedAt ?? existing?.createdAt ?? 0;
+        if (recordTimestamp > existingTimestamp) {
+          existing = record;
+        }
+      }
+    }
 
+    const action = existing ? "update" : "insert";
+    console.log("[occ-debug:commit_statuses]", {
+      statusId,
+      repoFullName,
+      teamId,
+      action,
+      state: statusDoc.state,
+      context: statusDoc.context,
+    });
+
+    if (existing) {
+      const existingTimestamp = existing.updatedAt ?? existing.createdAt;
+      const incomingTimestamp = statusDoc.updatedAt ?? statusDoc.createdAt;
+      const isStale =
+        typeof existingTimestamp === "number" &&
+        typeof incomingTimestamp === "number" &&
+        existingTimestamp >= incomingTimestamp;
+
+      if (isStale) {
+        console.log("[occ-debug:commit_statuses] skipped-stale", {
+          statusId,
+          existingTimestamp,
+          incomingTimestamp,
+        });
+      } else {
+        const needsUpdate =
+          existing.state !== statusDoc.state ||
+          existing.description !== statusDoc.description ||
+          existing.targetUrl !== statusDoc.targetUrl ||
+          existing.updatedAt !== statusDoc.updatedAt ||
+          existing.createdAt !== statusDoc.createdAt ||
+          existing.sha !== statusDoc.sha ||
+          existing.repoFullName !== statusDoc.repoFullName ||
+          existing.repositoryId !== statusDoc.repositoryId ||
+          existing.installationId !== statusDoc.installationId;
+
+        if (needsUpdate) {
+          await ctx.db.patch(existing._id, statusDoc);
+        } else {
+          console.log("[occ-debug:commit_statuses] skipped-noop", { statusId });
+        }
+      }
+
+      // Lazy cleanup: delete duplicates only when they exist (keep the newest)
       if (existingRecords.length > 1) {
-        console.warn("[upsertCommitStatus] Found duplicates, cleaning up", {
+        console.warn("[occ-debug:commit_statuses] cleaning-duplicates", {
           statusId,
           count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
         });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
+        for (const duplicate of existingRecords) {
+          if (duplicate._id !== existing._id) {
+            await ctx.db.delete(duplicate._id);
+          }
         }
       }
     } else {

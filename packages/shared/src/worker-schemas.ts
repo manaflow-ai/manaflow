@@ -167,15 +167,26 @@ export const WorkerTerminalFailedSchema = z.object({
 });
 
 // File upload schema for authentication files
+export const WorkerUploadFileSchema = z
+  .object({
+    sourcePath: z.string().optional(), // Path on host (for logging/debugging)
+    destinationPath: z.string(), // Path in container (relative to workspace root)
+    action: z.enum(["write", "delete"]).optional(),
+    contentBase64: z.string().optional(), // Base64 encoded file content
+    mode: z.string().optional(), // File permissions (e.g., "644")
+  })
+  .superRefine((value, ctx) => {
+    const action = value.action ?? "write";
+    if (action === "write" && !value.contentBase64) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "contentBase64 is required for write actions",
+      });
+    }
+  });
+
 export const WorkerUploadFilesSchema = z.object({
-  files: z.array(
-    z.object({
-      sourcePath: z.string(), // Path on host
-      destinationPath: z.string(), // Path in container
-      content: z.string(), // Base64 encoded file content
-      mode: z.string().optional(), // File permissions (e.g., "644")
-    })
-  ),
+  files: z.array(WorkerUploadFileSchema),
   terminalId: z.string().optional(), // Optional terminal context
 });
 
@@ -255,10 +266,11 @@ export type WorkerTerminalClosed = z.infer<typeof WorkerTerminalClosedSchema>;
 export type WorkerTerminalIdle = z.infer<typeof WorkerTerminalIdleSchema>;
 export type WorkerTaskComplete = z.infer<typeof WorkerTaskCompleteSchema>;
 export type WorkerTerminalFailed = z.infer<typeof WorkerTerminalFailedSchema>;
-export type WorkerUploadFiles = z.infer<typeof WorkerUploadFilesSchema>;
 export type WorkerConfigureGit = z.infer<typeof WorkerConfigureGitSchema>;
 export type WorkerExec = z.infer<typeof WorkerExecSchema>;
 export type WorkerExecResult = z.infer<typeof WorkerExecResultSchema>;
+export type WorkerUploadFile = z.infer<typeof WorkerUploadFileSchema>;
+export type WorkerUploadFiles = z.infer<typeof WorkerUploadFilesSchema>;
 export type WorkerStartScreenshotCollection = z.infer<
   typeof WorkerStartScreenshotCollectionSchema
 >;
@@ -286,7 +298,10 @@ export interface ServerToWorkerEvents {
   "worker:terminal-input": (data: WorkerTerminalInput) => void;
 
   // File operations
-  "worker:upload-files": (data: WorkerUploadFiles) => void;
+  "worker:upload-files": (
+    data: WorkerUploadFiles,
+    callback: (result: ErrorOr<{ success: true }>) => void
+  ) => void;
 
   // Git configuration
   "worker:configure-git": (data: WorkerConfigureGit) => void;
@@ -303,6 +318,18 @@ export interface ServerToWorkerEvents {
     worktreePath: string;
   }) => void;
   "worker:stop-file-watch": (data: { taskRunId: Id<"taskRuns"> }) => void;
+
+  // Cloud-to-local sync: start/stop syncing cloud changes back to local
+  "worker:start-cloud-sync": (data: {
+    taskRunId: Id<"taskRuns">;
+    workspacePath: string;
+  }) => void;
+  "worker:stop-cloud-sync": (data: { taskRunId: Id<"taskRuns"> }) => void;
+  // Request a full sync of all existing files from cloud to local
+  "worker:request-full-cloud-sync": (
+    data: { taskRunId: Id<"taskRuns"> },
+    callback: (result: { filesSent: number }) => void
+  ) => void;
   "worker:start-screenshot-collection": (
     data: WorkerStartScreenshotCollection | undefined
   ) => void;
@@ -327,6 +354,23 @@ export interface WorkerFileChange {
   path: string;
   timestamp: number;
 }
+
+// Cloud-to-local sync schemas
+export const WorkerSyncFileSchema = z.object({
+  relativePath: z.string(), // Path relative to workspace root
+  action: z.enum(["write", "delete"]),
+  contentBase64: z.string().optional(), // Base64 encoded content (required for write)
+  mode: z.string().optional(), // File permissions (e.g., "644")
+});
+
+export const WorkerSyncFilesSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+  files: z.array(WorkerSyncFileSchema),
+  timestamp: z.number(),
+});
+
+export type WorkerSyncFile = z.infer<typeof WorkerSyncFileSchema>;
+export type WorkerSyncFiles = z.infer<typeof WorkerSyncFilesSchema>;
 
 export interface WorkerFileDiff {
   path: string;
@@ -359,6 +403,9 @@ export interface WorkerToServerEvents {
     fileDiffs: WorkerFileDiff[];
     timestamp: number;
   }) => void;
+
+  // Cloud-to-local sync: worker sends file changes to be written locally
+  "worker:sync-files": (data: WorkerSyncFiles) => void;
 
   // Error reporting
   "worker:error": (data: { workerId: string; error: string }) => void;

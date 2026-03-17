@@ -69,7 +69,7 @@ function publish() {
     },
     repository: {
       type: "git",
-      url: "git+https://github.com/manaflow-ai/cmux.git",
+      url: "git+https://github.com/manaflow-ai/manaflow.git",
     },
   };
 

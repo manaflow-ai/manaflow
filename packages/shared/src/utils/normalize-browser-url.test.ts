@@ -7,13 +7,13 @@ describe("normalizeBrowserUrl", () => {
     expect(normalizeBrowserUrl("http://example.com")).toBe(
       "http://example.com",
     );
-    expect(normalizeBrowserUrl("https://cmux.dev/run")).toBe(
-      "https://cmux.dev/run",
+    expect(normalizeBrowserUrl("https://manaflow.com/run")).toBe(
+      "https://manaflow.com/run",
     );
   });
 
   it("adds https to protocol-relative URLs", () => {
-    expect(normalizeBrowserUrl("//cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeBrowserUrl("//manaflow.com")).toBe("https://manaflow.com");
   });
 
   it("adds http to localhost URLs", () => {
@@ -36,7 +36,7 @@ describe("normalizeBrowserUrl", () => {
   });
 
   it("defaults to https for external hosts", () => {
-    expect(normalizeBrowserUrl("cmux.dev")).toBe("https://cmux.dev");
+    expect(normalizeBrowserUrl("manaflow.com")).toBe("https://manaflow.com");
   });
 
   it("preserves special schemes without slashes", () => {

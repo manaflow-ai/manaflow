@@ -1,0 +1,9 @@
+{
+  "name": "cmux-linux-x64",
+  "version": "0.8.3",
+  "description": "cmux binary for Linux x64",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "license": "MIT",
+  "files": ["bin"]
+}

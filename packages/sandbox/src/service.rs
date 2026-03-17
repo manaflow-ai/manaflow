@@ -1,7 +1,7 @@
 use crate::errors::SandboxResult;
 use crate::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, GhResponse, HostEvent, PruneRequest,
-    PruneResponse, SandboxSummary,
+    AwaitReadyRequest, AwaitReadyResponse, CreateSandboxRequest, ExecRequest, ExecResponse,
+    GhResponse, HostEvent, PruneRequest, PruneResponse, SandboxSummary,
 };
 use crate::notifications::NotificationStore;
 use async_trait::async_trait;
@@ -58,6 +58,12 @@ pub trait SandboxService: Send + Sync + 'static {
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
     /// Prune orphaned sandbox filesystem directories that don't correspond to running sandboxes.
     async fn prune_orphaned(&self, request: PruneRequest) -> SandboxResult<PruneResponse>;
+    /// Wait for sandbox services (VNC, VS Code, etc.) to become ready.
+    async fn await_services_ready(
+        &self,
+        id: String,
+        request: AwaitReadyRequest,
+    ) -> SandboxResult<AwaitReadyResponse>;
 }
 
 #[derive(Clone)]

@@ -7,6 +7,7 @@
     "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.9",
     "@cmux/morphcloud-openapi-client": "workspace:*",
     "@cmux/convex": "workspace:*",
     "@cmux/shared": "workspace:*",
@@ -15,7 +16,7 @@
     "@openai/codex-sdk": "^0.46.0",
     "@stackframe/js": "^2.8.48",
     "commander": "^12.1.0",
-    "convex": "^1.29.3",
+    "convex": "^1.31.5",
     "dotenv": "^16.6.1",
     "ignore": "^6.0.2",
     "morphcloud": "^0.0.18",

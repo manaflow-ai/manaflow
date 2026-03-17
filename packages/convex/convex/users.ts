@@ -1,4 +1,17 @@
+import { v } from "convex/values";
+import { internalQuery } from "./_generated/server";
 import { authQuery } from "./users/utils";
+
+// Internal helper to fetch a user by Stack Auth userId (used by HTTP handlers)
+export const getByUserIdInternal = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    return await ctx.db
+      .query("users")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+  },
+});
 
 export const getCurrentBasic = authQuery({
   // No args needed; uses auth context

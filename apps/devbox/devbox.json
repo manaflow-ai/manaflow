@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/main/.schema/devbox.schema.json",
+  "env": {
+    "API_PORT": "10601",
+    "CODE_PORT": "10680",
+    "COMPUTER_API_PORT": "10691",
+    "CMUX_WORKSPACE_ID": "ws_3de79954",
+    "CMUX_WORKSPACE_PATH": "/Users/austinwang/Desktop/cmux-cloud-cli",
+    "DB_PORT": "10602",
+    "NODE_ENV": "development",
+    "PORT": "10600",
+    "VNC_PORT": "10690"
+  },
+  "packages": [
+    "openvscode-server@1.85.1",
+    "process-compose@latest",
+    "ripgrep@latest",
+    "nodejs@20",
+    "pnpm@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'cmux devbox Workspace: cmux-cloud-cli'",
+      "echo '   App:     http://localhost:'$PORT",
+      "echo '   VS Code: http://localhost:'$CODE_PORT"
+    ],
+    "scripts": {
+      "dev": "process-compose up",
+      "stop": "process-compose down"
+    }
+  }
+}

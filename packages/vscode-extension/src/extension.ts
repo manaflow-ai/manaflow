@@ -2,7 +2,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
-import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, createQueuedTerminals } from "./terminal";
+import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, waitForAnyCmuxPtyTerminals, createQueuedTerminals } from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -44,6 +44,42 @@ function log(message: string, ...args: unknown[]) {
     );
   } else {
     outputChannel.appendLine(formattedMessage);
+  }
+}
+
+async function pinTerminalEditor(
+  terminal: vscode.Terminal,
+  shouldPin: boolean,
+  preserveFocus: boolean
+): Promise<void> {
+  if (!shouldPin) return;
+
+  const previousTerminal = vscode.window.activeTerminal;
+  const previousEditor = vscode.window.activeTextEditor;
+
+  try {
+    terminal.show(false);
+    await vscode.commands.executeCommand("workbench.action.keepEditor");
+  } catch (error) {
+    console.error("[cmux] Failed to pin terminal editor:", error);
+  }
+
+  if (!preserveFocus) return;
+
+  try {
+    if (previousTerminal && previousTerminal !== terminal) {
+      previousTerminal.show(false);
+      return;
+    }
+    if (previousEditor) {
+      await vscode.window.showTextDocument(previousEditor.document, {
+        viewColumn: previousEditor.viewColumn,
+        preserveFocus: true,
+        preview: false,
+      });
+    }
+  } catch (error) {
+    console.error("[cmux] Failed to restore focus after pinning:", error);
   }
 }
 
@@ -270,6 +306,68 @@ async function waitForTmuxSession(
   return false;
 }
 
+/**
+ * Wait for VSCode to be fully ready before setting up terminals.
+ * This is especially important for Docker containers where VSCode
+ * may take longer to initialize (settings sync, extensions, etc.)
+ */
+async function waitForVSCodeReady(maxWaitMs: number = 30000): Promise<void> {
+  const startTime = Date.now();
+
+  log("Waiting for VSCode to be ready...");
+
+  // 1. Wait for window focus state to stabilize
+  // VSCode window may not be focused during initial load
+  if (!vscode.window.state.focused) {
+    log("Waiting for VSCode window to be ready (not focused yet)...");
+    await new Promise<void>((resolve) => {
+      const disposable = vscode.window.onDidChangeWindowState((state) => {
+        if (state.focused) {
+          log("VSCode window is now focused");
+          disposable.dispose();
+          resolve();
+        }
+      });
+      // Also resolve after timeout to not block forever
+      setTimeout(() => {
+        disposable.dispose();
+        log("VSCode window focus wait timed out, continuing anyway");
+        resolve();
+      }, Math.min(5000, maxWaitMs - (Date.now() - startTime)));
+    });
+  }
+
+  // 2. Wait for Git extension to be available (we need it for diff view)
+  const gitExtension = vscode.extensions.getExtension("vscode.git");
+  if (gitExtension && !gitExtension.isActive) {
+    log("Waiting for Git extension to activate...");
+    try {
+      await Promise.race([
+        gitExtension.activate(),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error("Git extension activation timeout")),
+            Math.min(10000, maxWaitMs - (Date.now() - startTime)))
+        )
+      ]);
+      log("Git extension activated");
+    } catch (e) {
+      log("Git extension activation failed or timed out, continuing anyway", e);
+    }
+  }
+
+  // 3. Small delay for settings sync to complete
+  // This is especially important for Docker containers where settings
+  // sync can take a while after the window is ready
+  const remainingTime = maxWaitMs - (Date.now() - startTime);
+  if (remainingTime > 0) {
+    const settingsSyncDelay = Math.min(2000, remainingTime);
+    log(`Waiting ${settingsSyncDelay}ms for settings sync...`);
+    await new Promise(resolve => setTimeout(resolve, settingsSyncDelay));
+  }
+
+  log(`VSCode ready check complete (took ${Date.now() - startTime}ms)`);
+}
+
 async function setupDefaultTerminal() {
   log("Setting up default terminal");
 
@@ -279,7 +377,15 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // If any meaningful editors exist (not just system/onboarding tabs), don't do anything
+  // Wait for VSCode to be fully ready before proceeding
+  // This prevents terminals from being created before VSCode is initialized
+  try {
+    await waitForVSCodeReady();
+  } catch (e) {
+    log("VSCode readiness check failed, continuing anyway", e);
+  }
+
+  // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup
   const isSystemTab = (label: string | undefined): boolean => {
     if (!label) return false;
     // Exact matches for known system tabs
@@ -290,26 +396,41 @@ async function setupDefaultTerminal() {
   };
   const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
   const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
-  if (meaningfulTabs.length > 0) {
-    log(`Found ${meaningfulTabs.length} existing tab(s), skipping setup`);
-    return;
+  const preserveFocus = meaningfulTabs.length > 0;
+  if (preserveFocus) {
+    log(
+      `Found ${meaningfulTabs.length} existing tab(s), preserving focus during setup`
+    );
   }
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
-  // Check if cmux-pty is managing the "cmux" terminal
-  // This happens when the worker creates PTY sessions instead of tmux
-  const hasCmuxPty = await waitForCmuxPtyTerminal("cmux", 5000);
+  // Check if cmux-pty is managing ANY terminals (not just "cmux")
+  // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
+  // We use a longer timeout (30s) to allow the orchestrator to finish
+  // This is especially important for Docker containers where startup may be slower
+  log("Waiting for cmux-pty terminals (up to 30s)...");
+  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
 
-  if (hasCmuxPty) {
-    // cmux-pty has the terminal - directly create it from the restore queue
-    log("cmux-pty is managing 'cmux' terminal, creating queued terminals");
+  if (hasCmuxPtyTerminals) {
+    // cmux-pty has terminals - create all of them from the restore queue
+    log("cmux-pty is managing terminals, creating queued terminals");
     // This directly creates the terminal using vscode.window.createTerminal with the PTY
     // It bypasses provideTerminalProfile which requires user action to trigger
-    createQueuedTerminals();
+    await createQueuedTerminals({ focus: !preserveFocus });
+
+    // Also check for the specific "cmux" terminal (main agent)
+    // If not present yet, it might still be created by the agent spawner
+    const hasCmuxTerminal = await waitForCmuxPtyTerminal("cmux", 5000);
+    if (hasCmuxTerminal) {
+      log("Found 'cmux' terminal in cmux-pty");
+      // The terminal was already created by createQueuedTerminals
+    } else {
+      log("'cmux' terminal not found in cmux-pty yet, it may be created later by agent spawner");
+    }
   } else {
     // Fall back to tmux-based terminal
-    log("cmux-pty not available, falling back to tmux");
+    log("cmux-pty not available or no terminals, falling back to tmux");
 
     // Wait for tmux session to exist before creating terminal
     const tmuxSessionExists = await waitForTmuxSession("cmux");
@@ -317,25 +438,32 @@ async function setupDefaultTerminal() {
       log("Tmux session not found, skipping terminal creation");
       // Still proceed with SCM/multi-diff setup
     } else {
+      const workspacePath =
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "/workspace";
       // Create terminal and attach to tmux session (Editor pane for main agent)
       const terminal = vscode.window.createTerminal({
         name: "cmux",
         location: vscode.TerminalLocation.Editor,
-        cwd: "/root/workspace",
+        cwd: workspacePath,
         env: process.env,
       });
-      terminal.show();
+      terminal.show(preserveFocus);
+      void pinTerminalEditor(terminal, true, preserveFocus);
       activeTerminals.set("default", terminal);
       terminal.sendText("tmux attach-session -t cmux");
     }
   }
 
-  // Run all UI setup in parallel
-  log("Setting up SCM view, multi-diff editor in parallel...");
-  await Promise.all([
-    vscode.commands.executeCommand("workbench.view.scm"),
-    openMultiDiffEditor(),
-  ]);
+  if (!preserveFocus) {
+    // Run all UI setup in parallel
+    log("Setting up SCM view, multi-diff editor in parallel...");
+    await Promise.all([
+      vscode.commands.executeCommand("workbench.view.scm"),
+      openMultiDiffEditor(),
+    ]);
+  } else {
+    log("Skipping SCM/multi-diff setup due to existing tabs");
+  }
 
   log("Terminal setup complete");
 }

@@ -8,7 +8,7 @@ describe.sequential.skip("getGitDiff - real repo (cmux PR 259)", () => {
     const entries = await getGitDiff({
       baseRef: "main",
       headRef: "cmux/update-readme-to-bold-its-last-line-rpics",
-      repoFullName: "manaflow-ai/cmux",
+      repoFullName: "manaflow-ai/manaflow",
       teamSlugOrId: "test-team",
       includeContents: true,
     } as unknown as Parameters<typeof getGitDiff>[0]);

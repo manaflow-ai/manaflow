@@ -1,0 +1,9 @@
+{
+  "name": "cmux55-linux-arm64",
+  "version": "0.8.0-dev.2",
+  "description": "cmux55 binary for Linux ARM64",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "license": "MIT",
+  "files": ["bin"]
+}

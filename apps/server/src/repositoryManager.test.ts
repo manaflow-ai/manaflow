@@ -198,6 +198,31 @@ describe.sequential("RepositoryManager branch behavior (no fallbacks)", () => {
     }
   }, 120_000);
 
+  it("worktreeExists correctly identifies exact path matches", async () => {
+    const mgr = RepositoryManager.getInstance({ fetchDepth: 1 });
+    const repo = REPOS[0]; // sindresorhus/is
+    const projectDir = path.join(TEST_BASE, "worktree-exists-test");
+    const originPath = path.join(projectDir, "origin");
+    const worktreesDir = path.join(projectDir, "worktrees");
+    await fs.mkdir(projectDir, { recursive: true });
+    await fs.mkdir(worktreesDir, { recursive: true });
+
+    await mgr.ensureRepository(repo.url, originPath, repo.defaultBranch);
+
+    // Create a worktree at /worktrees/foo
+    const fooWorktree = path.join(worktreesDir, "foo");
+    await mgr.createWorktree(originPath, fooWorktree, "cmux-foo", repo.defaultBranch);
+
+    // Exact match should return true
+    expect(await mgr.worktreeExists(originPath, fooWorktree)).toBe(true);
+    // Similar path that shouldn't match (foobar vs foo)
+    expect(await mgr.worktreeExists(originPath, path.join(worktreesDir, "foobar"))).toBe(false);
+    // Trailing slash variation should still work via path.resolve normalization
+    expect(await mgr.worktreeExists(originPath, fooWorktree + "/")).toBe(true);
+    // Completely different path
+    expect(await mgr.worktreeExists(originPath, "/nonexistent/path")).toBe(false);
+  }, 120_000);
+
   it("force-updates remote-tracking ref on non-fast-forward remote rewrite", async () => {
     // This test sets up a local bare repo as the remote, clones it via RepositoryManager,
     // then rewrites the remote's main branch to an unrelated commit and ensures that a

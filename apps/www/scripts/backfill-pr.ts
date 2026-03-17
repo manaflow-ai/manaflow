@@ -7,7 +7,7 @@ import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
 const TEAM = process.env.CMUX_TEAM_SLUG || "manaflow";
-const PR_URL = process.env.CMUX_PR_URL || "https://github.com/manaflow-ai/cmux/pull/255";
+const PR_URL = process.env.CMUX_PR_URL || "https://github.com/manaflow-ai/manaflow/pull/255";
 
 async function main() {
   const m = PR_URL.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i);

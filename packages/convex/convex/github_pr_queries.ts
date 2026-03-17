@@ -52,9 +52,23 @@ export const getScreenshotSet = internalQuery({
       }),
     );
 
+    // Get URLs for all videos
+    const videosWithUrls = screenshotSet.videos
+      ? await Promise.all(
+          screenshotSet.videos.map(async (video) => {
+            const url = await ctx.storage.getUrl(video.storageId);
+            return {
+              ...video,
+              url: url ?? undefined,
+            };
+          }),
+        )
+      : undefined;
+
     return {
       ...screenshotSet,
       images: imagesWithUrls,
+      videos: videosWithUrls,
     };
   },
 });

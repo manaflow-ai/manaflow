@@ -1,0 +1,13 @@
+version: "0.5"
+processes:
+  vscode:
+    command: openvscode-server --port ${CODE_PORT} --host 0.0.0.0 --without-connection-token
+    ready_log_line: "HTTP server listening"
+
+  web:
+    command: pnpm dev --port ${PORT}
+    working_dir: ${DBA_WORKSPACE_PATH}/project
+    ready_log_line: "ready"
+    depends_on:
+      vscode:
+        condition: process_started

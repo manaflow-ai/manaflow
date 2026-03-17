@@ -5,11 +5,11 @@ version: __CMUX_VERSION__
 release: __CMUX_RELEASE__
 section: default
 priority: optional
-maintainer: cmux <eng@cmux.dev>
+maintainer: manaflow <eng@manaflow.com>
 description: |
   cmux host runtime and services packaged for native installation.
 license: MIT
-homepage: https://github.com/lawrencecchen/cmux
+homepage: https://github.com/manaflow-ai/manaflow
 depends:
   - systemd
   - bash

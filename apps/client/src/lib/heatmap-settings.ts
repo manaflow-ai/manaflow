@@ -5,19 +5,22 @@ import {
   type HeatmapColorSettings,
 } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 
+const HEATMAP_MODEL_ANTHROPIC_HAIKU_45 = "anthropic-haiku-4-5";
+const LEGACY_HEATMAP_MODEL_ANTHROPIC_OPUS_45 = "anthropic-opus-4-5";
+const LEGACY_HEATMAP_MODEL_ANTHROPIC = "anthropic";
+
 export const HEATMAP_MODEL_OPTIONS = [
-  { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
+  { value: HEATMAP_MODEL_ANTHROPIC_HAIKU_45, label: "Claude Haiku 4.5" },
   { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
   { value: "cmux-heatmap-0", label: "cmux-heatmap-0" },
   { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
-  { value: "anthropic", label: "Claude Opus 4.1" },
 ] as const;
 
 export type HeatmapModelOptionValue =
   (typeof HEATMAP_MODEL_OPTIONS)[number]["value"];
 
 export const DEFAULT_HEATMAP_MODEL: HeatmapModelOptionValue =
-  "anthropic-opus-4-5";
+  HEATMAP_MODEL_ANTHROPIC_HAIKU_45;
 
 export const TOOLTIP_LANGUAGE_OPTIONS = [
   { value: "en", label: "English" },
@@ -53,6 +56,12 @@ export const DEFAULT_TOOLTIP_LANGUAGE: TooltipLanguageValue = "en";
 export function normalizeHeatmapModel(
   value: string | null | undefined
 ): HeatmapModelOptionValue {
+  if (
+    value === LEGACY_HEATMAP_MODEL_ANTHROPIC_OPUS_45 ||
+    value === LEGACY_HEATMAP_MODEL_ANTHROPIC
+  ) {
+    return DEFAULT_HEATMAP_MODEL;
+  }
   const match = HEATMAP_MODEL_OPTIONS.find((option) => option.value === value);
   return match ? match.value : DEFAULT_HEATMAP_MODEL;
 }

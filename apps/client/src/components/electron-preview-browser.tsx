@@ -834,17 +834,18 @@ export function ElectronPreviewBrowser({
       </div>
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 overflow-hidden bg-white dark:bg-neutral-950 border-l">
-          <PersistentWebView
-            persistKey={persistKey}
-            src={resolvedSrc}
-            requestUrl={requestUrl}
-            className="h-full w-full border-0"
-            borderRadius={0}
-            sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads"
-            onElectronViewReady={handleViewReady}
-            onElectronViewDestroyed={handleViewDestroyed}
-            forceWebContentsViewIfElectron
-          />
+            <PersistentWebView
+              persistKey={persistKey}
+              src={resolvedSrc}
+              requestUrl={requestUrl}
+              className="h-full w-full border-0"
+              borderRadius={0}
+              sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads"
+              retainOnUnmount={false}
+              onElectronViewReady={handleViewReady}
+              onElectronViewDestroyed={handleViewDestroyed}
+              forceWebContentsViewIfElectron
+            />
         </div>
         {renderBelowAddressBar?.()}
       </div>

@@ -208,12 +208,14 @@ body {
 
 
 .cmux-heatmap-char {
-  display: inline-block;
-  padding: 0 0.05rem;
+  display: inline;
+  padding: 0;
+  border-radius: 0.15rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .cmux-heatmap-char-wrapper {
-  display: inline-block;
   cursor: help;
 }
 

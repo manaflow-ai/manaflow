@@ -261,7 +261,7 @@ githubPrsOpenRouter.openapi(
     }
 
     const baseBranch = task.baseBranch?.trim() || "main";
-    const title = task.pullRequestTitle || task.text || "cmux changes";
+    const title = task.pullRequestTitle || task.text || "manaflow changes";
     const truncatedTitle =
       title.length > 72 ? `${title.slice(0, 69)}...` : title;
     const description =
@@ -525,10 +525,10 @@ githubPrsOpenRouter.openapi(
       );
     }
 
-    const title = task.pullRequestTitle || task.text || "cmux changes";
+    const title = task.pullRequestTitle || task.text || "manaflow changes";
     const truncatedTitle =
       title.length > 72 ? `${title.slice(0, 69)}...` : title;
-    const commitMessage = `Merged by cmux for task ${String(task._id)}.`;
+    const commitMessage = `Merged by manaflow for task ${String(task._id)}.`;
 
     const existingByRepo = new Map(
       (run.pullRequests ?? []).map(

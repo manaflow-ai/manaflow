@@ -14,6 +14,7 @@ pub mod settings;
 pub mod sync_files;
 pub mod terminal_guard;
 pub mod timing;
+pub mod vnc_proxy;
 
 pub use acp_client::{
     load_last_provider, run_chat_tui, run_chat_tui_with_workspace_status, run_demo_tui,

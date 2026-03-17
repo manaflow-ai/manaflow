@@ -1,22 +1,36 @@
 import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
+import { EditorSettingsSection } from "@/components/EditorSettingsSection";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { ShellHistorySettings } from "@/components/ShellHistorySettings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
-import { ChevronDown } from "lucide-react";
+import { useOnboardingOptional } from "@/contexts/onboarding";
+import { ChevronDown, HelpCircle } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
+import { useUser } from "@stackframe/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isElectron } from "@/lib/electron";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  normalizeHeatmapModel,
+} from "@/lib/heatmap-settings";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { toast } from "sonner";
+import { z } from "zod";
+
+const GitHubUserSchema = z.object({
+  login: z.string(),
+});
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
@@ -78,6 +92,178 @@ const PROVIDER_INFO: Record<string, ProviderInfo> = {
   },
 };
 
+function GitHubIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+    </svg>
+  );
+}
+
+function ConnectedAccountsSection({ teamSlugOrId }: { teamSlugOrId: string }) {
+  const user = useUser({ or: "return-null" });
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const { data: githubAccount, isLoading: isCheckingConnection } = useQuery({
+    queryKey: ["github-connection", user?.id],
+    queryFn: async () => {
+      if (!user) return { connected: false, username: null };
+      const account = await user.getConnectedAccount("github");
+      if (!account) return { connected: false, username: null };
+      try {
+        const token = await account.getAccessToken();
+        if (!token.accessToken) return { connected: true, username: null };
+        const response = await fetch("https://api.github.com/user", {
+          headers: { Authorization: `Bearer ${token.accessToken}` },
+        });
+        if (!response.ok) return { connected: true, username: null };
+        const parsed = GitHubUserSchema.safeParse(await response.json());
+        if (!parsed.success) return { connected: true, username: null };
+        return { connected: true, username: parsed.data.login };
+      } catch (err) {
+        console.error("Failed to fetch GitHub username:", err);
+        return { connected: true, username: null };
+      }
+    },
+    enabled: !!user,
+  });
+
+  const githubConnected = isCheckingConnection ? null : (githubAccount?.connected ?? false);
+  const githubUsername = githubAccount?.username ?? null;
+
+  const handleConnectGitHub = useCallback(async () => {
+    if (!user) return;
+    setIsConnecting(true);
+    try {
+      if (isElectron) {
+        // In Electron, open OAuth flow in system browser
+        // The www endpoint will handle OAuth and return via deep link
+        const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
+        window.open(oauthUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      // In web, use Stack Auth's redirect (page navigates away)
+      await user.getConnectedAccount("github", { or: "redirect" });
+    } catch (error) {
+      console.error("Failed to connect GitHub:", error);
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [user, teamSlugOrId]);
+
+  if (!user) return null;
+
+  return (
+    <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+      <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+          Connected Accounts
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+          Connect accounts to enable additional features like private repo access
+        </p>
+      </div>
+      <div className="p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-neutral-100 dark:bg-neutral-800 rounded-lg flex items-center justify-center">
+              <GitHubIcon className="w-4.5 h-4.5 text-neutral-700 dark:text-neutral-300" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                GitHub
+              </p>
+              {githubConnected === null ? (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">Checking...</p>
+              ) : githubConnected ? (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Connected{githubUsername ? ` as @${githubUsername}` : ""}
+                </p>
+              ) : (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Required for cloning private repos
+                </p>
+              )}
+            </div>
+          </div>
+          {githubConnected === false && (
+            <button
+              onClick={handleConnectGitHub}
+              disabled={isConnecting}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-neutral-900 dark:bg-neutral-100 dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isConnecting ? "Connecting..." : "Connect"}
+            </button>
+          )}
+          {githubConnected === true && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400">
+              Connected
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OnboardingTourSection({ teamSlugOrId }: { teamSlugOrId: string }) {
+  const onboarding = useOnboardingOptional();
+  const navigate = useNavigate();
+
+  const handleStartTour = useCallback(async () => {
+    if (!onboarding) return;
+    onboarding.resetOnboarding();
+    try {
+      await navigate({
+        to: "/$teamSlugOrId/dashboard",
+        params: { teamSlugOrId },
+      });
+    } catch (error) {
+      console.error("Failed to navigate to dashboard for onboarding:", error);
+      return;
+    }
+    // Small delay to ensure reset completes before starting
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+    onboarding.startOnboarding();
+  }, [navigate, onboarding, teamSlugOrId]);
+
+  return (
+    <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+      <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+          Getting Started
+        </h2>
+      </div>
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
+              <HelpCircle className="w-4.5 h-4.5 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                Product Tour
+              </p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                Take a guided tour of Manaflow to learn about its features and how to get the most out of it.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleStartTour}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors flex-shrink-0"
+          >
+            Start Tour
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
@@ -121,9 +307,9 @@ function SettingsComponent() {
 
   // Heatmap settings state
   const [heatmapModel, setHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>(DEFAULT_HEATMAP_MODEL);
   const [originalHeatmapModel, setOriginalHeatmapModel] =
-    useState<string>("anthropic-opus-4-5");
+    useState<string>(DEFAULT_HEATMAP_MODEL);
   const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
   const [originalHeatmapThreshold, setOriginalHeatmapThreshold] =
     useState<number>(0);
@@ -139,8 +325,7 @@ function SettingsComponent() {
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
-    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
-    { value: "anthropic", label: "Claude Opus 4.1" },
+    { value: "anthropic-haiku-4-5", label: "Claude Haiku 4.5" },
     { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
     { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
   ];
@@ -258,13 +443,9 @@ function SettingsComponent() {
       prev === nextAutoPrEnabled ? prev : nextAutoPrEnabled
     );
 
-    if (workspaceSettings?.heatmapModel) {
-      const nextModel = workspaceSettings.heatmapModel;
-      setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
-      setOriginalHeatmapModel((prev) =>
-        prev === nextModel ? prev : nextModel
-      );
-    }
+    const nextModel = normalizeHeatmapModel(workspaceSettings?.heatmapModel ?? null);
+    setHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
+    setOriginalHeatmapModel((prev) => (prev === nextModel ? prev : nextModel));
     if (workspaceSettings?.heatmapThreshold !== undefined) {
       const nextThreshold = workspaceSettings.heatmapThreshold;
       setHeatmapThreshold((prev) =>
@@ -385,7 +566,7 @@ function SettingsComponent() {
       containerSettingsData &&
       originalContainerSettingsData &&
       JSON.stringify(containerSettingsData) !==
-        JSON.stringify(originalContainerSettingsData);
+      JSON.stringify(originalContainerSettingsData);
 
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
@@ -448,7 +629,7 @@ function SettingsComponent() {
         containerSettingsData &&
         originalContainerSettingsData &&
         JSON.stringify(containerSettingsData) !==
-          JSON.stringify(originalContainerSettingsData)
+        JSON.stringify(originalContainerSettingsData)
       ) {
         await convex.mutation(api.containerSettings.update, {
           teamSlugOrId,
@@ -592,7 +773,7 @@ function SettingsComponent() {
                     Display Name
                   </label>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-                    How your team is displayed across cmux.
+                    How your team is displayed across Manaflow.
                   </p>
                   <input
                     type="text"
@@ -608,11 +789,10 @@ function SettingsComponent() {
                     aria-describedby={
                       teamNameError ? "team-name-error" : undefined
                     }
-                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 ${
-                      teamNameError
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 ${teamNameError
                         ? "border-red-500 focus:ring-red-500"
                         : "border-neutral-300 dark:border-neutral-700 focus:ring-blue-500"
-                    }`}
+                      }`}
                   />
                   {teamNameError && (
                     <p
@@ -642,7 +822,7 @@ function SettingsComponent() {
                             <path d="M14.5 12.5a5 5 0 1 0-7 7"></path>
                           </svg>
                           <span className="truncate">
-                            {`https://cmux.dev/${(teamSlug || "your-team").replace(/^\/+/, "")}/dashboard`}
+                            {`https://manaflow.com/${(teamSlug || "your-team").replace(/^\/+/, "")}/dashboard`}
                           </span>
                         </div>
                       </div>
@@ -691,17 +871,16 @@ function SettingsComponent() {
                     Lowercase letters, numbers, and hyphens. 3–48 characters.
                   </p>
                   <div
-                    className={`inline-flex items-center w-full rounded-lg bg-white dark:bg-neutral-900 border ${
-                      teamSlugError
+                    className={`inline-flex items-center w-full rounded-lg bg-white dark:bg-neutral-900 border ${teamSlugError
                         ? "border-red-500"
                         : "border-neutral-300 dark:border-neutral-700"
-                    }`}
+                      }`}
                   >
                     <span
                       aria-hidden
                       className="px-3 py-2 text-sm text-neutral-500 dark:text-neutral-400 select-none bg-neutral-50 dark:bg-neutral-800/50 border-r border-neutral-200 dark:border-neutral-700 rounded-l-lg"
                     >
-                      cmux.dev/
+                      manaflow.com/
                     </span>
                     <input
                       id="teamSlug"
@@ -747,6 +926,9 @@ function SettingsComponent() {
               </div>
             </div>
 
+            {/* Connected Accounts */}
+            <ConnectedAccountsSection teamSlugOrId={teamSlugOrId} />
+
             {/* Appearance */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
               <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
@@ -782,6 +964,9 @@ function SettingsComponent() {
                 </div>
               </div>
             </div>
+
+            {/* Onboarding Tour */}
+            <OnboardingTourSection teamSlugOrId={teamSlugOrId} />
 
             {/* Crown Evaluator */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -1019,7 +1204,7 @@ function SettingsComponent() {
                       autoComplete="off"
                     />
                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
-                      Default location: ~/cmux
+                      Default location: ~/manaflow
                     </p>
                   </div>
                 </div>
@@ -1080,11 +1265,11 @@ function SettingsComponent() {
                           <ul className="list-disc ml-4 space-y-0.5">
                             <li>
                               Start a coding CLI (Claude Code, Codex CLI, Gemini
-                              CLI, Amp, Opencode) and complete its sign-in; cmux
+                              CLI, Amp, Opencode) and complete its sign-in; Manaflow
                               reuses that authentication.
                             </li>
                             <li>
-                              Or enter API keys here and cmux will use them
+                              Or enter API keys here and Manaflow will use them
                               directly.
                             </li>
                           </ul>
@@ -1127,11 +1312,10 @@ function SettingsComponent() {
                                                   key.envVar
                                                 ] = el;
                                               }}
-                                              className={`font-medium min-w-0 ${
-                                                expandedUsedList[key.envVar]
+                                              className={`font-medium min-w-0 ${expandedUsedList[key.envVar]
                                                   ? "flex-1 whitespace-normal break-words"
                                                   : "flex-1 truncate"
-                                              }`}
+                                                }`}
                                             >
                                               {usedModels.join(", ")}
                                             </span>
@@ -1255,74 +1439,74 @@ function SettingsComponent() {
                                   </button>
                                 </div>
                               ) : (
-                              <div className="relative">
-                                <input
-                                  type={
-                                    showKeys[key.envVar] ? "text" : "password"
-                                  }
-                                  id={key.envVar}
-                                  value={apiKeyValues[key.envVar] || ""}
-                                  onChange={(e) =>
-                                    handleApiKeyChange(
-                                      key.envVar,
-                                      e.target.value
-                                    )
-                                  }
-                                  className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
-                                  placeholder={
-                                    key.envVar === "CLAUDE_CODE_OAUTH_TOKEN"
-                                      ? "sk-ant-oat01-..."
-                                      : key.envVar === "ANTHROPIC_API_KEY"
-                                        ? "sk-ant-api03-..."
-                                        : key.envVar === "OPENAI_API_KEY"
-                                          ? "sk-proj-..."
-                                          : key.envVar === "OPENROUTER_API_KEY"
-                                            ? "sk-or-v1-..."
-                                            : `Enter your ${key.displayName}`
-                                  }
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => toggleShowKey(key.envVar)}
-                                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-neutral-500"
-                                >
-                                  {showKeys[key.envVar] ? (
-                                    <svg
-                                      className="h-5 w-5"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                                      />
-                                    </svg>
-                                  ) : (
-                                    <svg
-                                      className="h-5 w-5"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                                      />
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                                      />
-                                    </svg>
-                                  )}
-                                </button>
-                              </div>
+                                <div className="relative">
+                                  <input
+                                    type={
+                                      showKeys[key.envVar] ? "text" : "password"
+                                    }
+                                    id={key.envVar}
+                                    value={apiKeyValues[key.envVar] || ""}
+                                    onChange={(e) =>
+                                      handleApiKeyChange(
+                                        key.envVar,
+                                        e.target.value
+                                      )
+                                    }
+                                    className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"
+                                    placeholder={
+                                      key.envVar === "CLAUDE_CODE_OAUTH_TOKEN"
+                                        ? "sk-ant-oat01-..."
+                                        : key.envVar === "ANTHROPIC_API_KEY"
+                                          ? "sk-ant-api03-..."
+                                          : key.envVar === "OPENAI_API_KEY"
+                                            ? "sk-proj-..."
+                                            : key.envVar === "OPENROUTER_API_KEY"
+                                              ? "sk-or-v1-..."
+                                              : `Enter your ${key.displayName}`
+                                    }
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleShowKey(key.envVar)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-neutral-500"
+                                  >
+                                    {showKeys[key.envVar] ? (
+                                      <svg
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <svg
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                        />
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                                        />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
                               )}
                               {originalApiKeyValues[key.envVar] && (
                                 <div className="flex items-center gap-1 mt-1">
@@ -1388,6 +1572,11 @@ function SettingsComponent() {
             {/* Shell History Settings - hidden in web mode */}
             {!env.NEXT_PUBLIC_WEB_MODE && (
               <ShellHistorySettings teamSlugOrId={teamSlugOrId} />
+            )}
+
+            {/* Editor Settings Sync - web mode only */}
+            {env.NEXT_PUBLIC_WEB_MODE && (
+              <EditorSettingsSection teamSlugOrId={teamSlugOrId} />
             )}
 
             {/* Notifications */}
@@ -1463,11 +1652,10 @@ function SettingsComponent() {
           <button
             onClick={saveApiKeys}
             disabled={!hasChanges() || isSaving}
-            className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${
-              !hasChanges() || isSaving
+            className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${!hasChanges() || isSaving
                 ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed opacity-50"
                 : "bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600"
-            }`}
+              }`}
           >
             {isSaving ? "Saving..." : "Save Changes"}
           </button>

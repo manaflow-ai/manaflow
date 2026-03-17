@@ -21,7 +21,7 @@ import type {
   PrReviewStrategyId,
 } from "./pr-review/core/options";
 
-const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/653";
+const DEFAULT_PR_URL = "https://github.com/manaflow-ai/manaflow/pull/653";
 const DEFAULT_IMAGE_TAG = "cmux-pr-review-local:latest";
 const LOGS_SUBDIR = "pr-review";
 const WORKSPACE_DIR = "/workspace";

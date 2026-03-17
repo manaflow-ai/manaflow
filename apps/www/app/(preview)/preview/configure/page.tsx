@@ -60,19 +60,56 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     return redirect(signInUrl);
   }
 
-  const [auth, teamsResult] = await Promise.all([
-    user.getAuthJson(),
-    user.listTeams(),
-  ]);
-  const teams: StackTeam[] = teamsResult;
-  const { accessToken } = auth;
+  // Try to get auth tokens and user data
+  // Wrap in try-catch to handle any Stack Auth API errors gracefully
+  let accessToken: string | null = null;
+  let teams: StackTeam[] = [];
+
+  try {
+    const [auth, teamsResult] = await Promise.all([
+      user.getAuthJson(),
+      user.listTeams(),
+    ]);
+    teams = teamsResult;
+    accessToken = auth.accessToken;
+  } catch (error) {
+    console.error("[PreviewConfigurePage] Failed to fetch user data from Stack Auth", error);
+    // Fall through to try creating a fresh session
+  }
+
+  // If accessToken is null, try creating a fresh session to get valid tokens
+  // This can happen right after OAuth sign-in when tokens aren't fully propagated
+  if (!accessToken) {
+    console.log("[PreviewConfigurePage] accessToken is null, attempting to create fresh session");
+    try {
+      const freshSession = await user.createSession({ expiresInMillis: 24 * 60 * 60 * 1000 });
+      const freshTokens = await freshSession.getTokens();
+      if (freshTokens.accessToken) {
+        accessToken = freshTokens.accessToken;
+        console.log("[PreviewConfigurePage] Got fresh access token from new session");
+        // Also try to fetch teams if we didn't get them earlier
+        if (teams.length === 0) {
+          try {
+            teams = await user.listTeams();
+          } catch (teamsError) {
+            console.error("[PreviewConfigurePage] Failed to fetch teams", teamsError);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[PreviewConfigurePage] Failed to create fresh session", error);
+    }
+  }
+
+  // If we still don't have an access token, redirect to sign-in
+  if (!accessToken) {
+    console.error("[PreviewConfigurePage] No access token available after retry, redirecting to sign-in");
+    const signInUrl = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
+    return redirect(signInUrl);
+  }
 
   if (teams.length === 0) {
     notFound();
-  }
-
-  if (!accessToken) {
-    throw new Error("Missing Stack access token");
   }
 
   const repo = getSearchValue(resolvedSearch, "repo");

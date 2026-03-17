@@ -1,0 +1,14 @@
+[Unit]
+Description=cmux devbox Worker Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env node /usr/local/bin/cmux-devbox-worker
+Restart=always
+RestartSec=5
+Environment=PORT=39377
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=cmux.target

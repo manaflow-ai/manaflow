@@ -2,26 +2,29 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Manaflow - Open Source Applied AI Lab",
-  description: "We build open source coding software",
+  description:
+    "Open source applied AI lab building next-gen devtools",
   openGraph: {
     title: "Manaflow - Open Source Applied AI Lab",
-    description: "We build open source coding software",
+    description:
+      "Open source applied AI lab building next-gen devtools",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Manaflow - Open Source Applied AI Lab",
-    description: "We build open source coding software",
+    description:
+      "Open source applied AI lab building next-gen devtools",
   },
 };
 
 export default function ManaflowPage() {
   return (
-    <div className="min-h-screen bg-white px-4 py-16 text-black font-mono">
+    <div className="min-h-screen bg-white px-4 py-16 text-black" style={{ fontFamily: "var(--font-geist-sans), sans-serif" }}>
       <div className="mx-auto max-w-xl">
         <h1 className="mb-4 text-3xl font-bold">Manaflow</h1>
         <p className="mb-8 text-neutral-600">
-          Open source applied AI lab. We build open source coding software.
+          Open source applied AI lab building next-gen devtools.
         </p>
 
         <div className="flex flex-col gap-6">
@@ -35,7 +38,7 @@ export default function ManaflowPage() {
                 cmux.dev
               </a>
               <a
-                href="https://github.com/manaflow-ai/cmux"
+                href="https://github.com/manaflow-ai/manaflow"
                 target="_blank"
                 className="text-neutral-500 hover:text-neutral-700 hover:underline text-sm"
               >
@@ -43,44 +46,7 @@ export default function ManaflowPage() {
               </a>
             </div>
             <p className="text-neutral-600 text-sm mt-1">
-              Coding agent manager that supports Claude Code, Codex, Gemini CLI,
-              Amp, Opencode, and other coding CLIs.
-            </p>
-          </div>
-
-          <div>
-            <div className="flex items-center gap-2">
-              <a
-                href="https://0github.com"
-                target="_blank"
-                className="text-black underline hover:text-neutral-600"
-              >
-                0github.com
-              </a>
-              <a
-                href="https://news.ycombinator.com/item?id=45760321"
-                target="_blank"
-                className="text-orange-500 hover:text-orange-600 hover:underline text-sm"
-              >
-                [hn]
-              </a>
-            </div>
-            <p className="text-neutral-600 text-sm mt-1">
-              Heatmap diff viewer for code reviews.
-            </p>
-          </div>
-
-          <div>
-            <a
-              href="https://x.manaflow.com"
-              target="_blank"
-              className="text-black underline hover:text-neutral-600"
-            >
-              x.manaflow.com
-            </a>
-            <p className="text-neutral-600 text-sm mt-1">
-              Curated algorithmic X/Twitter feed that lets coding agents
-              escalate the most urgent tasks for human review.
+              The open source terminal built for coding agents.
             </p>
           </div>
         </div>
@@ -101,7 +67,7 @@ export default function ManaflowPage() {
             github
           </a>
           <a
-            href="https://discord.gg/FVevu78A"
+            href="https://discord.gg/SDbQmzQhRK"
             target="_blank"
             className="text-neutral-500 hover:text-black hover:underline"
           >

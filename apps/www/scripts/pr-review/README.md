@@ -94,7 +94,7 @@ annotations instead of relying on the agent's chat response.
 
 ## Demo Harness
 
-`run-strategy-demo.ts` fetches PR [#709](https://github.com/manaflow-ai/cmux/pull/709/files),
+`run-strategy-demo.ts` fetches PR [#709](https://github.com/manaflow-ai/manaflow/pull/709/files),
 runs each strategy with synthetic model outputs, and stores prompts/responses
 under `tmp/strategy-demo/`. This is useful for quick smoke tests without
 calling the OpenAI API:

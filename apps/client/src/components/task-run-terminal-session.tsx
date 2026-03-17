@@ -5,6 +5,10 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import {
+  ACTIVE_TERMINAL_SCROLLBACK,
+  INACTIVE_TERMINAL_SCROLLBACK,
+} from "@cmux/shared/terminal-config";
 import clsx from "clsx";
 import { useXTerm } from "./xterm/use-xterm";
 
@@ -57,6 +61,24 @@ export function TaskRunTerminalSession({
 
   useEffect(() => {
     if (!terminal) {
+      return;
+    }
+
+    const nextScrollback = isActive
+      ? ACTIVE_TERMINAL_SCROLLBACK
+      : INACTIVE_TERMINAL_SCROLLBACK;
+
+    if (terminal.options.scrollback !== nextScrollback) {
+      terminal.options.scrollback = nextScrollback;
+    }
+
+    if (!isActive) {
+      terminal.clear();
+    }
+  }, [isActive, terminal]);
+
+  useEffect(() => {
+    if (!terminal) {
       fitAddonRef.current = null;
       return;
     }
@@ -83,7 +105,7 @@ export function TaskRunTerminalSession({
   }, [terminal]);
 
   useEffect(() => {
-    if (!terminal) {
+    if (!terminal || !isActive) {
       return;
     }
 
@@ -104,7 +126,7 @@ export function TaskRunTerminalSession({
         webglAddon.dispose();
       }
     };
-  }, [terminal]);
+  }, [isActive, terminal]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const attachAddonRef = useRef<AttachAddon | null>(null);
@@ -167,7 +189,7 @@ export function TaskRunTerminalSession({
   }, []);
 
   useEffect(() => {
-    if (!terminal) {
+    if (!terminal || !isActive) {
       return;
     }
 
@@ -178,10 +200,14 @@ export function TaskRunTerminalSession({
     return () => {
       disposable.dispose();
     };
-  }, [queueResize, terminal]);
+  }, [isActive, queueResize, terminal]);
 
   // Observe container resizes and propagate them to the backend
   useEffect(() => {
+    if (!isActive) {
+      return undefined;
+    }
+
     const container = containerRef.current;
     if (!container) {
       return undefined;
@@ -206,7 +232,7 @@ export function TaskRunTerminalSession({
       window.removeEventListener("resize", handle);
       window.cancelAnimationFrame(frame);
     };
-  }, [containerRef, measureAndQueueResize]);
+  }, [containerRef, isActive, measureAndQueueResize]);
 
   // Manage WebSocket lifecycle
   useEffect(() => {
@@ -215,10 +241,19 @@ export function TaskRunTerminalSession({
       return undefined;
     }
 
+    if (!isActive) {
+      notifyConnectionState("closed");
+      return undefined;
+    }
+
     let cancelled = false;
     const base = new URL(baseUrl);
     const wsUrl = new URL(`/sessions/${terminalId}/ws`, base);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+
+    terminal.clear();
+    pendingResizeRef.current = null;
+    lastSentResizeRef.current = null;
 
     const socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
@@ -275,7 +310,15 @@ export function TaskRunTerminalSession({
         socketRef.current = null;
       }
     };
-  }, [baseUrl, flushPendingResize, measureAndQueueResize, notifyConnectionState, terminal, terminalId]);
+  }, [
+    baseUrl,
+    flushPendingResize,
+    isActive,
+    measureAndQueueResize,
+    notifyConnectionState,
+    terminal,
+    terminalId,
+  ]);
 
   useEffect(() => {
     if (!terminal) {

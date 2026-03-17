@@ -1,5 +1,5 @@
 import { CmuxIpcSocketClient } from "@/lib/cmux-ipc-socket-client";
-import { type MainServerSocket } from "@cmux/shared/socket";
+import type { AvailableEditors } from "@cmux/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
@@ -70,18 +70,17 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
         console.error("[ElectronSocket] Connection error:", error);
       });
 
-      createdSocket.on("available-editors", (editors: unknown) => {
+      createdSocket.on("available-editors", (editors: AvailableEditors) => {
         if (disposed) return;
-        setAvailableEditors(editors as SocketContextType["availableEditors"]);
+        setAvailableEditors(editors);
       });
 
       // Connect the socket
       createdSocket.connect();
 
       if (!disposed) {
-        // Cast to Socket type to satisfy type requirement
-        setSocket(createdSocket as unknown as MainServerSocket);
-        setGlobalSocket(createdSocket as unknown as MainServerSocket);
+        setSocket(createdSocket);
+        setGlobalSocket(createdSocket);
         // Signal that the provider has created the socket instance
         socketBoot.resolve();
       }

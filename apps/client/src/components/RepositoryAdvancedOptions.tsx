@@ -7,6 +7,12 @@ import { Accordion, AccordionItem } from "@heroui/react";
 import { Check } from "lucide-react";
 import { Label, Radio, RadioGroup } from "react-aria-components";
 
+// Only show 4vCPU (Standard) and 8vCPU (Performance) options
+const ALLOWED_PRESET_IDS = ["4vcpu_16gb_48gb", "8vcpu_32gb_48gb"];
+const FILTERED_PRESETS = MORPH_SNAPSHOT_PRESETS.filter((p) =>
+  ALLOWED_PRESET_IDS.includes(p.presetId)
+);
+
 export interface RepositoryAdvancedOptionsProps {
   selectedSnapshotId?: MorphSnapshotId;
   onSnapshotChange: (snapshotId: MorphSnapshotId) => void;
@@ -45,7 +51,7 @@ export function RepositoryAdvancedOptions({
                 Machine size
               </Label>
               <div className="grid gap-3 sm:grid-cols-2 pt-1.5">
-                {MORPH_SNAPSHOT_PRESETS.map((preset) => (
+                {FILTERED_PRESETS.map((preset) => (
                   <Radio
                     key={preset.id}
                     value={preset.id}

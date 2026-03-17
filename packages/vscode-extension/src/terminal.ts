@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
 // =============================================================================
 // Types
@@ -73,6 +73,40 @@ function getConfig() {
   };
 }
 
+const RESTORE_FALLBACK_DELAY_MS = 1500;
+const RECONCILE_INTERVAL_MS = 15000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isTerminalInfo(value: unknown): value is TerminalInfo {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.index === 'number' &&
+    typeof value.shell === 'string' &&
+    typeof value.cwd === 'string' &&
+    typeof value.cols === 'number' &&
+    typeof value.rows === 'number' &&
+    typeof value.created_at === 'number' &&
+    typeof value.alive === 'boolean' &&
+    typeof value.pid === 'number'
+  );
+}
+
+function extractTerminalInfos(payload: unknown): TerminalInfo[] | null {
+  if (Array.isArray(payload)) {
+    return payload.filter(isTerminalInfo);
+  }
+  if (isRecord(payload) && Array.isArray(payload.sessions)) {
+    return payload.sessions.filter(isTerminalInfo);
+  }
+  return null;
+}
+
+
 // =============================================================================
 // CmuxPseudoterminal - Connects to a single PTY session
 // =============================================================================
@@ -88,6 +122,12 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
   private _dimensions: { cols: number; rows: number } = { cols: 80, rows: 24 };
   private _previousDimensions: { cols: number; rows: number } | null = null;
   private _skipInitialResize: boolean;
+  private _hasConnectedOnce = false;
+  private _reconnectAttempts = 0;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _reconnectBaseDelayMs = 500;
+  private _reconnectMaxDelayMs = 30000;
+  private _showedDisconnectMessage = false;
 
   public readonly onDidWrite: vscode.Event<string> = this._onDidWrite.event;
   public readonly onDidClose: vscode.Event<number | void> = this._onDidClose.event;
@@ -104,17 +144,35 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
 
   private _connectWebSocket(): void {
     if (this._isDisposed) return;
+    if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
 
     const wsUrl = this.serverUrl.replace(/^http/, 'ws');
     const fullUrl = `${wsUrl}/sessions/${this.ptyId}/ws`;
     console.log(`[cmux] CmuxPseudoterminal connecting to: ${fullUrl}`);
-    this._ws = new WebSocket(fullUrl);
+    const ws = new WebSocket(fullUrl);
+    this._ws = ws;
 
-    this._ws.onopen = () => {
+    ws.onopen = () => {
+      if (this._ws !== ws) return;
       console.log(`[cmux] WebSocket connected for PTY ${this.ptyId}`);
-      // Skip initial resize for restored sessions to avoid shell prompt redraw
+
+      if (this._reconnectTimer) {
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+      }
+      if (this._showedDisconnectMessage) {
+        this._writeStatusMessage('\r\n[cmux] Terminal connection restored.\r\n');
+        this._showedDisconnectMessage = false;
+      }
+      const isFirstConnect = !this._hasConnectedOnce;
+      this._hasConnectedOnce = true;
+      this._reconnectAttempts = 0;
+
+      // Skip initial resize only on the first connect for restored sessions
       // The proper resize will be sent when open() is called with actual dimensions
-      if (!this._skipInitialResize) {
+      if (!(isFirstConnect && this._skipInitialResize)) {
         this._ws?.send(JSON.stringify({
           type: 'resize',
           cols: this._dimensions.cols,
@@ -123,7 +181,8 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       }
     };
 
-    this._ws.onmessage = async (event) => {
+    ws.onmessage = async (event) => {
+      if (this._ws !== ws) return;
       if (this._isDisposed) return;
 
       try {
@@ -177,7 +236,8 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       }
     };
 
-    this._ws.onerror = (error) => {
+    ws.onerror = (error) => {
+      if (this._ws !== ws) return;
       console.error('WebSocket error:', error);
       if (!this._initialDataSent) {
         this._outputBuffer += '\r\nWebSocket connection error\r\n';
@@ -186,11 +246,40 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
       }
     };
 
-    this._ws.onclose = () => {
-      if (!this._isDisposed) {
-        this._onDidClose.fire();
-      }
+    ws.onclose = () => {
+      if (this._ws !== ws) return;
+      if (this._isDisposed) return;
+      this._scheduleReconnect();
     };
+  }
+
+  private _writeStatusMessage(message: string): void {
+    if (this._isDisposed) return;
+    if (!this._initialDataSent) {
+      this._outputBuffer += message;
+      return;
+    }
+    this._onDidWrite.fire(message);
+  }
+
+  private _scheduleReconnect(): void {
+    if (this._isDisposed) return;
+    if (this._reconnectTimer) return;
+
+    if (!this._showedDisconnectMessage) {
+      this._writeStatusMessage('\r\n[cmux] Terminal connection lost. Reconnecting...\r\n');
+      this._showedDisconnectMessage = true;
+    }
+
+    const delay = Math.min(
+      this._reconnectBaseDelayMs * Math.pow(2, this._reconnectAttempts),
+      this._reconnectMaxDelayMs
+    );
+    this._reconnectAttempts += 1;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this._connectWebSocket();
+    }, delay);
   }
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
@@ -261,6 +350,11 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
     if (this._isDisposed) return;
     this._isDisposed = true;
 
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -292,12 +386,14 @@ class PtyClient {
       console.log('[cmux] PtyClient connecting to:', fullUrl);
       this._ws = new WebSocket(fullUrl);
 
+      // Increased timeout to 20s for Docker containers where the PTY server
+      // may take longer to start (especially during initial container boot)
       const timeout = setTimeout(() => {
         if (!this._connected) {
-          console.error('[cmux] PtyClient connection timeout');
+          console.error('[cmux] PtyClient connection timeout after 20s');
           reject(new Error('Connection timeout'));
         }
-      }, 5000);
+      }, 20000);
 
       this._ws.onopen = () => {
         clearTimeout(timeout);
@@ -440,7 +536,7 @@ class CmuxTerminalManager {
 
   // Map of terminal name → {ptyId, pty} for terminals created via provideTerminalProfile
   // Used to set up tracking when VSCode creates the terminal
-  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo }>();
+  private _pendingTerminalSetup = new Map<string, { id: string; pty: CmuxPseudoterminal; info: TerminalInfo; isNewCreation?: boolean }>();
 
   // Queue of PTYs to restore - provideTerminalProfile consumes these
   // This allows VSCode to create terminals via profile provider while reusing existing PTYs
@@ -464,6 +560,11 @@ class CmuxTerminalManager {
   private _initialSyncPromise: Promise<void>;
   private _resolveInitialSync!: () => void;
 
+  // Restore and reconciliation timers
+  private _restoreFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private _reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private _reconcileInFlight = false;
+
   constructor() {
     const config = getConfig();
     this._ptyClient = new PtyClient(config.serverUrl);
@@ -485,13 +586,16 @@ class CmuxTerminalManager {
       console.log('[cmux] Connecting to PTY server...');
       await this._ptyClient.connect();
       console.log('[cmux] Connected to PTY server');
+      this._initialized = true;
+      this._startReconcileLoop();
     } catch (err) {
       console.error('[cmux] Failed to connect to PTY server:', err);
-      this._retryConnect();
-      return;
+      // Await the retry so initialization doesn't complete until we're connected
+      // This is important for Docker containers where the PTY server may take longer to start
+      console.log('[cmux] Starting connection retry sequence...');
+      await this._retryConnect();
+      // Note: _initialized is set by _retryConnect on success
     }
-
-    this._initialized = true;
   }
 
   private _registerEventHandlers(): void {
@@ -539,16 +643,125 @@ class CmuxTerminalManager {
   }
 
   private async _retryConnect(): Promise<void> {
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 1000));
+    // Increased retry count and delay for Docker containers where
+    // the PTY server may take longer to become available
+    const maxRetries = 20;
+    const retryDelayMs = 1500;
+
+    for (let i = 0; i < maxRetries; i++) {
+      console.log(`[cmux] Retry ${i + 1}/${maxRetries} connecting to PTY server...`);
+      await new Promise(r => setTimeout(r, retryDelayMs));
       try {
         await this._ptyClient.connect();
         // Handlers already registered in initialize(), just mark as initialized
         this._initialized = true;
+        this._startReconcileLoop();
+        console.log(`[cmux] Successfully connected to PTY server on retry ${i + 1}`);
         return;
-      } catch {
-        console.log(`Retry ${i + 1} failed`);
+      } catch (err) {
+        console.log(`[cmux] Retry ${i + 1}/${maxRetries} failed:`, err instanceof Error ? err.message : err);
       }
+    }
+    // After all retries exhausted, throw an error so callers know PTY is unavailable
+    // The extension will fall back to tmux in this case
+    const errMsg = `Failed to connect to PTY server after ${maxRetries} retries`;
+    console.error(`[cmux] ${errMsg}`);
+    throw new Error(errMsg);
+  }
+
+  private _scheduleRestoreFallback(reason: string): void {
+    if (this._restoreFallbackTimer) return;
+    this._restoreFallbackTimer = setTimeout(() => {
+      this._restoreFallbackTimer = null;
+      if (!this._restoreInProgress || this._restoreQueue.length === 0) {
+        return;
+      }
+      console.log(
+        `[cmux] Restore fallback (${reason}) draining ${this._restoreQueue.length} queued terminal(s)`
+      );
+      this.drainRestoreQueue();
+    }, RESTORE_FALLBACK_DELAY_MS);
+  }
+
+  private _startReconcileLoop(): void {
+    if (this._reconcileTimer) return;
+    this._reconcileTimer = setInterval(() => {
+      void this._reconcileFromServer("interval");
+    }, RECONCILE_INTERVAL_MS);
+  }
+
+  private _stopReconcileLoop(): void {
+    if (!this._reconcileTimer) return;
+    clearInterval(this._reconcileTimer);
+    this._reconcileTimer = null;
+  }
+
+  private async _reconcileFromServer(reason: string): Promise<void> {
+    if (this._reconcileInFlight) return;
+    this._reconcileInFlight = true;
+    try {
+      const config = getConfig();
+      const response = await fetch(`${config.serverUrl}/sessions`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        console.warn(
+          `[cmux] Reconcile (${reason}) failed: ${response.status} ${response.statusText}`
+        );
+        return;
+      }
+      const payload: unknown = await response.json();
+      const sessions = extractTerminalInfos(payload);
+      if (!sessions) {
+        console.warn(`[cmux] Reconcile (${reason}) received no sessions`);
+        return;
+      }
+      this._handleStateSync(sessions);
+      if (this._restoreQueue.length > 0) {
+        this._scheduleRestoreFallback('reconcile');
+      }
+    } catch (err) {
+      console.error(`[cmux] Reconcile (${reason}) error:`, err);
+    } finally {
+      this._reconcileInFlight = false;
+    }
+  }
+
+  private async _maybePinEditorTerminal(
+    terminal: vscode.Terminal,
+    shouldPin: boolean,
+    preserveFocus: boolean
+  ): Promise<void> {
+    if (!shouldPin) return;
+
+    const previousTerminal = vscode.window.activeTerminal;
+    const previousEditor = vscode.window.activeTextEditor;
+
+    try {
+      terminal.show(false);
+      await vscode.commands.executeCommand('workbench.action.keepEditor');
+    } catch (err) {
+      console.error('[cmux] Failed to pin terminal editor:', err);
+    }
+
+    if (!preserveFocus) {
+      return;
+    }
+
+    try {
+      if (previousTerminal && previousTerminal !== terminal) {
+        previousTerminal.show(false);
+        return;
+      }
+      if (previousEditor) {
+        await vscode.window.showTextDocument(previousEditor.document, {
+          viewColumn: previousEditor.viewColumn,
+          preserveFocus: true,
+          preview: false,
+        });
+      }
+    } catch (err) {
+      console.error('[cmux] Failed to restore focus after pinning:', err);
     }
   }
 
@@ -599,6 +812,10 @@ class CmuxTerminalManager {
       this._initialSyncDone = true;
       this._resolveInitialSync();
       console.log(`[cmux] Initial state sync complete, ${this._restoreQueue.length} terminals queued`);
+    }
+
+    if (this._restoreInProgress && this._restoreQueue.length > 0) {
+      this._scheduleRestoreFallback('state-sync');
     }
   }
 
@@ -708,6 +925,7 @@ class CmuxTerminalManager {
 
     // Show terminal with appropriate focus
     terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
+    void this._maybePinEditorTerminal(terminal, shouldOpenInEditor, !shouldFocus);
 
     // Listen for terminal close
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
@@ -783,7 +1001,8 @@ class CmuxTerminalManager {
       const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
 
       // Store for tracking when terminal opens
-      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data });
+      // Mark as new creation (not restore) so handleTerminalOpened focuses it
+      this._pendingTerminalSetup.set(data.name, { id: data.id, pty, info: data, isNewCreation: true });
 
       return { pty, name: data.name, id: data.id };
     } catch (err) {
@@ -802,6 +1021,10 @@ class CmuxTerminalManager {
 
   renamePty(ptyId: string, name: string): void {
     this._ptyClient.renamePty(ptyId, name);
+  }
+
+  reconcileNow(reason: string): void {
+    void this._reconcileFromServer(reason);
   }
 
   getTerminals(): ManagedTerminal[] {
@@ -951,10 +1174,14 @@ class CmuxTerminalManager {
     };
     this._terminals.set(pending.id, managed);
 
-    // Show and focus terminals with editor location
-    if (pending.info.metadata?.location === 'editor') {
+    // Focus new terminals or terminals with editor location
+    // - New creations (user clicked +) should always be focused
+    // - Restored editor terminals should be focused
+    if (pending.isNewCreation || pending.info.metadata?.location === 'editor') {
       terminal.show(false); // false = take focus
     }
+    const shouldPin = pending.info.metadata?.location === 'editor';
+    void this._maybePinEditorTerminal(terminal, shouldPin, !pending.isNewCreation);
 
     // Set up close listener
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
@@ -1000,6 +1227,12 @@ class CmuxTerminalManager {
       clearTimeout(timeout);
     }
     this._pendingDeletes.clear();
+
+    if (this._restoreFallbackTimer) {
+      clearTimeout(this._restoreFallbackTimer);
+      this._restoreFallbackTimer = null;
+    }
+    this._stopReconcileLoop();
 
     for (const d of this._disposables) {
       d.dispose();
@@ -1129,6 +1362,14 @@ export function activateTerminal(context: vscode.ExtensionContext) {
       // Try to handle this terminal - handleTerminalOpened checks _pendingTerminalSetup
       // and returns early if not a cmux-managed terminal. This works for renamed terminals too.
       terminalManager.handleTerminalOpened(terminal);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) {
+        terminalManager.reconcileNow("window-focus");
+      }
     })
   );
 
@@ -1266,21 +1507,121 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
 }
 
 /**
+ * Check if cmux-pty has ANY terminals (not just a specific name).
+ * This is useful for detecting if cmux-pty is being used at all.
+ */
+export function hasAnyCmuxPtyTerminals(): boolean {
+  if (!terminalManager) return false;
+  return terminalManager.hasTerminals() || terminalManager.hasQueuedTerminals();
+}
+
+/**
+ * Wait for cmux-pty to have ANY terminals.
+ * Returns true if cmux-pty has any terminals, false if not found after waiting.
+ * This is more reliable than waiting for a specific terminal name since
+ * maintenance/dev terminals may be created before the agent's "cmux" terminal.
+ */
+export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Promise<boolean> {
+  if (!terminalManager) {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: terminal manager not initialized');
+    return false;
+  }
+
+  // Wait for initial sync to complete (with longer timeout)
+  // Increased to 15 seconds for Docker containers where PTY server may take longer to start
+  const syncTimeout = 15000;
+  console.log(`[cmux] waitForAnyCmuxPtyTerminals: waiting for initial sync (timeout: ${syncTimeout}ms)...`);
+  try {
+    await Promise.race([
+      terminalManager.waitForInitialSync(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
+      )
+    ]);
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync complete');
+  } catch (err) {
+    // Timeout or connection failure - try an HTTP reconcile before falling back
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out:', err instanceof Error ? err.message : err);
+    terminalManager.reconcileNow('initial-sync-timeout');
+    const startFallback = Date.now();
+    while (Date.now() - startFallback < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (hasAnyCmuxPtyTerminals()) {
+        console.log('[cmux] waitForAnyCmuxPtyTerminals: found terminals after reconcile');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Check if ANY terminals exist
+  if (hasAnyCmuxPtyTerminals()) {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: found terminals after initial sync');
+    return true;
+  }
+
+  // Wait longer for terminals to be created (orchestrator may still be running)
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: waiting for terminals...');
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (hasAnyCmuxPtyTerminals()) {
+      console.log(`[cmux] waitForAnyCmuxPtyTerminals: found terminals after ${Date.now() - startTime}ms`);
+      return true;
+    }
+  }
+
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: no terminals found after waiting');
+  return false;
+}
+
+/**
  * Create all queued terminals from cmux-pty state_sync.
  * This should be called after waitForCmuxPtyTerminal() confirms terminals exist.
  * Directly creates the vscode terminals without going through provideTerminalProfile.
- * Focuses the "cmux" terminal if found.
+ * Focuses the "cmux" terminal if found, or the first available terminal.
  */
-export function createQueuedTerminals(): void {
+export async function createQueuedTerminals(options?: { focus?: boolean }): Promise<void> {
   if (!terminalManager) return;
   console.log('[cmux] createQueuedTerminals called');
   terminalManager.drainRestoreQueue();
 
   // Focus the "cmux" terminal (main agent terminal) after creation
+  const shouldFocus = options?.focus ?? true;
+  if (!shouldFocus) {
+    return;
+  }
+
   const terminals = terminalManager.getTerminals();
+  console.log(`[cmux] Have ${terminals.length} terminals after drain`);
+
+  // First try to focus the "cmux" terminal (main agent)
   const cmuxTerminal = terminals.find(t => t.info.name === 'cmux');
   if (cmuxTerminal) {
     console.log('[cmux] Focusing cmux terminal');
     cmuxTerminal.terminal.show(false); // false = take focus
+    return;
+  }
+
+  // If no "cmux" terminal, try to focus the "dev" terminal (for cloud workspaces)
+  const devTerminal = terminals.find(t => t.info.name === 'dev' || t.info.metadata?.type === 'dev');
+  if (devTerminal) {
+    console.log('[cmux] Focusing dev terminal');
+    devTerminal.terminal.show(false);
+    return;
+  }
+
+  // Otherwise focus the first terminal in panel location
+  const panelTerminal = terminals.find(t => t.info.metadata?.location === 'panel');
+  if (panelTerminal) {
+    console.log('[cmux] Focusing first panel terminal:', panelTerminal.info.name);
+    panelTerminal.terminal.show(false);
+    return;
+  }
+
+  // Last resort: focus any terminal
+  if (terminals.length > 0) {
+    console.log('[cmux] Focusing first available terminal:', terminals[0].info.name);
+    terminals[0].terminal.show(false);
   }
 }

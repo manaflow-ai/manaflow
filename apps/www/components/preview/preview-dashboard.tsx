@@ -21,7 +21,8 @@ import {
   GitCompare as GitCompareIcon,
   Github,
   Home,
-  Link2,
+  // Link2, // commented out: quick setup input is disabled
+  Lock,
   Loader2,
   Monitor,
   MoreVertical,
@@ -492,6 +493,299 @@ function VSCodeTabBar({ children }: VSCodeTabBarProps) {
   );
 }
 
+type MockNavItem = {
+  label: string;
+  icon: LucideIcon;
+  active?: boolean;
+};
+
+type MockSidebarItem = {
+  title: string;
+  subtitle: string;
+  status: "success" | "pending" | "neutral";
+};
+
+type MockWorkspaceItem = {
+  title: string;
+  items: string[];
+  active?: boolean;
+};
+
+type MockPinnedTask = {
+  text: string;
+  owner: string;
+};
+
+function MockCmuxStartRun() {
+  const navItems: MockNavItem[] = [
+    { label: "Home", icon: Home, active: true },
+    { label: "Environments", icon: Server },
+    { label: "Settings", icon: Settings },
+  ];
+
+  const pullRequests: MockSidebarItem[] = [
+    { title: "Devbox", subtitle: "manaflow/devbox-v1", status: "success" },
+    {
+      title: "chore: daily morph snapshot...",
+      subtitle: "morph-snapshot-20260120...",
+      status: "success",
+    },
+    {
+      title: "chore: daily morph snapshot...",
+      subtitle: "morph-snapshot-20260119...",
+      status: "success",
+    },
+    {
+      title: "Add iOS app with Stack Au...",
+      subtitle: "swift-ios-clean",
+      status: "pending",
+    },
+    {
+      title: "chore: daily morph snapshot...",
+      subtitle: "morph-snapshot-20260118...",
+      status: "neutral",
+    },
+  ];
+
+  const workspaces: MockWorkspaceItem[] = [
+    {
+      title: "Refactor Mac downloa...",
+      items: ["VS Code", "Git diff"],
+    },
+    {
+      title: "claude/opus-4.5",
+      items: ["VS Code", "Git diff"],
+    },
+    {
+      title: "codex/gpt-5-high",
+      items: ["VS Code", "Git diff"],
+      active: true,
+    },
+  ];
+
+  const pinnedTasks: MockPinnedTask[] = [
+    {
+      text: "we need to implement rsync between the local vscode to the cloud vscode for th...",
+      owner: "manaflow",
+    },
+    {
+      text: "our normal git diff viewer should have the sidebar thing where we can easily filter...",
+      owner: "manaflow-helpers",
+    },
+    {
+      text: "i think the trimming feature in the hostScreenshotCollector is too much...",
+      owner: "manaflow",
+    },
+    {
+      text: "for some reason the manaflow terminal is still not showing up all of the time...",
+      owner: "manaflow",
+    },
+    {
+      text: "the env picker dropdown should show recent repos first by default...",
+      owner: "manaflow",
+    },
+  ];
+
+  return (
+    <div className="w-[960px] h-[600px] rounded-2xl border border-neutral-800/80 bg-neutral-950/95 shadow-[0_30px_80px_rgba(0,0,0,0.55)] overflow-hidden flex flex-col">
+      <div className="relative flex items-center justify-center h-10 bg-neutral-900/90 border-b border-neutral-800/80">
+        <div className="absolute left-4 flex items-center gap-2">
+          <div className="h-3 w-3 rounded-full bg-[#ff5f57] border border-[#e0443e]" />
+          <div className="h-3 w-3 rounded-full bg-[#febc2e] border border-[#d89e24]" />
+          <div className="h-3 w-3 rounded-full bg-[#28c840] border border-[#1aab29]" />
+        </div>
+        <div className="flex items-center gap-2 rounded-full bg-neutral-800/80 px-3 py-1 text-[11px] text-neutral-200">
+          <Lock className="h-3 w-3 text-neutral-400" />
+          <span>Manaflow - Start a Run</span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        <aside className="w-[230px] bg-neutral-950/80 border-r border-neutral-800 flex flex-col min-h-0">
+          <div className="px-4 pt-4 pb-3 flex items-center gap-2 text-neutral-100 text-sm font-semibold">
+            <span className="h-2.5 w-2.5 rounded-full bg-sky-400" />
+            Manaflow
+          </div>
+
+          <nav className="px-2 space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.label}
+                  className={clsx(
+                    "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+                    item.active
+                      ? "bg-neutral-900/70 text-neutral-100"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{item.label}</span>
+                </div>
+              );
+            })}
+          </nav>
+
+          <div className="mt-4 px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+            Pull requests
+          </div>
+          <div className="mt-2 space-y-2 px-2">
+            {pullRequests.map((item) => (
+              <div
+                key={`${item.title}-${item.subtitle}`}
+                className="space-y-0.5"
+              >
+                <div className="flex items-center gap-2 text-xs text-neutral-200">
+                  <span
+                    className={clsx(
+                      "h-2 w-2 rounded-full",
+                      item.status === "success" && "bg-emerald-400",
+                      item.status === "pending" && "bg-purple-400",
+                      item.status === "neutral" && "bg-neutral-500"
+                    )}
+                  />
+                  <span className="truncate">{item.title}</span>
+                  <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-auto" />
+                </div>
+                <div className="pl-4 text-[10px] text-neutral-500">
+                  {item.subtitle}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 px-3 text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+            Workspaces
+          </div>
+          <div className="mt-2 space-y-2 px-2 pb-3">
+            {workspaces.map((workspace) => (
+              <div
+                key={workspace.title}
+                className={clsx(
+                  "rounded-md px-2 py-1.5",
+                  workspace.active
+                    ? "bg-neutral-900/70 text-neutral-100"
+                    : "text-neutral-300"
+                )}
+              >
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="truncate">{workspace.title}</span>
+                  {workspace.active ? (
+                    <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-auto" />
+                  ) : null}
+                </div>
+                <div className="mt-1 space-y-1 pl-4 text-[10px] text-neutral-500">
+                  {workspace.items.map((item) => (
+                    <div key={item} className="flex items-center gap-1.5">
+                      {item === "VS Code" ? (
+                        <VSCodeIcon className="h-2.5 w-2.5 grayscale opacity-70" />
+                      ) : (
+                        <GitCompareIcon className="h-2.5 w-2.5" />
+                      )}
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <main className="flex-1 bg-neutral-950/35 flex flex-col min-h-0">
+          <div className="px-6 pt-5 pb-4">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+              manaflow
+            </div>
+            <div className="mt-3 rounded-xl border border-neutral-800 bg-neutral-950/70 px-4 py-3">
+              <div className="text-sm text-neutral-500">Describe a task</div>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
+                <Github className="h-3 w-3" />
+                manaflow-ai/manaflow
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
+                <GitBranch className="h-3 w-3 text-emerald-400" />
+                main
+              </div>
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-950/70 px-3 py-1 text-[11px] text-neutral-200">
+                <span className="h-2 w-2 rounded-full bg-sky-400" />
+                codex/gpt-5.2-codex-xhigh
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-md border border-neutral-800 bg-neutral-950/80 text-neutral-400 flex items-center justify-center"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-md border border-neutral-800 bg-neutral-950/80 text-neutral-400 flex items-center justify-center"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-7 w-7 rounded-md border border-neutral-800 bg-neutral-950/80 text-neutral-400 flex items-center justify-center"
+                >
+                  <Monitor className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-7 rounded-md bg-sky-500 px-3 text-[11px] font-semibold text-white"
+                >
+                  Start
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 px-6 pb-6">
+            <div className="flex items-center gap-4 text-xs text-neutral-400 border-b border-neutral-800 pb-2">
+              <button
+                type="button"
+                className="text-neutral-100 border-b border-sky-400 pb-2 -mb-2"
+              >
+                Tasks
+              </button>
+              <button type="button" className="hover:text-neutral-200">
+                Previews
+              </button>
+              <button type="button" className="hover:text-neutral-200">
+                Archived
+              </button>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Pinned 5
+            </div>
+            <div className="mt-3 space-y-2">
+              {pinnedTasks.map((task) => (
+                <div
+                  key={task.text}
+                  className="flex items-start gap-2 text-xs text-neutral-200"
+                >
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  <span className="flex-1 min-w-0 truncate">
+                    {task.text}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-neutral-500">
+                    {task.owner}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function Section({
   title,
   headerContent,
@@ -846,7 +1140,7 @@ function MockGitHubPRBrowser() {
             />
             <ChromeTab
               icon={<TabFavicon />}
-              label="cmux"
+              label="manaflow"
               isActive={activeTab === "workspace"}
               onClick={() => setActiveTab("workspace")}
             />
@@ -888,12 +1182,12 @@ function MockGitHubPRBrowser() {
               {activeTab === "github" ? (
                 <>
                   <span className="text-[#9AA0A6]">github.com/</span>
-                  <span>manaflow-ai/cmux/pull/1124</span>
+                  <span>manaflow-ai/manaflow/pull/1124</span>
                 </>
               ) : (
                 <>
                   <span className="text-[#9AA0A6]">https://</span>
-                  <span>cmux.sh</span>
+                  <span>manaflow.com</span>
                 </>
               )}
             </span>
@@ -929,12 +1223,12 @@ function MockGitHubPRBrowser() {
                 </a>
                 <span className="text-[#7d8590]">/</span>
                 <a
-                  href="https://github.com/manaflow-ai/cmux"
+                  href="https://github.com/manaflow-ai/manaflow"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[#2f81f7] font-semibold hover:underline cursor-pointer"
                 >
-                  cmux
+                  manaflow
                 </a>
               </div>
             </div>
@@ -980,7 +1274,7 @@ function MockGitHubPRBrowser() {
                     main
                   </span>
                   {" from "}
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono"></span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">manaflow/test-re6k4tq</span>
                 </span>
               </div>
             </div>
@@ -1223,7 +1517,7 @@ function MockGitHubPRBrowser() {
                     <div className="shrink-0 w-10 h-10 rounded-full bg-[#0d1117] border border-[#30363d] flex items-center justify-center relative z-10">
                       <Image
                         src="https://avatars.githubusercontent.com/in/1690796?s=80&v=4"
-                        alt="cmux-agent avatar"
+                        alt="manaflow-agent avatar"
                         width={40}
                         height={40}
                         className="rounded-full"
@@ -1238,7 +1532,7 @@ function MockGitHubPRBrowser() {
                             onClick={() => setActiveTab("workspace")}
                             className="font-semibold text-sm text-[#e6edf3] hover:text-[#2f81f7] cursor-pointer"
                           >
-                            cmux-agent
+                            manaflow-agent
                           </button>
                           <span className="px-1.5 py-0.5 rounded-md text-xs font-medium bg-[#6e40c926] text-[#a371f7] border border-[#6e40c966]">
                             bot
@@ -1342,7 +1636,7 @@ function MockGitHubPRBrowser() {
                               }}
                               className="text-[#2f81f7] hover:underline cursor-pointer"
                             >
-                              cmux
+                              manaflow
                             </button>{" "}
                             preview system
                           </p>
@@ -1352,11 +1646,10 @@ function MockGitHubPRBrowser() {
                       <div className="flex items-center gap-1 mt-2">
                         <button
                           onClick={() => setThumbsUpActive(!thumbsUpActive)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
-                            thumbsUpActive
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${thumbsUpActive
                               ? "border-[#2f81f7] bg-[#388bfd1a] text-[#2f81f7]"
                               : "border-[#30363d] bg-[#21262d] hover:bg-[#30363d]"
-                          }`}
+                            }`}
                         >
                           <span>👍</span>
                           <span
@@ -1371,11 +1664,10 @@ function MockGitHubPRBrowser() {
                         </button>
                         <button
                           onClick={() => setRocketActive(!rocketActive)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
-                            rocketActive
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${rocketActive
                               ? "border-[#2f81f7] bg-[#388bfd1a] text-[#2f81f7]"
                               : "border-[#30363d] bg-[#21262d] hover:bg-[#30363d]"
-                          }`}
+                            }`}
                         >
                           <span>🚀</span>
                           <span
@@ -1761,7 +2053,7 @@ function MockGitHubPRBrowser() {
                           </span>
                           <span className="flex-1 px-2 text-[#3fb950]">
                             +import {"{"} api {"}"} from
-                            &quot;@cmux/convex/api&quot;;
+                            &quot;@manaflow/convex/api&quot;;
                           </span>
                         </div>
                         <div className="flex bg-[#2ea04326]">
@@ -1890,11 +2182,11 @@ function MockGitHubPRBrowser() {
             ref={containerRef}
             className="bg-neutral-900 flex flex-1 min-h-0"
           >
-            {/* Left Sidebar - cmux style */}
+            {/* Left Sidebar - manaflow style */}
             <div className="w-[280px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
               {/* Header with logo */}
               <div className="h-[38px] flex items-center px-3 shrink-0">
-                <CmuxLogo height={28} wordmarkText="cmux" />
+                <CmuxLogo height={28} wordmarkText="manaflow" />
                 <div className="ml-auto">
                   <div className="w-[25px] h-[25px] border border-neutral-800 rounded-lg flex items-center justify-center cursor-not-allowed">
                     <Plus className="w-4 h-4 text-neutral-400" />
@@ -1935,7 +2227,7 @@ function MockGitHubPRBrowser() {
                     <div className="space-y-px">
                       <PreviewItemButton
                         title="Preview screenshots for PR #1168"
-                        subtitle="main • manaflow-ai/cmux"
+                        subtitle="main • manaflow-ai/manaflow"
                         isExpanded={expandedTasks.has("task-1")}
                         isSelected={selectedTaskId === "task-1"}
                         isPRMerged={isPRMerged}
@@ -2066,7 +2358,7 @@ function MockGitHubPRBrowser() {
                     <div className="space-y-px">
                       <PreviewItemButton
                         title="Preview screenshots for PR #1142"
-                        subtitle="feat/dark-mode • manaflow-ai/cmux"
+                        subtitle="feat/dark-mode • manaflow-ai/manaflow"
                         isExpanded={expandedTasks.has("task-2")}
                         isSelected={selectedTaskId === "task-2"}
                         onToggleExpand={() => toggleTaskExpanded("task-2")}
@@ -2186,7 +2478,7 @@ function MockGitHubPRBrowser() {
                     <div className="space-y-px">
                       <PreviewItemButton
                         title="Preview screenshots for PR #1098"
-                        subtitle="fix/auth-redirect • manaflow-ai/cmux"
+                        subtitle="fix/auth-redirect • manaflow-ai/manaflow"
                         isExpanded={expandedTasks.has("task-3")}
                         isSelected={selectedTaskId === "task-3"}
                         onToggleExpand={() => toggleTaskExpanded("task-3")}
@@ -2330,7 +2622,7 @@ function MockGitHubPRBrowser() {
                         </div>
                         <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#cccccc]">
                           <ChevronDown className="h-3 w-3" />
-                          <span className="text-[10px]">cmux</span>
+                          <span className="text-[10px]">manaflow</span>
                         </div>
                         <div className="flex-1 overflow-y-auto text-[11px]">
                           {/* Root folders */}
@@ -2401,7 +2693,7 @@ function MockGitHubPRBrowser() {
                             <div className="pr-3 text-[#858585] select-none text-right w-8">
                               3
                             </div>
-                            <div>Welcome to cmux!</div>
+                            <div>Welcome to Manaflow!</div>
                           </div>
                           <div className="flex">
                             <div className="pr-3 text-[#858585] select-none text-right w-8">
@@ -2452,7 +2744,7 @@ function MockGitHubPRBrowser() {
                               11
                             </div>
                             <div className="text-[#6a9955]">
-                              ## What is cmux?
+                              ## What is Manaflow?
                             </div>
                           </div>
                           <div className="flex">
@@ -2504,7 +2796,7 @@ function MockGitHubPRBrowser() {
                               19
                             </div>
                             <div>
-                              today, preview.new screenshot agent runs on cmux
+                              today, preview.new screenshot agent runs on manaflow
                             </div>
                           </div>
                           <div className="flex">
@@ -2552,39 +2844,18 @@ function MockGitHubPRBrowser() {
                   >
                     {/* Browser Panel */}
                     <div
-                      className="bg-[#1e1e1e] flex flex-col"
+                      className="bg-[#0b0f14] flex flex-col"
                       style={{ height: `${topPanelHeight}%` }}
                     >
-                      {/* Panel header */}
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                        <Monitor className="h-4 w-4 text-[#858585]" />
-                        <span className="text-xs text-[#cccccc]">Browser</span>
-                      </div>
-                      {/* Browser inside with VS Code style tabs */}
-                      <div className="flex-1 flex flex-col bg-[#1e1e1e] overflow-hidden">
-                        {/* VS Code style tab bar */}
-                        <VSCodeTabBar>
-                          <VSCodeTab
-                            icon={<TabFavicon />}
-                            label="cmux.dev"
-                            isActive
-                          />
-                        </VSCodeTabBar>
-                        {/* Browser content - cmux.dev landing page */}
-                        <div className="flex-1 bg-[#030712] overflow-hidden">
-                          <iframe
-                            src="https://cmux.dev"
-                            className={clsx(
-                              "border-0 origin-top-left",
-                              isResizing && "pointer-events-none"
-                            )}
-                            style={{
-                              width: "200%",
-                              height: "200%",
-                              transform: "scale(0.5)",
-                            }}
-                            title="cmux landing page"
-                          />
+                      <div className="flex-1 bg-[#0b0f14] overflow-hidden">
+                        <div
+                          className={clsx(
+                            "origin-top-left w-[200%] h-[200%] flex items-center justify-center",
+                            isResizing && "pointer-events-none"
+                          )}
+                          style={{ transform: "scale(0.5)" }}
+                        >
+                          <MockCmuxStartRun />
                         </div>
                       </div>
                     </div>
@@ -2675,7 +2946,7 @@ function MockGitHubPRBrowser() {
                                 </span>
                                 <span className="flex-1 px-2 text-[#3fb950]">
                                   +import {"{"} api {"}"} from
-                                  &quot;@cmux/convex/api&quot;;
+                                  &quot;@manaflow/convex/api&quot;;
                                 </span>
                               </div>
                               <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">
@@ -2829,7 +3100,7 @@ function MockGitHubPRBrowser() {
                       </div>
                       <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#cccccc] bg-[#37373d]">
                         <ChevronDown className="h-3 w-3" />
-                        <span className="text-[10px]">cmux</span>
+                        <span className="text-[10px]">manaflow</span>
                       </div>
                       <div className="flex-1 overflow-y-auto text-[11px]">
                         {/* Root folders */}
@@ -2899,7 +3170,7 @@ function MockGitHubPRBrowser() {
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
                             3
                           </div>
-                          <div>Welcome to cmux!</div>
+                          <div>Welcome to Manaflow!</div>
                         </div>
                         <div className="flex">
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
@@ -2947,7 +3218,7 @@ function MockGitHubPRBrowser() {
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
                             11
                           </div>
-                          <div className="text-[#6a9955]">## What is cmux?</div>
+                          <div className="text-[#6a9955]">## What is Manaflow?</div>
                         </div>
                         <div className="flex">
                           <div className="pr-4 text-[#858585] select-none text-right w-10">
@@ -3007,45 +3278,16 @@ function MockGitHubPRBrowser() {
 
               {/* Single panel: Browser */}
               {viewMode === "browser" && (
-                <div className="flex-1 bg-[#1e1e1e] flex flex-col">
-                  {/* Panel header */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                    <Monitor className="h-4 w-4 text-[#858585]" />
-                    <span className="text-xs text-[#cccccc]">Browser</span>
-                    <div className="ml-auto flex items-center gap-1">
-                      <button
-                        onClick={() => setViewMode("all")}
-                        className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded text-[10px]"
-                      >
-                        Back to all
-                      </button>
-                    </div>
-                  </div>
-                  {/* Browser inside with VS Code style tabs */}
-                  <div className="flex-1 flex flex-col bg-[#1e1e1e] overflow-hidden">
-                    {/* VS Code style tab bar */}
-                    <VSCodeTabBar>
-                      <VSCodeTab
-                        icon={<TabFavicon />}
-                        label="cmux.dev"
-                        isActive
-                      />
-                    </VSCodeTabBar>
-                    {/* Browser content - cmux.dev landing page */}
-                    <div className="flex-1 bg-[#030712] overflow-hidden">
-                      <iframe
-                        src="https://cmux.dev"
-                        className={clsx(
-                          "border-0 origin-top-left",
-                          isResizing && "pointer-events-none"
-                        )}
-                        style={{
-                          width: "200%",
-                          height: "200%",
-                          transform: "scale(0.5)",
-                        }}
-                        title="cmux landing page"
-                      />
+                <div className="flex-1 bg-[#0b0f14] flex flex-col">
+                  <div className="flex-1 bg-[#0b0f14] overflow-hidden">
+                    <div
+                      className={clsx(
+                        "origin-top-left w-[200%] h-[200%] flex items-center justify-center",
+                        isResizing && "pointer-events-none"
+                      )}
+                      style={{ transform: "scale(0.5)" }}
+                    >
+                      <MockCmuxStartRun />
                     </div>
                   </div>
                 </div>
@@ -3129,7 +3371,7 @@ function MockGitHubPRBrowser() {
                             </span>
                             <span className="flex-1 px-4 text-[#3fb950]">
                               +import {"{"} api {"}"} from
-                              &quot;@cmux/convex/api&quot;;
+                              &quot;@manaflow/convex/api&quot;;
                             </span>
                           </div>
                           <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">
@@ -3324,14 +3566,14 @@ function MockGitHubPRBrowser() {
                       {activeTmuxSession === 1 && (
                         <>
                           <div className="text-[#8b949e]">
-                            $ /var/tmp/cmux-scripts/maintenance.sh
+                            $ /var/tmp/manaflow-scripts/maintenance.sh
                           </div>
                           <div className="text-[#7ee787]">
                             === Maintenance Script Started at 09:41 ===
                           </div>
                           <div className="mt-1" />
                           <div className="text-[#c9d1d9]">
-                            /var/tmp/cmux-scripts/maintenance.sh:10&gt; bun i
+                            /var/tmp/manaflow-scripts/maintenance.sh:10&gt; bun i
                           </div>
                           <div className="text-[#58a6ff]">
                             bun install v1.3.3 (274e01c7)
@@ -3343,7 +3585,7 @@ function MockGitHubPRBrowser() {
                           </div>
                           <div className="mt-1" />
                           <div className="text-[#8b949e]">
-                            /var/tmp/cmux-scripts/maintenance.sh:11&gt; echo
+                            /var/tmp/manaflow-scripts/maintenance.sh:11&gt; echo
                             &apos;=== Maintenance Script Completed ===&apos;
                           </div>
                           <div className="text-[#7ee787]">
@@ -3368,7 +3610,7 @@ function MockGitHubPRBrowser() {
                             </span>{" "}
                             <span className="text-[#c9d1d9]">
                               start
-                              headRefOrigin/cmux/add-mock-example-to-preview-front-page
+                              headRefOrigin/manaflow/add-mock-example-to-preview-front-page
                             </span>
                           </div>
                           <div>
@@ -3535,7 +3777,7 @@ function MockGitHubPRBrowser() {
                   <div className="flex items-center justify-between px-1 py-0.5 bg-[#238636] text-white text-[11px] shrink-0">
                     <div className="flex items-center">
                       <span className="text-[#7ee787] font-medium px-2">
-                        [cmux]
+                        [manaflow]
                       </span>
                       {[
                         { id: 0, name: "bunx" },
@@ -3704,8 +3946,8 @@ function PreviewDashboardInner({
   // OAuth sign-in with popup
   const { signInWithPopup, signingInProvider } = useOAuthPopup();
 
-  // Public URL input state
-  const [repoUrlInput, setRepoUrlInput] = useState("");
+  // Public URL input state (commented out: quick setup input is disabled)
+  // const [repoUrlInput, setRepoUrlInput] = useState("");
 
   const currentProviderConnections = useMemo(
     () => providerConnectionsByTeam[selectedTeamSlugOrIdState] ?? [],
@@ -3774,29 +4016,29 @@ function PreviewDashboardInner({
     setConfigs(previewConfigs);
   }, [previewConfigs]);
 
-  // Parse GitHub URL to extract owner/repo
-  const parseGithubUrl = useCallback((input: string): string | null => {
-    const trimmed = input.trim();
-    // Try to parse as URL
-    try {
-      const url = new URL(trimmed);
-      if (url.hostname === "github.com" || url.hostname === "www.github.com") {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (parts.length >= 2) {
-          return `${parts[0]}/${parts[1]}`;
-        }
-      }
-    } catch {
-      // Not a valid URL, check if it's owner/repo format
-      const ownerRepoMatch = trimmed.match(
-        /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/
-      );
-      if (ownerRepoMatch) {
-        return trimmed;
-      }
-    }
-    return null;
-  }, []);
+  // Parse GitHub URL to extract owner/repo (commented out: quick setup input is disabled)
+  // const parseGithubUrl = useCallback((input: string): string | null => {
+  //   const trimmed = input.trim();
+  //   // Try to parse as URL
+  //   try {
+  //     const url = new URL(trimmed);
+  //     if (url.hostname === "github.com" || url.hostname === "www.github.com") {
+  //       const parts = url.pathname.split("/").filter(Boolean);
+  //       if (parts.length >= 2) {
+  //         return `${parts[0]}/${parts[1]}`;
+  //       }
+  //     }
+  //   } catch {
+  //     // Not a valid URL, check if it's owner/repo format
+  //     const ownerRepoMatch = trimmed.match(
+  //       /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/
+  //     );
+  //     if (ownerRepoMatch) {
+  //       return trimmed;
+  //     }
+  //   }
+  //   return null;
+  // }, []);
 
   const handleOpenConfig = useCallback((config: PreviewConfigListItem) => {
     setOpeningConfigId(config.id);
@@ -3866,96 +4108,97 @@ function PreviewDashboardInner({
     setErrorMessage(null);
   }, []);
 
-  const handleStartPreview = useCallback(async () => {
-    const repoName = parseGithubUrl(repoUrlInput);
-    if (!repoName) {
-      setErrorMessage("Please enter a valid GitHub URL or owner/repo");
-      return;
-    }
-
-    // For unauthenticated users, redirect to sign-in without requiring team selection
-    if (!isAuthenticated) {
-      const params = new URLSearchParams({ repo: repoName });
-      // Include team if available, otherwise the configure page will handle it after sign-in
-      if (selectedTeamSlugOrIdState) {
-        params.set("team", selectedTeamSlugOrIdState);
-      }
-      const configurePath = `/preview/configure?${params.toString()}`;
-      setErrorMessage(null);
-      setNavigatingRepo("__url_input__");
-      window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
-      return;
-    }
-
-    if (!selectedTeamSlugOrIdState) {
-      setErrorMessage("Select a team before continuing.");
-      return;
-    }
-
-    const params = new URLSearchParams({ repo: repoName });
-    params.set("team", selectedTeamSlugOrIdState);
-    const configurePath = `/preview/configure?${params.toString()}`;
-
-    if (!hasGithubAppInstallation) {
-      setErrorMessage(null);
-      setIsInstallingApp(true);
-      setNavigatingRepo("__url_input__");
-
-      try {
-        const response = await fetch("/api/integrations/github/install-state", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            teamSlugOrId: selectedTeamSlugOrIdState,
-            returnUrl: new URL(
-              configurePath,
-              window.location.origin
-            ).toString(),
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-
-        const payload = (await response.json()) as { state: string };
-        const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-        if (!githubAppSlug) {
-          throw new Error("GitHub App slug is not configured");
-        }
-
-        const url = new URL(
-          `https://github.com/apps/${githubAppSlug}/installations/new`
-        );
-        url.searchParams.set("state", payload.state);
-        window.location.href = url.toString();
-        return;
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to start GitHub App install";
-        console.error(
-          "[PreviewDashboard] Failed to start GitHub App install",
-          error
-        );
-        setErrorMessage(message);
-        setIsInstallingApp(false);
-        setNavigatingRepo(null);
-        return;
-      }
-    }
-
-    setErrorMessage(null);
-    setNavigatingRepo("__url_input__");
-    window.location.href = configurePath;
-  }, [
-    repoUrlInput,
-    parseGithubUrl,
-    selectedTeamSlugOrIdState,
-    hasGithubAppInstallation,
-    isAuthenticated,
-  ]);
+  // handleStartPreview commented out: quick setup input is disabled
+  // const handleStartPreview = useCallback(async () => {
+  //   const repoName = parseGithubUrl(repoUrlInput);
+  //   if (!repoName) {
+  //     setErrorMessage("Please enter a valid GitHub URL or owner/repo");
+  //     return;
+  //   }
+  //
+  //   // For unauthenticated users, redirect to sign-in without requiring team selection
+  //   if (!isAuthenticated) {
+  //     const params = new URLSearchParams({ repo: repoName });
+  //     // Include team if available, otherwise the configure page will handle it after sign-in
+  //     if (selectedTeamSlugOrIdState) {
+  //       params.set("team", selectedTeamSlugOrIdState);
+  //     }
+  //     const configurePath = `/preview/configure?${params.toString()}`;
+  //     setErrorMessage(null);
+  //     setNavigatingRepo("__url_input__");
+  //     window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
+  //     return;
+  //   }
+  //
+  //   if (!selectedTeamSlugOrIdState) {
+  //     setErrorMessage("Select a team before continuing.");
+  //     return;
+  //   }
+  //
+  //   const params = new URLSearchParams({ repo: repoName });
+  //   params.set("team", selectedTeamSlugOrIdState);
+  //   const configurePath = `/preview/configure?${params.toString()}`;
+  //
+  //   if (!hasGithubAppInstallation) {
+  //     setErrorMessage(null);
+  //     setIsInstallingApp(true);
+  //     setNavigatingRepo("__url_input__");
+  //
+  //     try {
+  //       const response = await fetch("/api/integrations/github/install-state", {
+  //         method: "POST",
+  //         headers: { "Content-Type": "application/json" },
+  //         body: JSON.stringify({
+  //           teamSlugOrId: selectedTeamSlugOrIdState,
+  //           returnUrl: new URL(
+  //             configurePath,
+  //             window.location.origin
+  //           ).toString(),
+  //         }),
+  //       });
+  //
+  //       if (!response.ok) {
+  //         throw new Error(await response.text());
+  //       }
+  //
+  //       const payload = (await response.json()) as { state: string };
+  //       const githubAppSlug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+  //       if (!githubAppSlug) {
+  //         throw new Error("GitHub App slug is not configured");
+  //       }
+  //
+  //       const url = new URL(
+  //         `https://github.com/apps/${githubAppSlug}/installations/new`
+  //       );
+  //       url.searchParams.set("state", payload.state);
+  //       window.location.href = url.toString();
+  //       return;
+  //     } catch (error) {
+  //       const message =
+  //         error instanceof Error
+  //           ? error.message
+  //           : "Failed to start GitHub App install";
+  //       console.error(
+  //         "[PreviewDashboard] Failed to start GitHub App install",
+  //         error
+  //       );
+  //       setErrorMessage(message);
+  //       setIsInstallingApp(false);
+  //       setNavigatingRepo(null);
+  //       return;
+  //     }
+  //   }
+  //
+  //   setErrorMessage(null);
+  //   setNavigatingRepo("__url_input__");
+  //   window.location.href = configurePath;
+  // }, [
+  //   repoUrlInput,
+  //   parseGithubUrl,
+  //   selectedTeamSlugOrIdState,
+  //   hasGithubAppInstallation,
+  //   isAuthenticated,
+  // ]);
 
   // Auto-select first connection for the team, but keep user choice if still valid
   useEffect(() => {
@@ -4382,7 +4625,7 @@ function PreviewDashboardInner({
       </div>
 
       {/* Quick Setup Input */}
-      <div id="setup-preview" className="pb-10">
+      {/* <div id="setup-preview" className="pb-10">
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
           <div className="relative flex-1 flex items-center bg-white/5 backdrop-blur-sm">
             <Link2 className="absolute left-4 h-5 w-5 text-neutral-500 z-10" />
@@ -4414,7 +4657,7 @@ function PreviewDashboardInner({
         {errorMessage && (
           <p className="text-xs text-red-400 pt-2">{errorMessage}</p>
         )}
-      </div>
+      </div> */}
 
       {/* Main content grid */}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
@@ -4595,36 +4838,36 @@ function PreviewDashboardInner({
             inlineHeader={true}
             headerContent={
               <Link
-                href="https://cmux.dev"
+                href="https://manaflow.com"
                 className="inline-flex items-center hover:opacity-80 transition-opacity"
                 style={{ transform: "translate(-2.5px, -0.5px)" }}
               >
                 <CmuxLogo
                   height="2em"
-                  wordmarkText="cmux.dev"
+                  wordmarkText="manaflow.com"
                   wordmarkFill="#fff"
                 />
               </Link>
             }
           >
             <p className="text-sm text-neutral-400 pb-2">
-              Want UI screenshots for your code reviews? Check out cmux - an
+              Want UI screenshots for your code reviews? Check out Manaflow - an
               open-source Claude Code/Codex manager with visual diffs!
             </p>
             <div className="flex items-center gap-3 pt-2">
               <Link
-                href="https://github.com/manaflow-ai/cmux"
+                href="https://github.com/manaflow-ai/manaflow"
                 className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white"
               >
                 <Star className="h-3.5 w-3.5" />
                 Star on GitHub
               </Link>
               <Link
-                href="https://cmux.dev"
+                href="https://manaflow.com"
                 className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                Explore cmux
+                Explore Manaflow
               </Link>
             </div>
           </Section>

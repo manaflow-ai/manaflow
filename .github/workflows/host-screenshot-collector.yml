@@ -1,4 +1,4 @@
-name: Host Screenshot Collector Release
+name: Host Screenshot Collector Sync
 
 on:
   push:
@@ -12,19 +12,14 @@ concurrency:
   group: host-screenshot-collector-${{ github.ref }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
-
 env:
   NODE_VERSION: "24"
 
 jobs:
-  build-and-release:
-    name: Build and Release
+  build-and-sync:
+    name: Build and Sync to Convex
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      release_url: ${{ steps.release.outputs.url }}
+    environment: electron
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +36,7 @@ jobs:
         working-directory: packages/host-screenshot-collector
         run: bun run build
 
-      - name: Get version and commit info
+      - name: Get version info
         id: version
         working-directory: packages/host-screenshot-collector
         run: |
@@ -52,65 +47,18 @@ jobs:
           echo "version=${FULL_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${FULL_VERSION}"
 
-      - name: Create release tag
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          TAG="host-screenshot-collector-v${VERSION}"
-
-          # Check if release already exists
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists, deleting..."
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
-            git push --delete origin "$TAG" || true
-          fi
-
-          # Create release with the bundled JS file
-          echo "Creating release $TAG..."
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Host Screenshot Collector v${VERSION}" \
-            --notes "Automated release of host-screenshot-collector
-
-          Version: ${VERSION}
-          Commit: ${GITHUB_SHA}
-
-          This release contains the bundled screenshot collector script that runs inside Morph sandbox environments." \
-            packages/host-screenshot-collector/dist/index.js
-
-          RELEASE_URL=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q '.url')
-          echo "url=${RELEASE_URL}" >> "$GITHUB_OUTPUT"
-          echo "Release URL: ${RELEASE_URL}"
-
-  sync-to-convex:
-    name: Sync to Convex (Production)
-    needs: build-and-release
-    runs-on: ubuntu-latest
-    environment: electron
-    steps:
-      - name: Download release artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.build-and-release.outputs.version }}
-        run: |
-          TAG="host-screenshot-collector-v${VERSION}"
-          mkdir -p /tmp/release-artifact
-          gh release download "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "index.js" \
-            --dir /tmp/release-artifact
-
       - name: Sync to Convex
         env:
-          VERSION: ${{ needs.build-and-release.outputs.version }}
-          RELEASE_URL: ${{ needs.build-and-release.outputs.release_url }}
+          VERSION: ${{ steps.version.outputs.version }}
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
         run: |
           # Convert .convex.cloud to .convex.site for HTTP actions
           CONVEX_SITE_URL="${NEXT_PUBLIC_CONVEX_URL/.convex.cloud/.convex.site}"
           echo "Using Convex site URL: ${CONVEX_SITE_URL}"
+
+          # Build release URL from repository and commit
+          RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          echo "Release URL: ${RELEASE_URL}"
 
           # Upload the file to Convex via HTTP endpoint
           curl -X POST "${CONVEX_SITE_URL}/api/host-screenshot-collector/sync" \
@@ -119,5 +67,5 @@ jobs:
             -H "X-Commit-SHA: ${GITHUB_SHA}" \
             -H "X-Is-Staging: false" \
             -H "X-Release-URL: ${RELEASE_URL}" \
-            --data-binary @/tmp/release-artifact/index.js \
+            --data-binary @packages/host-screenshot-collector/dist/index.js \
             --fail-with-body

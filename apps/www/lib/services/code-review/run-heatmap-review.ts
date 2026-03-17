@@ -1,13 +1,16 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createOpenAI } from "@ai-sdk/openai";
+import type { LanguageModel } from "ai";
 import { streamObject } from "ai";
+import { withTracing } from "@posthog/ai";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import {
-  CLOUDFLARE_ANTHROPIC_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  BEDROCK_AWS_REGION,
 } from "@cmux/shared";
 import { getConvex } from "@/lib/utils/get-convex";
+import { getPostHogClientForAITracing } from "@/lib/analytics/posthog-server";
 import {
   collectPrDiffs,
   collectComparisonDiffs,
@@ -37,6 +40,7 @@ interface FileDiff {
 interface HeatmapReviewConfig {
   jobId: string;
   teamId?: string;
+  userId?: string;
   prUrl: string;
   prNumber?: number;
   accessToken: string;
@@ -66,23 +70,26 @@ export async function runHeatmapReview(
     prUrl: config.prUrl,
   });
 
-  // Determine the effective model configuration (defaults to Anthropic Opus 4.5)
+  // Determine the effective model configuration (defaults to Anthropic Haiku 4.5)
   const effectiveModelConfig: ModelConfig =
     config.modelConfig ?? getDefaultHeatmapModelConfig();
 
   // Validate API keys based on provider
   const openAiApiKey = process.env.OPENAI_API_KEY;
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  const awsBedrockToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
 
   if (effectiveModelConfig.provider === "openai" && !openAiApiKey) {
     throw new Error("OPENAI_API_KEY environment variable is required for OpenAI models");
   }
-  if (effectiveModelConfig.provider === "anthropic" && !anthropicApiKey) {
-    throw new Error("ANTHROPIC_API_KEY environment variable is required for Anthropic models");
+  if (effectiveModelConfig.provider === "anthropic" && !awsBedrockToken) {
+    throw new Error("AWS_BEARER_TOKEN_BEDROCK environment variable is required for Anthropic models via Bedrock");
   }
 
   const convex = getConvex({ accessToken: config.accessToken });
   const jobStart = Date.now();
+
+  // Initialize PostHog client for AI tracing (before try block so we can clean up in finally)
+  const posthogClient = getPostHogClientForAITracing();
 
   try {
     // Fetch diffs - either from pre-fetched client data, PR, or branch comparison
@@ -221,25 +228,48 @@ export async function runHeatmapReview(
     });
 
     // Create provider clients
-    const anthropic = createAnthropic({
-      apiKey: anthropicApiKey ?? "",
-      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+    // AWS Bedrock SDK reads AWS_BEARER_TOKEN_BEDROCK and AWS_REGION from env vars by default
+    // We pass them explicitly for clarity
+    const bedrock = createAmazonBedrock({
+      region: process.env.AWS_REGION ?? BEDROCK_AWS_REGION,
+      apiKey: awsBedrockToken,
     });
     const openai = createOpenAI({
       apiKey: openAiApiKey ?? "",
       baseURL: CLOUDFLARE_OPENAI_BASE_URL,
     });
 
-    // Create the model instance based on provider
-    const modelInstance =
+    // Create the base model instance based on provider
+    const baseModelInstance: LanguageModel =
       effectiveModelConfig.provider === "anthropic"
-        ? anthropic(effectiveModelConfig.model)
+        ? bedrock(effectiveModelConfig.model)
         : openai(effectiveModelConfig.model);
+
+    // Wrap model with PostHog tracing if client is available
+    // Cast needed due to posthog-node version mismatch between @posthog/ai peer dep and direct dep
+    const modelInstance = posthogClient
+      ? withTracing(baseModelInstance, posthogClient as unknown as Parameters<typeof withTracing>[1], {
+          posthogDistinctId: config.userId ?? "anonymous",
+          posthogTraceId: config.jobId,
+          posthogProperties: {
+            product: "0github",
+            teamId: config.teamId ?? null,
+            jobId: config.jobId,
+            prUrl: config.prUrl,
+            prNumber: config.prNumber ?? null,
+            provider: effectiveModelConfig.provider,
+            model: effectiveModelConfig.model,
+            reviewType: config.comparison ? "comparison" : "pr",
+          },
+          posthogGroups: config.teamId ? { team: config.teamId } : undefined,
+        })
+      : baseModelInstance;
 
     console.info("[heatmap-review] Using model", {
       jobId: config.jobId,
       provider: effectiveModelConfig.provider,
       model: effectiveModelConfig.model,
+      posthogTracingEnabled: !!posthogClient,
     });
 
     const allResults: Array<{ filePath: string; lines: HeatmapLine[] }> = [];
@@ -394,5 +424,14 @@ export async function runHeatmapReview(
     }
 
     throw error;
+  } finally {
+    // Ensure PostHog events are flushed
+    if (posthogClient) {
+      try {
+        await posthogClient.shutdown();
+      } catch (shutdownError) {
+        console.error("[heatmap-review] Failed to shutdown PostHog client", shutdownError);
+      }
+    }
   }
 }

@@ -80,6 +80,7 @@ jobs:
           MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
           # Next.js public env vars
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
           NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}

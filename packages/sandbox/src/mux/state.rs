@@ -1375,6 +1375,7 @@ impl<'a> MuxApp<'a> {
                 sandbox_ip: "0.0.0.0".to_string(),
                 cidr: 24,
             },
+            display: None, // Will be populated when sandbox is actually created
             correlation_id: tab_id_str.clone(), // Stored on sandbox itself - single source of truth
         };
 
@@ -1569,6 +1570,7 @@ mod tests {
                 sandbox_ip: "10.0.0.2".to_string(),
                 cidr: 24,
             },
+            display: None,
             correlation_id: None,
         }
     }

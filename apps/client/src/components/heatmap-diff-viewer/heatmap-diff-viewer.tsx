@@ -2,7 +2,7 @@
 // Adapted from apps/www/components/pr/pull-request-diff-viewer.tsx
 
 import {
-  Fragment,
+  forwardRef,
   memo,
   useMemo,
   useState,
@@ -12,7 +12,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Decoration,
   Diff,
   Hunk,
   computeNewLineNumber,
@@ -67,6 +66,8 @@ import {
 // ============================================================================
 
 export type HeatmapDiffViewerProps = {
+  /** ID for the container element */
+  id?: string;
   /** The raw git diff string */
   diffText: string;
   /** Pre-parsed diff data (optional, avoids parsing on each render) */
@@ -302,44 +303,44 @@ function inferLanguage(filename: string): string | null {
 function getFileStatusMeta(
   status: HeatmapDiffViewerProps["status"] | undefined
 ): FileStatusMeta {
-  const iconClassName = "h-3.5 w-3.5";
+  const iconClassName = "w-3.5 h-3.5 flex-shrink-0";
 
   switch (status) {
     case "added":
       return {
         icon: <FilePlus className={iconClassName} />,
-        colorClassName: "text-emerald-600 dark:text-emerald-400",
+        colorClassName: "text-green-600 dark:text-green-400",
         label: "Added file",
       };
     case "removed":
       return {
         icon: <FileMinus className={iconClassName} />,
-        colorClassName: "text-rose-600 dark:text-rose-400",
+        colorClassName: "text-red-600 dark:text-red-400",
         label: "Removed file",
       };
     case "modified":
     case "changed":
       return {
         icon: <FileEdit className={iconClassName} />,
-        colorClassName: "text-amber-600 dark:text-amber-400",
+        colorClassName: "text-yellow-600 dark:text-yellow-400",
         label: "Modified file",
       };
     case "renamed":
       return {
         icon: <FileCode className={iconClassName} />,
-        colorClassName: "text-sky-600 dark:text-sky-400",
+        colorClassName: "text-blue-600 dark:text-blue-400",
         label: "Renamed file",
       };
     case "copied":
       return {
         icon: <FileCode className={iconClassName} />,
-        colorClassName: "text-sky-600 dark:text-sky-400",
+        colorClassName: "text-blue-600 dark:text-blue-400",
         label: "Copied file",
       };
     default:
       return {
         icon: <FileText className={iconClassName} />,
-        colorClassName: "text-neutral-500 dark:text-neutral-400",
+        colorClassName: "text-neutral-500",
         label: "File change",
       };
   }
@@ -479,7 +480,7 @@ function HeatmapGutterTooltip({
   const theme = getHeatmapTooltipTheme(tooltipMeta.score);
 
   return (
-    <Tooltip delayDuration={120} open={isOpen} onOpenChange={handleOpenChange}>
+    <Tooltip delayDuration={0} open={isOpen} onOpenChange={handleOpenChange}>
       <TooltipTrigger asChild>
         <span
           className="cmux-heatmap-gutter"
@@ -511,25 +512,30 @@ function HeatmapGutterTooltip({
 // Main Component
 // ============================================================================
 
-export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
-  diffText,
-  parsedDiff: providedParsedDiff,
-  filename,
-  status,
-  additions = 0,
-  deletions = 0,
-  reviewHeatmap = [],
-  heatmapThreshold = 0,
-  diffHeatmap: providedDiffHeatmap,
-  heatmapColors = DEFAULT_HEATMAP_COLORS,
-  focusedLine = null,
-  autoTooltipLine = null,
-  isLoading = false,
-  errorMessage = null,
-  defaultCollapsed = false,
-  onCollapseChange,
-  className,
-}: HeatmapDiffViewerProps) {
+export const HeatmapDiffViewer = memo(
+  forwardRef<HTMLDivElement, HeatmapDiffViewerProps>(function HeatmapDiffViewerComponent(
+    {
+      id,
+      diffText,
+      parsedDiff: providedParsedDiff,
+      filename,
+      status,
+      additions = 0,
+      deletions = 0,
+      reviewHeatmap = [],
+      heatmapThreshold = 0,
+      diffHeatmap: providedDiffHeatmap,
+      heatmapColors = DEFAULT_HEATMAP_COLORS,
+      focusedLine = null,
+      autoTooltipLine = null,
+      isLoading = false,
+      errorMessage = null,
+      defaultCollapsed = false,
+      onCollapseChange,
+      className,
+    },
+    ref
+  ) {
   const { resolvedTheme } = useTheme();
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
@@ -666,7 +672,7 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
             return (
               <Tooltip
                 key={`heatmap-char-${lineNumber}-${index}`}
-                delayDuration={120}
+                delayDuration={0}
               >
                 <TooltipTrigger asChild>
                   <span className="cmux-heatmap-char-wrapper">{rendered}</span>
@@ -835,202 +841,196 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
   const isDarkMode = resolvedTheme === "dark";
 
   return (
-    <TooltipProvider
-      delayDuration={120}
-      skipDelayDuration={100}
-      disableHoverableContent
-    >
+    <>
+      <div
+        id={id}
+        ref={ref}
+        className={cn(
+          "bg-white dark:bg-neutral-900",
+          className
+        )}
+      >
+        {/* Header - matches FileDiffHeaderWithViewed styling */}
+        <div
+          className="w-full px-3 py-2 flex items-center text-left bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200/80 dark:border-neutral-800/70"
+        >
+          <button
+            type="button"
+            onClick={handleToggleCollapse}
+            className="flex items-center flex-1 min-w-0"
+            aria-expanded={!isCollapsed}
+          >
+            <div className="flex items-center" style={{ width: "20px" }}>
+              <div className="text-neutral-400 dark:text-neutral-500">
+                {isCollapsed ? (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </div>
+            </div>
+            <div className="flex items-center" style={{ width: "20px" }}>
+              <div className={cn("flex-shrink-0", statusMeta.colorClassName)}>
+                {statusMeta.icon}
+                <span className="sr-only">{statusMeta.label}</span>
+              </div>
+            </div>
+            <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex flex-col">
+                <span className="font-sans font-medium text-[13px] text-neutral-700 dark:text-neutral-300 truncate select-none">
+                  {filename}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-green-600 dark:text-green-400 font-medium select-none">
+                  +{additions}
+                </span>
+                <span className="text-red-600 dark:text-red-400 font-medium select-none">
+                  −{deletions}
+                </span>
+                {/* Loading indicator */}
+                {isLoading && (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center">
+                        <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="end"
+                      showArrow={false}
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      AI review in progress...
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {/* Diff Content */}
+        {!isCollapsed && (
+          <TooltipProvider delayDuration={0} skipDelayDuration={0} disableHoverableContent>
+            <div>
+              {parsedDiff ? (
+                parsedDiff.hunks.map((hunk) => (
+                  <div key={hunk.content}>
+                    {/* Hunk header - rendered as a block element outside the table */}
+                    <div className="bg-sky-50 dark:bg-sky-950/50 px-4 py-1.5 text-xs font-mono text-sky-700 dark:text-sky-300 border-b border-sky-100 dark:border-sky-900/50">
+                      {hunk.content}
+                    </div>
+                    {/* Diff table for this hunk */}
+                    <Diff
+                      diffType={parsedDiff.type}
+                      hunks={[hunk]}
+                      viewType="split"
+                      optimizeSelection
+                      className={cn(
+                        "diff-syntax system-mono overflow-auto text-xs leading-5",
+                        "bg-white dark:bg-neutral-950",
+                        "text-neutral-800 dark:text-neutral-200"
+                      )}
+                      gutterClassName={cn(
+                        "system-mono text-xs",
+                        "bg-white dark:bg-neutral-950",
+                        "text-neutral-500 dark:text-neutral-400"
+                      )}
+                      codeClassName={cn(
+                        "system-mono text-xs",
+                        "text-neutral-800 dark:text-neutral-200"
+                      )}
+                      tokens={tokens ?? undefined}
+                      renderToken={renderHeatmapToken}
+                      renderGutter={renderHeatmapGutter}
+                      generateLineClassName={({ changes, defaultGenerate }) => {
+                        const defaultClassName = defaultGenerate();
+                        const classNames: string[] = ["system-mono text-xs py-1"];
+                        const normalizedChanges = changes.filter(
+                          (change): change is ChangeData => Boolean(change)
+                        );
+                        const hasFocus =
+                          focusedLine !== null &&
+                          normalizedChanges.some((change) =>
+                            doesChangeMatchLine(change, focusedLine)
+                          );
+                        if (hasFocus) {
+                          classNames.push("cmux-heatmap-focus");
+                        }
+
+                        // Apply heatmap line classes
+                        if (
+                          diffHeatmap &&
+                          (diffHeatmap.lineClasses.size > 0 ||
+                            diffHeatmap.oldLineClasses.size > 0)
+                        ) {
+                          let bestHeatmapClass: string | null = null;
+
+                          const considerClass = (candidate: string | undefined) => {
+                            if (!candidate) {
+                              return;
+                            }
+                            if (!bestHeatmapClass) {
+                              bestHeatmapClass = candidate;
+                              return;
+                            }
+                            const currentStep =
+                              extractHeatmapGradientStep(bestHeatmapClass);
+                            const nextStep = extractHeatmapGradientStep(candidate);
+                            if (nextStep > currentStep) {
+                              bestHeatmapClass = candidate;
+                            }
+                          };
+
+                          for (const change of normalizedChanges) {
+                            const newLineNumber = computeNewLineNumber(change);
+                            if (newLineNumber > 0) {
+                              considerClass(
+                                diffHeatmap.lineClasses.get(newLineNumber)
+                              );
+                            }
+                            const oldLineNumber = computeOldLineNumber(change);
+                            if (oldLineNumber > 0) {
+                              considerClass(
+                                diffHeatmap.oldLineClasses.get(oldLineNumber)
+                              );
+                            }
+                          }
+
+                          if (bestHeatmapClass) {
+                            classNames.push(bestHeatmapClass);
+                          }
+                        }
+
+                        classNames.push(
+                          isDarkMode
+                            ? "text-neutral-200"
+                            : "text-neutral-800"
+                        );
+
+                        return cn(defaultClassName, classNames);
+                      }}
+                    >
+                      {(hunks) => hunks.map((h) => <Hunk key={h.content} hunk={h} />)}
+                    </Diff>
+                  </div>
+                ))
+              ) : (
+                <div className="bg-neutral-50 dark:bg-neutral-900 px-4 py-6 text-sm text-neutral-600 dark:text-neutral-400">
+                  {errorMessage ??
+                    "Diff content is unavailable for this file. It might be binary or too large to display."}
+                </div>
+              )}
+            </div>
+          </TooltipProvider>
+        )}
+      </div>
       <style
         data-heatmap-gradient
         dangerouslySetInnerHTML={{ __html: heatmapGradientCss }}
       />
-      <article
-        className={cn(
-          "bg-white dark:bg-neutral-900 transition",
-          className
-        )}
-      >
-        <div className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
-          {/* Header */}
-          <button
-            type="button"
-            onClick={handleToggleCollapse}
-            className={cn(
-              "sticky top-[var(--cmux-diff-header-offset,0px)] z-10 flex w-full items-center gap-0",
-              "border-t border-neutral-200 dark:border-neutral-700",
-              "bg-neutral-50 dark:bg-neutral-900/95",
-              "px-3.5 py-2.5 text-left font-sans font-medium transition",
-              "hover:bg-neutral-100 dark:hover:bg-neutral-800/80",
-              "focus:outline-none focus-visible:outline-none"
-            )}
-            aria-expanded={!isCollapsed}
-          >
-            <span className="flex h-5 w-5 items-center justify-center text-neutral-400 dark:text-neutral-500">
-              {isCollapsed ? (
-                <ChevronRight className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </span>
-
-            <span
-              className={cn(
-                "flex h-5 w-5 items-center justify-center pl-2",
-                statusMeta.colorClassName
-              )}
-            >
-              {statusMeta.icon}
-              <span className="sr-only">{statusMeta.label}</span>
-            </span>
-
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="pl-1.5 text-sm text-neutral-700 dark:text-neutral-300 truncate">
-                {filename}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 text-[13px] font-medium">
-              {isLoading ? (
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex items-center">
-                      <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="bottom"
-                    align="start"
-                    showArrow={false}
-                    className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                  >
-                    AI review in progress...
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-              <span className="text-emerald-600 dark:text-emerald-400">
-                +{additions}
-              </span>
-              <span className="text-rose-600 dark:text-rose-400">
-                -{deletions}
-              </span>
-            </div>
-          </button>
-
-          {/* Diff Content */}
-          {!isCollapsed && (
-            parsedDiff ? (
-              <Diff
-                diffType={parsedDiff.type}
-                hunks={parsedDiff.hunks}
-                viewType="split"
-                optimizeSelection
-                className={cn(
-                  "diff-syntax system-mono overflow-auto text-xs leading-5",
-                  "bg-white dark:bg-neutral-950",
-                  "text-neutral-800 dark:text-neutral-200"
-                )}
-                gutterClassName={cn(
-                  "system-mono text-xs",
-                  "bg-white dark:bg-neutral-950",
-                  "text-neutral-500 dark:text-neutral-400"
-                )}
-                codeClassName={cn(
-                  "system-mono text-xs",
-                  "text-neutral-800 dark:text-neutral-200"
-                )}
-                tokens={tokens ?? undefined}
-                renderToken={renderHeatmapToken}
-                renderGutter={renderHeatmapGutter}
-                generateLineClassName={({ changes, defaultGenerate }) => {
-                  const defaultClassName = defaultGenerate();
-                  const classNames: string[] = ["system-mono text-xs py-1"];
-                  const normalizedChanges = changes.filter(
-                    (change): change is ChangeData => Boolean(change)
-                  );
-                  const hasFocus =
-                    focusedLine !== null &&
-                    normalizedChanges.some((change) =>
-                      doesChangeMatchLine(change, focusedLine)
-                    );
-                  if (hasFocus) {
-                    classNames.push("cmux-heatmap-focus");
-                  }
-
-                  // Apply heatmap line classes
-                  if (
-                    diffHeatmap &&
-                    (diffHeatmap.lineClasses.size > 0 ||
-                      diffHeatmap.oldLineClasses.size > 0)
-                  ) {
-                    let bestHeatmapClass: string | null = null;
-
-                    const considerClass = (candidate: string | undefined) => {
-                      if (!candidate) {
-                        return;
-                      }
-                      if (!bestHeatmapClass) {
-                        bestHeatmapClass = candidate;
-                        return;
-                      }
-                      const currentStep =
-                        extractHeatmapGradientStep(bestHeatmapClass);
-                      const nextStep = extractHeatmapGradientStep(candidate);
-                      if (nextStep > currentStep) {
-                        bestHeatmapClass = candidate;
-                      }
-                    };
-
-                    for (const change of normalizedChanges) {
-                      const newLineNumber = computeNewLineNumber(change);
-                      if (newLineNumber > 0) {
-                        considerClass(
-                          diffHeatmap.lineClasses.get(newLineNumber)
-                        );
-                      }
-                      const oldLineNumber = computeOldLineNumber(change);
-                      if (oldLineNumber > 0) {
-                        considerClass(
-                          diffHeatmap.oldLineClasses.get(oldLineNumber)
-                        );
-                      }
-                    }
-
-                    if (bestHeatmapClass) {
-                      classNames.push(bestHeatmapClass);
-                    }
-                  }
-
-                  classNames.push(
-                    isDarkMode
-                      ? "text-neutral-200"
-                      : "text-neutral-800"
-                  );
-
-                  return cn(defaultClassName, classNames);
-                }}
-              >
-                {(hunks) =>
-                  hunks.map((hunk) => (
-                    <Fragment key={hunk.content}>
-                      <Decoration>
-                        <div className="bg-sky-50 dark:bg-sky-950/50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
-                          {hunk.content}
-                        </div>
-                      </Decoration>
-                      <Hunk hunk={hunk} />
-                    </Fragment>
-                  ))
-                }
-              </Diff>
-            ) : (
-              <div className="bg-neutral-50 dark:bg-neutral-900 px-4 py-6 text-sm text-neutral-600 dark:text-neutral-400">
-                {errorMessage ??
-                  "Diff content is unavailable for this file. It might be binary or too large to display."}
-              </div>
-            )
-          )}
-        </div>
-      </article>
-    </TooltipProvider>
+    </>
   );
-});
+}));

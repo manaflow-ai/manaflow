@@ -65,13 +65,15 @@ FROM rust-base AS rust-chef
 WORKDIR /cmux
 COPY crates/cmux-env/Cargo.toml crates/cmux-env/Cargo.lock crates/cmux-env/
 COPY crates/cmux-proxy/Cargo.toml crates/cmux-proxy/Cargo.lock crates/cmux-proxy/
+COPY crates/cmux-terminal/Cargo.toml crates/cmux-terminal/
 COPY crates/cmux-pty/Cargo.toml crates/cmux-pty/Cargo.lock crates/cmux-pty/
-RUN mkdir -p crates/cmux-env/src/bin crates/cmux-proxy/src crates/cmux-pty/src && \
+RUN mkdir -p crates/cmux-env/src/bin crates/cmux-proxy/src crates/cmux-terminal/src crates/cmux-pty/src && \
   printf 'fn main() {}\n' > crates/cmux-env/src/bin/envd.rs && \
   printf 'fn main() {}\n' > crates/cmux-env/src/bin/envctl.rs && \
   printf 'pub fn noop() {}\n' > crates/cmux-env/src/lib.rs && \
   printf 'fn main() {}\n' > crates/cmux-proxy/src/main.rs && \
   printf 'pub fn noop() {}\n' > crates/cmux-proxy/src/lib.rs && \
+  printf 'pub fn noop() {}\n' > crates/cmux-terminal/src/lib.rs && \
   printf 'fn main() {}\n' > crates/cmux-pty/src/main.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
@@ -89,6 +91,9 @@ WORKDIR /cmux
 COPY --from=rust-chef /cmux/recipe-env.json /cmux/recipe-env.json
 COPY --from=rust-chef /cmux/recipe-proxy.json /cmux/recipe-proxy.json
 COPY --from=rust-chef /cmux/recipe-pty.json /cmux/recipe-pty.json
+# Copy cmux-terminal for path dependency resolution during cargo chef cook
+# cargo-chef places cmux-pty at /cmux during cooking, so ../cmux-terminal resolves to /cmux-terminal
+COPY --from=rust-chef /cmux/crates/cmux-terminal /cmux-terminal
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/usr/local/cargo/git \
   --mount=type=cache,target=/cmux/target \

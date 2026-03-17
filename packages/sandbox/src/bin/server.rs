@@ -668,4 +668,12 @@ impl SandboxService for UnavailableSandboxService {
     ) -> SandboxResult<cmux_sandbox::models::PruneResponse> {
         Err(self.error("prune orphaned"))
     }
+
+    async fn await_services_ready(
+        &self,
+        _id: String,
+        _request: cmux_sandbox::models::AwaitReadyRequest,
+    ) -> SandboxResult<cmux_sandbox::models::AwaitReadyResponse> {
+        Err(self.error("await services ready"))
+    }
 }

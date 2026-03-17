@@ -1,4 +1,5 @@
 import { env } from "../_shared/convex-env";
+import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction, type ActionCtx } from "./_generated/server";
@@ -316,57 +317,33 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       return jsonResponse({ error: "Task not found" }, 404);
     }
 
-    if (!taskRun.latestScreenshotSetId) {
-      console.log("[preview-jobs-http] No screenshots found for task run", {
-        taskRunId,
-      });
-      await ctx.runMutation(internal.previewRuns.updateStatus, {
-        previewRunId: previewRun._id,
-        status: "skipped",
-      });
+    // TEMPORARY: Never skip - always proceed regardless of screenshot set status
+    // Get the task run screenshot set if one exists
+    const taskScreenshotSet = taskRun.latestScreenshotSetId
+      ? await ctx.runQuery(internal.github_pr_queries.getScreenshotSet, {
+          screenshotSetId: taskRun.latestScreenshotSetId,
+        })
+      : null;
 
-      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+    const screenshotSetId = taskRun.latestScreenshotSetId;
+    const imageCount = taskScreenshotSet?.images.length ?? 0;
 
-      return jsonResponse({
-        success: true,
-        skipped: true,
-        reason: "No screenshots available",
-        runStatusUpdated: taskCompletion.runStatusUpdated,
-        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
-      });
-    }
-
-    // Get the task run screenshot set
-    const taskScreenshotSet = await ctx.runQuery(
-      internal.github_pr_queries.getScreenshotSet,
-      {
-        screenshotSetId: taskRun.latestScreenshotSetId,
-      }
-    );
-
-    if (!taskScreenshotSet) {
-      console.error("[preview-jobs-http] Screenshot set not found", {
-        taskRunId,
-        screenshotSetId: taskRun.latestScreenshotSetId,
-      });
-      return jsonResponse({ error: "Screenshot set not found" }, 404);
-    }
-
-    console.log("[preview-jobs-http] Found screenshot set for task run", {
+    console.log("[preview-jobs-http] Processing task run (never skipping)", {
       taskRunId,
       previewRunId: previewRun._id,
-      screenshotSetId: taskRun.latestScreenshotSetId,
-      imageCount: taskScreenshotSet.images.length,
+      screenshotSetId,
+      imageCount,
+      hasScreenshotSet: !!taskScreenshotSet,
     });
 
-    // Post or update GitHub comment if we have installation ID
-    if (previewRun.repoInstallationId) {
+    // Post or update GitHub comment if we have installation ID AND a valid screenshot set
+    if (previewRun.repoInstallationId && screenshotSetId) {
       const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
         teamId: taskRun.teamId,
       });
       const teamSlug = team?.slug ?? taskRun.teamId;
-      const workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
-      const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
+      const workspaceUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}`;
+      const devServerUrl = `https://www.manaflow.com/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
       // Determine which comment to update:
       // 1. Use stored githubCommentId if available - update it
@@ -387,7 +364,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             repoFullName: previewRun.repoFullName,
             prNumber: previewRun.prNumber,
             commentId: commentIdToUpdate,
-            screenshotSetId: taskRun.latestScreenshotSetId,
+            screenshotSetId,
             previewRunId: previewRun._id,
             workspaceUrl,
             devServerUrl,
@@ -401,8 +378,23 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             commentId: commentIdToUpdate,
           });
 
+          // Track comment updated (non-blocking)
+          capturePosthogEvent({
+            distinctId: taskRun.teamId,
+            event: "preview_comment_posted",
+            properties: {
+              repo_full_name: previewRun.repoFullName,
+              pr_number: previewRun.prNumber,
+              preview_run_id: previewRun._id,
+              comment_type: "update",
+              has_screenshots: imageCount > 0,
+              screenshot_count: imageCount,
+            },
+          });
+
           const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
+          await drainPosthogEvents();
           return jsonResponse({
             success: true,
             commentUrl: previewRun.githubCommentUrl,
@@ -434,7 +426,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             installationId: previewRun.repoInstallationId,
             repoFullName: previewRun.repoFullName,
             prNumber: previewRun.prNumber,
-            screenshotSetId: taskRun.latestScreenshotSetId,
+            screenshotSetId,
             previewRunId: previewRun._id,
             workspaceUrl,
             devServerUrl,
@@ -448,8 +440,23 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             commentUrl: commentResult.commentUrl,
           });
 
+          // Track comment posted (non-blocking)
+          capturePosthogEvent({
+            distinctId: taskRun.teamId,
+            event: "preview_comment_posted",
+            properties: {
+              repo_full_name: previewRun.repoFullName,
+              pr_number: previewRun.prNumber,
+              preview_run_id: previewRun._id,
+              comment_type: "new",
+              has_screenshots: imageCount > 0,
+              screenshot_count: imageCount,
+            },
+          });
+
           const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
+          await drainPosthogEvents();
           return jsonResponse({
             success: true,
             commentUrl: commentResult.commentUrl,
@@ -468,8 +475,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           }, 500);
         }
       }
-    } else {
-      console.log("[preview-jobs-http] No GitHub installation ID, skipping comment", {
+    } else if (!previewRun.repoInstallationId) {
+      console.log("[preview-jobs-http] No GitHub installation ID, proceeding without comment", {
         taskRunId,
         previewRunId: previewRun._id,
       });
@@ -478,15 +485,37 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
-        screenshotSetId: taskRun.latestScreenshotSetId ?? undefined,
+        screenshotSetId: screenshotSetId ?? undefined,
       });
 
       const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
       return jsonResponse({
         success: true,
-        skipped: true,
-        reason: "No GitHub installation ID",
+        skipped: false,
+        reason: "No GitHub installation ID - proceeding anyway",
+        runStatusUpdated: taskCompletion.runStatusUpdated,
+        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
+      });
+    } else {
+      // Has installation ID but no screenshot set - still proceed
+      console.log("[preview-jobs-http] No screenshot set yet, proceeding without comment", {
+        taskRunId,
+        previewRunId: previewRun._id,
+        hasInstallationId: !!previewRun.repoInstallationId,
+      });
+
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId: previewRun._id,
+        status: "completed",
+      });
+
+      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+
+      return jsonResponse({
+        success: true,
+        skipped: false,
+        reason: "No screenshot set - proceeding anyway",
         runStatusUpdated: taskCompletion.runStatusUpdated,
         alreadyCompleted: taskCompletion.taskAlreadyCompleted,
       });
@@ -508,5 +537,153 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         { previewRunId: previewRun._id },
       );
     }
+  }
+});
+
+/**
+ * Parse a GitHub PR URL to extract owner, repo, and PR number.
+ */
+function parsePrUrl(prUrl: string): { owner: string; repo: string; prNumber: number } | null {
+  const match = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!match) {
+    return null;
+  }
+  return {
+    owner: match[1],
+    repo: match[2],
+    prNumber: parseInt(match[3], 10),
+  };
+}
+
+/**
+ * HTTP action to create a test preview task run for development/testing.
+ * Creates a full chain: previewConfig → previewRun → task → taskRun, returns JWT for worker auth.
+ * This ensures the `/api/preview/complete` endpoint can find the previewRun.
+ * Authenticated via bearer token (CMUX_TASK_RUN_JWT_SECRET).
+ */
+export const createTestPreviewTask = httpAction(async (ctx, req) => {
+  const authHeader = req.headers.get("authorization") ?? "";
+  const [, bearerToken] = authHeader.split(" ");
+
+  if (!bearerToken || bearerToken !== env.CMUX_TASK_RUN_JWT_SECRET) {
+    console.error("[preview-jobs-http] Unauthorized test task request");
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !("teamId" in body) ||
+    !("userId" in body) ||
+    !("prUrl" in body)
+  ) {
+    return jsonResponse({
+      error: "Missing required fields: teamId, userId, prUrl"
+    }, 400);
+  }
+
+  const { teamId, userId, prUrl, repoUrl } = body as {
+    teamId: string;
+    userId: string;
+    prUrl: string;
+    repoUrl?: string;
+  };
+
+  // Parse PR URL to get owner/repo and PR number
+  const prInfo = parsePrUrl(prUrl);
+  if (!prInfo) {
+    return jsonResponse({
+      error: "Invalid PR URL format. Expected: https://github.com/<owner>/<repo>/pull/<number>",
+    }, 400);
+  }
+
+  const repoFullName = `${prInfo.owner}/${prInfo.repo}`.toLowerCase();
+
+  console.log("[preview-jobs-http] Creating test preview task", {
+    teamId,
+    userId,
+    prUrl,
+    repoFullName,
+    prNumber: prInfo.prNumber,
+  });
+
+  try {
+    // Step 1: Create or find a preview config for this repo
+    const previewConfigId = await ctx.runMutation(internal.previewConfigs.upsertInternal, {
+      teamId,
+      userId,
+      repoFullName,
+    });
+
+    // Step 2: Create a preview run (following the webhook flow)
+    const testHeadSha = `test-${Date.now()}`; // Use a unique test SHA
+    const previewRunId = await ctx.runMutation(internal.previewRuns.enqueueFromWebhook, {
+      previewConfigId,
+      teamId,
+      repoFullName,
+      repoInstallationId: undefined,
+      prNumber: prInfo.prNumber,
+      prUrl,
+      prTitle: `Test Preview: ${prUrl}`,
+      prDescription: undefined,
+      headSha: testHeadSha,
+      baseSha: undefined,
+      headRef: undefined,
+      headRepoFullName: undefined,
+      headRepoCloneUrl: undefined,
+    });
+
+    // Step 3: Create a test task for this preview run
+    const taskId = await ctx.runMutation(internal.tasks.createTestTask, {
+      teamId,
+      userId,
+      name: `Test Preview: ${prUrl}`,
+      repoUrl: repoUrl ?? `https://github.com/${repoFullName}`,
+    });
+
+    // Step 4: Create the preview task run
+    const result = await ctx.runMutation(internal.taskRuns.createForPreview, {
+      taskId,
+      teamId,
+      userId,
+      prUrl,
+    });
+
+    // Step 5: Link the taskRun to the previewRun
+    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+      previewRunId,
+      taskRunId: result.taskRunId,
+    });
+
+    console.log("[preview-jobs-http] Test preview task created", {
+      previewConfigId,
+      previewRunId,
+      taskId,
+      taskRunId: result.taskRunId,
+    });
+
+    return jsonResponse({
+      success: true,
+      previewConfigId,
+      previewRunId,
+      taskId,
+      taskRunId: result.taskRunId,
+      jwt: result.jwt,
+    });
+  } catch (error) {
+    console.error("[preview-jobs-http] Failed to create test preview task", {
+      error,
+    });
+    return jsonResponse({
+      error: "Failed to create test preview task",
+      message: error instanceof Error ? error.message : String(error),
+    }, 500);
   }
 });

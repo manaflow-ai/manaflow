@@ -42,7 +42,6 @@ export function useXTerm({ options, addons, listeners }: UseXTermProps = {}) {
     const instance = new Terminal(
       createTerminalOptions({
         cursorBlink: true,
-        scrollback: 1000000,
         ...options,
       })
     );

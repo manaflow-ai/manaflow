@@ -7,7 +7,7 @@ import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
 
 const TEAM = process.env.CMUX_TEAM_SLUG || "manaflow";
-const REPO = process.env.CMUX_REPO || "manaflow-ai/cmux";
+const REPO = process.env.CMUX_REPO || "manaflow-ai/manaflow";
 const STATE = (process.env.CMUX_STATE as "open" | "closed" | "all") || "all";
 const MAX_PAGES = Number(process.env.CMUX_MAX_PAGES || 50);
 

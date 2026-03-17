@@ -15,7 +15,7 @@ console.log("Running with agent config:", agentConfig);
 
 const { taskId } = await getConvex().mutation(api.tasks.create, {
   teamSlugOrId: "default",
-  projectFullName: "manaflow-ai/cmux",
+  projectFullName: "manaflow-ai/manaflow",
   text: "whats the time rn?",
 });
 
@@ -24,7 +24,7 @@ const result = await spawnAgent(
   agentConfig,
   taskId,
   {
-    repoUrl: "https://github.com/manaflow-ai/cmux",
+    repoUrl: "https://github.com/manaflow-ai/manaflow",
     branch: "main",
     taskDescription: "whats the time rn?",
     isCloudMode: true,

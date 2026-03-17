@@ -1,10 +1,10 @@
 import { MacDownloadLink } from "@/components/mac-download-link";
 import { SiteHeader } from "@/components/site-header";
+import { CmuxIcon } from "@/components/icons/cmux-icon";
 import {
   ArrowRight,
   Cloud,
   GitPullRequest,
-  Globe,
   Layers,
   Settings,
   Terminal,
@@ -63,13 +63,13 @@ const productPillars = [
   {
     title: "Supports cloud sandboxes or local Docker",
     description:
-      "cmux includes configurations for cloud sandbox mode with repos, cloud sandbox mode with environments, and local mode with Docker containers.",
+      "Manaflow includes configurations for cloud sandbox mode with repos, cloud sandbox mode with environments, and local mode with Docker containers.",
     icon: Cloud,
   },
   {
     title: "Integrates with your local auth setup",
     description:
-      "cmux integrates with your local auth setup and you can bring your OpenAI and Claude subscriptions or API keys to run the coding agents on tasks.",
+      "Manaflow integrates with your local auth setup and you can bring your OpenAI and Claude subscriptions or API keys to run the coding agents on tasks.",
     icon: Zap,
   },
 ];
@@ -110,13 +110,13 @@ const workflowSteps = [
   },
   {
     id: "step-ship",
-    title: "4. Ship directly from cmux",
+    title: "4. Ship directly from Manaflow",
     copy:
-      "Create your pull request inside cmux and finish the merge once verification is done.",
+      "Create your pull request inside Manaflow and finish the merge once verification is done.",
     checklist: [
-      "Open a pull request from the cmux review surface when you're ready.",
+      "Open a pull request from the Manaflow review surface when you're ready.",
       "Attach verification notes and confirm required checks before finishing.",
-      "Merge the pull request in cmux to wrap the run.",
+      "Merge the pull request in Manaflow to wrap the run.",
     ],
   },
 ];
@@ -141,7 +141,7 @@ const verificationHighlights = [
   {
     title: "Preview dev server environments directly",
     paragraphs: [
-      "cmux spins up the right dev servers based on your environment configuration as soon as work starts.",
+      "Manaflow spins up the right dev servers based on your environment configuration as soon as work starts.",
       "Open the live preview to validate UI, APIs, and workflows manually before you publish the pull request.",
     ],
     asset: cmuxDemo2,
@@ -163,6 +163,20 @@ export default async function LandingPage() {
         <div className="absolute inset-x-[10%] bottom-[-20%] h-[32rem] rounded-full bg-gradient-to-tr from-indigo-500/20 via-blue-700/10 to-transparent blur-[200px]" />
       </div>
 
+      <a
+        href="https://cmux.dev/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="group relative z-10 flex items-center justify-center gap-2.5 bg-sky-950/80 px-4 py-2.5 text-sm transition-colors hover:bg-sky-900/80"
+      >
+        <CmuxIcon className="h-3.5 w-3.5" aria-hidden />
+        <span className="text-sky-100/90">
+          <span className="font-medium text-white">cmux.dev</span>
+          <span className="hidden sm:inline"> — The Open Source Terminal for Coding Agents</span>
+        </span>
+        <ArrowRight className="h-3.5 w-3.5 text-sky-300/60 transition-transform group-hover:translate-x-0.5 group-hover:text-sky-200" aria-hidden />
+      </a>
+
       <SiteHeader
         fallbackUrl={fallbackUrl}
         latestVersion={latestVersion}
@@ -182,7 +196,7 @@ export default async function LandingPage() {
                 </h1>
                 <div className="space-y-4 text-base text-neutral-300 sm:text-lg">
                   <p>
-                    cmux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
+                    Manaflow is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
                   </p>
                   <p>
                     Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready so parallel agent work stays verifiable, fast, and ready to ship.
@@ -196,21 +210,14 @@ export default async function LandingPage() {
                     >
                       vision
                     </a>
-                    ,
+                    {" "}
+                    or
                     {" "}
                     <a
                       className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
                       href="#nav-features"
                     >
                       how it works today
-                    </a>
-                    , or explore the
-                    {" "}
-                    <a
-                      className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
-                      href="#nav-roadmap"
-                    >
-                      roadmap
                     </a>
                     .
                   </p>
@@ -223,7 +230,7 @@ export default async function LandingPage() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <Globe className="h-4 w-4" aria-hidden />
+                  <CmuxIcon className="h-4 w-4" aria-hidden />
                   Try web version
                 </a>
                 <MacDownloadLink
@@ -232,8 +239,8 @@ export default async function LandingPage() {
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-neutral-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-neutral-800"
                   title={
                     latestVersion
-                      ? `Download cmux ${latestVersion} for macOS`
-                      : "Download cmux for macOS"
+                      ? `Download Manaflow ${latestVersion} for macOS`
+                      : "Download Manaflow for macOS"
                   }
                   urls={macDownloadUrls}
                 >
@@ -252,9 +259,9 @@ export default async function LandingPage() {
               </div>
               {latestVersion ? (
                 <p className="text-xs text-neutral-400">
-                  Latest release: cmux {latestVersion}. Need another build? Visit the{" "}
+                  Latest release: Manaflow {latestVersion}. Need another build? Visit the{" "}
                   <a
-                    href="https://github.com/manaflow-ai/cmux/releases"
+                    href="https://github.com/manaflow-ai/manaflow/releases"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline hover:text-neutral-300"
@@ -276,7 +283,7 @@ export default async function LandingPage() {
                     <iframe
                       className="h-full w-full"
                       src="https://www.youtube.com/embed/YtQTKSM_wsA"
-                      title="cmux demo video"
+                      title="Manaflow demo video"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen
                     />
@@ -301,7 +308,7 @@ export default async function LandingPage() {
           <div className="mt-12 relative overflow-hidden rounded-2xl">
             <Image
               src={cmuxDemo0}
-              alt="cmux dashboard showing parallel AI agents"
+              alt="Manaflow dashboard showing parallel AI agents"
               width={3248}
               height={2112}
               sizes="(min-width: 1024px) 1024px, 100vw"
@@ -319,14 +326,14 @@ export default async function LandingPage() {
                 Rethinking the developer interface
               </h2>
               <p className="mx-auto max-w-3xl text-sm text-neutral-400 sm:text-base">
-                Everyone is focusing on making AI agents better at coding but not on making it easier to verify their work. cmux focuses on the verification surface so developers who use multiple agents can ship fast and accurate code.
+                Everyone is focusing on making AI agents better at coding but not on making it easier to verify their work. Manaflow focuses on the verification surface so developers who use multiple agents can ship fast and accurate code.
               </p>
             </div>
             <div className="space-y-8 text-sm text-neutral-300 sm:text-base">
               <div className="space-y-2">
                 <p>
                   <span className="text-white font-semibold">The interface is the bottleneck.</span>{" "}
-                  Developers still spend most of their time reviewing and verifying code instead of prompting. cmux removes the window-juggling and diff spelunking that slows teams down.
+                  Developers still spend most of their time reviewing and verifying code instead of prompting. Manaflow removes the window-juggling and diff spelunking that slows teams down.
                 </p>
                 <blockquote className="border-l-2 border-white/10 pl-4 text-neutral-400">
                   <p>
@@ -348,11 +355,11 @@ export default async function LandingPage() {
               <div className="space-y-2">
                 <p>
                   <span className="text-white font-semibold">Verification is non-negotiable.</span>{" "}
-                  Code diffs are just the start. We need to see running apps, test results, and metrics for every agent without losing context. cmux keeps that verification front and center.
+                  Code diffs are just the start. We need to see running apps, test results, and metrics for every agent without losing context. Manaflow keeps that verification front and center.
                 </p>
                 <blockquote className="border-l-2 border-white/10 pl-4 text-neutral-400">
                   <p>
-                    cmux gives each agent its own world: separate container in the cloud or Docker, separate VS Code, separate git state. You can see exactly what changed immediately—without losing context.
+                    Manaflow gives each agent its own world: separate container in the cloud or Docker, separate VS Code, separate git state. You can see exactly what changed immediately—without losing context.
                   </p>
                 </blockquote>
               </div>
@@ -360,7 +367,7 @@ export default async function LandingPage() {
             <div className="mt-12 relative overflow-hidden rounded-2xl">
               <Image
                 src={cmuxDemo1}
-                alt="cmux dashboard showing task management for AI agents"
+                alt="Manaflow dashboard showing task management for AI agents"
                 width={3248}
                 height={2112}
                 sizes="(min-width: 1024px) 1024px, 100vw"
@@ -376,10 +383,10 @@ export default async function LandingPage() {
           <div className="space-y-12">
             <div className="space-y-3 text-center">
               <h2 className="text-2xl font-semibold text-white sm:text-3xl">
-                How cmux works today
+                How Manaflow works today
               </h2>
               <p className="mx-auto max-w-3xl text-sm text-neutral-400 sm:text-base">
-                The cmux dashboard keeps every agent and workspace organized so you can launch, monitor, and review without alt-tabbing between terminals, keeping track of VS Code windows, and restarting dev servers.
+                The Manaflow dashboard keeps every agent and workspace organized so you can launch, monitor, and review without alt-tabbing between terminals, keeping track of VS Code windows, and restarting dev servers.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -403,7 +410,7 @@ export default async function LandingPage() {
             <div className="mt-10 relative overflow-hidden rounded-2xl">
               <Image
                 src={cmuxDemo2}
-                alt="cmux vscode instances showing diffs"
+                alt="Manaflow vscode instances showing diffs"
                 width={3248}
                 height={2112}
                 sizes="(min-width: 1024px) 1024px, 100vw"
@@ -422,7 +429,7 @@ export default async function LandingPage() {
                 A guided workflow from start to finish
               </h2>
               <p className="mt-4 text-sm text-neutral-400 sm:text-base">
-                Each phase inside cmux is integral to keep the process fast and confidence high while coding agents execute tasks in parallel.
+                Each phase inside Manaflow is integral to keep the process fast and confidence high while coding agents execute tasks in parallel.
               </p>
             </div>
             <div className="grid flex-1 gap-6 sm:grid-cols-2">
@@ -502,11 +509,11 @@ export default async function LandingPage() {
         <section id="nav-requirements" className="mx-auto max-w-4xl px-4 pb-20 text-center sm:px-6 scroll-mt-32">
           <h2 className="text-2xl font-semibold text-white sm:text-3xl">Requirements</h2>
           <p className="mt-4 text-sm text-neutral-400 sm:text-base">
-            cmux runs locally on your machine. You&apos;ll need:
+            Manaflow runs locally on your machine. You&apos;ll need:
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
-              Docker installed or use cmux cloud
+              Docker installed or use Manaflow cloud
             </div>
             <div className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white sm:w-auto text-center">
               macOS 13+, Linux (preview), Windows (waitlist)
@@ -519,7 +526,7 @@ export default async function LandingPage() {
             <div className="space-y-3">
               <h2 className="text-xl font-semibold text-white sm:text-2xl">Talk to the team</h2>
               <p className="text-sm text-neutral-300 sm:text-base">
-                Curious how cmux can power your workflow? Book time with us for a demo or deep dive.
+                Curious how Manaflow can power your workflow? Book time with us for a demo or deep dive.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
@@ -548,12 +555,12 @@ export default async function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-4 py-8 text-sm text-neutral-500 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2">
             <Terminal className="h-4 w-4 text-neutral-600" aria-hidden />
-            <span className="font-mono">cmux by manaflow</span>
+            <span className="font-mono">Manaflow</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
             <a
               className="transition hover:text-white"
-              href="https://github.com/manaflow-ai/cmux"
+              href="https://github.com/manaflow-ai/manaflow"
               rel="noopener noreferrer"
               target="_blank"
             >

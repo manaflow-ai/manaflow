@@ -20,7 +20,7 @@ export interface RunTaskScreenshotsOptions {
   devCommand?: string | null;
 }
 
-function resolveContentType(filePath: string): string {
+function resolveImageContentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".jpg" || extension === ".jpeg") {
     return "image/jpeg";
@@ -29,6 +29,26 @@ function resolveContentType(filePath: string): string {
     return "image/webp";
   }
   return "image/png";
+}
+
+function resolveVideoContentType(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".webm") {
+    return "video/webm";
+  }
+  if (extension === ".mkv") {
+    return "video/x-matroska";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  if (extension === ".apng") {
+    return "image/apng";
+  }
+  return "video/mp4";
 }
 
 async function uploadScreenshotFile(params: {
@@ -42,7 +62,7 @@ async function uploadScreenshotFile(params: {
   const { screenshotPath, fileName, commitSha, token, convexUrl, description } =
     params;
   const resolvedFileName = fileName ?? path.basename(screenshotPath);
-  const contentType = resolveContentType(screenshotPath);
+  const contentType = resolveImageContentType(screenshotPath);
 
   const uploadUrl = await createScreenshotUploadUrl({
     token,
@@ -82,6 +102,57 @@ async function uploadScreenshotFile(params: {
   };
 }
 
+async function uploadVideoFile(params: {
+  videoPath: string;
+  fileName?: string;
+  commitSha: string;
+  token: string;
+  convexUrl?: string;
+  description?: string;
+}): Promise<NonNullable<ScreenshotUploadPayload["videos"]>[number]> {
+  const { videoPath, fileName, commitSha, token, convexUrl, description } =
+    params;
+  const resolvedFileName = fileName ?? path.basename(videoPath);
+  const contentType = resolveVideoContentType(videoPath);
+
+  const uploadUrl = await createScreenshotUploadUrl({
+    token,
+    baseUrlOverride: convexUrl,
+    contentType,
+  });
+
+  const bytes = await fs.readFile(videoPath);
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+    },
+    body: new Uint8Array(bytes),
+  });
+
+  if (!uploadResponse.ok) {
+    const body = await uploadResponse.text();
+    throw new Error(
+      `Video upload failed with status ${uploadResponse.status}: ${body}`
+    );
+  }
+
+  const uploadResult = (await uploadResponse.json()) as {
+    storageId?: string;
+  };
+  if (!uploadResult.storageId) {
+    throw new Error("Video upload response missing storageId");
+  }
+
+  return {
+    storageId: uploadResult.storageId,
+    mimeType: contentType,
+    fileName: resolvedFileName,
+    commitSha,
+    description,
+  };
+}
+
 export async function runTaskScreenshots(
   options: RunTaskScreenshotsOptions
 ): Promise<void> {
@@ -103,6 +174,7 @@ export async function runTaskScreenshots(
   });
 
   let images: ScreenshotUploadPayload["images"];
+  let videos: ScreenshotUploadPayload["videos"];
   let hasUiChanges: boolean | undefined;
   let status: ScreenshotUploadPayload["status"] = "failed";
   let error: string | undefined;
@@ -111,13 +183,17 @@ export async function runTaskScreenshots(
   if (result.status === "completed") {
     commitSha = result.commitSha;
     const capturedScreens = result.screenshots ?? [];
+    const capturedVideos = result.videos ?? [];
     hasUiChanges = result.hasUiChanges;
-    if (capturedScreens.length === 0) {
+
+    // Allow completion if we have either screenshots or videos
+    if (capturedScreens.length === 0 && capturedVideos.length === 0) {
       status = "failed";
-      error = "Claude collector returned no screenshots";
+      error = "Claude collector returned no screenshots or videos";
       log("ERROR", error, { taskRunId });
     } else {
-      const uploadPromises = capturedScreens.map((screenshot) =>
+      // Upload screenshots
+      const screenshotUploadPromises = capturedScreens.map((screenshot) =>
         uploadScreenshotFile({
           screenshotPath: screenshot.path,
           fileName: screenshot.fileName,
@@ -128,12 +204,28 @@ export async function runTaskScreenshots(
         })
       );
 
-      const settledUploads = await Promise.allSettled(uploadPromises);
-      const successfulScreens: NonNullable<ScreenshotUploadPayload["images"]> =
-        [];
-      const failures: { index: number; reason: string }[] = [];
+      // Upload videos
+      const videoUploadPromises = capturedVideos.map((video) =>
+        uploadVideoFile({
+          videoPath: video.path,
+          fileName: video.fileName,
+          commitSha: result.commitSha,
+          token,
+          convexUrl,
+          description: video.description,
+        })
+      );
 
-      settledUploads.forEach((settled, index) => {
+      const [settledScreenshots, settledVideos] = await Promise.all([
+        Promise.allSettled(screenshotUploadPromises),
+        Promise.allSettled(videoUploadPromises),
+      ]);
+
+      const successfulScreens: NonNullable<ScreenshotUploadPayload["images"]> = [];
+      const successfulVideos: NonNullable<ScreenshotUploadPayload["videos"]> = [];
+      const failures: { type: string; index: number; reason: string }[] = [];
+
+      settledScreenshots.forEach((settled, index) => {
         if (settled.status === "fulfilled") {
           successfulScreens.push(settled.value);
         } else {
@@ -141,7 +233,7 @@ export async function runTaskScreenshots(
             settled.reason instanceof Error
               ? settled.reason.message
               : String(settled.reason);
-          failures.push({ index, reason });
+          failures.push({ type: "screenshot", index, reason });
           log("ERROR", "Failed to upload screenshot", {
             taskRunId,
             screenshotPath: capturedScreens[index]?.path,
@@ -150,26 +242,46 @@ export async function runTaskScreenshots(
         }
       });
 
+      settledVideos.forEach((settled, index) => {
+        if (settled.status === "fulfilled") {
+          successfulVideos.push(settled.value);
+        } else {
+          const reason =
+            settled.reason instanceof Error
+              ? settled.reason.message
+              : String(settled.reason);
+          failures.push({ type: "video", index, reason });
+          log("ERROR", "Failed to upload video", {
+            taskRunId,
+            videoPath: capturedVideos[index]?.path,
+            error: reason,
+          });
+        }
+      });
+
       if (failures.length === 0) {
-        images = successfulScreens;
+        images = successfulScreens.length > 0 ? successfulScreens : undefined;
+        videos = successfulVideos.length > 0 ? successfulVideos : undefined;
         status = "completed";
-        log("INFO", "Screenshots uploaded", {
+        log("INFO", "Media uploaded", {
           taskRunId,
           screenshotCount: successfulScreens.length,
+          videoCount: successfulVideos.length,
           commitSha: result.commitSha,
         });
       } else {
         status = "failed";
         error =
-          failures.length === 1
-            ? failures[0]?.reason
-            : `Failed to upload ${failures.length} screenshots`;
+          failures.length === 1 && failures[0]
+            ? failures[0].reason
+            : `Failed to upload ${failures.length} media files`;
       }
     }
   } else if (result.status === "skipped") {
     status = "skipped";
     error = result.reason;
     commitSha = result.commitSha;
+    hasUiChanges = result.hasUiChanges;
     log("INFO", "Screenshot workflow skipped", {
       taskRunId,
       reason: result.reason,
@@ -178,6 +290,7 @@ export async function runTaskScreenshots(
     status = "failed";
     error = result.error;
     commitSha = result.commitSha;
+    hasUiChanges = result.hasUiChanges;
     log("ERROR", "Screenshot workflow failed", {
       taskRunId,
       error: result.error,
@@ -210,6 +323,7 @@ export async function runTaskScreenshots(
       // Only include commitSha if available (required for completed, optional for failed/skipped)
       ...(commitSha && { commitSha }),
       images,
+      videos,
       error,
       hasUiChanges,
     },

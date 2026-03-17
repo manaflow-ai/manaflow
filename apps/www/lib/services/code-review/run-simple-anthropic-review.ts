@@ -1,10 +1,10 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import {
-  CLOUDFLARE_ANTHROPIC_BASE_URL,
   CLOUDFLARE_OPENAI_BASE_URL,
+  BEDROCK_AWS_REGION,
 } from "@cmux/shared";
 import { collectPrDiffs, collectPrDiffsViaGhCli } from "@/scripts/pr-review-heatmap";
 import { env } from "@/lib/utils/www-env";
@@ -368,9 +368,11 @@ export async function runSimpleAnthropicReviewStream(
   const effectiveModelConfig: ModelConfig =
     modelConfig ?? getDefaultHeatmapModelConfig();
 
-  const anthropic = createAnthropic({
-    apiKey: env.ANTHROPIC_API_KEY,
-    baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+  // AWS Bedrock SDK reads AWS_BEARER_TOKEN_BEDROCK and AWS_REGION from env vars by default
+  // We pass them explicitly for clarity
+  const bedrock = createAmazonBedrock({
+    region: env.AWS_REGION ?? BEDROCK_AWS_REGION,
+    apiKey: env.AWS_BEARER_TOKEN_BEDROCK,
   });
 
   const openai = createOpenAI({
@@ -411,7 +413,7 @@ export async function runSimpleAnthropicReviewStream(
           const modelInstance =
             effectiveModelConfig.provider === "openai"
               ? openai(effectiveModelConfig.model)
-              : anthropic(effectiveModelConfig.model);
+              : bedrock(effectiveModelConfig.model);
 
           const stream = streamText({
             model: modelInstance,

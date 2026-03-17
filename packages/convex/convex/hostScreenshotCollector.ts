@@ -25,6 +25,7 @@ export const getLatestReleaseUrl = query({
       version: release.version,
       commitSha: release.commitSha,
       url,
+      releaseUrl: release.releaseUrl,
       createdAt: release.createdAt,
     };
   },
@@ -51,6 +52,7 @@ export const listReleases = query({
         commitSha: release.commitSha,
         isLatest: release.isLatest,
         url: await ctx.storage.getUrl(release.storageId),
+        releaseUrl: release.releaseUrl,
         createdAt: release.createdAt,
       }))
     );

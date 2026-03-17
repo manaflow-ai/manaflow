@@ -11,16 +11,13 @@ const DEFAULT_AGENT_NAME = "local-workspace";
 
 const DEFAULT_WORKSPACE_DESCRIPTOR = ({
   workspaceName,
-  projectFullName,
   branch,
 }: {
   workspaceName: string;
-  projectFullName?: string | null;
   branch?: string | null;
 }) => {
-  const descriptorBase = projectFullName
-    ? `Local workspace ${workspaceName} (${projectFullName})`
-    : `Local workspace ${workspaceName}`;
+  // Use just the workspace name as the title (projectFullName is shown in secondary line)
+  const descriptorBase = workspaceName;
   if (!branch) {
     return descriptorBase;
   }
@@ -57,6 +54,7 @@ export const reserve = authMutation({
     projectFullName: v.optional(v.string()),
     repoUrl: v.optional(v.string()),
     branch: v.optional(v.string()),
+    linkedFromCloudTaskRunId: v.optional(v.id("taskRuns")),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -76,7 +74,6 @@ export const reserve = authMutation({
     const workspaceName = generateWorkspaceName({ repoName, sequence });
     const descriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
       workspaceName,
-      projectFullName,
       branch,
     });
 
@@ -104,6 +101,7 @@ export const reserve = authMutation({
       worktreePath: undefined,
       isCompleted: false,
       isLocalWorkspace: true,
+      linkedFromCloudTaskRunId: args.linkedFromCloudTaskRunId,
       createdAt: now,
       updatedAt: now,
       lastActivityAt: now,

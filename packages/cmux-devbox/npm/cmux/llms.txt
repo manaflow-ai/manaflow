@@ -1,0 +1,70 @@
+# cmux
+
+> Cloud VMs for development - spawn isolated dev environments instantly
+
+cmux is a CLI tool for managing cloud development VMs. It provides instant access to fully configured development environments with VS Code, VNC desktop, SSH, and browser automation.
+
+## Installation
+
+```bash
+npm install -g cmux
+```
+
+## Commands
+
+### Authentication
+- `cmux login` - Login via browser
+- `cmux logout` - Logout
+- `cmux whoami` - Show current user and team
+
+### VM Management
+- `cmux start [path]` - Create new VM, optionally sync a directory
+- `cmux ls` - List all VMs (aliases: list, ps)
+- `cmux status <id>` - Show VM status and URLs
+- `cmux pause <id>` - Pause VM (preserves state)
+- `cmux resume <id>` - Resume paused VM
+- `cmux delete <id>` - Delete VM permanently
+
+### Accessing VMs
+- `cmux code <id>` - Open VS Code in browser
+- `cmux ssh <id>` - SSH into VM
+- `cmux vnc <id>` - Open VNC desktop in browser
+- `cmux pty <id>` - Interactive terminal session
+
+### Working with VMs
+- `cmux exec <id> "command"` - Execute command in VM
+- `cmux sync <id> <path>` - Sync local directory to VM
+- `cmux sync <id> <path> --pull` - Pull from VM to local
+
+### Browser Automation
+Control Chrome running in the VNC desktop:
+- `cmux computer open <id> <url>` - Navigate to URL
+- `cmux computer snapshot <id>` - Get accessibility tree with element refs (@e1, @e2)
+- `cmux computer click <id> <selector>` - Click element (use @ref or CSS selector)
+- `cmux computer type <id> "text"` - Type into focused element
+- `cmux computer fill <id> <selector> "value"` - Clear and fill input
+- `cmux computer screenshot <id> [file]` - Take screenshot
+- `cmux computer press <id> <key>` - Press key (enter, tab, escape, etc.)
+
+## Examples
+
+Create a VM and run a dev server:
+```bash
+cmux start ./my-app
+cmux exec cmux_abc123 "npm install && npm run dev"
+cmux code cmux_abc123
+```
+
+Automate browser testing:
+```bash
+cmux computer open cmux_abc123 "http://localhost:3000"
+cmux computer snapshot cmux_abc123
+cmux computer click cmux_abc123 @e1
+cmux computer screenshot cmux_abc123 test.png
+```
+
+## Links
+
+- Homepage: https://manaflow.com
+- Documentation: https://manaflow.com/docs
+- GitHub: https://github.com/manaflow-ai/manaflow

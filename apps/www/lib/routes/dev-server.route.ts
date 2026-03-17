@@ -153,12 +153,13 @@ const startDevServerRoute = createRoute({
 devServerRouter.openapi(startDevServerRoute, async (c) => {
   const body = c.req.valid("json");
 
-  try {
-    // Initialize Morph client
-    const client = new MorphCloudClient();
+  const client = new MorphCloudClient();
+  let instance: Awaited<ReturnType<typeof client.instances.start>> | null = null;
+  let stopInstanceOnError = false;
 
+  try {
     // Start the instance with provided or default snapshot
-    const instance = await client.instances.start({
+    instance = await client.instances.start({
       snapshotId: body.snapshotId || DEFAULT_MORPH_SNAPSHOT_ID,
       ttlSeconds: body.ttlSeconds || 60 * 30, // Default 30 minutes
       ttlAction: "pause",
@@ -169,13 +170,21 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
         branch: body.branch || "main",
       },
     });
+    stopInstanceOnError = true;
     void (async () => {
       await instance.setWakeOn(true, true);
     })();
 
     console.log(`Created dev server instance: ${instance.id}`);
 
-    const exposedServices = instance.networking.httpServices;
+    // SDK bug: instances.start() returns empty httpServices array
+    // Re-fetch instance to get the actual networking data
+    const refreshedInstance =
+      instance.networking.httpServices.length === 0
+        ? await client.instances.get({ instanceId: instance.id })
+        : instance;
+
+    const exposedServices = refreshedInstance.networking.httpServices;
     const vscodeService = exposedServices.find(
       (service) => service.port === 39378
     );
@@ -188,6 +197,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     if (!vscodeService || !workerService || !vncService || !cdpService) {
       // Stop the instance if services are not available
       await instance.stop();
+      stopInstanceOnError = false;
       throw new Error("VSCode, worker, VNC, or DevTools service not found");
     }
 
@@ -277,10 +287,12 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
 
       clientSocket.on("connect_error", (error: Error) => {
         clearTimeout(timeout);
+        clientSocket.disconnect();
         reject(error);
       });
     });
 
+    stopInstanceOnError = false;
     return c.json(
       {
         instanceId: instance.id,
@@ -295,6 +307,20 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
       200
     );
   } catch (error) {
+    if (stopInstanceOnError && instance) {
+      try {
+        await instance.stop();
+        console.warn(
+          "Stopped dev server instance after startup failure:",
+          instance.id
+        );
+      } catch (stopError) {
+        console.error(
+          "Failed to stop dev server instance after error:",
+          stopError
+        );
+      }
+    }
     console.error("Failed to start dev server instance:", error);
     return c.json(
       {

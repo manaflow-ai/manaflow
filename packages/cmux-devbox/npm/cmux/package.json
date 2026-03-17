@@ -1,0 +1,45 @@
+{
+  "name": "cmux",
+  "version": "0.3.6",
+  "description": "Cloud VMs for development - spawn isolated dev environments instantly",
+  "keywords": [
+    "cli",
+    "devbox",
+    "cloud",
+    "vm",
+    "development",
+    "sandbox",
+    "remote",
+    "vscode"
+  ],
+  "homepage": "https://manaflow.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manaflow-ai/manaflow.git",
+    "directory": "packages/cmux-devbox"
+  },
+  "license": "MIT",
+  "author": "Manaflow",
+  "bin": {
+    "cmux": "bin/cmux"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "AGENTS.md",
+    "llms.txt"
+  ],
+  "scripts": {
+    "postinstall": "node lib/postinstall.js"
+  },
+  "optionalDependencies": {
+    "cmux-darwin-arm64": "0.3.6",
+    "cmux-darwin-x64": "0.3.6",
+    "cmux-linux-arm64": "0.3.6",
+    "cmux-linux-x64": "0.3.6",
+    "cmux-win32-x64": "0.3.6"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

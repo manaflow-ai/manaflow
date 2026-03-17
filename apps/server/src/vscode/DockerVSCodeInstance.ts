@@ -63,6 +63,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
   private static eventStreamBackoffMs = 1000;
 
+  // Track when images were last pulled to implement TTL-based freshness
+  private static imagePullTimes = new Map<string, number>();
+  // TTL for :latest tags - pull if older than 4 hours
+  private static readonly IMAGE_TTL_MS = 4 * 60 * 60 * 1000;
+
   // Get or create the Docker singleton
   static getDocker(): Docker {
     if (!DockerVSCodeInstance.dockerInstance) {
@@ -77,27 +82,129 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   constructor(config: VSCodeInstanceConfig) {
     super(config);
     this.containerName = `cmux-${this.taskRunId}`;
-    this.imageName = process.env.WORKER_IMAGE_NAME || "cmux-worker:0.0.1";
+    this.imageName =
+      process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest";
     dockerLogger.info(`WORKER_IMAGE_NAME: ${process.env.WORKER_IMAGE_NAME}`);
     dockerLogger.info(`this.imageName: ${this.imageName}`);
     // Register this instance
     VSCodeInstance.getInstances().set(this.instanceId, this);
   }
 
+  private async updateStatusMessage(message: string | undefined): Promise<void> {
+    try {
+      await getConvex().mutation(api.taskRuns.updateVSCodeStatusMessage, {
+        teamSlugOrId: this.teamSlugOrId,
+        id: this.taskRunId,
+        statusMessage: message,
+      });
+    } catch (error) {
+      dockerLogger.warn(`Failed to update status message:`, error);
+    }
+  }
+
+  /**
+   * Check if an image reference uses a mutable tag (:latest or no tag).
+   * Handles registry URLs with ports correctly (e.g., localhost:5000/image).
+   * Treats digest-pinned images as immutable.
+   */
+  private static isMutableTag(imageName: string): boolean {
+    const digestSeparatorIndex = imageName.indexOf("@");
+    if (digestSeparatorIndex !== -1) {
+      return false;
+    }
+
+    const lastSlashIndex = imageName.lastIndexOf("/");
+    const lastColonIndex = imageName.lastIndexOf(":");
+
+    // No colon means no explicit tag, which is implicitly :latest.
+    if (lastColonIndex === -1) {
+      return true;
+    }
+
+    // If the last colon appears before the last slash, it belongs to the registry port.
+    if (lastColonIndex < lastSlashIndex) {
+      return true;
+    }
+
+    const tag = imageName.slice(lastColonIndex + 1);
+    return tag === "latest";
+  }
+
   private async ensureImageExists(docker: Docker): Promise<void> {
+    // Determine if image uses a mutable tag (:latest or no tag specified)
+    const isLatestTag = DockerVSCodeInstance.isMutableTag(this.imageName);
+
+    // Check if we should pull based on TTL for mutable tags
+    const lastPullTime = DockerVSCodeInstance.imagePullTimes.get(this.imageName);
+    const now = Date.now();
+
+    // For pinned tags, only pull if image doesn't exist locally
+    let shouldPull = false;
+    let imageExistsLocally = false;
+
     try {
       // Check if image exists locally
       await docker.getImage(this.imageName).inspect();
+      imageExistsLocally = true;
       dockerLogger.info(`Image ${this.imageName} found locally`);
-    } catch (_error) {
-      // Image doesn't exist locally, try to pull it
-      dockerLogger.info(
-        `Image ${this.imageName} not found locally, pulling...`
-      );
 
-      try {
-        const stream = await docker.pull(this.imageName);
-        await new Promise((resolve, reject) => {
+      // For mutable tags, check TTL to decide if we should refresh
+      // Only consider stale if we have a lastPullTime that's expired
+      // This avoids stalling on first use after server restart
+      if (isLatestTag && lastPullTime) {
+        const timeSinceLastPull = now - lastPullTime;
+        if (timeSinceLastPull > DockerVSCodeInstance.IMAGE_TTL_MS) {
+          shouldPull = true;
+          const staleDuration = Math.round(timeSinceLastPull / 1000 / 60);
+          dockerLogger.info(
+            `Image ${this.imageName} is stale (last pulled ${staleDuration} minutes ago), will pull fresh copy`
+          );
+        }
+      }
+      // If no lastPullTime exists (first use after restart), seed it to avoid
+      // immediate pull attempts. The image will be refreshed after TTL expires.
+      if (isLatestTag && !lastPullTime) {
+        DockerVSCodeInstance.imagePullTimes.set(this.imageName, now);
+        dockerLogger.info(
+          `Image ${this.imageName} found locally, seeding TTL tracker (will refresh in ${DockerVSCodeInstance.IMAGE_TTL_MS / 1000 / 60 / 60} hours)`
+        );
+      }
+    } catch (_error) {
+      // Image doesn't exist locally - must pull
+      shouldPull = true;
+      dockerLogger.info(
+        `Image ${this.imageName} not found locally, will pull`
+      );
+    }
+
+    // If image exists and doesn't need refresh, we're done
+    if (imageExistsLocally && !shouldPull) {
+      return;
+    }
+
+    // Pull the image
+    dockerLogger.info(`Pulling image ${this.imageName}...`);
+
+    // Update status to show we're pulling the image
+    await this.updateStatusMessage(`Pulling Docker image: ${this.imageName}`);
+
+    // Set up a timeout for the pull operation (10 minutes)
+    const PULL_TIMEOUT_MS = 10 * 60 * 1000;
+    let pullTimedOut = false;
+    let lastProgressTime = Date.now();
+    const progressInterval = setInterval(() => {
+      const currentTime = Date.now();
+      // If no progress for 2 minutes, consider it stalled
+      if (currentTime - lastProgressTime > 2 * 60 * 1000) {
+        pullTimedOut = true;
+      }
+    }, 30000);
+
+    try {
+      const stream = await docker.pull(this.imageName);
+
+      await Promise.race([
+        new Promise((resolve, reject) => {
           docker.modem.followProgress(
             stream,
             (err: Error | null, res: unknown[]) => {
@@ -107,26 +214,99 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                 resolve(res);
               }
             },
-            (event: { status: string; progress: string }) => {
-              // Log pull progress
+            (event: { status: string; progress: string; id?: string }) => {
+              lastProgressTime = Date.now();
               if (event.status) {
-                dockerLogger.info(
-                  `Pull progress: ${event.status} ${event.progress || ""}`
+                // Update status with progress (throttled - only major status changes)
+                if (
+                  event.status === "Downloading" ||
+                  event.status === "Extracting" ||
+                  event.status === "Pull complete"
+                ) {
+                  void this.updateStatusMessage(
+                    `Pulling Docker image: ${event.status}${event.id ? ` (${event.id})` : ""}`
+                  );
+                }
+              }
+
+              if (pullTimedOut) {
+                throw new Error(
+                  "Docker pull stalled - no progress for 2 minutes"
                 );
               }
             }
           );
-        });
-        dockerLogger.info(`Successfully pulled image ${this.imageName}`);
-      } catch (pullError) {
-        dockerLogger.error(
-          `Failed to pull image ${this.imageName}:`,
-          pullError
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(
+              new Error(
+                `Docker pull timed out after ${PULL_TIMEOUT_MS / 1000 / 60} minutes`
+              )
+            );
+          }, PULL_TIMEOUT_MS);
+        }),
+      ]);
+
+      clearInterval(progressInterval);
+
+      // Clear status message on success
+      await this.updateStatusMessage(undefined);
+      dockerLogger.info(`Successfully pulled image ${this.imageName}`);
+
+      // Record pull time for TTL tracking
+      DockerVSCodeInstance.imagePullTimes.set(this.imageName, Date.now());
+    } catch (pullError) {
+      clearInterval(progressInterval);
+
+      const errorMessage =
+        pullError instanceof Error ? pullError.message : String(pullError);
+
+      dockerLogger.error(
+        `Failed to pull image ${this.imageName}:`,
+        pullError
+      );
+
+      // If image exists locally, fall back to using it instead of failing
+      if (imageExistsLocally) {
+        dockerLogger.warn(
+          `Pull failed but using cached image ${this.imageName}: ${errorMessage}`
         );
-        throw new Error(
-          `Failed to pull Docker image ${this.imageName}: ${pullError}`
-        );
+        await this.updateStatusMessage(undefined);
+        // Don't update pull time - we didn't successfully pull
+        return;
       }
+
+      // Image doesn't exist locally and pull failed - this is a hard failure
+      await this.updateStatusMessage(`Docker pull failed: ${errorMessage}`);
+
+      // Provide helpful error messages
+      let userFriendlyError: string;
+      if (
+        errorMessage.includes("timeout") ||
+        errorMessage.includes("stalled")
+      ) {
+        userFriendlyError = `Docker image pull timed out. This may be due to slow network or Docker registry issues. Please try again.`;
+      } else if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("manifest unknown")
+      ) {
+        userFriendlyError = `Docker image "${this.imageName}" not found. Please check if the image name is correct.`;
+      } else if (
+        errorMessage.includes("unauthorized") ||
+        errorMessage.includes("authentication")
+      ) {
+        userFriendlyError = `Docker authentication failed. Please ensure you have access to the Docker registry.`;
+      } else if (
+        errorMessage.includes("ECONNREFUSED") ||
+        errorMessage.includes("connection refused")
+      ) {
+        userFriendlyError = `Cannot connect to Docker daemon. Please ensure Docker is running.`;
+      } else {
+        userFriendlyError = `Failed to pull Docker image "${this.imageName}": ${errorMessage}`;
+      }
+
+      throw new Error(userFriendlyError);
     }
   }
 
@@ -221,13 +401,31 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     dockerLogger.info(`  Workspace: ${this.config.workspacePath}`);
     dockerLogger.info(`  Agent name: ${this.config.agentName}`);
 
+    // Capture current auth token for this instance and mapping FIRST
+    // This is needed for updating status messages during Docker pull
+    this.authToken = getAuthToken();
+
     const docker = DockerVSCodeInstance.getDocker();
+
+    // Initialize VSCode status early so users can see Docker pull progress
+    try {
+      await getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
+        teamSlugOrId: this.teamSlugOrId,
+        id: this.taskRunId,
+        vscode: {
+          provider: "docker",
+          containerName: this.containerName,
+          status: "starting",
+          statusMessage: "Initializing Docker container...",
+          startedAt: Date.now(),
+        },
+      });
+    } catch (error) {
+      dockerLogger.warn(`Failed to set initial VSCode status:`, error);
+    }
 
     // Check if image exists and pull if missing
     await this.ensureImageExists(docker);
-
-    // Capture current auth token for this instance and mapping
-    this.authToken = getAuthToken();
 
     // Set initial mapping status
     containerMappings.set(this.containerName, {

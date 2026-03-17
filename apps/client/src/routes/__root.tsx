@@ -60,15 +60,25 @@ function useAutoUpdateNotifications() {
     const showToast = (version: string | null) => {
       const versionLabel = version ? ` (${version})` : "";
 
+      const showRestartingToast = () => {
+        toast.loading("Restarting Manaflow...", {
+          id: AUTO_UPDATE_TOAST_ID,
+          duration: Infinity,
+          description: "Please wait while the update is being applied.",
+          className: "select-none",
+        });
+      };
+
       toast("New version available", {
         id: AUTO_UPDATE_TOAST_ID,
         duration: 30000,
-        description: `Restart cmux to apply the latest version${versionLabel}.`,
+        description: `Restart Manaflow to apply the latest version${versionLabel}.`,
         className: "select-none",
         action: cmux?.autoUpdate
           ? {
               label: "Restart now",
               onClick: () => {
+                showRestartingToast();
                 void cmux.autoUpdate
                   .install()
                   .then((result) => {
@@ -77,7 +87,7 @@ function useAutoUpdateNotifications() {
                         result.reason === "not-packaged"
                           ? "Updates can only be applied from the packaged app."
                           : "Failed to restart. Try again from the menu.";
-                      toast.error(reason);
+                      toast.error(reason, { id: AUTO_UPDATE_TOAST_ID });
                     }
                   })
                   .catch((error) => {
@@ -85,7 +95,9 @@ function useAutoUpdateNotifications() {
                       "Failed to trigger auto-update install",
                       error
                     );
-                    toast.error("Couldn't restart. Try again from the menu.");
+                    toast.error("Couldn't restart. Try again from the menu.", {
+                      id: AUTO_UPDATE_TOAST_ID,
+                    });
                   });
               },
             }

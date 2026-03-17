@@ -923,7 +923,7 @@ fn fuzz_merge_commit_inference_matches_github() {
 fn debug_single_pr() {
     let truth = ground_truth();
     let target_repo =
-        std::env::var("DEBUG_PR_REPO").unwrap_or_else(|_| "manaflow-ai/cmux".to_string());
+        std::env::var("DEBUG_PR_REPO").unwrap_or_else(|_| "manaflow-ai/manaflow".to_string());
     let target_number: u64 = std::env::var("DEBUG_PR_NUMBER")
         .ok()
         .and_then(|v| v.parse().ok())

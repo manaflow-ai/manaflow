@@ -1,0 +1,37 @@
+{
+  "name": "cloudrouter-zzz",
+  "version": "0.0.1",
+  "description": "Test package for cmux CLI (cloud sandbox management with env push/pull)",
+  "keywords": [
+    "cli",
+    "devbox",
+    "cloud",
+    "sandbox",
+    "development",
+    "e2b",
+    "morph"
+  ],
+  "license": "MIT",
+  "author": "Manaflow",
+  "bin": {
+    "cloudrouter-zzz": "bin/cloudrouter-zzz"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "scripts": {
+    "postinstall": "node lib/postinstall.js"
+  },
+  "optionalDependencies": {
+    "cloudrouter-zzz-darwin-arm64": "0.0.1",
+    "cloudrouter-zzz-darwin-x64": "0.0.1",
+    "cloudrouter-zzz-linux-arm64": "0.0.1",
+    "cloudrouter-zzz-linux-x64": "0.0.1",
+    "cloudrouter-zzz-win32-x64": "0.0.1"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "private": true
+}

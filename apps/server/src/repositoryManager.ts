@@ -8,9 +8,22 @@ import {
   type GitHooksConfig,
 } from "./gitHooks";
 import { serverLogger } from "./utils/fileLogger";
+import { getGitHubOAuthToken } from "./utils/getGitHubToken";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+/**
+ * Sanitize a URL or command string by removing credentials.
+ * Replaces patterns like `https://user:token@host` with `https://***@host`
+ */
+function sanitizeForLogging(str: string): string {
+  // Match URLs with credentials: protocol://user:password@host
+  return str.replace(
+    /(\w+:\/\/)([^:]+):([^@]+)@/g,
+    "$1***:***@"
+  );
+}
 
 interface RepositoryOperation {
   promise: Promise<void>;
@@ -23,11 +36,18 @@ interface GitConfig {
   operationCacheTime: number;
 }
 
+// Default timeout for git commands (2 minutes)
+const DEFAULT_GIT_TIMEOUT_MS = 120_000;
+// Longer timeout for clone/fetch operations (5 minutes)
+const CLONE_FETCH_TIMEOUT_MS = 300_000;
+
 interface GitCommandOptions {
   cwd: string;
   encoding?: "utf8" | "ascii" | "base64" | "hex" | "binary" | "latin1";
   // When true, suppress logging for expected failures (e.g., existence checks)
   suppressErrorLogging?: boolean;
+  // Timeout in milliseconds (defaults to DEFAULT_GIT_TIMEOUT_MS)
+  timeout?: number;
 }
 
 interface QueuedOperation {
@@ -100,17 +120,30 @@ export class RepositoryManager {
 
     this.isProcessingQueue = true;
 
-    while (this.operationQueue.length > 0) {
-      const operation = this.operationQueue.shift()!;
-      try {
-        const result = await operation.execute();
-        operation.resolve(result);
-      } catch (error) {
-        operation.reject(error);
+    try {
+      while (this.operationQueue.length > 0) {
+        const operation = this.operationQueue.shift()!;
+        try {
+          const result = await operation.execute();
+          // Wrap resolve in try-catch to prevent breaking the queue
+          try {
+            operation.resolve(result);
+          } catch (resolveErr) {
+            serverLogger.error(`Error in operation resolve callback:`, resolveErr);
+          }
+        } catch (error) {
+          // Wrap reject in try-catch to prevent breaking the queue
+          try {
+            operation.reject(error);
+          } catch (rejectErr) {
+            serverLogger.error(`Error in operation reject callback:`, rejectErr);
+          }
+        }
       }
+    } finally {
+      // Always reset the flag to prevent permanent queue stall
+      this.isProcessingQueue = false;
     }
-
-    this.isProcessingQueue = false;
   }
 
   // Note: Keep all git invocations using executeGitCommand with a shell, as some CI envs lack direct execFile PATH resolution.
@@ -123,7 +156,7 @@ export class RepositoryManager {
       if (
         candidate &&
         typeof (candidate as { toString?: () => string }).toString ===
-          "function"
+        "function"
       ) {
         try {
           return (candidate as { toString: () => string }).toString();
@@ -145,11 +178,20 @@ export class RepositoryManager {
       command.includes("git worktree add") ||
       command.includes("git clone");
 
+    // Use longer timeout for clone/fetch operations
+    const isLongOperation =
+      command.includes("git clone") ||
+      command.includes("git fetch") ||
+      command.includes("git pull");
+    const timeout = options?.timeout ?? (isLongOperation ? CLONE_FETCH_TIMEOUT_MS : DEFAULT_GIT_TIMEOUT_MS);
+
     if (needsQueue) {
       return this.queueOperation(async () => {
         try {
           const result = await execAsync(command, {
             shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+            timeout,
+            maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
             ...options,
           });
           return {
@@ -159,11 +201,11 @@ export class RepositoryManager {
         } catch (error) {
           // Log only if not suppressed (some failures are expected)
           if (!options?.suppressErrorLogging) {
-            serverLogger.error(`Git command failed: ${command}`);
+            serverLogger.error(`Git command failed: ${sanitizeForLogging(command)}`);
             if (error instanceof Error) {
-              serverLogger.error(`Error: ${error.message}`);
+              serverLogger.error(`Error: ${sanitizeForLogging(error.message)}`);
               const stderrMsg = this.extractStderr(error);
-              if (stderrMsg) serverLogger.error(`Stderr: ${stderrMsg}`);
+              if (stderrMsg) serverLogger.error(`Stderr: ${sanitizeForLogging(stderrMsg)}`);
             }
           }
           throw error;
@@ -181,6 +223,8 @@ export class RepositoryManager {
           // Ensure string output for easier logging; fall back to utf8
           encoding: options?.encoding ?? "utf8",
           windowsHide: true,
+          timeout,
+          maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
         };
         const result = await execFileAsync(gitPath, args, execOptions);
         return {
@@ -191,12 +235,12 @@ export class RepositoryManager {
         // Log and fall through to shell execution unless suppressed
         if (!options?.suppressErrorLogging) {
           serverLogger.error(
-            `Git command failed: ${gitPath} ${args.join(" ")}`
+            `Git command failed: ${gitPath} ${sanitizeForLogging(args.join(" "))}`
           );
           if (error instanceof Error) {
-            serverLogger.error(`Error: ${error.message}`);
+            serverLogger.error(`Error: ${sanitizeForLogging(error.message)}`);
             const stderrMsg = this.extractStderr(error);
-            if (stderrMsg) serverLogger.error(`Stderr: ${stderrMsg}`);
+            if (stderrMsg) serverLogger.error(`Stderr: ${sanitizeForLogging(stderrMsg)}`);
           }
         }
       }
@@ -206,6 +250,8 @@ export class RepositoryManager {
     try {
       const result = await execAsync(command, {
         shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+        timeout,
+        maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
         ...options,
       });
       return {
@@ -215,11 +261,11 @@ export class RepositoryManager {
     } catch (error) {
       // Log only if not suppressed
       if (!options?.suppressErrorLogging) {
-        serverLogger.error(`Git command failed: ${command}`);
+        serverLogger.error(`Git command failed: ${sanitizeForLogging(command)}`);
         if (error instanceof Error) {
-          serverLogger.error(`Error: ${error.message}`);
+          serverLogger.error(`Error: ${sanitizeForLogging(error.message)}`);
           const stderrMsg = this.extractStderr(error);
-          if (stderrMsg) serverLogger.error(`Stderr: ${stderrMsg}`);
+          if (stderrMsg) serverLogger.error(`Stderr: ${sanitizeForLogging(stderrMsg)}`);
         }
       }
       throw error;
@@ -319,14 +365,56 @@ export class RepositoryManager {
   }
 
   /**
+   * Get the fetch source for git commands.
+   * If authenticatedUrl is provided, use it directly.
+   * Otherwise, try to get a GitHub OAuth token and inject it into the origin URL.
+   * Falls back to "origin" if no authentication is available.
+   */
+  private async getFetchSource(
+    repoPath: string,
+    authenticatedUrl?: string
+  ): Promise<string> {
+    if (authenticatedUrl) {
+      return `"${authenticatedUrl}"`;
+    }
+
+    // Try to get the origin URL and inject auth token if available
+    try {
+      const { stdout } = await this.executeGitCommand(
+        `git remote get-url origin`,
+        { cwd: repoPath, suppressErrorLogging: true }
+      );
+      const originUrl = stdout.trim();
+
+      // Only try to authenticate GitHub URLs
+      if (originUrl.startsWith("https://github.com/")) {
+        const token = await getGitHubOAuthToken();
+        if (token) {
+          const authenticatedOrigin = originUrl.replace(
+            "https://github.com/",
+            `https://x-access-token:${token}@github.com/`
+          );
+          return `"${authenticatedOrigin}"`;
+        }
+      }
+    } catch (err) {
+      serverLogger.error("Failed to get authenticated origin URL:", err);
+    }
+
+    return "origin";
+  }
+
+  /**
    * Prewarm commit history for fast ancestry (merge-base) operations.
    * Uses partial clone filter to avoid fetching blobs, and writes commit-graph.
    * Idempotent and rate-limited via a timestamp file under .git.
+   * @param authenticatedUrl - Optional authenticated URL for private repos
    */
   async prewarmCommitHistory(
     repoPath: string,
     branch: string,
-    ttlMs = 30 * 60 * 1000
+    ttlMs = 30 * 60 * 1000,
+    authenticatedUrl?: string
   ): Promise<void> {
     const gitDir = await this.getGitDir(repoPath);
     const stamp = path.join(gitDir, "cmux-prewarm.stamp");
@@ -350,18 +438,21 @@ export class RepositoryManager {
       serverLogger.warn("Failed to set partial clone promisor config:", e);
     }
 
+    // Get authenticated fetch source for private repo support
+    const fetchSource = await this.getFetchSource(repoPath, authenticatedUrl);
+
     const shallow = await this.isShallow(repoPath);
     try {
       if (shallow) {
         // Unshallow commit history, but keep blobs filtered
         await this.executeGitCommand(
-          `git fetch --filter=blob:none --unshallow --prune origin ${branch}`,
+          `git fetch --filter=blob:none --unshallow --prune ${fetchSource} ${branch}`,
           { cwd: repoPath }
         );
       } else {
         // Ensure we have latest commit graph for branch history
         await this.executeGitCommand(
-          `git fetch --filter=blob:none --prune origin ${branch}`,
+          `git fetch --filter=blob:none --prune ${fetchSource} ${branch}`,
           { cwd: repoPath }
         );
       }
@@ -389,7 +480,8 @@ export class RepositoryManager {
   async updateRemoteBranchIfStale(
     repoPath: string,
     branch: string,
-    ttlMs = 20_000
+    ttlMs = 20_000,
+    authenticatedUrl?: string
   ): Promise<void> {
     const safeBranch = branch.replace(/[^a-zA-Z0-9._-]/g, "_");
     const gitDir = await this.getGitDir(repoPath);
@@ -401,9 +493,11 @@ export class RepositoryManager {
       // ignore
     }
     try {
+      // Get authenticated fetch source for private repo support
+      const fetchSource = await this.getFetchSource(repoPath, authenticatedUrl);
       await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
       await this.executeGitCommand(
-        `git fetch --depth 1 origin +refs/heads/${branch}:refs/remotes/origin/${branch}`,
+        `git fetch --depth 1 ${fetchSource} +refs/heads/${branch}:refs/remotes/origin/${branch}`,
         { cwd: repoPath }
       );
       await fs.writeFile(stamp, `${Date.now()}\n`, "utf8");
@@ -417,9 +511,8 @@ export class RepositoryManager {
       this.config.pullStrategy === "ff-only"
         ? "only"
         : this.config.pullStrategy;
-    const cmd = `git config pull.${
-      this.config.pullStrategy === "ff-only" ? "ff" : this.config.pullStrategy
-    } ${strategy === "only" ? "only" : "true"}`;
+    const cmd = `git config pull.${this.config.pullStrategy === "ff-only" ? "ff" : this.config.pullStrategy
+      } ${strategy === "only" ? "only" : "true"}`;
 
     // Retry a few times to avoid transient .git/config lock contention
     const maxAttempts = 3;
@@ -440,18 +533,30 @@ export class RepositoryManager {
     }
   }
 
+  /**
+   * Ensure a repository is cloned/fetched and ready to use.
+   * @param repoUrl - URL used for git operations (may include auth token)
+   * @param originPath - Local path for the bare/origin repository
+   * @param branch - Optional branch to fetch
+   * @param remoteUrl - Optional clean URL to store as the remote origin (without auth tokens).
+   *                    If not provided, repoUrl is used. Use this to avoid persisting tokens in .git/config.
+   */
   async ensureRepository(
     repoUrl: string,
     originPath: string,
-    branch?: string
+    branch?: string,
+    remoteUrl?: string
   ): Promise<void> {
     this.cleanupStaleOperations();
+
+    // Use remoteUrl for storage if provided, otherwise use repoUrl
+    const urlForRemote = remoteUrl ?? repoUrl;
 
     // Check if repo exists
     const repoExists = await this.checkIfRepoExists(originPath);
 
     if (!repoExists) {
-      await this.handleCloneOperation(repoUrl, originPath);
+      await this.handleCloneOperation(repoUrl, originPath, urlForRemote);
       // After cloning, set the remote HEAD reference
       try {
         await this.executeGitCommand(`git remote set-head origin -a`, {
@@ -463,8 +568,8 @@ export class RepositoryManager {
     } else {
       // Configure git pull strategy for existing repos
       await this.configureGitPullStrategy(originPath);
-      // Ensure a usable remote named 'origin' exists and points to repoUrl
-      await this.ensureRemoteOrigin(originPath, repoUrl);
+      // Ensure a usable remote named 'origin' exists and points to the clean URL
+      await this.ensureRemoteOrigin(originPath, urlForRemote);
     }
 
     // If no branch specified, detect the default branch
@@ -523,7 +628,8 @@ export class RepositoryManager {
 
   private async handleCloneOperation(
     repoUrl: string,
-    originPath: string
+    originPath: string,
+    remoteUrl: string
   ): Promise<void> {
     // Key the clone operation by both repo URL and destination path to avoid
     // reusing a clone into a different directory, which can cause ENOENT when
@@ -535,24 +641,36 @@ export class RepositoryManager {
       existingClone &&
       Date.now() - existingClone.timestamp < this.config.operationCacheTime
     ) {
-      serverLogger.info(`Reusing existing clone operation for ${repoUrl}`);
-      await existingClone.promise.catch(() => {
-        /* swallow to allow retry below */
-      });
-      // After the in-flight operation completes, remove it so the next call can proceed freshly
-      this.operations.delete(cloneKey);
-    } else {
-      const clonePromise = this.cloneRepository(repoUrl, originPath);
-      this.operations.set(cloneKey, {
-        promise: clonePromise,
-        timestamp: Date.now(),
-      });
+      serverLogger.info(`Reusing existing clone operation for ${sanitizeForLogging(repoUrl)}`);
       try {
-        await clonePromise;
+        await existingClone.promise;
+        // Existing operation succeeded, verify the repo actually exists
+        const repoExists = await this.checkIfRepoExists(originPath);
+        if (repoExists) {
+          return; // Clone succeeded, we're done
+        }
+        // Clone "succeeded" but repo doesn't exist - fall through to retry
+        serverLogger.warn(`Clone operation completed but repo not found at ${originPath}, retrying...`);
+      } catch (err) {
+        // Existing operation failed, fall through to retry
+        serverLogger.warn(`Existing clone operation failed, retrying: ${err}`);
       } finally {
-        // Remove entry so subsequent operations aren't skipped
+        // Remove the failed/stale entry
         this.operations.delete(cloneKey);
       }
+    }
+
+    // Either no existing operation, or existing operation failed - do the clone
+    const clonePromise = this.cloneRepository(repoUrl, originPath, remoteUrl);
+    this.operations.set(cloneKey, {
+      promise: clonePromise,
+      timestamp: Date.now(),
+    });
+    try {
+      await clonePromise;
+    } finally {
+      // Remove entry so subsequent operations aren't skipped
+      this.operations.delete(cloneKey);
     }
   }
 
@@ -571,25 +689,42 @@ export class RepositoryManager {
       Date.now() - existingFetch.timestamp < this.config.operationCacheTime
     ) {
       serverLogger.info(
-        `Reusing existing fetch operation for ${repoUrl} branch ${branch}`
+        `Reusing existing fetch operation for branch ${branch}`
       );
-      await existingFetch.promise.catch(() => {
-        /* swallow to allow retry below */
-      });
-      // Remove completed entry to allow a fresh fetch
-      this.operations.delete(fetchKey);
-    } else {
-      const fetchPromise = this.fetchAndCheckoutBranch(originPath, branch);
-      this.operations.set(fetchKey, {
-        promise: fetchPromise,
-        timestamp: Date.now(),
-      });
       try {
-        await fetchPromise;
+        await existingFetch.promise;
+        // Existing operation succeeded, verify we're on the right branch
+        try {
+          const currentBranch = await this.getCurrentBranch(originPath);
+          if (currentBranch === branch) {
+            return; // Fetch succeeded and we're on the right branch
+          }
+          // On wrong branch - fall through to retry
+          serverLogger.warn(`Fetch completed but on branch ${currentBranch} instead of ${branch}, retrying...`);
+        } catch {
+          // Can't verify branch - fall through to retry
+          serverLogger.warn(`Fetch completed but couldn't verify branch, retrying...`);
+        }
+      } catch (err) {
+        // Existing operation failed, fall through to retry
+        serverLogger.warn(`Existing fetch operation failed, retrying: ${err}`);
       } finally {
-        // Ensure the operation does not block subsequent real fetches
+        // Remove the failed/stale entry
         this.operations.delete(fetchKey);
       }
+    }
+
+    // Either no existing operation, or existing operation failed - do the fetch
+    const fetchPromise = this.fetchAndCheckoutBranch(originPath, branch, repoUrl);
+    this.operations.set(fetchKey, {
+      promise: fetchPromise,
+      timestamp: Date.now(),
+    });
+    try {
+      await fetchPromise;
+    } finally {
+      // Ensure the operation does not block subsequent real fetches
+      this.operations.delete(fetchKey);
     }
   }
 
@@ -604,16 +739,31 @@ export class RepositoryManager {
 
   private async cloneRepository(
     repoUrl: string,
-    originPath: string
+    originPath: string,
+    remoteUrl: string
   ): Promise<void> {
     serverLogger.info(
-      `Cloning repository ${repoUrl} with depth ${this.config.fetchDepth}...`
+      `Cloning repository with depth ${this.config.fetchDepth}...`
     );
     try {
       await this.executeGitCommand(
         `git clone --depth ${this.config.fetchDepth} "${repoUrl}" "${originPath}"`
       );
-      serverLogger.info(`Successfully cloned ${repoUrl}`);
+      serverLogger.info(`Successfully cloned repository`);
+
+      // SECURITY: Reset the remote URL to the clean URL (without auth tokens)
+      // to avoid persisting credentials in .git/config
+      if (remoteUrl !== repoUrl) {
+        try {
+          await this.executeGitCommand(
+            `git remote set-url origin "${remoteUrl}"`,
+            { cwd: originPath }
+          );
+          serverLogger.info("Reset remote origin to clean URL");
+        } catch (error) {
+          serverLogger.warn("Failed to reset remote origin URL:", error);
+        }
+      }
 
       // Set the remote HEAD reference explicitly
       try {
@@ -630,7 +780,7 @@ export class RepositoryManager {
       // Set up git hooks
       await this.setupGitHooks(originPath);
     } catch (error) {
-      serverLogger.error(`Failed to clone ${repoUrl}:`, error);
+      serverLogger.error(`Failed to clone repository:`, error);
       throw error;
     }
   }
@@ -693,7 +843,8 @@ export class RepositoryManager {
 
   private async pullLatestChanges(
     repoPath: string,
-    branch: string
+    branch: string,
+    authenticatedUrl?: string
   ): Promise<void> {
     const pullFlags =
       this.config.pullStrategy === "rebase"
@@ -702,11 +853,14 @@ export class RepositoryManager {
           ? "--ff-only"
           : "";
 
+    // Use authenticated URL if provided to support private repos
+    const fetchSource = await this.getFetchSource(repoPath, authenticatedUrl);
+
     try {
       // Clear any stale shallow.lock before invoking a pull (pull may fetch)
       await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
       await this.executeGitCommand(
-        `git pull ${pullFlags} --depth ${this.config.fetchDepth} origin ${branch}`,
+        `git pull ${pullFlags} --depth ${this.config.fetchDepth} ${fetchSource} ${branch}`,
         { cwd: repoPath }
       );
       serverLogger.info(`Successfully pulled latest changes for ${branch}`);
@@ -719,23 +873,24 @@ export class RepositoryManager {
           error.message.includes("unrelated histories"))
       ) {
         serverLogger.warn(
-          `Pull failed (likely conflicts/divergence). Attempting hard reset to origin/${branch}`
+          `Pull failed (likely conflicts/divergence). Attempting hard reset to ${branch}`
         );
         try {
-          // Fetch the latest state
+          // Fetch the latest state using authenticated URL if provided
           await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
           await this.executeGitCommand(
-            `git fetch --depth ${this.config.fetchDepth} origin ${branch}`,
+            `git fetch --depth ${this.config.fetchDepth} ${fetchSource} ${branch}`,
             { cwd: repoPath }
           );
-          // Reset to the remote branch
-          await this.executeGitCommand(`git reset --hard origin/${branch}`, {
+          // Reset to FETCH_HEAD since fetching from a URL only updates FETCH_HEAD,
+          // not the origin/<branch> remote-tracking ref
+          await this.executeGitCommand(`git reset --hard FETCH_HEAD`, {
             cwd: repoPath,
           });
-          serverLogger.info(`Successfully reset to origin/${branch}`);
+          serverLogger.info(`Successfully reset to FETCH_HEAD for ${branch}`);
         } catch (resetError) {
           serverLogger.error(
-            `Failed to reset to origin/${branch}:`,
+            `Failed to reset to FETCH_HEAD for ${branch}:`,
             resetError
           );
           throw resetError;
@@ -748,14 +903,15 @@ export class RepositoryManager {
 
   private async fetchAndCheckoutBranch(
     originPath: string,
-    branch: string
+    branch: string,
+    authenticatedUrl?: string
   ): Promise<void> {
     serverLogger.info(`Fetching and checking out branch ${branch}...`);
     try {
       // Always fetch and checkout explicitly to reduce reliance on shell availability for rev-parse
-      await this.switchToBranch(originPath, branch);
+      await this.switchToBranch(originPath, branch, authenticatedUrl);
       // Then pull latest changes for safety (fast and idempotent)
-      await this.pullLatestChanges(originPath, branch);
+      await this.pullLatestChanges(originPath, branch, authenticatedUrl);
       serverLogger.info(`Successfully on branch ${branch}`);
     } catch (error) {
       serverLogger.error(`Failed to fetch/checkout branch ${branch}:`, error);
@@ -766,14 +922,17 @@ export class RepositoryManager {
 
   private async switchToBranch(
     repoPath: string,
-    branch: string
+    branch: string,
+    authenticatedUrl?: string
   ): Promise<void> {
     // Fetch the specific branch and explicitly update the remote-tracking ref
     // even if the clone was created with --single-branch.
     // Force-update the remote-tracking ref to tolerate non-fast-forward updates
     // (e.g., when the remote branch was force-pushed). Using a leading '+'
     // mirrors the default fetch refspec behavior: +refs/heads/*:refs/remotes/origin/*
-    const fetchCmd = `git fetch --depth ${this.config.fetchDepth} origin +refs/heads/${branch}:refs/remotes/origin/${branch}`;
+    // Use the authenticated URL if provided to support private repos (tokens not stored in .git/config)
+    const fetchSource = authenticatedUrl ? `"${authenticatedUrl}"` : "origin";
+    const fetchCmd = `git fetch --depth ${this.config.fetchDepth} ${fetchSource} +refs/heads/${branch}:refs/remotes/origin/${branch}`;
     // First, proactively clear stale shallow.lock if present (older than 15s)
     await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
     try {
@@ -809,8 +968,19 @@ export class RepositoryManager {
         `git worktree list --porcelain`,
         { cwd: originPath }
       );
-      // Check if the worktree path exists in the list
-      return stdout.includes(worktreePath);
+      // Parse worktree list properly to avoid false positives from partial path matching
+      // e.g., "/path/to/foo" should not match "/path/to/foobar"
+      const normalizedTargetPath = path.resolve(worktreePath);
+      const lines = stdout.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          const registeredPath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
+          if (registeredPath === normalizedTargetPath) {
+            return true;
+          }
+        }
+      }
+      return false;
     } catch {
       return false;
     }
@@ -847,7 +1017,8 @@ export class RepositoryManager {
 
       for (const line of lines) {
         if (line.startsWith("worktree ")) {
-          currentWorktreePath = line.substring(9); // Remove 'worktree ' prefix
+          // Normalize the path to resolve symlinks and ensure consistent comparison
+          currentWorktreePath = path.resolve(line.substring(9)); // Remove 'worktree ' prefix
         } else if (
           line.startsWith("branch refs/heads/") &&
           currentWorktreePath
@@ -869,7 +1040,8 @@ export class RepositoryManager {
     originPath: string,
     worktreePath: string,
     branchName: string,
-    baseBranch: string = "main"
+    baseBranch: string = "main",
+    authenticatedUrl?: string
   ): Promise<string> {
     // In-process lock keyed by repo+branch to avoid concurrent add for same branch
     const inProcessLockKey = `${originPath}::${branchName}`;
@@ -878,7 +1050,18 @@ export class RepositoryManager {
       serverLogger.info(
         `Waiting for existing worktree operation on ${originPath} (${branchName})...`
       );
-      await existingLock;
+      // Wait for existing lock with timeout to prevent indefinite waits
+      const lockTimeout = CLONE_FETCH_TIMEOUT_MS; // 5 minutes max wait
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error(`Worktree lock timeout after ${lockTimeout}ms for ${branchName}`)), lockTimeout);
+      });
+      try {
+        await Promise.race([existingLock, timeoutPromise]);
+      } catch (err) {
+        serverLogger.warn(`Worktree lock wait failed or timed out, proceeding anyway: ${err}`);
+        // Remove the stale lock to prevent future waits
+        this.worktreeLocks.delete(inProcessLockKey);
+      }
     }
 
     let releaseInProcessLock: () => void;
@@ -892,13 +1075,16 @@ export class RepositoryManager {
 
     serverLogger.info(`Creating worktree with branch ${branchName}...`);
     try {
+      // Get authenticated fetch source for private repo support
+      const fetchSource = await this.getFetchSource(originPath, authenticatedUrl);
+
       // Before creating the worktree, try to fetch the remote branch ref for this branch
       // so that if the agent pushed it, we base the worktree on the pushed commits
       // rather than creating a fresh branch off the base.
       const fetchRemoteBranchRef = async (): Promise<boolean> => {
         // Proactively clear shallow.lock to avoid fetch contention
         await this.removeStaleGitLock(originPath, "shallow.lock", 15_000);
-        const fetchCmd = `git fetch --depth ${this.config.fetchDepth} origin +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
+        const fetchCmd = `git fetch --depth ${this.config.fetchDepth} ${fetchSource} +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
         try {
           await this.executeGitCommand(fetchCmd, { cwd: originPath });
         } catch (e) {

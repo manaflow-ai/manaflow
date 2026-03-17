@@ -115,8 +115,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   }
 
   async stop(): Promise<void> {
-    // Disconnect socket and ask www to stop
-    await this.disconnectFromWorker();
+    this.stopFileWatch();
     if (this.sandboxId) {
       try {
         await postApiSandboxesByIdStop({
@@ -184,5 +183,50 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
 
   getName(): string {
     return this.sandboxId || this.instanceId;
+  }
+
+  getWorkerUrl(): string | null {
+    return this.workerUrl;
+  }
+
+  /**
+   * Reconnect to an existing running sandbox without starting a new one.
+   * Used when server restarts but the cloud workspace is still running.
+   */
+  static async reconnect({
+    config,
+    workerUrl,
+    sandboxId,
+  }: {
+    config: VSCodeInstanceConfig;
+    workerUrl: string;
+    sandboxId?: string;
+  }): Promise<CmuxVSCodeInstance> {
+    dockerLogger.info(
+      `[CmuxVSCodeInstance] Reconnecting to existing worker at ${workerUrl} for taskRun ${config.taskRunId}`
+    );
+
+    const instance = new CmuxVSCodeInstance(config);
+    instance.workerUrl = workerUrl;
+    if (sandboxId) {
+      instance.sandboxId = sandboxId;
+    }
+
+    try {
+      await instance.connectToWorker(workerUrl);
+      dockerLogger.info(
+        `[CmuxVSCodeInstance ${instance.instanceId}] Reconnected to worker successfully`
+      );
+    } catch (error) {
+      dockerLogger.error(
+        `[CmuxVSCodeInstance ${instance.instanceId}] Failed to reconnect to worker`,
+        error
+      );
+      // Remove from registry if connection failed
+      VSCodeInstance.getInstances().delete(instance.instanceId);
+      throw error;
+    }
+
+    return instance;
   }
 }

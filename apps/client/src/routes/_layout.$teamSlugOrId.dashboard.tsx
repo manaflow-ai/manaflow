@@ -1,4 +1,5 @@
 import { env } from "@/client-env";
+import { AnalyticsCards } from "@/components/dashboard/AnalyticsCards";
 import {
   DashboardInput,
   type EditorApi,
@@ -12,7 +13,6 @@ import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
-import { TitleBar } from "@/components/TitleBar";
 import type { SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip,
@@ -20,22 +20,32 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useOnboardingOptional } from "@/contexts/onboarding";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
+import { getApiIntegrationsGithubBranches } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullProgress,
+  DockerPullImageResponse,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
   TaskStarted,
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
 import { convexQuery } from "@convex-dev/react-query";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
@@ -62,20 +72,31 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
       query: api.tasks.get,
       args: { teamSlugOrId },
     });
+    // Prewarm analytics query
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.analytics.getDashboardStats,
+      args: { teamSlugOrId },
+    });
   },
 });
 
 // Default agents (not persisted to localStorage)
-const DEFAULT_AGENTS = ["claude/opus-4.5"];
+const DEFAULT_AGENTS = ["claude/opus-4.6", "codex/gpt-5.3-codex-xhigh"];
 const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
-const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
-  KNOWN_AGENT_NAMES.has(agent)
+const DISABLED_AGENT_NAMES = new Set(
+  AGENT_CONFIGS.filter((agent) => agent.disabled).map((agent) => agent.name)
+);
+const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter(
+  (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
 );
 
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
 
+// Filter to known agents and exclude disabled ones
 const filterKnownAgents = (agents: string[]): string[] =>
-  agents.filter((agent) => KNOWN_AGENT_NAMES.has(agent));
+  agents.filter(
+    (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
+  );
 
 const parseStoredAgentSelection = (stored: string | null): string[] => {
   if (!stored) {
@@ -103,6 +124,130 @@ function DashboardComponent() {
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const onboarding = useOnboardingOptional();
+  const dockerPullToastIdRef = useRef<
+    ReturnType<typeof toast.custom> | undefined
+  >(undefined);
+
+  const renderDockerPullToast = useCallback(
+    (progress: DockerPullProgress) => () => {
+      const title =
+        progress.phase === "waiting"
+          ? "Waiting for Docker image pull"
+          : "Pulling Docker image";
+      const description =
+        progress.phase === "waiting"
+          ? "This may take a few minutes. We'll start once the image is ready."
+          : "This may take a few minutes. You can keep working while it downloads.";
+      return (
+        <div className="flex w-[360px] flex-col gap-2 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-neutral-900 shadow-lg dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100">
+          <div className="text-sm font-medium">{title}</div>
+          <div className="text-xs text-neutral-600 dark:text-neutral-300">
+            {progress.imageName}
+          </div>
+          <div className="text-xs text-neutral-600 dark:text-neutral-300">
+            {description}
+          </div>
+        </div>
+      );
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleDockerPullProgress = (payload: DockerPullProgress) => {
+      if (payload.phase === "complete") {
+        if (dockerPullToastIdRef.current) {
+          toast.dismiss(dockerPullToastIdRef.current);
+          dockerPullToastIdRef.current = undefined;
+        }
+        return;
+      }
+
+      if (payload.phase === "error") {
+        if (dockerPullToastIdRef.current) {
+          toast.dismiss(dockerPullToastIdRef.current);
+          dockerPullToastIdRef.current = undefined;
+        }
+        toast.error(`Docker image pull failed for ${payload.imageName}.`);
+        return;
+      }
+
+      if (payload.phase !== "pulling" && payload.phase !== "waiting") {
+        return;
+      }
+
+      if (dockerPullToastIdRef.current) {
+        toast.custom(renderDockerPullToast(payload), {
+          id: dockerPullToastIdRef.current,
+          duration: Infinity,
+        });
+      } else {
+        dockerPullToastIdRef.current = toast.custom(
+          renderDockerPullToast(payload),
+          { duration: Infinity }
+        );
+      }
+    };
+
+    socket.on("docker-pull-progress", handleDockerPullProgress);
+    return () => {
+      socket.off("docker-pull-progress", handleDockerPullProgress);
+    };
+  }, [renderDockerPullToast, socket]);
+
+  // Query tasks to check if user is new (has no tasks)
+  const tasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId })
+  );
+  const archivedTasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId, archived: true })
+  );
+
+  const tasksReady = tasksQuery.isSuccess && archivedTasksQuery.isSuccess;
+  const { hasRealTasks, hasCompletedRealTasks } = useMemo(() => {
+    const activeTasks = tasksQuery.data ?? [];
+    const archivedTasks = archivedTasksQuery.data ?? [];
+    const allTasks = [...activeTasks, ...archivedTasks];
+    const realTasks = allTasks.filter(
+      (task) => !task.isCloudWorkspace && !task.isLocalWorkspace
+    );
+    return {
+      hasRealTasks: realTasks.length > 0,
+      hasCompletedRealTasks: realTasks.some((task) => task.isCompleted),
+    };
+  }, [tasksQuery.data, archivedTasksQuery.data]);
+
+  // Auto-start onboarding for new users on the dashboard
+  useEffect(() => {
+    // Only start if onboarding context is available
+    if (!onboarding) return;
+
+    // Don't start if user has already completed or skipped onboarding
+    if (onboarding.hasCompletedOnboarding) return;
+
+    // Don't start if onboarding is already active
+    if (onboarding.isOnboardingActive) return;
+
+    // Wait for tasks queries to load
+    if (!tasksReady) return;
+
+    // Only start for new users - check for real tasks (not standalone workspaces),
+    // including archived tasks.
+    // Standalone workspaces (isCloudWorkspace/isLocalWorkspace) don't count as "tasks"
+    if (hasRealTasks) return;
+    if (hasCompletedRealTasks) return;
+
+    // Start onboarding for new users
+    onboarding.startOnboarding();
+  }, [
+    onboarding,
+    tasksReady,
+    hasRealTasks,
+    hasCompletedRealTasks,
+  ]);
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
@@ -205,36 +350,92 @@ function DashboardComponent() {
   // This prevents delay when user clears the search
   const effectiveBranchSearch = branchSearch === "" ? "" : debouncedBranchSearch;
 
-  // Branches query - uses GraphQL to get default branch AND branches in a single API call
-  // Server-side search via GitHub GraphQL API (prefix match)
+  // Branches query - infinite scroll with server-side ordering by recent commits
   // Each search term is cached separately by React Query
-  const branchesQuery = useQuery({
-    ...getApiIntegrationsGithubBranchesOptions({
-      query: {
-        repo: selectedProject[0] || "",
-        limit: 5,
-        search: effectiveBranchSearch || undefined,
-      },
-    }),
+  const branchPageSize = 10;
+  const currentRepo = selectedProject[0] ?? "";
+
+  const branchesQuery = useInfiniteQuery<
+    GithubBranchesResponse,
+    Error,
+    InfiniteData<GithubBranchesResponse, number | null>,
+    Array<string | number>,
+    number | null
+  >({
+    queryKey: [
+      "github-branches",
+      currentRepo,
+      effectiveBranchSearch,
+      branchPageSize,
+    ],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam, signal }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
+      const { data } = await getApiIntegrationsGithubBranches({
+        query: {
+          repo: currentRepo,
+          limit: branchPageSize,
+          search: effectiveBranchSearch || undefined,
+          offset,
+        },
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.hasMore) {
+        return undefined;
+      }
+      return lastPage.nextOffset ?? undefined;
+    },
     staleTime: 30_000,
-    enabled: !!selectedProject[0] && !isEnvSelected,
+    enabled: !!currentRepo && !isEnvSelected,
     // Keep previous data visible while fetching new search results
-    // This prevents "No options" flash and button skeleton during search
-    placeholderData: keepPreviousData,
+    // BUT only if the repo hasn't changed - otherwise show loading state
+    placeholderData: (previousData, previousQuery) => {
+      // Don't use placeholder data if repo changed
+      const prevRepo = previousQuery?.queryKey?.[1];
+      if (prevRepo !== currentRepo) {
+        return undefined;
+      }
+      // For same repo, keep previous data during search
+      return previousData;
+    },
   });
 
   // Show loading in search input when search is pending or fetching
   const isBranchSearchLoading =
     branchSearch !== "" &&
-    (branchSearch !== effectiveBranchSearch || branchesQuery.isFetching);
+    (branchSearch !== effectiveBranchSearch ||
+      (branchesQuery.isFetching && !branchesQuery.isFetchingNextPage));
 
   // Extract branch names and default branch from the query
-  const branchNames = useMemo(
-    () => branchesQuery.data?.branches?.map((branch) => branch.name) ?? [],
+  const branchPages = useMemo(
+    () => branchesQuery.data?.pages ?? [],
     [branchesQuery.data]
   );
+  const branchNames = useMemo(() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const page of branchPages) {
+      for (const branch of page.branches ?? []) {
+        if (seen.has(branch.name)) continue;
+        seen.add(branch.name);
+        names.push(branch.name);
+      }
+    }
+    return names;
+  }, [branchPages]);
 
-  const defaultBranchName = branchesQuery.data?.defaultBranch ?? null;
+  const defaultBranchName = useMemo(() => {
+    for (const page of branchPages) {
+      if (page.defaultBranch) {
+        return page.defaultBranch;
+      }
+    }
+    return null;
+  }, [branchPages]);
 
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
@@ -464,6 +665,88 @@ function DashboardComponent() {
     return [];
   }, [selectedBranch, defaultBranchName, branchNames]);
 
+  // Prewarm sandbox when user starts typing with a repo selected in cloud mode
+  const prewarmCacheKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!taskDescription.trim()) {
+      // Reset when input is cleared (after task submission) so next typing triggers a new prewarm
+      prewarmCacheKeyRef.current = null;
+      return;
+    }
+    // Only trigger in cloud mode with a repo selected (not environment)
+    if (isEnvSelected || !isCloudMode || !selectedProject[0]) return;
+
+    const repoUrl = `https://github.com/${selectedProject[0]}.git`;
+    const branch = effectiveSelectedBranch[0] || "";
+    const cacheKey = `${teamSlugOrId}:${repoUrl}:${branch}`;
+
+    // Skip if already prewarmed for this exact combo
+    if (prewarmCacheKeyRef.current === cacheKey) return;
+    prewarmCacheKeyRef.current = cacheKey;
+
+    // Fire-and-forget prewarm request
+    (async () => {
+      try {
+        const user = await stackClientApp.getUser();
+        if (!user) return;
+        const authHeaders = await user.getAuthHeaders();
+        await fetch(`${WWW_ORIGIN}/api/sandboxes/prewarm`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teamSlugOrId,
+            repoUrl,
+            branch: branch || undefined,
+          }),
+        });
+      } catch (error) {
+        console.error("[prewarm] Failed to trigger prewarm:", error);
+      }
+    })();
+  }, [taskDescription, selectedProject, effectiveSelectedBranch, isEnvSelected, isCloudMode, teamSlugOrId]);
+
+  const ensureDockerReadyForLocalTask = useCallback(async (): Promise<boolean> => {
+    if (!socket) {
+      console.error("Cannot verify Docker status: socket not connected");
+      toast.error(
+        "Cannot verify Docker status. Please ensure the server is running."
+      );
+      return false;
+    }
+
+    const status = await new Promise<ProviderStatusResponse | undefined>(
+      (resolve) => {
+        socket.emit("check-provider-status", resolve);
+      }
+    );
+
+    const isRunning = status?.dockerStatus?.isRunning ?? false;
+    setDockerReady(isRunning);
+
+    if (!isRunning) {
+      toast.error(
+        "Docker isn't running. Install or start Docker Desktop to run local tasks."
+      );
+      return false;
+    }
+
+    const pullResponse = await new Promise<DockerPullImageResponse>(
+      (resolve) => {
+        socket.emit("docker-pull-image", resolve);
+      }
+    );
+
+    if (!pullResponse.success) {
+      toast.error(
+        pullResponse.error ??
+          "Docker image is not ready yet. Please try again."
+      );
+      return false;
+    }
+
+    return true;
+  }, [setDockerReady, socket]);
+
   const handleStartTask = useCallback(async () => {
     if (isStartingTaskRef.current) {
       return;
@@ -475,29 +758,8 @@ function DashboardComponent() {
     try {
       // For local mode, perform a fresh docker check right before starting
       if (!isEnvSelected && !isCloudMode) {
-        // Always check Docker status when in local mode, regardless of current state
-        if (socket) {
-          const ready = await new Promise<boolean>((resolve) => {
-            socket.emit("check-provider-status", (response) => {
-              const isRunning = !!response?.dockerStatus?.isRunning;
-              if (typeof isRunning === "boolean") {
-                setDockerReady(isRunning);
-              }
-              resolve(isRunning);
-            });
-          });
-
-          // Only show the alert if Docker is actually not running after checking
-          if (!ready) {
-            toast.error("Docker is not running. Start Docker Desktop.");
-            return;
-          }
-        } else {
-          // If socket is not connected, we can't verify Docker status
-          console.error("Cannot verify Docker status: socket not connected");
-          toast.error(
-            "Cannot verify Docker status. Please ensure the server is running."
-          );
+        const dockerReady = await ensureDockerReadyForLocalTask();
+        if (!dockerReady) {
           return;
         }
       }
@@ -597,7 +859,11 @@ function DashboardComponent() {
       ) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          const message =
+            typeof response.error === "string"
+              ? response.error
+              : "Task failed to start. Please try again.";
+          toast.error(message);
           return;
         }
 
@@ -651,6 +917,7 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     generateUploadUrl,
+    ensureDockerReadyForLocalTask,
   ]);
 
   // Fetch repos on mount if none exist
@@ -738,7 +1005,8 @@ function DashboardComponent() {
     }));
 
     const options: SelectOption[] = [];
-    if (envOptions.length > 0) {
+    // Only show environments in cloud mode
+    if (isCloudMode && envOptions.length > 0) {
       options.push({
         label: "Environments",
         value: "__heading-env",
@@ -756,7 +1024,7 @@ function DashboardComponent() {
     }
 
     return options;
-  }, [reposByOrg, environmentsQuery.data]);
+  }, [reposByOrg, environmentsQuery.data, isCloudMode]);
 
   const selectedRepoFullName = useMemo(() => {
     if (!selectedProject[0] || isEnvSelected) return null;
@@ -785,6 +1053,15 @@ function DashboardComponent() {
   // }, []);
 
   const branchOptions = branchNames;
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = branchesQuery;
+  const canLoadMoreBranches = hasNextPage ?? false;
+  const isLoadingMoreBranches = isFetchingNextPage;
+  const handleBranchLoadMore = useCallback(() => {
+    if (!canLoadMoreBranches || isLoadingMoreBranches) {
+      return;
+    }
+    void fetchNextPage();
+  }, [fetchNextPage, canLoadMoreBranches, isLoadingMoreBranches]);
 
   // Cloud mode toggle handler
   const handleCloudModeToggle = useCallback(() => {
@@ -999,7 +1276,7 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
+    <FloatingPane>
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">
@@ -1027,12 +1304,15 @@ function DashboardComponent() {
               onBranchChange={handleBranchChange}
               onBranchSearchChange={handleBranchSearchChange}
               isBranchSearchLoading={isBranchSearchLoading}
+              onBranchLoadMore={handleBranchLoadMore}
+              canLoadMoreBranches={canLoadMoreBranches}
+              isLoadingMoreBranches={isLoadingMoreBranches}
               selectedAgents={selectedAgents}
               onAgentChange={handleAgentChange}
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isFetching && effectiveSelectedBranch.length === 0}
+              isLoadingBranches={branchesQuery.isLoading && effectiveSelectedBranch.length === 0}
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
@@ -1047,6 +1327,8 @@ function DashboardComponent() {
                 projectFullName={selectedRepoFullName}
               />
             ) : null}
+
+            <AnalyticsCards teamSlugOrId={teamSlugOrId} />
 
             {/* {shouldShowCloudRepoOnboarding && createEnvironmentSearch ? (
               <div className="mt-4 mb-4 flex items-start gap-2 rounded-xl border border-green-200/60 dark:border-green-500/40 bg-green-50/80 dark:bg-green-500/10 px-3 py-2 text-sm text-green-900 dark:text-green-100">
@@ -1107,6 +1389,9 @@ type DashboardMainCardProps = {
   onBranchChange: (newBranches: string[]) => void;
   onBranchSearchChange: (search: string) => void;
   isBranchSearchLoading: boolean;
+  onBranchLoadMore: () => void;
+  canLoadMoreBranches: boolean;
+  isLoadingMoreBranches: boolean;
   selectedAgents: string[];
   onAgentChange: (newAgents: string[]) => void;
   isCloudMode: boolean;
@@ -1138,6 +1423,9 @@ function DashboardMainCard({
   onBranchChange,
   onBranchSearchChange,
   isBranchSearchLoading,
+  onBranchLoadMore,
+  canLoadMoreBranches,
+  isLoadingMoreBranches,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -1153,7 +1441,10 @@ function DashboardMainCard({
   isStartingTask,
 }: DashboardMainCardProps) {
   return (
-    <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
+    <div
+      className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all"
+      data-onboarding="dashboard-input"
+    >
       <DashboardInput
         ref={editorApiRef}
         onTaskDescriptionChange={onTaskDescriptionChange}
@@ -1176,6 +1467,9 @@ function DashboardMainCard({
           onBranchChange={onBranchChange}
           onBranchSearchChange={onBranchSearchChange}
           isBranchSearchLoading={isBranchSearchLoading}
+          onBranchLoadMore={onBranchLoadMore}
+          canLoadMoreBranches={canLoadMoreBranches}
+          isLoadingMoreBranches={isLoadingMoreBranches}
           selectedAgents={selectedAgents}
           onAgentChange={onAgentChange}
           isCloudMode={isCloudMode}

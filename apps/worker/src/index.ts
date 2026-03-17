@@ -4,6 +4,7 @@ import {
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
   WorkerStartScreenshotCollectionSchema,
+  WorkerUploadFilesSchema,
   type ClientToServerEvents,
   type InterServerEvents,
   type PostStartCommand,
@@ -34,6 +35,7 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createServer } from "node:http";
 import { cpus, platform, totalmem } from "node:os";
@@ -44,6 +46,7 @@ import { checkDockerReadiness } from "./checkDockerReadiness";
 import { detectTerminalIdle } from "./detectTerminalIdle";
 import { runWorkerExec } from "./execRunner";
 import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
+import { CloudToLocalSyncManager } from "./cloudToLocalSync";
 import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
 import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
@@ -371,6 +374,9 @@ let mainServerSocket: Socket<
 // Track active file watchers by taskRunId
 const activeFileWatchers: Map<string, FileWatcher> = new Map();
 
+// Cloud-to-local sync manager (syncs cloud workspace changes back to local)
+let cloudToLocalSyncManager: CloudToLocalSyncManager | null = null;
+
 // Queue for pending events when mainServerSocket is not connected
 interface PendingEvent<
   K extends WorkerToServerEventNames = WorkerToServerEventNames,
@@ -415,6 +421,11 @@ function emitToMainServer<K extends WorkerToServerEventNames>(
     });
   }
 }
+
+// Initialize cloud-to-local sync manager
+cloudToLocalSyncManager = new CloudToLocalSyncManager((data) => {
+  emitToMainServer("worker:sync-files", data);
+});
 
 /**
  * Send all pending events to the main server
@@ -1073,6 +1084,92 @@ managementIO.on("connection", (socket) => {
     }
   });
 
+  socket.on("worker:upload-files", async (data, callback) => {
+    try {
+      const validated = WorkerUploadFilesSchema.parse(data);
+      const workspaceRoot = "/root/workspace";
+
+      // Compute content hashes and mark files BEFORE writing to prevent echo loops
+      // This uses both timing-based and content-hash based echo prevention
+      if (cloudToLocalSyncManager) {
+        const filesToMark: Array<{ relativePath: string; contentHash: string }> = [];
+        const deletedPaths: string[] = [];
+
+        for (const file of validated.files) {
+          const action = file.action ?? "write";
+          if (action === "delete") {
+            deletedPaths.push(file.destinationPath);
+          } else if (file.contentBase64) {
+            // Compute hash of content we're about to write
+            const content = Buffer.from(file.contentBase64, "base64");
+            const contentHash = createHash("md5").update(content).digest("hex");
+            filesToMark.push({
+              relativePath: file.destinationPath,
+              contentHash,
+            });
+          }
+        }
+
+        // Mark write files with their content hashes (timing + content-based)
+        if (filesToMark.length > 0) {
+          cloudToLocalSyncManager.markSyncedFromLocalWithHashes(filesToMark);
+        }
+        // Clear hashes for deleted files
+        if (deletedPaths.length > 0) {
+          cloudToLocalSyncManager.clearSyncedHashesAllSessions(deletedPaths);
+        }
+      }
+
+      for (const file of validated.files) {
+        const action = file.action ?? "write";
+        const resolvedPath = path.resolve(workspaceRoot, file.destinationPath);
+        const normalizedRoot = path.resolve(workspaceRoot);
+        if (
+          resolvedPath !== normalizedRoot &&
+          !resolvedPath.startsWith(`${normalizedRoot}${path.sep}`)
+        ) {
+          throw new Error(
+            `Invalid destination path outside workspace: ${file.destinationPath}`
+          );
+        }
+
+        if (action === "delete") {
+          await fs.rm(resolvedPath, { recursive: true, force: true });
+          continue;
+        }
+
+        if (!file.contentBase64) {
+          throw new Error(
+            `Missing content for write action: ${file.destinationPath}`
+          );
+        }
+
+        const dir = path.dirname(resolvedPath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(
+          resolvedPath,
+          Buffer.from(file.contentBase64, "base64")
+        );
+
+        if (file.mode) {
+          await fs.chmod(resolvedPath, parseInt(file.mode, 8));
+        }
+      }
+
+      callback({
+        error: null,
+        data: { success: true },
+      });
+    } catch (error) {
+      console.error("[worker:upload-files] Failed to apply file sync", error);
+      log("ERROR", "Failed to apply file sync", error);
+      callback({
+        error: error instanceof Error ? error : new Error(String(error)),
+        data: null,
+      });
+    }
+  });
+
   socket.on("worker:shutdown", () => {
     console.log(`Worker ${WORKER_ID} received shutdown command`);
     gracefulShutdown();
@@ -1152,6 +1249,60 @@ managementIO.on("connection", (socket) => {
       watcher.stop();
       activeFileWatchers.delete(taskRunId);
       log("INFO", `[Worker] Stopped file watcher for task ${taskRunId}`);
+    }
+  });
+
+  // Handle cloud-to-local sync start request
+  socket.on("worker:start-cloud-sync", async (data) => {
+    const { taskRunId, workspacePath } = data;
+
+    if (!taskRunId || !workspacePath) {
+      log("ERROR", "Missing taskRunId or workspacePath for cloud sync");
+      return;
+    }
+
+    if (cloudToLocalSyncManager) {
+      await cloudToLocalSyncManager.startSync({
+        taskRunId,
+        workspacePath,
+      });
+      log(
+        "INFO",
+        `[Worker] Started cloud-to-local sync for task ${taskRunId} at ${workspacePath}`
+      );
+    }
+  });
+
+  // Handle cloud-to-local sync stop request
+  socket.on("worker:stop-cloud-sync", async (data) => {
+    const { taskRunId } = data;
+
+    if (cloudToLocalSyncManager) {
+      await cloudToLocalSyncManager.stopSync(taskRunId);
+      log("INFO", `[Worker] Stopped cloud-to-local sync for task ${taskRunId}`);
+    }
+  });
+
+  // Handle request for full cloud sync (initial download of all cloud files)
+  socket.on("worker:request-full-cloud-sync", async (data, callback) => {
+    const { taskRunId } = data;
+
+    if (!cloudToLocalSyncManager) {
+      log("ERROR", "[Worker] Cloud sync manager not available for full sync request");
+      callback({ filesSent: 0 });
+      return;
+    }
+
+    try {
+      const result = await cloudToLocalSyncManager.triggerFullSync(taskRunId);
+      log(
+        "INFO",
+        `[Worker] Completed full cloud sync for task ${taskRunId}: ${result.filesSent} files sent`
+      );
+      callback(result);
+    } catch (error) {
+      log("ERROR", `[Worker] Failed to trigger full cloud sync for task ${taskRunId}`, error);
+      callback({ filesSent: 0 });
     }
   });
 

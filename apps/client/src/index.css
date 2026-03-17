@@ -513,6 +513,12 @@ pre,
 }
 
 /* Sidebar responsive width */
+[style*="--sidebar-width"] {
+  width: min(var(--sidebar-width), 75vw) !important;
+  min-width: min(var(--sidebar-width), 75vw) !important;
+  max-width: min(var(--sidebar-width), 75vw) !important;
+}
+
 @media (min-width: 768px) {
   [style*="--sidebar-width"] {
     width: var(--sidebar-width) !important;
@@ -755,6 +761,15 @@ pre,
   /* Ensure diff table renders below sticky headers */
   position: relative;
   z-index: 1;
+  /* Reset any default margins that might cause visual offset */
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* Ensure the diff table is a proper block-level table */
+table.diff {
+  display: table !important;
+  border-collapse: collapse;
 }
 
 .diff-hunk {
@@ -763,22 +778,33 @@ pre,
 
 .diff-decoration {
   scroll-margin-top: 48px;
+  position: static !important;
+  top: auto !important;
+  /* Ensure decoration tbody displays properly */
+  display: table-row-group !important;
 }
 
 /* Ensure hunk header decorations don't overlap with file headers */
 .diff-decoration-content {
-  position: relative;
-  z-index: 2;
+  position: static !important;
+  z-index: auto;
+}
+
+/* Ensure decoration cells span full width */
+.diff-decoration td {
+  position: static !important;
 }
 
 /* Heatmap character highlight styles */
 .cmux-heatmap-char {
-  display: inline-block;
-  padding: 0 0.05rem;
+  display: inline;
+  padding: 0;
+  border-radius: 0.15rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .cmux-heatmap-char-wrapper {
-  display: inline-block;
   cursor: help;
 }
 

@@ -37,6 +37,7 @@ import {
   FolderOpen,
   GitBranch,
   GitMerge,
+  RefreshCw,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -72,6 +73,8 @@ interface TaskDetailHeaderProps {
   onCollapseAllChecks?: () => void;
   onPanelSettings?: () => void;
   onOpenLocalWorkspace?: () => void;
+  onToggleAutoSync?: () => void;
+  autoSyncEnabled?: boolean;
   teamSlugOrId: string;
 }
 
@@ -208,6 +211,8 @@ export function TaskDetailHeader({
   onCollapseAllChecks,
   onPanelSettings,
   onOpenLocalWorkspace,
+  onToggleAutoSync,
+  autoSyncEnabled = true,
   teamSlugOrId,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
@@ -291,7 +296,7 @@ export function TaskDetailHeader({
 
   return (
     <div
-      className="bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2"
+      className="bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white px-3.5 sticky top-0 z-[var(--z-sticky)] py-2 border-b border-neutral-200/80 dark:border-neutral-800/70"
       style={dragStyle}
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 gap-y-1">
@@ -368,6 +373,22 @@ export function TaskDetailHeader({
               title="Open local workspace from this branch"
             >
               <FolderOpen className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {onToggleAutoSync && (
+            <button
+              onClick={onToggleAutoSync}
+              className={clsx(
+                "p-1 select-none transition-colors",
+                autoSyncEnabled
+                  ? "text-green-500 hover:text-green-600 dark:text-green-400 dark:hover:text-green-300"
+                  : "text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
+              )}
+              aria-label={autoSyncEnabled ? "Auto-sync enabled (click to disable)" : "Auto-sync disabled (click to enable)"}
+              title={autoSyncEnabled ? "Auto-sync ON - Click to disable" : "Auto-sync OFF - Click to enable"}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
             </button>
           )}
 

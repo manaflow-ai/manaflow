@@ -43,7 +43,7 @@ import {
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -57,6 +57,9 @@ import {
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useSocket } from "@/contexts/socket/use-socket";
+import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
+import { toast } from "sonner";
 
 type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
 type IframeStatusEntry = {
@@ -305,6 +308,7 @@ function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
   const search = Route.useSearch();
   const localServeWeb = useLocalVSCodeServeWebQuery();
+  const { socket } = useSocket();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -317,6 +321,12 @@ function TaskDetailPage() {
     teamSlugOrId,
     taskId,
   });
+  // Query workspace settings for auto-sync toggle
+  const workspaceSettings = useQuery(api.workspaceSettings.get, { teamSlugOrId });
+  const updateWorkspaceSettings = useMutation(api.workspaceSettings.update);
+
+  // Auto-sync enabled state (defaults to true)
+  const autoSyncEnabled = workspaceSettings?.autoSyncEnabled ?? true;
 
   const [panelConfig, setPanelConfig] = useState<PanelConfig>(() =>
     loadPanelConfig()
@@ -474,6 +484,59 @@ function TaskDetailPage() {
   }, [search.runId, taskRunIndex, taskRuns]);
 
   const selectedRunId = selectedRun?._id ?? null;
+
+  // Query for existing linked local workspace (to prevent creating duplicates)
+  const linkedLocalWorkspace = useQuery(
+    api.tasks.getLinkedLocalWorkspace,
+    selectedRunId ? { teamSlugOrId, cloudTaskRunId: selectedRunId } : "skip"
+  );
+
+  // Helper to trigger sync - can be called from multiple places for reliability
+  const triggerSyncIfNeeded = useCallback(() => {
+    if (!autoSyncEnabled || !socket) {
+      return;
+    }
+
+    let localWorkspacePath: string | undefined;
+    let cloudTaskRunId: string | undefined;
+
+    // Case 1: Viewing a local workspace task directly
+    if (task?.isLocalWorkspace && task?.linkedFromCloudTaskRunId && task?.worktreePath) {
+      localWorkspacePath = task.worktreePath;
+      cloudTaskRunId = task.linkedFromCloudTaskRunId;
+    }
+    // Case 2: Viewing a cloud task that has a linked local workspace
+    else if (linkedLocalWorkspace?.task?.worktreePath && selectedRunId) {
+      localWorkspacePath = linkedLocalWorkspace.task.worktreePath;
+      cloudTaskRunId = selectedRunId;
+    }
+
+    if (!localWorkspacePath || !cloudTaskRunId) {
+      return;
+    }
+
+    socket.emit(
+      "trigger-local-cloud-sync",
+      {
+        localWorkspacePath,
+        cloudTaskRunId,
+      },
+      (response: { success: boolean; error?: string }) => {
+        if (!response.success) {
+          console.error("Failed to trigger sync:", response.error);
+        }
+      }
+    );
+  }, [
+    autoSyncEnabled,
+    socket,
+    task?.isLocalWorkspace,
+    task?.linkedFromCloudTaskRunId,
+    task?.worktreePath,
+    linkedLocalWorkspace?.task?.worktreePath,
+    selectedRunId,
+  ]);
+
   useEffect(() => {
     const previousRunId = previousSelectedRunIdRef.current;
     if (previousRunId === selectedRunId) {
@@ -504,6 +567,15 @@ function TaskDetailPage() {
       ]);
     }
   }, [selectedRunId, workspaceUrl]);
+
+  // Restore sync session when returning to a page with a local workspace linked to a cloud task run
+  // This handles two scenarios:
+  // 1. Viewing a local workspace task directly (task.isLocalWorkspace && task.linkedFromCloudTaskRunId)
+  // 2. Viewing a cloud task that has a linked local workspace (linkedLocalWorkspace exists)
+  // The sync session is in-memory on the server and gets lost on page refresh or server restart
+  useEffect(() => {
+    triggerSyncIfNeeded();
+  }, [triggerSyncIfNeeded]);
 
   const updateIframeStatus = useCallback(
     (
@@ -549,8 +621,10 @@ function TaskDetailPage() {
   const onEditorLoad = useCallback(() => {
     if (selectedRunId) {
       console.log(`Workspace view loaded for task run ${selectedRunId}`);
+      // Trigger sync when workspace iframe loads - ensures sync starts on user interaction
+      triggerSyncIfNeeded();
     }
-  }, [selectedRunId]);
+  }, [selectedRunId, triggerSyncIfNeeded]);
 
   const onEditorError = useCallback(
     (error: Error) => {
@@ -639,37 +713,150 @@ function TaskDetailPage() {
     };
   }, [selectedRun, taskRuns?.length]);
 
-  // Determine if this is a workspace-only task (local or cloud workspace)
-  const isWorkspaceOnlyTask = task?.isLocalWorkspace || task?.isCloudWorkspace;
+  // Get primary repo from task for local workspace creation
+  const primaryRepo = task?.projectFullName;
+  const baseBranch = task?.baseBranch ?? "main";
+
+  // Handle opening a local workspace for the current task run
+  const handleOpenLocalWorkspace = useCallback(() => {
+    // If query is still loading (undefined), don't allow creation to prevent duplicates
+    // linkedLocalWorkspace is undefined while loading, null when no linked workspace exists
+    if (linkedLocalWorkspace === undefined) {
+      toast.info("Checking for existing workspace...", {
+        description: "Please wait a moment and try again",
+      });
+      return;
+    }
+
+    // If a linked local workspace already exists, just show a message
+    if (linkedLocalWorkspace) {
+      toast.info("Local workspace already exists", {
+        description: "VS Code (Local) is available in the sidebar",
+      });
+      return;
+    }
+
+    if (!socket) {
+      toast.error("Socket not connected");
+      return;
+    }
+
+    if (!primaryRepo) {
+      toast.error("No repository information available");
+      return;
+    }
+
+    if (!selectedRun?.newBranch) {
+      toast.error("No branch information available");
+      return;
+    }
+
+    const loadingToast = toast.loading("Creating local workspace...");
+
+    socket.emit(
+      "create-local-workspace",
+      {
+        teamSlugOrId,
+        projectFullName: primaryRepo,
+        repoUrl: `https://github.com/${primaryRepo}.git`,
+        branch: selectedRun.newBranch,
+        baseBranch,
+        linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
+      },
+      (response: CreateLocalWorkspaceResponse) => {
+        if (response.success && response.workspacePath) {
+          toast.success("Local workspace created!", {
+            id: loadingToast,
+            description: "VS Code (Local) is now available in the sidebar",
+          });
+          // Don't navigate - the local VS Code entry will appear under the current task run
+        } else {
+          toast.error(response.error || "Failed to create workspace", {
+            id: loadingToast,
+          });
+        }
+      }
+    );
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, baseBranch]);
+
+  // Handle toggling auto-sync on/off
+  const handleToggleAutoSync = useCallback(() => {
+    const newValue = !autoSyncEnabled;
+    updateWorkspaceSettings({
+      teamSlugOrId,
+      autoSyncEnabled: newValue,
+    })
+      .then(() => {
+        toast.success(newValue ? "Auto-sync enabled" : "Auto-sync disabled");
+      })
+      .catch((error) => {
+        console.error("Failed to toggle auto-sync:", error);
+        toast.error("Failed to toggle auto-sync");
+      });
+  }, [autoSyncEnabled, teamSlugOrId, updateWorkspaceSettings]);
+
+  // Determine workspace type for layout overrides
+  const isLocalWorkspaceTask = task?.isLocalWorkspace;
+  const isCloudWorkspaceTask = task?.isCloudWorkspace;
+
+  // Determine effective layout mode based on workspace type
+  // - Local workspaces: single panel (just VSCode)
+  // - Cloud workspaces: two-horizontal (VSCode left, browser right)
+  // - Regular tasks: use user's configured layout
+  const effectiveLayoutMode = useMemo(() => {
+    if (isLocalWorkspaceTask) {
+      return "single-panel" as const;
+    }
+    if (isCloudWorkspaceTask) {
+      return "two-horizontal" as const;
+    }
+    return panelConfig.layoutMode;
+  }, [isLocalWorkspaceTask, isCloudWorkspaceTask, panelConfig.layoutMode]);
 
   const currentLayout = useMemo(() => {
-    const layout = getCurrentLayoutPanels(panelConfig);
-
-    // For local/cloud workspaces, hide gitDiff and browser panels since they're not applicable
-    if (isWorkspaceOnlyTask) {
+    // For local workspaces: just VSCode
+    if (isLocalWorkspaceTask) {
       return {
-        topLeft: layout.topLeft === "gitDiff" || layout.topLeft === "browser" ? null : layout.topLeft,
-        topRight: layout.topRight === "gitDiff" || layout.topRight === "browser" ? null : layout.topRight,
-        bottomLeft: layout.bottomLeft === "gitDiff" || layout.bottomLeft === "browser" ? null : layout.bottomLeft,
-        bottomRight: layout.bottomRight === "gitDiff" || layout.bottomRight === "browser" ? null : layout.bottomRight,
+        topLeft: "workspace" as const,
+        topRight: null,
+        bottomLeft: null,
+        bottomRight: null,
       };
     }
 
-    return layout;
-  }, [panelConfig, isWorkspaceOnlyTask]);
+    // For cloud workspaces: VSCode left, browser right
+    if (isCloudWorkspaceTask) {
+      return {
+        topLeft: "workspace" as const,
+        topRight: "browser" as const,
+        bottomLeft: null,
+        bottomRight: null,
+      };
+    }
+
+    // Regular tasks: use configured layout
+    return getCurrentLayoutPanels(panelConfig);
+  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+
   const availablePanels = useMemo(() => {
     const panels = getAvailablePanels(panelConfig);
 
-    // For local/cloud workspaces, exclude gitDiff and browser from available panels
-    if (isWorkspaceOnlyTask) {
+    // For local workspaces, exclude gitDiff and browser from available panels
+    if (isLocalWorkspaceTask) {
       return panels.filter((p) => p !== "gitDiff" && p !== "browser");
     }
 
+    // For cloud workspaces, exclude gitDiff (browser is used)
+    if (isCloudWorkspaceTask) {
+      return panels.filter((p) => p !== "gitDiff");
+    }
+
     return panels;
-  }, [panelConfig, isWorkspaceOnlyTask]);
+  }, [panelConfig, isLocalWorkspaceTask, isCloudWorkspaceTask]);
+
   const activePanelPositions = useMemo(
-    () => getActivePanelPositions(panelConfig.layoutMode),
-    [panelConfig.layoutMode]
+    () => getActivePanelPositions(effectiveLayoutMode),
+    [effectiveLayoutMode]
   );
 
   const isPanelPositionActive = useCallback(
@@ -753,6 +940,13 @@ function TaskDetailPage() {
           taskRunId={headerTaskRunId}
           teamSlugOrId={teamSlugOrId}
           onPanelSettings={handleOpenPanelSettings}
+          onOpenLocalWorkspace={
+            !isLocalWorkspaceTask && !isCloudWorkspaceTask
+              ? handleOpenLocalWorkspace
+              : undefined
+          }
+          onToggleAutoSync={linkedLocalWorkspace ? handleToggleAutoSync : undefined}
+          autoSyncEnabled={autoSyncEnabled}
         />
         <PanelConfigModal
           open={isPanelSettingsOpen}
@@ -769,7 +963,7 @@ function TaskDetailPage() {
             />
           ) : null}
           <FlexiblePanelLayout
-            layoutMode={panelConfig.layoutMode}
+            layoutMode={effectiveLayoutMode}
             storageKey="taskDetailGrid"
             topLeft={
               isPanelPositionActive("topLeft") && currentLayout.topLeft ? (

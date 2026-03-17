@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 const API_ROOT = "https://api.github.com";
-const REPO = "manaflow-ai/cmux" as const;
+const REPO = "manaflow-ai/manaflow" as const;
 const OUTPUT_DIR = resolve(import.meta.dirname, "data");
 const CHECKPOINT_FILE = resolve(OUTPUT_DIR, "checkpoint.json");
 const OUTPUT_FILE = resolve(OUTPUT_DIR, "bot-comments.jsonl");

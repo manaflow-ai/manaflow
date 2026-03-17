@@ -26,28 +26,33 @@ function EnvironmentsListPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
 
+  // Auto-navigate to /environments/new if there's a draft in progress
+  useEffect(() => {
+    if (draft) {
+      void navigate({
+        to: "/$teamSlugOrId/environments/new",
+        params: { teamSlugOrId },
+        search: {
+          step: draft.step,
+          selectedRepos: draft.selectedRepos,
+          instanceId: draft.instanceId,
+          snapshotId: draft.snapshotId,
+          connectionLogin: undefined,
+          repoSearch: undefined,
+        },
+        replace: true,
+      });
+    }
+  }, [draft, navigate, teamSlugOrId]);
+
   const environments = useQuery(api.environments.list, {
     teamSlugOrId,
   });
 
-  useEffect(() => {
-    if (!draft || draft.step !== "configure" || !draft.instanceId) {
-      return;
-    }
-    void navigate({
-      to: "/$teamSlugOrId/environments/new",
-      params: { teamSlugOrId },
-      search: {
-        step: "configure",
-        selectedRepos: draft.selectedRepos,
-        connectionLogin: undefined,
-        repoSearch: undefined,
-        instanceId: draft.instanceId,
-        snapshotId: draft.snapshotId ?? undefined,
-      },
-      replace: true,
-    });
-  }, [draft, navigate, teamSlugOrId]);
+  // Don't render if we're redirecting to draft
+  if (draft) {
+    return null;
+  }
 
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>

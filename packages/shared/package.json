@@ -90,6 +90,10 @@
       "import": "./src/utils/format-env-vars-content.ts",
       "types": "./src/utils/format-env-vars-content.ts"
     },
+    "./utils/anthropic": {
+      "import": "./src/utils/anthropic.ts",
+      "types": "./src/utils/anthropic.ts"
+    },
     "./pull-request-state": {
       "import": "./src/pull-request-state.ts",
       "types": "./src/pull-request-state.ts"
@@ -113,6 +117,26 @@
     "./morph-snapshots": {
       "import": "./src/morph-snapshots.ts",
       "types": "./src/morph-snapshots.ts"
+    },
+    "./components/environment": {
+      "import": "./src/components/environment/index.ts",
+      "types": "./src/components/environment/index.ts"
+    },
+    "./hooks/use-network": {
+      "import": "./src/hooks/use-network.ts",
+      "types": "./src/hooks/use-network.ts"
+    },
+    "./e2b-templates": {
+      "import": "./src/e2b-templates.ts",
+      "types": "./src/e2b-templates.ts"
+    },
+    "./modal-templates": {
+      "import": "./src/modal-templates.ts",
+      "types": "./src/modal-templates.ts"
+    },
+    "./modal-snapshots": {
+      "import": "./src/modal-snapshots.ts",
+      "types": "./src/modal-snapshots.ts"
     }
   },
   "peerDependencies": {
@@ -130,7 +154,7 @@
   "dependencies": {
     "clsx": "^2.0.0",
     "@cmux/convex": "workspace:*",
-    "convex": "1.29.3",
+    "convex": "1.31.5",
     "jose": "^6.1.0",
     "zod": "^4.1.5",
     "socket.io-client": "^4.8.1"

@@ -57,11 +57,13 @@ export const CreateLocalWorkspaceSchema = z.object({
   projectFullName: z.string().optional(),
   repoUrl: z.string().optional(),
   branch: z.string().optional(),
+  baseBranch: z.string().optional(),
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
   workspaceName: z.string().optional(),
   descriptor: z.string().optional(),
   sequence: z.number().optional(),
+  linkedFromCloudTaskRunId: typedZid("taskRuns").optional(), // Links this local workspace to a cloud task run
 });
 
 export const CreateLocalWorkspaceResponseSchema = z.object({
@@ -351,6 +353,19 @@ export const ArchiveTaskSchema = z.object({
   taskId: typedZid("tasks"),
 });
 
+// Trigger local-to-cloud sync schema
+export const TriggerLocalCloudSyncSchema = z.object({
+  localWorkspacePath: z.string(),
+  cloudTaskRunId: typedZid("taskRuns"),
+});
+
+export const TriggerLocalCloudSyncResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string().optional(),
+  filesQueued: z.number().optional(),
+  error: z.string().optional(),
+});
+
 export const SpawnFromCommentSchema = z.object({
   url: z.string(),
   page: z.string(),
@@ -387,6 +402,24 @@ export const DockerStatusSchema = z.object({
       isPulling: z.boolean().optional(),
     })
     .optional(),
+});
+
+// Docker pull image schemas
+export const DockerPullImageResponseSchema = z.object({
+  success: z.boolean(),
+  imageName: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const DockerPullProgressSchema = z.object({
+  imageName: z.string(),
+  status: z.string(),
+  progress: z.string().optional(),
+  id: z.string().optional(),
+  current: z.number().optional(),
+  total: z.number().optional(),
+  percent: z.number().optional(),
+  phase: z.enum(["waiting", "pulling", "complete", "error"]).optional(),
 });
 
 export const GitStatusSchema = z.object({
@@ -467,9 +500,17 @@ export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
 export type GitHubSyncPrState = z.infer<typeof GitHubSyncPrStateSchema>;
 export type GitHubMergeBranch = z.infer<typeof GitHubMergeBranchSchema>;
 export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
+export type TriggerLocalCloudSync = z.infer<typeof TriggerLocalCloudSyncSchema>;
+export type TriggerLocalCloudSyncResponse = z.infer<
+  typeof TriggerLocalCloudSyncResponseSchema
+>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export type DockerStatus = z.infer<typeof DockerStatusSchema>;
+export type DockerPullImageResponse = z.infer<
+  typeof DockerPullImageResponseSchema
+>;
+export type DockerPullProgress = z.infer<typeof DockerPullProgressSchema>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
@@ -563,8 +604,22 @@ export interface ClientToServerEvents {
   "check-provider-status": (
     callback: (response: ProviderStatusResponse) => void
   ) => void;
+  "docker-pull-image": (
+    callback: (response: DockerPullImageResponse) => void
+  ) => void;
   "get-local-vscode-serve-web-origin": (
     callback: (response: { baseUrl: string | null; port: number | null }) => void
+  ) => void;
+  "check-vscode-availability": (
+    data: { refresh?: boolean } | undefined,
+    callback: (response: {
+      available: boolean;
+      executablePath: string | null;
+      variant: string | null;
+      source: string | null;
+      suggestions: string[];
+      errors: string[];
+    }) => void
   ) => void;
   "archive-task": (
     data: ArchiveTask,
@@ -582,6 +637,11 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+  // Trigger local-to-cloud file sync
+  "trigger-local-cloud-sync": (
+    data: TriggerLocalCloudSync,
+    callback: (response: TriggerLocalCloudSyncResponse) => void
+  ) => void;
 }
 
 export interface ServerToClientEvents {
@@ -595,6 +655,7 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "docker-pull-progress": (data: DockerPullProgress) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

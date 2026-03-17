@@ -350,6 +350,11 @@ async function startMorphInstanceTask(
     void (async () => {
       await instance.setWakeOn(true, true);
     })();
+    // SDK bug: instances.start() returns empty httpServices array
+    // Re-fetch instance to get the actual networking data
+    if (instance.networking.httpServices.length === 0) {
+      return await client.instances.get({ instanceId: instance.id });
+    }
     return instance;
   } catch (error) {
     const message =

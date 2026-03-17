@@ -136,6 +136,7 @@ async function createTerminalWithPrompt(
         "@anthropic-ai/claude-code",
         "--model",
         "claude-sonnet-4-20250514",
+        "--allow-dangerously-skip-permissions",
         "--dangerously-skip-permissions",
         prompt,
       ];

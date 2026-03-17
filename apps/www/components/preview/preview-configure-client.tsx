@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import posthog from "posthog-js";
 import {
   Loader2,
   ArrowLeft,
@@ -29,6 +30,10 @@ import {
   getFrameworkPresetConfig,
   type FrameworkPreset,
 } from "./framework-preset-select";
+import {
+  MachinePresetSelect,
+  type MachinePresetId,
+} from "./machine-preset-select";
 import type { PackageManager } from "@/lib/github/framework-detection";
 import {
   VncViewer,
@@ -115,7 +120,7 @@ function resolveMorphHostId(
     }
 
     const proxyMatch = url.hostname.match(
-      /^cmux-([^-]+)-[a-z0-9-]+-\d+\.cmux\.(?:app|dev|sh|local|localhost)$/i
+      /^(?:manaflow|cmux)-([^-]+)-[a-z0-9-]+-\d+\.(?:manaflow|cmux)\.(?:app|dev|sh|local|localhost)$/i
     );
     if (proxyMatch && proxyMatch[1]) {
       return `morphvm-${proxyMatch[1].toLowerCase()}`;
@@ -474,6 +479,9 @@ export function PreviewConfigureClient({
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
   const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
   const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>("other");
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<MachinePresetId>(
+    DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID
+  );
   const [maintenanceScript, setMaintenanceScript] = useState("");
   const [devScript, setDevScript] = useState("");
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
@@ -491,6 +499,15 @@ export function PreviewConfigureClient({
   );
 
   const [isSaving, setIsSaving] = useState(false);
+
+  // Track config funnel - which step users start at and reach
+  useEffect(() => {
+    posthog.capture("preview_config_step", {
+      repo_full_name: repo,
+      step: "initial-setup",
+      team_slug_or_id: selectedTeamSlugOrId,
+    });
+  }, [repo, selectedTeamSlugOrId]);
 
   useEffect(() => {
     if (initialHasEnvValues) {
@@ -707,7 +724,7 @@ export function PreviewConfigureClient({
           repoUrl: `https://github.com/${repo}`,
           branch: "main",
           ttlSeconds: 3600,
-          snapshotId: DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID,
+          snapshotId: selectedSnapshotId,
         }),
       });
 
@@ -743,7 +760,7 @@ export function PreviewConfigureClient({
     } finally {
       setIsProvisioning(false);
     }
-  }, [repo, resolvedTeamSlugOrId]);
+  }, [repo, resolvedTeamSlugOrId, selectedSnapshotId]);
 
   useEffect(() => {
     if (!resolvedTeamSlugOrId) {
@@ -951,6 +968,13 @@ export function PreviewConfigureClient({
         throw new Error(await previewResponse.text());
       }
 
+      // Track configuration completed
+      posthog.capture("preview_config_step", {
+        repo_full_name: repo,
+        step: "completed",
+        team_slug_or_id: selectedTeamSlugOrId,
+      });
+
       window.location.href = "/preview";
     } catch (error) {
       const message =
@@ -964,6 +988,12 @@ export function PreviewConfigureClient({
 
   // Handle transitioning from initial setup to workspace configuration
   const handleStartWorkspaceConfig = useCallback(() => {
+    // Track entering workspace config (first step is run-scripts)
+    posthog.capture("preview_config_step", {
+      repo_full_name: repo,
+      step: "run-scripts",
+      team_slug_or_id: selectedTeamSlugOrId,
+    });
     setLayoutPhase("transitioning");
     // Add search param to track that we're in workspace config phase
     const url = new URL(window.location.href);
@@ -973,7 +1003,7 @@ export function PreviewConfigureClient({
     setTimeout(() => {
       setLayoutPhase("workspace-config");
     }, 650); // Match CSS transition duration (600ms + buffer)
-  }, []);
+  }, [repo, selectedTeamSlugOrId]);
 
   // Handle going back to initial setup from workspace config
   const handleBackToInitialSetup = useCallback(() => {
@@ -995,9 +1025,16 @@ export function PreviewConfigureClient({
 
     // Move to next step if not at end
     if (currentIndex < ALL_CONFIG_STEPS.length - 1) {
-      setCurrentConfigStep(ALL_CONFIG_STEPS[currentIndex + 1]);
+      const nextStep = ALL_CONFIG_STEPS[currentIndex + 1];
+      // Track entering the next step
+      posthog.capture("preview_config_step", {
+        repo_full_name: repo,
+        step: nextStep,
+        team_slug_or_id: selectedTeamSlugOrId,
+      });
+      setCurrentConfigStep(nextStep);
     }
-  }, [currentConfigStep]);
+  }, [currentConfigStep, repo, selectedTeamSlugOrId]);
 
   // Helper to check if a step is visible (completed or current)
   const isStepVisible = useCallback(
@@ -1506,6 +1543,12 @@ export function PreviewConfigureClient({
           value={frameworkPreset}
           onValueChange={handleFrameworkPresetChange}
           isLoading={isDetectingFramework}
+        />
+
+        {/* Machine Size Preset */}
+        <MachinePresetSelect
+          value={selectedSnapshotId}
+          onValueChange={setSelectedSnapshotId}
         />
 
         {/* Maintenance and Dev Scripts - Always expanded on initial setup */}

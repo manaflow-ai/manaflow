@@ -52,10 +52,15 @@ import {
   type ElectronRendererEventMap,
 } from "../../src/types/electron-events";
 import { CertificateManager } from "./preview-proxy-certs";
+import {
+  buildStackAuthCookieSpecs,
+  isStackAuthCookieName,
+} from "./stack-auth-cookies";
+import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
-const PARTITION = "persist:cmux";
-const APP_HOST = "cmux.local";
+const PARTITION = "persist:manaflow";
+const APP_HOST = "manaflow.local";
 
 function resolveMaxSuspendedWebContents(): number | undefined {
   const raw =
@@ -525,6 +530,40 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+function registerAppIpcHandlers(): void {
+  ipcMain.handle("cmux:app:get-protocol-status", async () => {
+    try {
+      const call = computeSetAsDefaultProtocolClientCall({
+        scheme: "manaflow",
+        defaultApp: process.defaultApp,
+        execPath: process.execPath,
+        argv: process.argv,
+      });
+      let isDefaultProtocolClient = false;
+      try {
+        isDefaultProtocolClient =
+          call.kind === "withArgs"
+            ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
+            : app.isDefaultProtocolClient(call.scheme);
+      } catch (error) {
+        mainWarn("isDefaultProtocolClient(manaflow) failed", error);
+      }
+
+      return {
+        ok: true as const,
+        isPackaged: app.isPackaged,
+        isDefaultProtocolClient,
+      };
+    } catch (error) {
+      mainWarn("Failed to get protocol status", error);
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+}
+
 
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
@@ -657,9 +696,9 @@ function createWindow(): void {
     },
   };
 
-  // Use only the icon from cmux-logos iconset.
+  // Use only the icon from manaflow-logos iconset.
   const iconPng = resolveResourcePath(
-    "cmux-logos/cmux.iconset/icon_512x512.png"
+    "manaflow-logos/manaflow.iconset/icon_512x512.png"
   );
   if (process.platform !== "darwin") {
     windowOptions.icon = iconPng;
@@ -811,6 +850,7 @@ app.whenReady().then(async () => {
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerAppIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
@@ -909,11 +949,11 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Ensure macOS menu and About panel use "cmux" instead of package.json name
+  // Ensure macOS menu and About panel use "Manaflow" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("cmux");
-      app.setAboutPanelOptions({ applicationName: "cmux" });
+      app.setName("Manaflow");
+      app.setAboutPanelOptions({ applicationName: "Manaflow" });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -934,10 +974,36 @@ app.whenReady().then(async () => {
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
   try {
-    const ok = app.setAsDefaultProtocolClient("cmux");
-    mainLog("setAsDefaultProtocolClient(cmux)", {
+    const call = computeSetAsDefaultProtocolClientCall({
+      scheme: "manaflow",
+      defaultApp: process.defaultApp,
+      execPath: process.execPath,
+      argv: process.argv,
+    });
+    const ok =
+      call.kind === "withArgs"
+        ? app.setAsDefaultProtocolClient(call.scheme, call.execPath, call.args)
+        : app.setAsDefaultProtocolClient(call.scheme);
+    let isDefaultProtocolClient = false;
+    try {
+      isDefaultProtocolClient =
+        call.kind === "withArgs"
+          ? app.isDefaultProtocolClient(call.scheme, call.execPath, call.args)
+          : app.isDefaultProtocolClient(call.scheme);
+    } catch (error) {
+      mainWarn(
+        "isDefaultProtocolClient(manaflow) failed after registration",
+        error,
+      );
+    }
+    mainLog("setAsDefaultProtocolClient(manaflow)", {
       ok,
+      isDefaultProtocolClient,
       packaged: app.isPackaged,
+      defaultApp: process.defaultApp,
+      registrationKind: call.kind,
+      execPath: call.kind === "withArgs" ? call.execPath : null,
+      args: call.kind === "withArgs" ? call.args : null,
     });
   } catch (e) {
     mainWarn("setAsDefaultProtocolClient failed", e);
@@ -950,7 +1016,7 @@ app.whenReady().then(async () => {
   // Set Dock icon from iconset on macOS.
   if (process.platform === "darwin") {
     const iconPng = resolveResourcePath(
-      "cmux-logos/cmux.iconset/icon_512x512.png"
+      "manaflow-logos/manaflow.iconset/icon_512x512.png"
     );
     const img = nativeImage.createFromPath(iconPng);
     if (!img.isEmpty()) app.dock?.setIcon(img);
@@ -1231,63 +1297,149 @@ async function handleProtocolUrl(url: string): Promise<void> {
   const urlObj = new URL(url);
 
   if (urlObj.hostname === "auth-callback") {
-    const rawStackRefresh = urlObj.searchParams.get("stack_refresh");
-    const rawStackAccess = urlObj.searchParams.get("stack_access");
+    const stackRefresh = urlObj.searchParams.get("stack_refresh");
+    const stackAccess = urlObj.searchParams.get("stack_access");
 
-    if (!rawStackRefresh || !rawStackAccess) {
+    if (!stackRefresh || !stackAccess) {
       mainWarn("Aborting cookie set due to missing tokens");
       return;
     }
 
-    // Check for the full URL parameter
-    const stackRefresh = encodeURIComponent(rawStackRefresh);
-    const stackAccess = encodeURIComponent(rawStackAccess);
+    mainLog("Processing auth-callback deeplink", {
+      hasRefresh: !!stackRefresh,
+      hasAccess: !!stackAccess,
+      refreshLength: stackRefresh.length,
+      accessLength: stackAccess.length,
+    });
 
-    // Verify tokens with Stack JWKS and extract exp for cookie expiry.
-    const [refreshPayload, accessPayload] = await Promise.all([
-      verifyJwtAndGetPayload(stackRefresh),
-      verifyJwtAndGetPayload(stackAccess),
-    ]);
+    // Verify refresh token when it looks like a JWT (for logs only). Access token
+    // may be a JSON array string (`["refresh","access"]`) so skip verification.
+    const refreshPayload = await verifyJwtAndGetPayload(stackRefresh);
+    if (!refreshPayload) {
+      mainWarn("JWT verification failed - refresh token may be opaque/malformed", {
+        refreshLength: stackRefresh.length,
+      });
+    }
 
-    if (refreshPayload?.exp === null || accessPayload?.exp === null) {
-      mainWarn("Aborting cookie set due to invalid tokens");
+    // Stack Auth SDK expects structured refresh cookies and a paired access cookie
+    // value. Using these formats avoids refresh-token rotation issues on Electron.
+    const win = mainWindow;
+    if (!win) {
+      mainWarn("Aborting cookie set due to missing window");
+      return;
+    }
+    const currentUrl = new URL(win.webContents.getURL());
+    const cookieOrigin = `${currentUrl.origin}/`;
+    const cookieHost = currentUrl.hostname;
+    const isSecure = currentUrl.protocol === "https:";
+    const cookieSpecs = buildStackAuthCookieSpecs({
+      projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID,
+      refreshToken: stackRefresh,
+      stackAccessParam: stackAccess,
+      secure: isSecure,
+    });
+
+    // Clear all Stack Auth cookies for this host across all paths. This
+    // migrates away from legacy cookie paths (e.g. /index-electron.html) that
+    // can prevent Stack Auth from deleting rotated refresh tokens.
+    try {
+      const allCookies = await win.webContents.session.cookies.get({});
+      const relevantCookies = allCookies.filter((cookie) => {
+        if (!cookie.domain) return false;
+        const domain = cookie.domain?.startsWith(".")
+          ? cookie.domain.slice(1)
+          : cookie.domain;
+        return (
+          domain === cookieHost &&
+          isStackAuthCookieName(cookie.name, env.NEXT_PUBLIC_STACK_PROJECT_ID)
+        );
+      });
+
+      if (relevantCookies.length > 0) {
+        mainLog("Clearing existing Stack Auth cookies", {
+          host: cookieHost,
+          count: relevantCookies.length,
+          names: relevantCookies.map((c) => c.name),
+        });
+      }
+
+      await Promise.all(
+        relevantCookies.map(async (cookie) => {
+          const domain = cookie.domain?.startsWith(".")
+            ? cookie.domain.slice(1)
+            : cookie.domain;
+          if (!domain) return;
+          const scheme = cookie.secure
+            ? "https"
+            : currentUrl.protocol.replace(":", "");
+          const removalUrl = `${scheme}://${domain}${cookie.path}`;
+          try {
+            await win.webContents.session.cookies.remove(removalUrl, cookie.name);
+          } catch (removeError) {
+            // Best-effort cleanup; don't block login.
+            mainWarn("Failed to remove cookie", {
+              name: cookie.name,
+              removalUrl,
+              error: removeError,
+            });
+          }
+        })
+      );
+    } catch (clearError) {
+      mainWarn("Failed to enumerate/clear Stack Auth cookies", clearError);
+    }
+
+    mainLog("Setting auth cookies", {
+      url: cookieOrigin,
+      refreshCookieName: cookieSpecs.refresh.name,
+      accessCookieName: cookieSpecs.access.name,
+      refreshValueLength: cookieSpecs.refresh.value.length,
+      accessValueLength: cookieSpecs.access.value.length,
+      secure: isSecure,
+    });
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    try {
+      await Promise.all([
+        win.webContents.session.cookies.set({
+          url: cookieOrigin,
+          name: cookieSpecs.refresh.name,
+          value: cookieSpecs.refresh.value,
+          expirationDate: nowSeconds + cookieSpecs.refresh.maxAgeSeconds,
+          sameSite: cookieSpecs.refresh.sameSite,
+          secure: cookieSpecs.refresh.secure,
+          httpOnly: cookieSpecs.refresh.httpOnly,
+          path: cookieSpecs.refresh.path,
+        }),
+        win.webContents.session.cookies.set({
+          url: cookieOrigin,
+          name: cookieSpecs.access.name,
+          value: cookieSpecs.access.value,
+          expirationDate: nowSeconds + cookieSpecs.access.maxAgeSeconds,
+          sameSite: cookieSpecs.access.sameSite,
+          secure: cookieSpecs.access.secure,
+          httpOnly: cookieSpecs.access.httpOnly,
+          path: cookieSpecs.access.path,
+        }),
+        win.webContents.session.cookies.set({
+          url: cookieOrigin,
+          name: cookieSpecs.isHttps.name,
+          value: cookieSpecs.isHttps.value,
+          expirationDate: nowSeconds + cookieSpecs.isHttps.maxAgeSeconds,
+          sameSite: cookieSpecs.isHttps.sameSite,
+          secure: cookieSpecs.isHttps.secure,
+          httpOnly: cookieSpecs.isHttps.httpOnly,
+          path: cookieSpecs.isHttps.path,
+        }),
+      ]);
+      mainLog("Auth cookies set successfully");
+    } catch (cookieError) {
+      mainError("Failed to set auth cookies", cookieError);
       return;
     }
 
-    // Determine a cookieable URL. Prefer our custom cmux:// origin when not
-    // running against an http(s) dev server.
-    const currentUrl = new URL(mainWindow.webContents.getURL());
-    currentUrl.hash = "";
-    const realUrl = currentUrl.toString() + "/";
-
-    await Promise.all([
-      mainWindow.webContents.session.cookies.remove(
-        realUrl,
-        `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`
-      ),
-      mainWindow.webContents.session.cookies.remove(realUrl, `stack-access`),
-    ]);
-
-    await Promise.all([
-      mainWindow.webContents.session.cookies.set({
-        url: realUrl,
-        name: `stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`,
-        value: stackRefresh,
-        expirationDate: refreshPayload?.exp,
-        sameSite: "no_restriction",
-        secure: true,
-      }),
-      mainWindow.webContents.session.cookies.set({
-        url: realUrl,
-        name: "stack-access",
-        value: stackAccess,
-        expirationDate: accessPayload?.exp,
-        sameSite: "no_restriction",
-        secure: true,
-      }),
-    ]);
-
-    mainWindow.webContents.reload();
+    mainLog("Reloading renderer to apply auth cookies");
+    win.webContents.reload();
     return;
   }
 

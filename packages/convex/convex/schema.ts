@@ -84,6 +84,8 @@ const convexSchema = defineSchema({
     ),
     // Anonymous flag
     isAnonymous: v.optional(v.boolean()),
+    // Onboarding
+    onboardingCompletedAt: v.optional(v.number()), // Timestamp when user completed/skipped onboarding
     // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -99,6 +101,7 @@ const convexSchema = defineSchema({
     isPreview: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
+    linkedFromCloudTaskRunId: v.optional(v.id("taskRuns")), // For local workspaces created from a cloud task run's git diff viewer
     description: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
     pullRequestDescription: v.optional(v.string()),
@@ -164,10 +167,13 @@ const convexSchema = defineSchema({
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_created", ["teamId", "userId", "createdAt"])
+    .index("by_team_user_merge_updated", ["teamId", "userId", "mergeStatus", "updatedAt"])
     .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
-    .index("by_team_preview", ["teamId", "isPreview"]),
+    .index("by_team_preview", ["teamId", "isPreview"])
+    .index("by_linked_cloud_task_run", ["linkedFromCloudTaskRunId"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
@@ -244,6 +250,23 @@ const convexSchema = defineSchema({
     screenshotFileName: v.optional(v.string()),
     screenshotCommitSha: v.optional(v.string()),
     latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+    // AI-generated claims about the run (for verification/review)
+    claims: v.optional(
+      v.array(
+        v.object({
+          claim: v.string(),
+          evidence: v.object({
+            type: v.string(),
+            screenshotIndex: v.optional(v.number()),
+            filePath: v.optional(v.string()),
+            startLine: v.optional(v.number()),
+            endLine: v.optional(v.number()),
+          }),
+          timestamp: v.number(),
+        })
+      )
+    ),
+    claimsGeneratedAt: v.optional(v.number()),
     // VSCode instance information
     vscode: v.optional(
       v.object({
@@ -259,6 +282,7 @@ const convexSchema = defineSchema({
           v.literal("running"),
           v.literal("stopped")
         ),
+        statusMessage: v.optional(v.string()), // Human-readable status (e.g., "Pulling Docker image...")
         ports: v.optional(
           v.object({
             vscode: v.string(),
@@ -306,6 +330,7 @@ const convexSchema = defineSchema({
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_status_created", ["teamId", "userId", "status", "createdAt"])
     .index("by_pull_request_url", ["pullRequestUrl"]),
 
   // Junction table linking taskRuns to pull requests by PR identity
@@ -341,6 +366,16 @@ const convexSchema = defineSchema({
         commitSha: v.optional(v.string()),
         description: v.optional(v.string()),
       }),
+    ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+        }),
+      ),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -569,9 +604,10 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    autoSyncEnabled: v.optional(v.boolean()), // Auto-sync local workspace to cloud (default: true)
     nextLocalWorkspaceSequence: v.optional(v.number()), // Counter for local workspace naming
     // Heatmap review settings
-    heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-opus-4-5", "cmux-heatmap-2")
+    heatmapModel: v.optional(v.string()), // Model to use for heatmap review (e.g., "anthropic-haiku-4-5", "cmux-heatmap-2")
     heatmapThreshold: v.optional(v.number()), // Score threshold for filtering (0-1, default: 0)
     heatmapTooltipLanguage: v.optional(v.string()), // Language for tooltip text (e.g., "en", "zh-Hant", "ja")
     heatmapColors: v.optional(
@@ -599,7 +635,7 @@ const convexSchema = defineSchema({
     createdByUserId: v.optional(v.string()),
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
-    repoInstallationId: v.number(),
+    repoInstallationId: v.optional(v.number()),
     repoDefaultBranch: v.optional(v.string()),
     environmentId: v.optional(v.id("environments")),
     status: v.optional(
@@ -639,7 +675,9 @@ const convexSchema = defineSchema({
       v.literal("completed"),
       v.literal("failed"),
       v.literal("skipped"),
+      v.literal("superseded"), // Marked when a newer commit's preview run replaces this one
     ),
+    supersededBy: v.optional(v.id("previewRuns")), // Reference to the newer run that superseded this one
     stateReason: v.optional(v.string()),
     dispatchedAt: v.optional(v.number()),
     startedAt: v.optional(v.number()),
@@ -653,6 +691,7 @@ const convexSchema = defineSchema({
     .index("by_config_status", ["previewConfigId", "status", "createdAt"])
     .index("by_config_head", ["previewConfigId", "headSha"])
     .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
+    .index("by_config_pr_head", ["previewConfigId", "prNumber", "headSha"]) // For commit-aware duplicate detection
     .index("by_team_created", ["teamId", "createdAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
@@ -678,6 +717,25 @@ const convexSchema = defineSchema({
     updatedAt: v.number(),
     userId: v.string(),
     teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
+
+  // User-uploaded editor settings (VS Code, Cursor, Windsurf)
+  // For cmux.sh web users who can't auto-detect local settings
+  userEditorSettings: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    settingsJson: v.optional(v.string()), // settings.json content
+    keybindingsJson: v.optional(v.string()), // keybindings.json content
+    snippets: v.optional(
+      v.array(
+        v.object({
+          name: v.string(), // filename e.g. "javascript.json"
+          content: v.string(), // snippet file content
+        })
+      )
+    ),
+    extensions: v.optional(v.string()), // newline-separated extension IDs
+    updatedAt: v.number(),
   }).index("by_team_user", ["teamId", "userId"]),
 
   // Shell history settings for zsh-autosuggestions in VMs
@@ -998,6 +1056,7 @@ const convexSchema = defineSchema({
   })
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
+    .index("by_team_repo_pr", ["teamId", "repoFullName", "triggeringPrNumber", "updatedAt"])
     .index("by_checkRunId", ["checkRunId"])
     .index("by_headSha", ["headSha", "updatedAt"]),
 
@@ -1108,6 +1167,7 @@ const convexSchema = defineSchema({
     type: v.union(
       v.literal("run_completed"),
       v.literal("run_failed"),
+      v.literal("run_needs_input"),
     ),
     message: v.optional(v.string()), // Optional summary message
     readAt: v.optional(v.number()), // Null/undefined means unread
@@ -1130,6 +1190,108 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId"]) // Get all unread runs for a user
     .index("by_team_user", ["teamId", "userId"]) // Get unread runs for a user in a team
     .index("by_task_user", ["taskId", "userId"]), // Get unread runs for a task
+
+  // Track Morph instance activity for cleanup cron decisions
+  morphInstanceActivity: defineTable({
+    instanceId: v.string(), // Morph instance ID (morphvm_xxx)
+    lastPausedAt: v.optional(v.number()), // When instance was last paused by cron
+    lastResumedAt: v.optional(v.number()), // When instance was last resumed via UI
+    stoppedAt: v.optional(v.number()), // When instance was permanently stopped
+  }).index("by_instanceId", ["instanceId"]),
+
+  // User-owned devbox instances (standalone sandboxes not tied to task runs)
+  devboxInstances: defineTable({
+    devboxId: v.string(), // Friendly ID (cr_xxxxxxxx) for CLI users
+    userId: v.string(), // Owner user ID
+    teamId: v.string(), // Team scope
+    name: v.optional(v.string()), // User-friendly name
+    source: v.optional(v.union(v.literal("cli"), v.literal("web"))), // Where instance was created
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("stopped"),
+      v.literal("unknown")
+    ),
+    environmentId: v.optional(v.id("environments")), // Optional linked environment
+    metadata: v.optional(v.record(v.string(), v.string())),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastAccessedAt: v.optional(v.number()), // When user last accessed the instance
+    stoppedAt: v.optional(v.number()), // When instance was stopped
+  })
+    .index("by_devboxId", ["devboxId"])
+    .index("by_team_user", ["teamId", "userId", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"])
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_status", ["status", "updatedAt"]),
+
+  // Provider-specific info for devbox instances (maps our ID to provider details)
+  devboxInfo: defineTable({
+    devboxId: v.string(), // Our friendly ID (cr_xxxxxxxx)
+    provider: v.union(v.literal("morph"), v.literal("e2b"), v.literal("modal"), v.literal("daytona")), // Provider name (extensible for future providers)
+    providerInstanceId: v.string(), // Provider's instance ID (e.g., morphvm_xxx)
+    snapshotId: v.optional(v.string()), // Snapshot ID used to create the instance
+    createdAt: v.number(),
+  })
+    .index("by_devboxId", ["devboxId"])
+    .index("by_providerInstanceId", ["providerInstanceId"]),
+
+  // E2B instance activity tracking (for managing instance lifecycle)
+  e2bInstanceActivity: defineTable({
+    instanceId: v.string(), // E2B sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+  }).index("by_instanceId", ["instanceId"]),
+
+  // Modal instance activity tracking (for managing instance lifecycle)
+  modalInstanceActivity: defineTable({
+    instanceId: v.string(), // Modal sandbox instance ID
+    lastResumedAt: v.optional(v.number()),
+    lastPausedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
+    gpu: v.optional(v.string()), // GPU config used (e.g., "T4", "A100", "H100:2")
+  }).index("by_instanceId", ["instanceId"]),
+
+  // Prewarmed Morph instances for fast task startup.
+  // Instances are provisioned with a specific repo already cloned,
+  // triggered when a user starts typing a task description.
+  warmPool: defineTable({
+    instanceId: v.string(), // Morph instance ID (morphvm_xxx)
+    snapshotId: v.string(), // Snapshot used to create this instance
+    status: v.union(
+      v.literal("provisioning"), // Instance is being created + repo cloning
+      v.literal("ready"), // Instance ready with repo cloned
+      v.literal("claimed"), // Claimed by a task
+      v.literal("failed") // Failed to provision
+    ),
+    teamId: v.string(), // Team that requested the prewarm
+    userId: v.string(), // User that requested the prewarm
+    repoUrl: v.optional(v.string()), // GitHub repo URL (if repo-specific)
+    branch: v.optional(v.string()), // Base branch
+    vscodeUrl: v.optional(v.string()), // Pre-resolved VSCode URL
+    workerUrl: v.optional(v.string()), // Pre-resolved worker URL
+    claimedAt: v.optional(v.number()),
+    claimedByTaskRunId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    errorMessage: v.optional(v.string()),
+  })
+    .index("by_status", ["status", "createdAt"])
+    .index("by_instanceId", ["instanceId"])
+    .index("by_team_status", ["teamId", "status", "createdAt"]),
+
+  // CloudRouter subscription tiers for concurrency limits
+  cloudRouterSubscription: defineTable({
+    userId: v.string(),
+    subscriptionType: v.union(
+      v.literal("low"), // 50 concurrent sandboxes
+      v.literal("mid"), // 100 concurrent sandboxes
+      v.literal("high") // 500 concurrent sandboxes
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
 });
 
 export default convexSchema;

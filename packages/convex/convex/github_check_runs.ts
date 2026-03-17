@@ -11,6 +11,7 @@
  */
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
+import type { Doc } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import { authQuery } from "./users/utils";
 import type { CheckRunEvent } from "@octokit/webhooks-types";
@@ -109,26 +110,62 @@ export const upsertCheckRunFromWebhook = internalMutation({
     };
 
 
-    // Upsert the check run - fetch all matching records to handle duplicates
+    // Use .take(5) for low OCC cost while enabling duplicate cleanup
+    // Happy path (0-1 records): same cost as .first()
+    // Duplicate path: cleanup when needed (5 handles rare concurrent webhook storms)
     const existingRecords = await ctx.db
       .query("githubCheckRuns")
       .withIndex("by_checkRunId", (q) => q.eq("checkRunId", checkRunId))
-      .collect();
+      .take(5);
 
-    if (existingRecords.length > 0) {
-      // Update the first record
-      await ctx.db.patch(existingRecords[0]._id, checkRunDoc);
-
-      // Delete any duplicates
-      if (existingRecords.length > 1) {
-        console.warn("[upsertCheckRun] Found duplicates, cleaning up", {
-          checkRunId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
+    // Find the newest record by updatedAt (handles duplicates correctly)
+    let existing = existingRecords[0];
+    if (existingRecords.length > 1) {
+      for (const record of existingRecords) {
+        if ((record.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          existing = record;
         }
+      }
+    }
+    const action = existing ? "update" : "insert";
+    console.log("[occ-debug:check_runs]", {
+      checkRunId,
+      repoFullName,
+      teamId,
+      action,
+      status: checkRunDoc.status,
+      conclusion: checkRunDoc.conclusion,
+    });
+
+    if (existing) {
+      // Lazy cleanup: delete duplicates first (keep the newest) - must run even for stale updates
+      if (existingRecords.length > 1) {
+        console.warn("[occ-debug:check_runs] cleaning-duplicates", { checkRunId, count: existingRecords.length });
+        for (const dup of existingRecords) {
+          if (dup._id !== existing._id) {
+            await ctx.db.delete(dup._id);
+          }
+        }
+      }
+
+      // Skip stale updates - if existing record is newer, don't overwrite
+      if (existing.updatedAt && checkRunDoc.updatedAt && existing.updatedAt >= checkRunDoc.updatedAt) {
+        console.log("[occ-debug:check_runs] skipped-stale", { checkRunId, existingUpdatedAt: existing.updatedAt, newUpdatedAt: checkRunDoc.updatedAt });
+        return;
+      }
+
+      // Skip no-op updates - only patch if something actually changed
+      const needsUpdate =
+        existing.status !== checkRunDoc.status ||
+        existing.conclusion !== checkRunDoc.conclusion ||
+        existing.updatedAt !== checkRunDoc.updatedAt ||
+        existing.completedAt !== checkRunDoc.completedAt ||
+        existing.htmlUrl !== checkRunDoc.htmlUrl;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existing._id, checkRunDoc);
+      } else {
+        console.log("[occ-debug:check_runs] skipped-noop", { checkRunId });
       }
     } else {
       // Insert new check run
@@ -150,23 +187,29 @@ export const getCheckRunsForPr = authQuery({
     const { teamSlugOrId, repoFullName, prNumber, headSha, limit = 20 } = args;
     const teamId = await getTeamId(ctx, teamSlugOrId);
 
+    let filtered: Doc<"githubCheckRuns">[];
 
-    // Source: check_run webhooks from third-party GitHub Apps (e.g., Vercel, Bugbot)
-    const allRunsForRepo = await ctx.db
-      .query("githubCheckRuns")
-      .withIndex("by_team_repo", (q) =>
-        q.eq("teamId", teamId).eq("repoFullName", repoFullName),
-      )
-      .collect();
-
-
-    // Filter by headSha if provided (more specific), otherwise by triggeringPrNumber
-    const filtered = allRunsForRepo.filter((run) => {
-      if (headSha) {
-        return run.headSha === headSha;
-      }
-      return run.triggeringPrNumber === prNumber;
-    });
+    if (headSha) {
+      // Use the by_headSha index for efficient filtering when headSha is provided
+      filtered = await ctx.db
+        .query("githubCheckRuns")
+        .withIndex("by_headSha", (q) => q.eq("headSha", headSha))
+        .order("desc")
+        .collect();
+      // Filter to ensure it's for the right team/repo
+      filtered = filtered.filter(
+        (run) => run.teamId === teamId && run.repoFullName === repoFullName
+      );
+    } else {
+      // Use the by_team_repo_pr index for filtering by PR number
+      filtered = await ctx.db
+        .query("githubCheckRuns")
+        .withIndex("by_team_repo_pr", (q) =>
+          q.eq("teamId", teamId).eq("repoFullName", repoFullName).eq("triggeringPrNumber", prNumber)
+        )
+        .order("desc")
+        .collect();
+    }
 
     // Deduplicate by name (for same app), keeping the most recently updated one
     const dedupMap = new Map<string, typeof filtered[number]>();

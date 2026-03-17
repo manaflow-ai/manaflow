@@ -79,12 +79,22 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
     mimeType: image.mimeType,
     fileName: image.fileName,
     commitSha: image.commitSha,
+    description: image.description,
+  }));
+
+  const storedVideos = (payload.videos ?? []).map((video) => ({
+    storageId: video.storageId as Id<"_storage">,
+    mimeType: video.mimeType,
+    fileName: video.fileName,
+    description: video.description,
   }));
 
   if (payload.status === "completed") {
-    if (!payload.images || payload.images.length === 0) {
+    const hasImages = payload.images && payload.images.length > 0;
+    const hasVideos = payload.videos && payload.videos.length > 0;
+    if (!hasImages && !hasVideos) {
       return jsonResponse(
-        { code: 400, message: "At least one screenshot image is required" },
+        { code: 400, message: "At least one screenshot image or video is required" },
         400,
       );
     }
@@ -98,6 +108,7 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
       commitSha: payload.commitSha,
       error: payload.error,
       images: storedScreens,
+      videos: storedVideos,
     },
   );
 

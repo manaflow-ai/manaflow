@@ -157,22 +157,45 @@ export function validateStorageUrl(url: string): string | null {
       return null;
     }
 
-    // Only allow Convex storage domains
+    // Only allow trusted storage domains
     const allowedDomains = [
       ".convex.cloud", // Production Convex storage
       ".convex.site", // Convex sites
     ];
 
-    const isAllowed = allowedDomains.some((domain) =>
+    // Also allow GitHub's user-attachments and release assets domains
+    const allowedExactHosts = [
+      "github.com", // GitHub user-attachments and release assets
+    ];
+
+    const isDomainAllowed = allowedDomains.some((domain) =>
       parsed.hostname.endsWith(domain)
     );
+    const isExactHostAllowed = allowedExactHosts.includes(parsed.hostname);
 
-    if (!isAllowed) {
+    if (!isDomainAllowed && !isExactHostAllowed) {
       console.warn("[sanitize-markdown] Rejecting storage URL from untrusted domain", {
         url,
         hostname: parsed.hostname,
       });
       return null;
+    }
+
+    // For GitHub URLs, only allow specific paths:
+    // - /user-attachments/assets/... (user-uploaded files)
+    // - /<owner>/<repo>/releases/download/... (release assets)
+    if (parsed.hostname === "github.com") {
+      const isUserAttachment = parsed.pathname.startsWith("/user-attachments/");
+      // Release download URLs: /<owner>/<repo>/releases/download/<tag>/<filename>
+      const isReleaseAsset = /^\/[^/]+\/[^/]+\/releases\/download\//.test(parsed.pathname);
+
+      if (!isUserAttachment && !isReleaseAsset) {
+        console.warn("[sanitize-markdown] Rejecting GitHub URL that is not user-attachments or release asset", {
+          url,
+          pathname: parsed.pathname,
+        });
+        return null;
+      }
     }
 
     // Reject URLs with suspicious path patterns

@@ -9,7 +9,7 @@ let initialized = false;
 
 function registerPlatform() {
   posthog.register({
-    platform: isElectron ? "cmux-client-electron" : "cmux-client-web",
+    platform: isElectron ? "manaflow-client-electron" : "manaflow-client-web",
   });
 }
 

@@ -512,6 +512,7 @@ function PullRequestHeader({
   repo: string;
 }) {
   try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- use() in try/catch is valid for RSC error handling
     const pullRequest = use(promise);
     return (
       <PullRequestHeaderContent
@@ -715,7 +716,9 @@ function PullRequestDiffSection({
   pullNumber: number;
 }) {
   try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- use() in try/catch is valid for RSC error handling
     const files = use(filesPromise);
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     const pullRequest = use(pullRequestPromise);
     const fallbackRepoFullName =
       pullRequest.base?.repo?.full_name ??

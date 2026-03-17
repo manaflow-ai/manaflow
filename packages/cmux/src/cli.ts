@@ -16,7 +16,7 @@ import { checkDockerStatus } from "./utils/checkDocker";
 const versionPadding = " ".repeat(Math.max(0, 14 - VERSION.toString().length));
 console.log("\n\x1b[36m╔══════════════════════════════════════╗\x1b[0m");
 console.log(
-  `\x1b[36m║      Welcome to \x1b[1m\x1b[37mcmux\x1b[0m\x1b[36m v${VERSION}!${versionPadding}║\x1b[0m`
+  `\x1b[36m║    Welcome to \x1b[1m\x1b[37mmanaflow\x1b[0m\x1b[36m v${VERSION}!${versionPadding}║\x1b[0m`
 );
 console.log("\x1b[36m╚══════════════════════════════════════╝\x1b[0m\n");
 console.log("\x1b[32m✓\x1b[0m Server starting...");
@@ -62,7 +62,7 @@ process.on("SIGTERM", async () => {
 });
 
 program
-  .name("cmux")
+  .name("manaflow")
   .description("Socket.IO server")
   .version(VERSION)
   .argument("[path]", "path to git repository (defaults to current directory)")
@@ -81,13 +81,13 @@ program
         console.log("\x1b[33m⚠\x1b[0m Docker is not installed.");
         if (isMac) {
           console.log(
-            "\nInstall one of the following and relaunch cmux:\n" +
+            "\nInstall one of the following and relaunch manaflow:\n" +
               "  • \x1b[36mbrew install --cask orbstack\x1b[0m  (recommended — more battery efficient)\n" +
               "  • \x1b[36mbrew install docker\x1b[0m\n"
           );
         } else {
           console.log(
-            "\nPlease install Docker Engine or a Docker Desktop alternative, then relaunch cmux."
+            "\nPlease install Docker Engine or a Docker Desktop alternative, then relaunch manaflow."
           );
         }
         process.exit(1);
@@ -99,10 +99,10 @@ program
         );
         if (isMac) {
           console.log(
-            "\nStart \x1b[36mOrbStack\x1b[0m or \x1b[36mDocker Desktop\x1b[0m, then relaunch cmux.\n"
+            "\nStart \x1b[36mOrbStack\x1b[0m or \x1b[36mDocker Desktop\x1b[0m, then relaunch manaflow.\n"
           );
         } else {
-          console.log("\nStart the Docker daemon, then relaunch cmux.\n");
+          console.log("\nStart the Docker daemon, then relaunch manaflow.\n");
         }
         process.exit(1);
       }
@@ -134,7 +134,7 @@ program
         console.error(portsInUse.map((p) => `  - ${p}`).join("\n"));
         console.log(
           "\nYou can either:\n" +
-            "  1. Run with default behavior to auto-kill: \x1b[36mcmux\x1b[0m\n" +
+            "  1. Run with default behavior to auto-kill: \x1b[36mmanaflow\x1b[0m\n" +
             "  2. Manually kill the processes: \x1b[90m" +
             `for p in ${portsInUse.join(" ")}; do lsof -ti :$p | xargs -r kill -9; done\x1b[0m`
         );
@@ -239,9 +239,9 @@ program
 
 program
   .command("uninstall")
-  .description("Remove cmux data and show uninstall instructions")
+  .description("Remove manaflow data and show uninstall instructions")
   .action(async () => {
-    console.log("\n\x1b[33m🗑️  Uninstalling cmux...\x1b[0m\n");
+    console.log("\n\x1b[33m🗑️  Uninstalling manaflow...\x1b[0m\n");
 
     // Remove ~/.cmux directory
     if (existsSync(convexDir)) {
@@ -263,18 +263,18 @@ program
     console.log("\n\x1b[36mTo complete the uninstallation:\x1b[0m\n");
 
     console.log("If installed globally with npm:");
-    console.log("  \x1b[90mnpm uninstall -g cmux\x1b[0m\n");
+    console.log("  \x1b[90mnpm uninstall -g manaflow\x1b[0m\n");
 
     console.log("If installed globally with yarn:");
-    console.log("  \x1b[90myarn global remove cmux\x1b[0m\n");
+    console.log("  \x1b[90myarn global remove manaflow\x1b[0m\n");
 
     console.log("If installed globally with pnpm:");
-    console.log("  \x1b[90mpnpm uninstall -g cmux\x1b[0m\n");
+    console.log("  \x1b[90mpnpm uninstall -g manaflow\x1b[0m\n");
 
     console.log("If installed globally with bun:");
-    console.log("  \x1b[90mbun uninstall -g cmux\x1b[0m\n");
+    console.log("  \x1b[90mbun uninstall -g manaflow\x1b[0m\n");
 
-    console.log("\x1b[32m✓\x1b[0m cmux data has been removed!");
+    console.log("\x1b[32m✓\x1b[0m manaflow data has been removed!");
     process.exit(0);
   });
 

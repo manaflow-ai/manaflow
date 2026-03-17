@@ -1,6 +1,6 @@
 import {
   DMG_SUFFIXES,
-  GITHUB_RELEASE_URL,
+  GITHUB_RELEASES_URL,
   MacArchitecture,
   MacDownloadUrls,
   RELEASE_PAGE_URL,
@@ -14,6 +14,8 @@ export type ReleaseInfo = {
 
 type GithubRelease = {
   tag_name?: string;
+  draft?: boolean;
+  prerelease?: boolean;
   assets?: Array<{
     name?: string;
     browser_download_url?: string;
@@ -28,6 +30,14 @@ const emptyDownloads: MacDownloadUrls = {
 
 const normalizeVersion = (tag: string): string =>
   tag.startsWith("v") ? tag.slice(1) : tag;
+
+/**
+ * Check if a tag matches the cmux CLI release pattern (e.g., v1.0.208).
+ * This filters out sub-component releases like host-screenshot-collector-v0.1.0-...
+ */
+const isCmuxCliRelease = (tagName: string): boolean => {
+  return /^v\d+\.\d+\.\d+$/.test(tagName);
+};
 
 const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
   if (!data) {
@@ -76,7 +86,7 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
 
 export async function fetchLatestRelease(): Promise<ReleaseInfo> {
   try {
-    const response = await fetch(GITHUB_RELEASE_URL, {
+    const response = await fetch(GITHUB_RELEASES_URL, {
       headers: {
         Accept: "application/vnd.github+json",
       },
@@ -89,9 +99,19 @@ export async function fetchLatestRelease(): Promise<ReleaseInfo> {
       return deriveReleaseInfo(null);
     }
 
-    const data = (await response.json()) as GithubRelease;
+    const releases = (await response.json()) as GithubRelease[];
 
-    return deriveReleaseInfo(data);
+    // Find the first stable release that matches the cmux CLI pattern (v1.0.xxx)
+    // Exclude drafts and prereleases to match the behavior of /releases/latest
+    const cmuxRelease = releases.find(
+      (release) =>
+        typeof release.tag_name === "string" &&
+        !release.draft &&
+        !release.prerelease &&
+        isCmuxCliRelease(release.tag_name)
+    );
+
+    return deriveReleaseInfo(cmuxRelease ?? null);
   } catch (error) {
     console.error("Failed to retrieve latest GitHub release", error);
 

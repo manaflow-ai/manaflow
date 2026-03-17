@@ -67,6 +67,13 @@ export function removeTaskRunIframe(taskRunId: string): void {
   persistentIframeManager.removeIframe(getTaskRunPersistKey(taskRunId));
 }
 
+export function setTaskRunIframePinned(
+  taskRunId: string,
+  pinned: boolean
+): void {
+  persistentIframeManager.setPinned(getTaskRunPersistKey(taskRunId), pinned);
+}
+
 /**
  * Get all currently loaded task run iframe keys
  * @returns Array of task run IDs that have loaded iframes

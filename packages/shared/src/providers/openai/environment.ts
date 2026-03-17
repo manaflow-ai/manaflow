@@ -37,9 +37,12 @@ export function applyCodexApiKeys(
   }
 
   // Fallback: inject OPENAI_API_KEY as environment variable
+  // Also set CODEX_API_KEY to the same value to skip the sign-in screen
+  // (OPENAI_API_KEY only pre-fills the input, CODEX_API_KEY bypasses it entirely)
   const openaiKey = keys.OPENAI_API_KEY;
   if (openaiKey) {
     env.OPENAI_API_KEY = openaiKey;
+    env.CODEX_API_KEY = openaiKey;
   }
 
   return { files, env };

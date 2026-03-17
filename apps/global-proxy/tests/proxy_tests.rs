@@ -866,7 +866,7 @@ async fn port_39378_strips_cors_and_applies_csp() {
             .get("content-security-policy")
             .and_then(|v| v.to_str().ok()),
         Some(
-            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;",
+            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev https://www.manaflow.com https://manaflow.com http://localhost:5173;",
         )
     );
     assert!(headers.get("x-frame-options").is_none());
@@ -1003,7 +1003,7 @@ async fn port_39378_strips_cors_and_applies_csp() {
             .get("content-security-policy")
             .and_then(|v| v.to_str().ok()),
         Some(
-            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;"
+            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev https://www.manaflow.com https://manaflow.com http://localhost:5173;"
         )
     );
 

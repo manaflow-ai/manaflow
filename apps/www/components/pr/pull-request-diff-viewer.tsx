@@ -91,8 +91,7 @@ import {
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
-  HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
-  HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
+  HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE,
   HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
@@ -100,6 +99,7 @@ import {
   HEATMAP_LANGUAGE_QUERY_KEY,
   TOOLTIP_LANGUAGE_OPTIONS,
   getInitialTooltipLanguage,
+  normalizeHeatmapModelQueryValue,
   TOOLTIP_LANGUAGE_STORAGE_KEY,
   type HeatmapModelQueryValue,
   type TooltipLanguageValue,
@@ -224,8 +224,8 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
   label: string;
 }> = [
   {
-    value: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
-    label: "Claude Opus 4.5",
+    value: HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE,
+    label: "Claude Haiku 4.5",
   },
   {
     value: HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
@@ -238,10 +238,6 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
   {
     value: HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE,
     label: "cmux-heatmap-1",
-  },
-  {
-    value: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
-    label: "Claude Opus 4.1",
   },
 ];
 
@@ -598,8 +594,11 @@ export function PullRequestDiffViewer({
   const [heatmapModelPreference, setHeatmapModelPreference] =
     useLocalStorage<HeatmapModelOptionValue>({
       key: "cmux-heatmap-model",
-      defaultValue: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
+      defaultValue: HEATMAP_MODEL_ANTHROPIC_HAIKU_45_QUERY_VALUE,
     });
+  const normalizedHeatmapModelPreference = normalizeHeatmapModelQueryValue(
+    heatmapModelPreference
+  );
   // Use getInitialTooltipLanguage() to synchronously read the correct language
   // from localStorage (or detect from browser) on first render. This avoids the
   // race condition where useLocalStorage returns "en" initially, causing Convex
@@ -610,7 +609,7 @@ export function PullRequestDiffViewer({
       defaultValue: getInitialTooltipLanguage(),
     });
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
-    heatmapModelPreference
+    normalizedHeatmapModelPreference
   );
   const tooltipLanguagePreferenceRef = useRef<TooltipLanguageValue>(
     tooltipLanguagePreference
@@ -990,8 +989,18 @@ export function PullRequestDiffViewer({
   );
 
   useEffect(() => {
-    heatmapModelPreferenceRef.current = heatmapModelPreference;
-  }, [heatmapModelPreference]);
+    if (heatmapModelPreference !== normalizedHeatmapModelPreference) {
+      setHeatmapModelPreference(normalizedHeatmapModelPreference);
+    }
+  }, [
+    heatmapModelPreference,
+    normalizedHeatmapModelPreference,
+    setHeatmapModelPreference,
+  ]);
+
+  useEffect(() => {
+    heatmapModelPreferenceRef.current = normalizedHeatmapModelPreference;
+  }, [normalizedHeatmapModelPreference]);
 
   useEffect(() => {
     tooltipLanguagePreferenceRef.current = tooltipLanguagePreference;
@@ -999,13 +1008,17 @@ export function PullRequestDiffViewer({
 
   const handleHeatmapModelPreferenceChange = useCallback(
     (value: HeatmapModelOptionValue) => {
-      if (value === heatmapModelPreference) {
+      if (value === normalizedHeatmapModelPreference) {
         return;
       }
       setHeatmapModelPreference(value);
       fetchCodeReview({ modelOverride: value });
     },
-    [fetchCodeReview, heatmapModelPreference, setHeatmapModelPreference]
+    [
+      fetchCodeReview,
+      normalizedHeatmapModelPreference,
+      setHeatmapModelPreference,
+    ]
   );
 
   const handleTooltipLanguagePreferenceChange = useCallback(
@@ -2249,7 +2262,7 @@ export function PullRequestDiffViewer({
                 onCopyStyles={handleCopyHeatmapConfig}
                 onLoadConfig={handlePromptLoadColors}
                 copyStatus={clipboard.copied}
-                selectedModel={heatmapModelPreference}
+                selectedModel={normalizedHeatmapModelPreference}
                 onModelChange={handleHeatmapModelPreferenceChange}
                 selectedLanguage={tooltipLanguagePreference}
                 onLanguageChange={handleTooltipLanguagePreferenceChange}
@@ -2371,7 +2384,7 @@ export function PullRequestDiffViewer({
                   </pre>
                 </div>
                 <a
-                  href="https://github.com/manaflow-ai/cmux"
+                  href="https://github.com/manaflow-ai/manaflow"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none"
@@ -2488,16 +2501,16 @@ function CmuxPromoCard() {
             From the creators of
           </p>
           <a
-            href="https://cmux.dev"
+            href="https://manaflow.com"
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Visit cmux.dev"
+            aria-label="Visit manaflow.com"
             className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-4.8px]"
           >
             <CmuxLogo
               height={30}
-              label="cmux.dev"
-              wordmarkText="cmux.dev"
+              label="manaflow.com"
+              wordmarkText="manaflow.com"
               wordmarkFill="#0f172a"
             />
           </a>
@@ -2505,12 +2518,12 @@ function CmuxPromoCard() {
         <div className="mb-1 translate-y-[-1.5px]">
           <p className="text-xs font-sans leading-relaxed text-neutral-500">
             We also made an open-source Claude Code/Codex manager! Check out
-            cmux if you want heatmaps for your vibe coded diffs (coming soon)!
+            Manaflow if you want heatmaps for your vibe coded diffs (coming soon)!
           </p>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
           <a
-            href="https://github.com/manaflow-ai/cmux"
+            href="https://github.com/manaflow-ai/manaflow"
             target="_blank"
             rel="noopener noreferrer"
             className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
@@ -2519,12 +2532,12 @@ function CmuxPromoCard() {
             Star on GitHub
           </a>
           <a
-            href="https://cmux.dev"
+            href="https://manaflow.com"
             target="_blank"
             rel="noopener noreferrer"
             className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
           >
-            Explore cmux
+            Explore Manaflow
           </a>
         </div>
       </div>

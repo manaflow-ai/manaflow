@@ -88,6 +88,9 @@ enum Command {
     #[command(alias = "b")]
     Browser(BrowserArgs),
 
+    /// Manage workspace sync via Mutagen
+    Sync(SyncArgs),
+
     /// Internal helper to proxy stdin/stdout to a TCP address
     #[command(name = "_internal-proxy", hide = true)]
     InternalProxy { address: String },
@@ -209,6 +212,112 @@ struct BrowserArgs {
     /// Team slug or ID (optional for cloud sandboxes)
     #[arg(long, short = 't', env = "CMUX_TEAM")]
     team: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct SyncArgs {
+    #[command(subcommand)]
+    command: SyncCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum SyncCommand {
+    /// Start or resume a Mutagen sync session
+    Start(SyncStartArgs),
+    /// Show sync session status
+    Status(SyncStatusArgs),
+    /// Terminate a sync session
+    Stop(SyncStopArgs),
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum SyncMode {
+    TwoWaySafe,
+    TwoWayResolved,
+    OneWaySafe,
+    OneWayReplica,
+}
+
+impl SyncMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            SyncMode::TwoWaySafe => "two-way-safe",
+            SyncMode::TwoWayResolved => "two-way-resolved",
+            SyncMode::OneWaySafe => "one-way-safe",
+            SyncMode::OneWayReplica => "one-way-replica",
+        }
+    }
+}
+
+#[derive(Args, Debug)]
+struct SyncStartArgs {
+    /// Sandbox ID: c_xxx (cloud), l_xxx (local), or task-run UUID
+    id: String,
+    /// Local path to sync (defaults to current directory)
+    #[arg(long, short = 'p')]
+    path: Option<PathBuf>,
+    /// Remote path to sync (defaults to /workspace for local, /root/workspace for cloud)
+    #[arg(long)]
+    remote_path: Option<String>,
+    /// Sync mode (default: two-way-safe)
+    #[arg(long, value_enum, default_value_t = SyncMode::TwoWaySafe)]
+    mode: SyncMode,
+    /// Override session name
+    #[arg(long, short = 'n')]
+    name: Option<String>,
+    /// Team slug or ID (optional for cloud sandboxes)
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
+    /// Additional ignore patterns (repeatable)
+    #[arg(long, short = 'i')]
+    ignore: Vec<String>,
+    /// Include VCS directories (default: ignored)
+    #[arg(long)]
+    include_vcs: bool,
+    /// Disable default ignore patterns (node_modules, dist, etc.)
+    #[arg(long)]
+    no_default_ignores: bool,
+}
+
+#[derive(Args, Debug)]
+struct SyncStatusArgs {
+    /// Sandbox ID: c_xxx (cloud), l_xxx (local), or task-run UUID
+    #[arg(long)]
+    id: Option<String>,
+    /// Team slug or ID (optional for cloud sandboxes)
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
+    /// Local path used for the session (defaults to current directory)
+    #[arg(long, short = 'p')]
+    path: Option<PathBuf>,
+    /// Explicit session name
+    #[arg(long, short = 'n')]
+    name: Option<String>,
+    /// Show detailed session info
+    #[arg(long)]
+    long: bool,
+    /// List all sessions (ignores filters)
+    #[arg(long)]
+    all: bool,
+}
+
+#[derive(Args, Debug)]
+struct SyncStopArgs {
+    /// Sandbox ID: c_xxx (cloud), l_xxx (local), or task-run UUID
+    #[arg(long)]
+    id: Option<String>,
+    /// Team slug or ID (optional for cloud sandboxes)
+    #[arg(long, short = 't', env = "CMUX_TEAM")]
+    team: Option<String>,
+    /// Local path used for the session (defaults to current directory)
+    #[arg(long, short = 'p')]
+    path: Option<PathBuf>,
+    /// Explicit session name
+    #[arg(long, short = 'n')]
+    name: Option<String>,
+    /// Terminate all sessions
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Args, Debug)]
@@ -369,6 +478,19 @@ struct EsctestArgs {
 
 const ENV_CMUX_NO_ATTACH: &str = "CMUX_NO_ATTACH";
 const ENV_CMUX_FORCE_ATTACH: &str = "CMUX_FORCE_ATTACH";
+const DEFAULT_MUTAGEN_IGNORES: &[&str] = &[
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    "out",
+    ".cache",
+    ".turbo",
+    ".parcel-cache",
+    ".idea",
+    ".vscode",
+    ".DS_Store",
+];
 
 #[derive(Subcommand, Debug)]
 enum SandboxCommand {
@@ -942,6 +1064,10 @@ async fn run() -> anyhow::Result<()> {
         Command::Browser(args) => {
             let api_url = get_cmux_api_url();
             handle_browser_unified(&client, &cli.base_url, &api_url, &args).await?;
+        }
+        Command::Sync(args) => {
+            let api_url = get_cmux_api_url();
+            handle_sync_command(&client, &cli.base_url, &api_url, args).await?;
         }
         Command::Start(args) => {
             handle_server_start(&args).await?;
@@ -2889,7 +3015,7 @@ fn get_cmux_api_url() -> String {
         #[cfg(not(debug_assertions))]
         {
             // Production
-            "https://cmux.sh".to_string()
+            "https://manaflow.com".to_string()
         }
     })
 }
@@ -3283,7 +3409,7 @@ async fn resolve_team(
 
     if teams.is_empty() {
         return Err(anyhow::anyhow!(
-            "No teams found. Create a team at https://cmux.sh or specify --team."
+            "No teams found. Create a team at https://manaflow.com or specify --team."
         ));
     }
 
@@ -3348,7 +3474,7 @@ async fn handle_auth_login() -> anyhow::Result<()> {
 
     let init_response: CliAuthInitResponse = response.json().await?;
 
-    // Step 2: Open browser (use cmux.sh for browser URL, not auth API)
+    // Step 2: Open browser (use manaflow.com for browser URL, not auth API)
     let cmux_url = get_cmux_api_url();
     let auth_url = format!(
         "{}/handler/cli-auth-confirm?login_code={}",
@@ -4455,6 +4581,438 @@ fn ensure_ssh_config_include() -> anyhow::Result<()> {
         std::fs::set_permissions(&ssh_config_path, perms)?;
     }
 
+    Ok(())
+}
+
+struct SyncRemoteInfo {
+    internal_id: String,
+    ssh_host: String,
+    remote_default_path: String,
+}
+
+struct MutagenCreateContext<'a> {
+    session_name: &'a str,
+    mode: SyncMode,
+    local_path: &'a Path,
+    ssh_host: &'a str,
+    remote_path: &'a str,
+    internal_id: &'a str,
+    extra_ignores: Vec<String>,
+    include_vcs: bool,
+    no_default_ignores: bool,
+}
+
+async fn handle_sync_command(
+    client: &Client,
+    local_daemon_url: &str,
+    api_url: &str,
+    args: SyncArgs,
+) -> anyhow::Result<()> {
+    ensure_mutagen_available()?;
+    match args.command {
+        SyncCommand::Start(args) => {
+            handle_sync_start(client, local_daemon_url, api_url, args).await
+        }
+        SyncCommand::Status(args) => handle_sync_status(client, api_url, args).await,
+        SyncCommand::Stop(args) => handle_sync_stop(client, api_url, args).await,
+    }
+}
+
+async fn handle_sync_start(
+    client: &Client,
+    local_daemon_url: &str,
+    api_url: &str,
+    args: SyncStartArgs,
+) -> anyhow::Result<()> {
+    let local_path = resolve_sync_path(args.path)?;
+    let (id_type, id) = parse_sandbox_id(&args.id);
+
+    let SyncRemoteInfo {
+        internal_id,
+        ssh_host,
+        remote_default_path,
+    } = resolve_sync_remote(
+        client,
+        local_daemon_url,
+        api_url,
+        id_type.clone(),
+        &id,
+        args.team,
+    )
+    .await?;
+
+    let remote_path = args.remote_path.unwrap_or(remote_default_path);
+
+    if !remote_path.starts_with('/') {
+        return Err(anyhow::anyhow!(
+            "Remote path must be absolute: {}",
+            remote_path
+        ));
+    }
+
+    let session_name = args
+        .name
+        .unwrap_or_else(|| sync_session_name(&internal_id, &id_type, &local_path));
+
+    let mutagen_args = build_mutagen_create_args(MutagenCreateContext {
+        session_name: &session_name,
+        mode: args.mode,
+        local_path: &local_path,
+        ssh_host: &ssh_host,
+        remote_path: &remote_path,
+        internal_id: &internal_id,
+        extra_ignores: args.ignore,
+        include_vcs: args.include_vcs,
+        no_default_ignores: args.no_default_ignores,
+    });
+
+    if mutagen_session_exists(&session_name)? {
+        eprintln!("Sync session already exists. Resuming {}", session_name);
+        run_mutagen_inherit(&mutagen_command_args(
+            &["sync", "resume"],
+            &[session_name.as_str()],
+        ))?;
+    } else {
+        run_mutagen_inherit(&mutagen_args)?;
+    }
+
+    run_mutagen_inherit(&mutagen_list_args(Some(session_name.as_str()), false))?;
+    Ok(())
+}
+
+async fn handle_sync_status(
+    client: &Client,
+    api_url: &str,
+    args: SyncStatusArgs,
+) -> anyhow::Result<()> {
+    if args.all {
+        return run_mutagen_inherit(&mutagen_list_args(None, args.long));
+    }
+
+    if let Some(name) = args.name {
+        return run_mutagen_inherit(&mutagen_list_args(Some(name.as_str()), args.long));
+    }
+
+    let id = args
+        .id
+        .ok_or_else(|| anyhow::anyhow!("Provide --id, --name, or --all"))?;
+    let local_path = resolve_sync_path(args.path)?;
+    let (id_type, id) = parse_sandbox_id(&id);
+    let internal_id =
+        resolve_sync_internal_id(client, api_url, id_type.clone(), &id, args.team).await?;
+    let session_name = sync_session_name(&internal_id, &id_type, &local_path);
+    run_mutagen_inherit(&mutagen_list_args(Some(session_name.as_str()), args.long))
+}
+
+async fn handle_sync_stop(
+    client: &Client,
+    api_url: &str,
+    args: SyncStopArgs,
+) -> anyhow::Result<()> {
+    if args.all {
+        return run_mutagen_inherit(&mutagen_command_args(&["sync", "terminate", "--all"], &[]));
+    }
+
+    if let Some(name) = args.name {
+        return run_mutagen_inherit(&mutagen_command_args(
+            &["sync", "terminate"],
+            &[name.as_str()],
+        ));
+    }
+
+    let id = args
+        .id
+        .ok_or_else(|| anyhow::anyhow!("Provide --id, --name, or --all"))?;
+    let local_path = resolve_sync_path(args.path)?;
+    let (id_type, id) = parse_sandbox_id(&id);
+    let internal_id =
+        resolve_sync_internal_id(client, api_url, id_type.clone(), &id, args.team).await?;
+    let session_name = sync_session_name(&internal_id, &id_type, &local_path);
+    run_mutagen_inherit(&mutagen_command_args(
+        &["sync", "terminate"],
+        &[session_name.as_str()],
+    ))
+}
+
+async fn resolve_sync_remote(
+    client: &Client,
+    local_daemon_url: &str,
+    api_url: &str,
+    id_type: SandboxIdType,
+    id: &str,
+    team: Option<String>,
+) -> anyhow::Result<SyncRemoteInfo> {
+    match id_type {
+        SandboxIdType::Local => {
+            let sandbox_id = id.strip_prefix("l_").unwrap_or(id);
+            let url = format!(
+                "{}/sandboxes/{}",
+                local_daemon_url.trim_end_matches('/'),
+                sandbox_id
+            );
+            let response = client.get(&url).send().await?;
+            if !response.status().is_success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to get sandbox info: {}",
+                    response.status()
+                ));
+            }
+            let sandbox: SandboxSummary = response.json().await?;
+            let short_id = sandbox_id.get(..8).unwrap_or(sandbox_id);
+            let ssh_host = format!("cmux-local-{}", short_id);
+
+            ensure_ssh_config_include()?;
+            write_ssh_config_entry(&ssh_host, &sandbox.network.sandbox_ip, "root")?;
+
+            Ok(SyncRemoteInfo {
+                internal_id: id.to_string(),
+                ssh_host,
+                remote_default_path: "/workspace".to_string(),
+            })
+        }
+        SandboxIdType::Cloud | SandboxIdType::TaskRun => {
+            let spinner = create_spinner("Authenticating");
+            let access_token = get_access_token(client).await?;
+            finish_spinner(&spinner, "Authenticated");
+
+            let team = if id_type == SandboxIdType::Cloud && team.is_none() {
+                None
+            } else {
+                Some(resolve_team(client, &access_token, team.as_deref()).await?)
+            };
+
+            let spinner = create_spinner("Resolving sandbox");
+            let ssh_info =
+                get_sandbox_ssh_info(client, &access_token, id, team.as_deref(), api_url).await?;
+            finish_spinner(&spinner, "Sandbox resolved");
+
+            if ssh_info.status == "paused" {
+                let spinner = create_spinner("Resuming sandbox");
+                resume_sandbox(client, &access_token, id, team.as_deref(), api_url).await?;
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                finish_spinner(&spinner, "Sandbox resumed");
+            }
+
+            let internal_id = ssh_info.morph_instance_id.clone();
+            let display_id = internal_id.strip_prefix("morphvm_").unwrap_or(&internal_id);
+            let ssh_host = format!("cmux-cloud-{}", display_id);
+
+            ensure_ssh_config_include()?;
+            write_ssh_config_entry(&ssh_host, "ssh.cloud.morph.so", &ssh_info.access_token)?;
+
+            Ok(SyncRemoteInfo {
+                internal_id,
+                ssh_host,
+                remote_default_path: "/root/workspace".to_string(),
+            })
+        }
+    }
+}
+
+async fn resolve_sync_internal_id(
+    client: &Client,
+    api_url: &str,
+    id_type: SandboxIdType,
+    id: &str,
+    team: Option<String>,
+) -> anyhow::Result<String> {
+    match id_type {
+        SandboxIdType::Local => Ok(id.to_string()),
+        SandboxIdType::Cloud => Ok(id.to_string()),
+        SandboxIdType::TaskRun => {
+            let access_token = get_access_token(client).await?;
+            let team = Some(resolve_team(client, &access_token, team.as_deref()).await?);
+            let ssh_info =
+                get_sandbox_ssh_info(client, &access_token, id, team.as_deref(), api_url).await?;
+            Ok(ssh_info.morph_instance_id)
+        }
+    }
+}
+
+fn resolve_sync_path(path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let path = match path {
+        Some(path) => path,
+        None => std::env::current_dir()?,
+    };
+
+    path.canonicalize()
+        .map_err(|error| anyhow::anyhow!("Failed to resolve path {}: {}", path.display(), error))
+}
+
+fn sync_session_name(internal_id: &str, id_type: &SandboxIdType, path: &Path) -> String {
+    let mut display_id = internal_id.strip_prefix("morphvm_").unwrap_or(internal_id);
+    if id_type == &SandboxIdType::Local {
+        display_id = display_id.strip_prefix("l_").unwrap_or(display_id);
+    }
+    let prefix = match id_type {
+        SandboxIdType::Local => format!("local-{}", display_id),
+        SandboxIdType::Cloud | SandboxIdType::TaskRun => display_id.to_string(),
+    };
+    let path_str = path.to_string_lossy();
+    let hash = fnv1a_64(path_str.as_ref());
+    format!("cmux-{}-{:016x}", sanitize_mutagen_name(&prefix), hash)
+}
+
+fn fnv1a_64(input: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in input.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn sanitize_mutagen_name(input: &str) -> String {
+    input
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || value == '-' || value == '.' {
+                value
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn build_mutagen_create_args(ctx: MutagenCreateContext<'_>) -> Vec<String> {
+    let MutagenCreateContext {
+        session_name,
+        mode,
+        local_path,
+        ssh_host,
+        remote_path,
+        internal_id,
+        extra_ignores,
+        include_vcs,
+        no_default_ignores,
+    } = ctx;
+    let mut args = vec![
+        "sync".to_string(),
+        "create".to_string(),
+        "--name".to_string(),
+        session_name.to_string(),
+        "--sync-mode".to_string(),
+        mode.as_str().to_string(),
+        "--label".to_string(),
+        "cmux=true".to_string(),
+        "--label".to_string(),
+        format!("sandbox={}", internal_id),
+        "--label".to_string(),
+        format!(
+            "path={:016x}",
+            fnv1a_64(local_path.to_string_lossy().as_ref())
+        ),
+    ];
+
+    if include_vcs {
+        args.push("--no-ignore-vcs".to_string());
+    } else {
+        args.push("--ignore-vcs".to_string());
+    }
+
+    if !no_default_ignores {
+        for ignore in DEFAULT_MUTAGEN_IGNORES {
+            args.push("--ignore".to_string());
+            args.push((*ignore).to_string());
+        }
+    }
+
+    for ignore in extra_ignores {
+        args.push("--ignore".to_string());
+        args.push(ignore);
+    }
+
+    let local_path = local_path.to_string_lossy().to_string();
+    let remote_endpoint = format!("ssh://{}{}", ssh_host, remote_path);
+    args.push(local_path);
+    args.push(remote_endpoint);
+    args
+}
+
+fn mutagen_list_args(name: Option<&str>, long: bool) -> Vec<String> {
+    let mut args = vec!["sync".to_string(), "list".to_string()];
+    if long {
+        args.push("--long".to_string());
+    }
+    if let Some(name) = name {
+        args.push(name.to_string());
+    }
+    args
+}
+
+fn mutagen_command_args(prefix: &[&str], extras: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = prefix.iter().map(|value| (*value).to_string()).collect();
+    args.extend(extras.iter().map(|value| (*value).to_string()));
+    args
+}
+
+fn ensure_mutagen_available() -> anyhow::Result<()> {
+    let output = ProcessCommand::new("mutagen").arg("version").output();
+    match output {
+        Ok(result) if result.status.success() => Ok(()),
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            Err(anyhow::anyhow!(
+                "Mutagen failed to run.\nstdout: {}\nstderr: {}",
+                stdout.trim(),
+                stderr.trim()
+            ))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(anyhow::anyhow!(
+            "Mutagen is not installed. Install it and try again."
+        )),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn mutagen_session_exists(name: &str) -> anyhow::Result<bool> {
+    let output = ProcessCommand::new("mutagen")
+        .args(["sync", "list", name])
+        .output()?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("did not match any sessions") {
+        return Ok(false);
+    }
+    Err(anyhow::anyhow!(
+        "Failed to query Mutagen sessions: {}",
+        stderr.trim()
+    ))
+}
+
+fn run_mutagen_inherit(args: &[String]) -> anyhow::Result<()> {
+    let status = ProcessCommand::new("mutagen").args(args).status()?;
+    if !status.success() {
+        let exit_code = status.code().unwrap_or(1);
+        return Err(anyhow::anyhow!(
+            "Mutagen failed (exit code {}) while running: mutagen {}",
+            exit_code,
+            args.join(" ")
+        ));
+    }
+    Ok(())
+}
+
+fn write_ssh_config_entry(ssh_host: &str, host_name: &str, user: &str) -> anyhow::Result<()> {
+    let config_dir = get_config_dir();
+    let ssh_config_path = config_dir.join("ssh_config");
+    std::fs::create_dir_all(&config_dir)?;
+
+    let ssh_config = format!(
+        r#"Host {}
+    HostName {}
+    User {}
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+"#,
+        ssh_host, host_name, user
+    );
+    std::fs::write(&ssh_config_path, ssh_config)?;
     Ok(())
 }
 

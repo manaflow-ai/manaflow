@@ -23,6 +23,7 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    autoSyncEnabled: v.optional(v.boolean()),
     heatmapModel: v.optional(v.string()),
     heatmapThreshold: v.optional(v.number()),
     heatmapTooltipLanguage: v.optional(v.string()),
@@ -48,6 +49,7 @@ export const update = authMutation({
       const updates: {
         worktreePath?: string;
         autoPrEnabled?: boolean;
+        autoSyncEnabled?: boolean;
         heatmapModel?: string;
         heatmapThreshold?: number;
         heatmapTooltipLanguage?: string;
@@ -63,6 +65,9 @@ export const update = authMutation({
       }
       if (args.autoPrEnabled !== undefined) {
         updates.autoPrEnabled = args.autoPrEnabled;
+      }
+      if (args.autoSyncEnabled !== undefined) {
+        updates.autoSyncEnabled = args.autoSyncEnabled;
       }
       if (args.heatmapModel !== undefined) {
         updates.heatmapModel = args.heatmapModel;
@@ -82,6 +87,7 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        autoSyncEnabled: args.autoSyncEnabled,
         heatmapModel: args.heatmapModel,
         heatmapThreshold: args.heatmapThreshold,
         heatmapTooltipLanguage: args.heatmapTooltipLanguage,
