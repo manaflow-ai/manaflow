@@ -59,6 +59,7 @@ import {
   instanceActionRouter as devboxV2InstanceActionRouter,
   instanceGetRouter as devboxV2InstanceGetRouter,
 } from "./devbox_v2_http";
+import { ingestHeartbeat as mobileIngestHeartbeat } from "./mobile_http";
 
 const http = httpRouter();
 
@@ -204,6 +205,12 @@ http.route({
   path: "/api/anthropic/api/event_logging/batch",
   method: "POST",
   handler: anthropicEventLogging,
+});
+
+http.route({
+  path: "/api/mobile/heartbeat",
+  method: "POST",
+  handler: mobileIngestHeartbeat,
 });
 
 // Media proxy endpoint for serving storage files with proper Content-Type headers

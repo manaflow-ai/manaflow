@@ -103,6 +103,16 @@ export interface CmuxAPI {
         | { ok: false; error: string }
       >;
   };
+  machine?: {
+    getInfo: () =>
+      Promise<{
+        machineId: string;
+        displayName: string;
+        hostname: string;
+        tailscaleHostname?: string;
+        tailscaleIPs: string[];
+      }>;
+  };
   ui: {
     focusWebContents: (id: number) => Promise<{ ok: boolean; queued?: boolean }>;
     restoreLastFocusInWebContents: (id: number) => Promise<{ ok: boolean; queued?: boolean }>;

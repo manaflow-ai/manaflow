@@ -214,6 +214,16 @@ const cmuxAPI = {
         | { ok: false; error: string }
       >,
   },
+  machine: {
+    getInfo: () =>
+      ipcRenderer.invoke("cmux:mobile:get-machine-info") as Promise<{
+        machineId: string;
+        displayName: string;
+        hostname: string;
+        tailscaleHostname?: string;
+        tailscaleIPs: string[];
+      }>,
+  },
   webContentsView: {
     create: (options: {
       url: string;

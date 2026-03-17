@@ -7,6 +7,7 @@ import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
+import { useMobileMachineHeartbeat } from "@/hooks/useMobileMachineHeartbeat";
 import { api } from "@cmux/convex/api";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { convexQuery } from "@convex-dev/react-query";
@@ -75,6 +76,10 @@ function LayoutComponent() {
 
   // Tasks are already sorted by the query (unread notifications first, then by createdAt)
   const displayTasks = tasks;
+  useMobileMachineHeartbeat({
+    teamSlugOrId,
+    tasks: displayTasks,
+  });
 
   return (
     <ExpandTasksProvider>

@@ -57,6 +57,7 @@ import {
   isStackAuthCookieName,
 } from "./stack-auth-cookies";
 import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
+import { getMobileMachineInfo } from "./mobile-machine-info";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:manaflow";
@@ -561,6 +562,10 @@ function registerAppIpcHandlers(): void {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  });
+
+  ipcMain.handle("cmux:mobile:get-machine-info", async () => {
+    return await getMobileMachineInfo();
   });
 }
 

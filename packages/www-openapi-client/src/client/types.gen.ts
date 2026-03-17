@@ -387,6 +387,42 @@ export type GithubBranchesResponse = {
     hasMore: boolean;
 };
 
+export type MobileMachineSessionResponse = {
+    token: string;
+    teamId: string;
+    userId: string;
+    machineId: string;
+    expiresAt: number;
+};
+
+export type MobileMachineSessionBody = {
+    teamSlugOrId: string;
+    machineId: string;
+    displayName?: string;
+};
+
+export type MobileHeartbeatBody = {
+    machineId: string;
+    displayName: string;
+    tailscaleHostname?: string;
+    tailscaleIPs: Array<string>;
+    status: 'online' | 'offline' | 'unknown';
+    lastSeenAt?: number;
+    lastWorkspaceSyncAt?: number;
+    workspaces: Array<{
+        workspaceId: string;
+        taskId?: string;
+        taskRunId?: string;
+        title: string;
+        preview?: string;
+        phase: string;
+        tmuxSessionName: string;
+        lastActivityAt: number;
+        latestEventSeq: number;
+        lastEventAt?: number;
+    }>;
+};
+
 export type ResumeTaskRunResponse = {
     resumed: true;
 };
@@ -1894,6 +1930,50 @@ export type GetApiIntegrationsGithubBranchesResponses = {
 };
 
 export type GetApiIntegrationsGithubBranchesResponse = GetApiIntegrationsGithubBranchesResponses[keyof GetApiIntegrationsGithubBranchesResponses];
+
+export type PostApiMobileMachineSessionData = {
+    body: MobileMachineSessionBody;
+    path?: never;
+    query?: never;
+    url: '/api/mobile/machine-session';
+};
+
+export type PostApiMobileMachineSessionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobileMachineSessionResponses = {
+    /**
+     * Machine session minted
+     */
+    200: MobileMachineSessionResponse;
+};
+
+export type PostApiMobileMachineSessionResponse = PostApiMobileMachineSessionResponses[keyof PostApiMobileMachineSessionResponses];
+
+export type PostApiMobileHeartbeatData = {
+    body: MobileHeartbeatBody;
+    path?: never;
+    query?: never;
+    url: '/api/mobile/heartbeat';
+};
+
+export type PostApiMobileHeartbeatErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobileHeartbeatResponses = {
+    /**
+     * Heartbeat accepted
+     */
+    202: unknown;
+};
 
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;
