@@ -31,6 +31,11 @@ describe("mobileHeartbeatRouter", () => {
         tailscaleHostname: "orb.tailnet.ts.net",
         tailscaleIPs: ["100.64.0.1"],
         status: "online",
+        directConnect: {
+          directPort: 9443,
+          directTlsPins: ["sha256:pin-a"],
+          ticketSecret: "secret-123",
+        },
         workspaces: [
           {
             workspaceId: "workspace_123",
@@ -52,6 +57,11 @@ describe("mobileHeartbeatRouter", () => {
       teamId: "team_123",
       userId: "user_123",
       machineId: "machine_123",
+      directConnect: {
+        directPort: 9443,
+        directTlsPins: ["sha256:pin-a"],
+        ticketSecret: "secret-123",
+      },
     });
   });
 

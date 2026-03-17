@@ -52,6 +52,7 @@ import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as media_proxy_http from "../media_proxy_http.js";
 import type * as migrations from "../migrations.js";
 import type * as mobileInbox from "../mobileInbox.js";
+import type * as mobileMachineConnections from "../mobileMachineConnections.js";
 import type * as mobileMachines from "../mobileMachines.js";
 import type * as mobileWorkspaceEvents from "../mobileWorkspaceEvents.js";
 import type * as mobileWorkspaces from "../mobileWorkspaces.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   media_proxy_http: typeof media_proxy_http;
   migrations: typeof migrations;
   mobileInbox: typeof mobileInbox;
+  mobileMachineConnections: typeof mobileMachineConnections;
   mobileMachines: typeof mobileMachines;
   mobileWorkspaceEvents: typeof mobileWorkspaceEvents;
   mobileWorkspaces: typeof mobileWorkspaces;

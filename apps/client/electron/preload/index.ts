@@ -222,6 +222,11 @@ const cmuxAPI = {
         hostname: string;
         tailscaleHostname?: string;
         tailscaleIPs: string[];
+        directConnect?: {
+          directPort: number;
+          directTlsPins: string[];
+          ticketSecret: string;
+        };
       }>,
   },
   webContentsView: {

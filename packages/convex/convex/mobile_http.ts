@@ -16,6 +16,11 @@ export const ingestHeartbeat = httpAction(async (ctx, request) => {
     status: "online" | "offline" | "unknown";
     lastSeenAt: number;
     lastWorkspaceSyncAt?: number;
+    directConnect?: {
+      directPort: number;
+      directTlsPins: string[];
+      ticketSecret: string;
+    };
     workspaces: Array<{
       workspaceId: string;
       taskId?: string;
@@ -51,6 +56,18 @@ export const ingestHeartbeat = httpAction(async (ctx, request) => {
       workspaces: body.workspaces,
     },
   );
+
+  if (body.directConnect) {
+    await ctx.runMutation(internal.mobileMachineConnections.upsertInternal, {
+      teamId: body.teamId,
+      userId: body.userId,
+      machineId: body.machineId,
+      directPort: body.directConnect.directPort,
+      directTlsPins: body.directConnect.directTlsPins,
+      ticketSecret: body.directConnect.ticketSecret,
+      updatedAt: body.lastSeenAt,
+    });
+  }
 
   return new Response(JSON.stringify({ accepted: true }), {
     status: 202,

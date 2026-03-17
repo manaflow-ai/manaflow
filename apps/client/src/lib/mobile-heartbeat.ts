@@ -23,6 +23,11 @@ export type MobileMachineInfo = {
   hostname: string;
   tailscaleHostname?: string;
   tailscaleIPs: string[];
+  directConnect?: {
+    directPort: number;
+    directTlsPins: string[];
+    ticketSecret: string;
+  };
 };
 
 export type MobileHeartbeatPayload = {
@@ -33,6 +38,11 @@ export type MobileHeartbeatPayload = {
   status: "online";
   lastSeenAt: number;
   lastWorkspaceSyncAt: number;
+  directConnect?: {
+    directPort: number;
+    directTlsPins: string[];
+    ticketSecret: string;
+  };
   workspaces: MobileWorkspaceHeartbeatRow[];
 };
 
@@ -141,6 +151,7 @@ export function buildMobileHeartbeatPayload(args: {
     status: "online",
     lastSeenAt: now,
     lastWorkspaceSyncAt: now,
+    directConnect: args.machine.directConnect,
     workspaces,
   };
 }

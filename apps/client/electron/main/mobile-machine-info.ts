@@ -1,6 +1,10 @@
 import { execFile as execFileCallback } from "node:child_process";
 import os from "node:os";
 import { promisify } from "node:util";
+import {
+  ensureMobileDirectDaemonConnection,
+  type MobileDirectConnectInfo,
+} from "./mobile-direct-daemon";
 
 const execFile = promisify(execFileCallback);
 
@@ -24,6 +28,7 @@ export type MobileMachineInfo = {
   hostname: string;
   tailscaleHostname?: string;
   tailscaleIPs: string[];
+  directConnect?: MobileDirectConnectInfo;
 };
 
 export function trimTailscaleHostname(value?: string | null): string | undefined {
@@ -68,13 +73,30 @@ async function loadTailscaleStatus(): Promise<ReturnType<typeof parseTailscaleSt
   return null;
 }
 
-export async function getMobileMachineInfo(): Promise<MobileMachineInfo> {
+export async function getMobileMachineInfo(options?: {
+  loadTailscaleStatus?: () => Promise<ReturnType<typeof parseTailscaleStatus> | null>;
+  resolveDirectConnect?: (args: {
+    machineId: string;
+    hostname: string;
+    tailscaleHostname?: string;
+    tailscaleIPs: string[];
+  }) => Promise<MobileDirectConnectInfo | null>;
+}): Promise<MobileMachineInfo> {
   const hostname = os.hostname().trim().replace(/\.local$/i, "");
-  const tailscale = await loadTailscaleStatus();
+  const tailscale = await (options?.loadTailscaleStatus ?? loadTailscaleStatus)();
   const tailscaleHostname = tailscale?.running ? tailscale.tailscaleHostname : undefined;
   const tailscaleIPs = tailscale?.running ? tailscale.tailscaleIPs : [];
   const displayName = tailscale?.displayName ?? hostname;
   const machineId = tailscaleHostname ?? hostname;
+  const directConnect =
+    tailscale?.running
+      ? await (options?.resolveDirectConnect ?? ensureMobileDirectDaemonConnection)({
+          machineId,
+          hostname,
+          tailscaleHostname,
+          tailscaleIPs,
+        })
+      : null;
 
   return {
     machineId,
@@ -82,5 +104,6 @@ export async function getMobileMachineInfo(): Promise<MobileMachineInfo> {
     hostname,
     tailscaleHostname,
     tailscaleIPs,
+    directConnect: directConnect ?? undefined,
   };
 }

@@ -13,6 +13,7 @@ import {
   booksRouter,
   branchRouter,
   codeReviewRouter,
+  daemonTicketRouter,
   devServerRouter,
   editorSettingsRouter,
   environmentsRouter,
@@ -123,6 +124,7 @@ app.route("/", healthRouter);
 app.route("/", authAnonymousRouter);
 app.route("/", usersRouter);
 app.route("/", booksRouter);
+app.route("/", daemonTicketRouter);
 app.route("/", devServerRouter);
 app.route("/", githubReposRouter);
 app.route("/", githubFrameworkDetectionRouter);

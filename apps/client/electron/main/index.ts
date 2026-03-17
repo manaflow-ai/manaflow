@@ -58,6 +58,7 @@ import {
 } from "./stack-auth-cookies";
 import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
 import { getMobileMachineInfo } from "./mobile-machine-info";
+import { shutdownMobileDirectDaemon } from "./mobile-direct-daemon";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:manaflow";
@@ -852,6 +853,8 @@ app.whenReady().then(async () => {
       });
       embeddedServerCleanup = null;
     }
+
+    shutdownMobileDirectDaemon();
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();

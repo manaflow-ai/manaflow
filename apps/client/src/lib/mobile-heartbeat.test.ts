@@ -12,6 +12,11 @@ const machine: MobileMachineInfo = {
   hostname: "cmux-macmini",
   tailscaleHostname: "cmux-macmini.tail.ts.net",
   tailscaleIPs: ["100.64.0.10"],
+  directConnect: {
+    directPort: 9443,
+    directTlsPins: ["sha256:pin-a"],
+    ticketSecret: "secret-123",
+  },
 };
 
 describe("mobile-heartbeat", () => {
@@ -113,6 +118,11 @@ describe("mobile-heartbeat", () => {
       "task_new",
       "task_old",
     ]);
+    expect(payload.directConnect).toEqual({
+      directPort: 9443,
+      directTlsPins: ["sha256:pin-a"],
+      ticketSecret: "secret-123",
+    });
     expect(payload.lastSeenAt).toBe(100);
     expect(payload.lastWorkspaceSyncAt).toBe(100);
   });

@@ -1246,6 +1246,18 @@ const convexSchema = defineSchema({
     .index("by_team_user_workspace", ["teamId", "userId", "workspaceId"])
     .index("by_team_user_updated", ["teamId", "userId", "updatedAt"]),
 
+  mobileMachineConnections: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    machineId: v.string(),
+    directPort: v.number(),
+    directTlsPins: v.array(v.string()),
+    ticketSecret: v.string(),
+    updatedAt: v.number(),
+  })
+    .index("by_team_user_machine", ["teamId", "userId", "machineId"])
+    .index("by_team_user_updated", ["teamId", "userId", "updatedAt"]),
+
   devicePushTokens: defineTable({
     teamId: v.string(),
     userId: v.string(),

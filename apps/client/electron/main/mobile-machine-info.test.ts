@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseTailscaleStatus, trimTailscaleHostname } from "./mobile-machine-info";
+import {
+  getMobileMachineInfo,
+  parseTailscaleStatus,
+  trimTailscaleHostname,
+} from "./mobile-machine-info";
 
 describe("mobile-machine-info", () => {
   it("trims trailing dots from tailscale hostnames", () => {
@@ -45,5 +49,28 @@ describe("mobile-machine-info", () => {
     expect(status.running).toBe(false);
     expect(status.tailscaleHostname).toBe("cmux-macmini.tail.ts.net");
     expect(status.tailscaleIPs).toEqual(["100.64.0.10"]);
+  });
+
+  it("includes direct connect info when tailscale is running", async () => {
+    const info = await getMobileMachineInfo({
+      loadTailscaleStatus: async () => ({
+        running: true,
+        displayName: "Mac mini",
+        tailscaleHostname: "cmux-macmini.tail.ts.net",
+        tailscaleIPs: ["100.64.0.10"],
+      }),
+      resolveDirectConnect: async () => ({
+        directPort: 9443,
+        directTlsPins: ["sha256:pin-a"],
+        ticketSecret: "secret-123",
+      }),
+    });
+
+    expect(info.machineId).toBe("cmux-macmini.tail.ts.net");
+    expect(info.directConnect).toEqual({
+      directPort: 9443,
+      directTlsPins: ["sha256:pin-a"],
+      ticketSecret: "secret-123",
+    });
   });
 });
