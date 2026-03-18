@@ -164,14 +164,14 @@ export default async function LandingPage() {
       </div>
 
       <a
-        href="https://cmux.dev/"
+        href="https://cmux.com/"
         target="_blank"
         rel="noopener noreferrer"
         className="group relative z-10 flex items-center justify-center gap-2.5 bg-sky-950/80 px-4 py-2.5 text-sm transition-colors hover:bg-sky-900/80"
       >
         <CmuxIcon className="h-3.5 w-3.5" aria-hidden />
         <span className="text-sky-100/90">
-          <span className="font-medium text-white">cmux.dev</span>
+          <span className="font-medium text-white">cmux.com</span>
           <span className="hidden sm:inline"> — The Open Source Terminal for Coding Agents</span>
         </span>
         <ArrowRight className="h-3.5 w-3.5 text-sky-300/60 transition-transform group-hover:translate-x-0.5 group-hover:text-sky-200" aria-hidden />
