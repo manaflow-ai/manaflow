@@ -4,6 +4,7 @@ const PROXY_DOMAINS = [
   "cmux.app",
   "cmux.sh",
   "cmux.dev",
+  "cmux.com",
   "manaflow.com",
   "cmux.local",
   "cmux.localhost",
