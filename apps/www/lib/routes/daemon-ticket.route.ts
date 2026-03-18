@@ -3,9 +3,14 @@ import {
   DaemonTicketRequestSchema,
   DaemonTicketResponseSchema,
 } from "@cmux/shared/mobile-contracts";
+import {
+  type MobileAnalyticsEventName,
+  type MobileAnalyticsProperties,
+} from "@cmux/shared/mobile-analytics";
 import { ConvexHttpClient } from "convex/browser";
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { createHmac, randomUUID } from "node:crypto";
+import { trackMobileEvent } from "../analytics/track-mobile-event";
 
 type DirectConnectionRecord = {
   machineId: string;
@@ -65,6 +70,11 @@ export function createDaemonTicketRouter(options?: {
     req: Request;
     teamSlugOrId: string;
   }) => Promise<{ uuid: string }>;
+  trackEvent?: (args: {
+    distinctId: string;
+    event: MobileAnalyticsEventName;
+    properties?: MobileAnalyticsProperties;
+  }) => Promise<void>;
   getDirectConnection?: (args: {
     teamId: string;
     userId: string;
@@ -112,6 +122,7 @@ export function createDaemonTicketRouter(options?: {
         serverId,
       });
     });
+  const trackEvent = options?.trackEvent ?? trackMobileEvent;
   const now = options?.now ?? (() => Date.now());
   const expiresInSeconds = options?.expiresInSeconds ?? 5 * 60;
 
@@ -179,6 +190,17 @@ export function createDaemonTicketRouter(options?: {
         },
         connection.ticketSecret,
       );
+      await trackEvent({
+        distinctId: user.userId,
+        event: "mobile_daemon_ticket_issued",
+        properties: {
+          teamId: team.uuid,
+          userId: user.userId,
+          machineId: connection.machineId,
+          source: "daemon_ticket",
+          result: "issued",
+        },
+      });
 
       return c.json({
         ticket,

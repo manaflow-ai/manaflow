@@ -6,8 +6,13 @@ import {
   MobilePushTestRequestSchema,
   MobilePushTestResponseSchema,
 } from "@cmux/shared/mobile-contracts";
+import {
+  type MobileAnalyticsEventName,
+  type MobileAnalyticsProperties,
+} from "@cmux/shared/mobile-analytics";
 import { ConvexHttpClient } from "convex/browser";
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { trackMobileEvent } from "../analytics/track-mobile-event";
 
 function getAdminConvexClient(adminToken?: string) {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -26,6 +31,11 @@ function getAdminConvexClient(adminToken?: string) {
 
 export function createMobilePushRouter(options?: {
   resolveUser?: (req: Request) => Promise<{ userId: string } | null>;
+  trackEvent?: (args: {
+    distinctId: string;
+    event: MobileAnalyticsEventName;
+    properties?: MobileAnalyticsProperties;
+  }) => Promise<void>;
   upsertPushToken?: (args: {
     userId: string;
     token: string;
@@ -55,6 +65,7 @@ export function createMobilePushRouter(options?: {
       }
       return { userId: user.id };
     });
+  const trackEvent = options?.trackEvent ?? trackMobileEvent;
   const upsertPushToken =
     options?.upsertPushToken ??
     (async ({
@@ -153,6 +164,16 @@ export function createMobilePushRouter(options?: {
         bundleId: body.bundleId,
         deviceId: body.deviceId,
       });
+      await trackEvent({
+        distinctId: user.userId,
+        event: "mobile_push_registered",
+        properties: {
+          userId: user.userId,
+          platform: body.platform,
+          bundleId: body.bundleId,
+          result: body.environment,
+        },
+      });
 
       return c.json({ ok: true }, 200);
     },
@@ -196,6 +217,13 @@ export function createMobilePushRouter(options?: {
       await removePushToken({
         userId: user.userId,
         token: body.token,
+      });
+      await trackEvent({
+        distinctId: user.userId,
+        event: "mobile_push_removed",
+        properties: {
+          userId: user.userId,
+        },
       });
 
       return c.json({ ok: true }, 200);
@@ -241,6 +269,14 @@ export function createMobilePushRouter(options?: {
         userId: user.userId,
         title: body.title,
         body: body.body,
+      });
+      await trackEvent({
+        distinctId: user.userId,
+        event: "mobile_push_test_sent",
+        properties: {
+          userId: user.userId,
+          result: "sent",
+        },
       });
 
       return c.json(result ?? { scheduledCount: 0 }, 200);

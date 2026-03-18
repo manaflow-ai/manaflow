@@ -3,8 +3,13 @@ import {
   MobileMarkReadRequestSchema,
   MobileOkResponseSchema,
 } from "@cmux/shared/mobile-contracts";
+import {
+  type MobileAnalyticsEventName,
+  type MobileAnalyticsProperties,
+} from "@cmux/shared/mobile-analytics";
 import { ConvexHttpClient } from "convex/browser";
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { trackMobileEvent } from "../analytics/track-mobile-event";
 
 function getAdminConvexClient(adminToken?: string) {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -27,6 +32,11 @@ export function createMobileMarkReadRouter(options?: {
     req: Request;
     teamSlugOrId: string;
   }) => Promise<{ uuid: string }>;
+  trackEvent?: (args: {
+    distinctId: string;
+    event: MobileAnalyticsEventName;
+    properties?: MobileAnalyticsProperties;
+  }) => Promise<void>;
   markRead?: (args: {
     teamId: string;
     userId: string;
@@ -51,6 +61,7 @@ export function createMobileMarkReadRouter(options?: {
       const { verifyTeamAccess } = await import("@/lib/utils/team-verification");
       return await verifyTeamAccess({ req, teamSlugOrId });
     });
+  const trackEvent = options?.trackEvent ?? trackMobileEvent;
   const markRead =
     options?.markRead ??
     (async ({
@@ -118,6 +129,16 @@ export function createMobileMarkReadRouter(options?: {
         userId: user.userId,
         workspaceId: body.workspaceId,
         latestEventSeq: body.latestEventSeq,
+      });
+      await trackEvent({
+        distinctId: user.userId,
+        event: "mobile_workspace_mark_read",
+        properties: {
+          teamId: team.uuid,
+          userId: user.userId,
+          workspaceId: body.workspaceId,
+          source: "http",
+        },
       });
 
       return c.json({ ok: true }, 200);

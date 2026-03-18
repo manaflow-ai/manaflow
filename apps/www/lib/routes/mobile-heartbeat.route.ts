@@ -4,6 +4,11 @@ import {
   MobileHeartbeatPayloadSchema,
   MobileWorkspaceHeartbeatRow,
 } from "@cmux/shared/mobile-contracts";
+import {
+  type MobileAnalyticsEventName,
+  type MobileAnalyticsProperties,
+} from "@cmux/shared/mobile-analytics";
+import { trackMobileEvent } from "../analytics/track-mobile-event";
 import { verifyMachineSessionToken } from "./mobile-machine-session.route";
 
 function getConvexHeartbeatConfig() {
@@ -62,6 +67,11 @@ export function createMobileHeartbeatRouter(options?: {
     userId: string;
     machineId: string;
   }>;
+  trackEvent?: (args: {
+    distinctId: string;
+    event: MobileAnalyticsEventName;
+    properties?: MobileAnalyticsProperties;
+  }) => Promise<void>;
   publishHeartbeat?: (
     args: Parameters<typeof publishMobileHeartbeatToConvex>[0],
   ) => Promise<void>;
@@ -77,6 +87,7 @@ export function createMobileHeartbeatRouter(options?: {
       ));
   const publishHeartbeat =
     options?.publishHeartbeat ?? publishMobileHeartbeatToConvex;
+  const trackEvent = options?.trackEvent ?? trackMobileEvent;
   const now = options?.now ?? (() => Date.now());
 
   router.openapi(
@@ -132,6 +143,29 @@ export function createMobileHeartbeatRouter(options?: {
         directConnect: body.directConnect,
         workspaces: body.workspaces,
       });
+      await trackEvent({
+        distinctId: claims.userId,
+        event: "mobile_heartbeat_ingested",
+        properties: {
+          teamId: claims.teamId,
+          userId: claims.userId,
+          machineId: body.machineId,
+          workspaceCount: body.workspaces.length,
+          result: "accepted",
+        },
+      });
+      if (body.workspaces.length > 0) {
+        await trackEvent({
+          distinctId: claims.userId,
+          event: "mobile_workspace_snapshot_ingested",
+          properties: {
+            teamId: claims.teamId,
+            userId: claims.userId,
+            machineId: body.machineId,
+            workspaceCount: body.workspaces.length,
+          },
+        });
+      }
 
       return c.json({ accepted: true }, 202);
     },

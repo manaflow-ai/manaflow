@@ -18,6 +18,7 @@ export { githubPrsRouter } from "./github.prs.route";
 export { githubInstallStateRouter } from "./github.install-state.route";
 export { healthRouter } from "./health.route";
 export { iframePreflightRouter } from "./iframe-preflight.route";
+export { mobileAnalyticsRouter } from "./mobile-analytics.route";
 export { mobileHeartbeatRouter } from "./mobile-heartbeat.route";
 export { mobileMachineSessionRouter } from "./mobile-machine-session.route";
 export { mobileMarkReadRouter } from "./mobile-mark-read.route";

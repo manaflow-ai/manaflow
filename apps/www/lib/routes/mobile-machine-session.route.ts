@@ -3,7 +3,12 @@ import {
   MobileMachineSessionRequestSchema,
   MobileMachineSessionResponseSchema,
 } from "@cmux/shared/mobile-contracts";
+import {
+  type MobileAnalyticsEventName,
+  type MobileAnalyticsProperties,
+} from "@cmux/shared/mobile-analytics";
 import { SignJWT, jwtVerify } from "jose";
+import { trackMobileEvent } from "../analytics/track-mobile-event";
 
 type MachineSessionClaims = {
   teamId: string;
@@ -53,6 +58,11 @@ export function createMobileMachineSessionRouter(options?: {
     req: Request;
     teamSlugOrId: string;
   }) => Promise<{ uuid: string }>;
+  trackEvent?: (args: {
+    distinctId: string;
+    event: MobileAnalyticsEventName;
+    properties?: MobileAnalyticsProperties;
+  }) => Promise<void>;
   secret?: string;
   now?: () => number;
 }) {
@@ -73,6 +83,7 @@ export function createMobileMachineSessionRouter(options?: {
       const { verifyTeamAccess } = await import("@/lib/utils/team-verification");
       return await verifyTeamAccess({ req, teamSlugOrId });
     });
+  const trackEvent = options?.trackEvent ?? trackMobileEvent;
   const now = options?.now ?? (() => Date.now());
 
   router.openapi(
@@ -126,6 +137,17 @@ export function createMobileMachineSessionRouter(options?: {
         secret,
         nowSeconds,
       );
+      await trackEvent({
+        distinctId: user.userId,
+        event: "mobile_machine_session_issued",
+        properties: {
+          teamId: team.uuid,
+          userId: user.userId,
+          machineId: body.machineId,
+          source: "machine_session",
+          result: "issued",
+        },
+      });
 
       return c.json({
         token,

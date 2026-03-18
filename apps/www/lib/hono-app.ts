@@ -23,6 +23,7 @@ import {
   githubOAuthTokenRouter,
   healthRouter,
   morphRouter,
+  mobileAnalyticsRouter,
   mobileHeartbeatRouter,
   mobileMarkReadRouter,
   mobileMachineSessionRouter,
@@ -142,6 +143,7 @@ app.route("/", githubPrsFileContentsBatchRouter);
 app.route("/", githubInstallStateRouter);
 app.route("/", githubOAuthTokenRouter);
 app.route("/", githubBranchesRouter);
+app.route("/", mobileAnalyticsRouter);
 app.route("/", mobileMachineSessionRouter);
 app.route("/", mobileHeartbeatRouter);
 app.route("/", mobileMarkReadRouter);

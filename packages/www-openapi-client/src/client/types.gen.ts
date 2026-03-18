@@ -87,23 +87,6 @@ export type CreateBook = {
     genre: 'fiction' | 'non-fiction' | 'science' | 'history' | 'biography';
 };
 
-export type DaemonTicketResponse = {
-    ticket: string;
-    direct_url: string;
-    direct_tls_pins: Array<string>;
-    session_id: string;
-    attachment_id: string;
-    expires_at: string;
-};
-
-export type DaemonTicketBody = {
-    server_id: string;
-    team_id: string;
-    session_id?: string;
-    attachment_id?: string;
-    capabilities?: Array<string>;
-};
-
 export type DevServerResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -402,47 +385,6 @@ export type GithubBranchesResponse = {
     error: string | null;
     nextOffset?: number;
     hasMore: boolean;
-};
-
-export type MobileMachineSessionResponse = {
-    token: string;
-    teamId: string;
-    userId: string;
-    machineId: string;
-    expiresAt: number;
-};
-
-export type MobileMachineSessionBody = {
-    teamSlugOrId: string;
-    machineId: string;
-    displayName?: string;
-};
-
-export type MobileHeartbeatBody = {
-    machineId: string;
-    displayName: string;
-    tailscaleHostname?: string;
-    tailscaleIPs: Array<string>;
-    status: 'online' | 'offline' | 'unknown';
-    lastSeenAt?: number;
-    lastWorkspaceSyncAt?: number;
-    directConnect?: {
-        directPort: number;
-        directTlsPins: Array<string>;
-        ticketSecret: string;
-    };
-    workspaces: Array<{
-        workspaceId: string;
-        taskId?: string;
-        taskRunId?: string;
-        title: string;
-        preview?: string;
-        phase: string;
-        tmuxSessionName: string;
-        lastActivityAt: number;
-        latestEventSeq: number;
-        lastEventAt?: number;
-    }>;
 };
 
 export type ResumeTaskRunResponse = {
@@ -1195,7 +1137,13 @@ export type PostApiBooksByIdReturnResponses = {
 export type PostApiBooksByIdReturnResponse = PostApiBooksByIdReturnResponses[keyof PostApiBooksByIdReturnResponses];
 
 export type PostApiDaemonTicketData = {
-    body: DaemonTicketBody;
+    body: {
+        server_id: string;
+        team_id: string;
+        session_id?: string;
+        attachment_id?: string;
+        capabilities?: Array<string>;
+    };
     path?: never;
     query?: never;
     url: '/api/daemon-ticket';
@@ -1216,7 +1164,14 @@ export type PostApiDaemonTicketResponses = {
     /**
      * Direct daemon ticket minted
      */
-    200: DaemonTicketResponse;
+    200: {
+        ticket: string;
+        direct_url: string;
+        direct_tls_pins: Array<string>;
+        session_id: string;
+        attachment_id: string;
+        expires_at: string;
+    };
 };
 
 export type PostApiDaemonTicketResponse = PostApiDaemonTicketResponses[keyof PostApiDaemonTicketResponses];
@@ -1980,8 +1935,55 @@ export type GetApiIntegrationsGithubBranchesResponses = {
 
 export type GetApiIntegrationsGithubBranchesResponse = GetApiIntegrationsGithubBranchesResponses[keyof GetApiIntegrationsGithubBranchesResponses];
 
+export type PostApiMobileAnalyticsData = {
+    body: {
+        event: 'mobile_machine_session_issued' | 'mobile_heartbeat_ingested' | 'mobile_workspace_snapshot_ingested' | 'mobile_workspace_opened' | 'mobile_workspace_mark_read' | 'mobile_push_registered' | 'mobile_push_removed' | 'mobile_push_test_sent' | 'mobile_push_opened' | 'mobile_daemon_ticket_issued' | 'mobile_daemon_attach_result' | 'ios_grdb_boot_completed';
+        properties?: {
+            teamId?: string;
+            teamKind?: 'personal' | 'shared';
+            userId?: string;
+            machineId?: string;
+            workspaceId?: string;
+            platform?: string;
+            bundleId?: string;
+            source?: string;
+            result?: string;
+            errorCode?: string;
+            latencyMs?: number;
+            cacheAgeMs?: number;
+            workspaceCount?: number;
+            unreadCount?: number;
+        };
+    };
+    path?: never;
+    query?: never;
+    url: '/api/mobile/analytics';
+};
+
+export type PostApiMobileAnalyticsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobileAnalyticsResponses = {
+    /**
+     * Analytics event accepted
+     */
+    202: {
+        accepted: true;
+    };
+};
+
+export type PostApiMobileAnalyticsResponse = PostApiMobileAnalyticsResponses[keyof PostApiMobileAnalyticsResponses];
+
 export type PostApiMobileMachineSessionData = {
-    body: MobileMachineSessionBody;
+    body: {
+        teamSlugOrId: string;
+        machineId: string;
+        displayName?: string;
+    };
     path?: never;
     query?: never;
     url: '/api/mobile/machine-session';
@@ -1998,13 +2000,44 @@ export type PostApiMobileMachineSessionResponses = {
     /**
      * Machine session minted
      */
-    200: MobileMachineSessionResponse;
+    200: {
+        token: string;
+        teamId: string;
+        userId: string;
+        machineId: string;
+        expiresAt: number;
+    };
 };
 
 export type PostApiMobileMachineSessionResponse = PostApiMobileMachineSessionResponses[keyof PostApiMobileMachineSessionResponses];
 
 export type PostApiMobileHeartbeatData = {
-    body: MobileHeartbeatBody;
+    body: {
+        machineId: string;
+        displayName: string;
+        tailscaleHostname?: string;
+        tailscaleIPs: Array<string>;
+        status: 'online' | 'offline' | 'unknown';
+        lastSeenAt?: number;
+        lastWorkspaceSyncAt?: number;
+        directConnect?: {
+            directPort: number;
+            directTlsPins: Array<string>;
+            ticketSecret: string;
+        };
+        workspaces: Array<{
+            workspaceId: string;
+            taskId?: string;
+            taskRunId?: string;
+            title: string;
+            preview?: string;
+            phase: string;
+            tmuxSessionName: string;
+            lastActivityAt: number;
+            latestEventSeq: number;
+            lastEventAt?: number;
+        }>;
+    };
     path?: never;
     query?: never;
     url: '/api/mobile/heartbeat';
@@ -2021,8 +2054,127 @@ export type PostApiMobileHeartbeatResponses = {
     /**
      * Heartbeat accepted
      */
-    202: unknown;
+    202: {
+        accepted: true;
+    };
 };
+
+export type PostApiMobileHeartbeatResponse = PostApiMobileHeartbeatResponses[keyof PostApiMobileHeartbeatResponses];
+
+export type PostApiMobileWorkspacesMarkReadData = {
+    body: {
+        teamSlugOrId: string;
+        workspaceId: string;
+        latestEventSeq?: number;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/mobile/workspaces/mark-read';
+};
+
+export type PostApiMobileWorkspacesMarkReadErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobileWorkspacesMarkReadResponses = {
+    /**
+     * Workspace marked read
+     */
+    200: {
+        ok: true;
+    };
+};
+
+export type PostApiMobileWorkspacesMarkReadResponse = PostApiMobileWorkspacesMarkReadResponses[keyof PostApiMobileWorkspacesMarkReadResponses];
+
+export type PostApiMobilePushRegisterData = {
+    body: {
+        token: string;
+        environment: 'development' | 'production';
+        platform: string;
+        bundleId: string;
+        deviceId?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/mobile/push/register';
+};
+
+export type PostApiMobilePushRegisterErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobilePushRegisterResponses = {
+    /**
+     * Push token registered
+     */
+    200: {
+        ok: true;
+    };
+};
+
+export type PostApiMobilePushRegisterResponse = PostApiMobilePushRegisterResponses[keyof PostApiMobilePushRegisterResponses];
+
+export type PostApiMobilePushRemoveData = {
+    body: {
+        token: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/mobile/push/remove';
+};
+
+export type PostApiMobilePushRemoveErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobilePushRemoveResponses = {
+    /**
+     * Push token removed
+     */
+    200: {
+        ok: true;
+    };
+};
+
+export type PostApiMobilePushRemoveResponse = PostApiMobilePushRemoveResponses[keyof PostApiMobilePushRemoveResponses];
+
+export type PostApiMobilePushTestData = {
+    body: {
+        title: string;
+        body: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/mobile/push/test';
+};
+
+export type PostApiMobilePushTestErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiMobilePushTestResponses = {
+    /**
+     * Test push scheduled
+     */
+    200: {
+        scheduledCount: number;
+    };
+};
+
+export type PostApiMobilePushTestResponse = PostApiMobilePushTestResponses[keyof PostApiMobilePushTestResponses];
 
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;

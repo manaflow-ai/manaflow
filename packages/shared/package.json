@@ -22,6 +22,10 @@
       "import": "./src/mobile-contracts.ts",
       "types": "./src/mobile-contracts.ts"
     },
+    "./mobile-analytics": {
+      "import": "./src/mobile-analytics.ts",
+      "types": "./src/mobile-analytics.ts"
+    },
     "./node/socket": {
       "import": "./src/node/socket-server.ts",
       "types": "./src/node/socket-server.ts"
