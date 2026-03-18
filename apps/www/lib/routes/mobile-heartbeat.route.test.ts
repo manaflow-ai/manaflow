@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { describe, expect, it, vi } from "vitest";
+import { MobileHeartbeatPayloadSchema } from "@cmux/shared/mobile-contracts";
 import { createMobileHeartbeatRouter } from "./mobile-heartbeat.route";
 
 describe("mobileHeartbeatRouter", () => {
@@ -19,35 +20,39 @@ describe("mobileHeartbeatRouter", () => {
       }),
     );
 
+    const payload = MobileHeartbeatPayloadSchema.parse({
+      machineId: "machine_123",
+      displayName: "Orb",
+      tailscaleHostname: "orb.tailnet.ts.net",
+      tailscaleIPs: ["100.64.0.1"],
+      status: "online",
+      lastSeenAt: 1_700_000_000_000,
+      lastWorkspaceSyncAt: 1_700_000_000_000,
+      directConnect: {
+        directPort: 9443,
+        directTlsPins: ["sha256:pin-a"],
+        ticketSecret: "secret-123",
+      },
+      workspaces: [
+        {
+          workspaceId: "workspace_123",
+          title: "orb / cmux",
+          preview: "feature/dogfood",
+          phase: "connected",
+          tmuxSessionName: "cmux-orb",
+          lastActivityAt: 1_700_000_000_000,
+          latestEventSeq: 4,
+        },
+      ],
+    });
+
     const response = await app.request("/mobile/heartbeat", {
       method: "POST",
       headers: {
         authorization: "Bearer test-token",
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        machineId: "machine_123",
-        displayName: "Orb",
-        tailscaleHostname: "orb.tailnet.ts.net",
-        tailscaleIPs: ["100.64.0.1"],
-        status: "online",
-        directConnect: {
-          directPort: 9443,
-          directTlsPins: ["sha256:pin-a"],
-          ticketSecret: "secret-123",
-        },
-        workspaces: [
-          {
-            workspaceId: "workspace_123",
-            title: "orb / cmux",
-            preview: "feature/dogfood",
-            phase: "connected",
-            tmuxSessionName: "cmux-orb",
-            lastActivityAt: 1_700_000_000_000,
-            latestEventSeq: 4,
-          },
-        ],
-      }),
+      body: JSON.stringify(payload),
     });
 
     expect(response.status).toBe(202);

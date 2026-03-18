@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { describe, expect, it } from "vitest";
+import { DaemonTicketRequestSchema } from "@cmux/shared/mobile-contracts";
 import {
   createDaemonTicketRouter,
   signDirectDaemonTicket,
@@ -30,13 +31,13 @@ describe("daemonTicketRouter", () => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify(DaemonTicketRequestSchema.parse({
         server_id: "machine_123",
         team_id: "cmux",
         session_id: "sess-1",
         attachment_id: "att-1",
         capabilities: ["session.attach", "session.open"],
-      }),
+      })),
     });
 
     expect(response.status).toBe(200);
@@ -72,10 +73,10 @@ describe("daemonTicketRouter", () => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify(DaemonTicketRequestSchema.parse({
         server_id: "machine_123",
         team_id: "cmux",
-      }),
+      })),
     });
 
     expect(response.status).toBe(404);

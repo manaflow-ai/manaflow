@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { describe, expect, it } from "vitest";
+import { MobileMachineSessionRequestSchema } from "@cmux/shared/mobile-contracts";
 import {
   createMobileMachineSessionRouter,
   verifyMachineSessionToken,
@@ -24,10 +25,11 @@ describe("mobileMachineSessionRouter", () => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify(MobileMachineSessionRequestSchema.parse({
         teamSlugOrId: "cmux",
         machineId: "machine_123",
-      }),
+        displayName: "Mac Mini",
+      })),
     });
 
     expect(response.status).toBe(200);
@@ -59,10 +61,11 @@ describe("mobileMachineSessionRouter", () => {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify(MobileMachineSessionRequestSchema.parse({
         teamSlugOrId: "cmux",
         machineId: "machine_123",
-      }),
+        displayName: "Mac Mini",
+      })),
     });
 
     expect(response.status).toBe(401);
