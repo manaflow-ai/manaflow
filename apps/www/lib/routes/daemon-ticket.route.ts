@@ -1,28 +1,11 @@
 import { internal } from "@cmux/convex/api";
+import {
+  DaemonTicketRequestSchema,
+  DaemonTicketResponseSchema,
+} from "@cmux/shared/mobile-contracts";
 import { ConvexHttpClient } from "convex/browser";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { createHmac, randomUUID } from "node:crypto";
-
-const DaemonTicketBody = z
-  .object({
-    server_id: z.string(),
-    team_id: z.string(),
-    session_id: z.string().optional(),
-    attachment_id: z.string().optional(),
-    capabilities: z.array(z.string()).default(["session.attach"]),
-  })
-  .openapi("DaemonTicketBody");
-
-const DaemonTicketResponse = z
-  .object({
-    ticket: z.string(),
-    direct_url: z.string(),
-    direct_tls_pins: z.array(z.string()),
-    session_id: z.string(),
-    attachment_id: z.string(),
-    expires_at: z.string(),
-  })
-  .openapi("DaemonTicketResponse");
 
 type DirectConnectionRecord = {
   machineId: string;
@@ -142,7 +125,7 @@ export function createDaemonTicketRouter(options?: {
         body: {
           content: {
             "application/json": {
-              schema: DaemonTicketBody,
+              schema: DaemonTicketRequestSchema,
             },
           },
           required: true,
@@ -153,7 +136,7 @@ export function createDaemonTicketRouter(options?: {
           description: "Direct daemon ticket minted",
           content: {
             "application/json": {
-              schema: DaemonTicketResponse,
+              schema: DaemonTicketResponseSchema,
             },
           },
         },

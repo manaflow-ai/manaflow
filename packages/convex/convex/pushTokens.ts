@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { authMutation } from "./users/utils";
 
@@ -76,6 +77,114 @@ async function resolveDefaultTeamId(
   throw new ConvexError("No team available for push token registration");
 }
 
+async function upsertPushTokenForUser(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    token: string;
+    environment: "development" | "production";
+    platform: string;
+    bundleId: string;
+    deviceId?: string;
+  },
+) {
+  const teamId = await resolveDefaultTeamId(ctx, args.userId);
+  const existingRows = await ctx.db
+    .query("devicePushTokens")
+    .withIndex("by_team_user_updated", (q) =>
+      q.eq("teamId", teamId).eq("userId", args.userId),
+    )
+    .order("desc")
+    .collect();
+  const updatedAt = Date.now();
+  const { canonical, duplicateIds } = reconcilePushTokenRows(existingRows, {
+    ...args,
+    updatedAt,
+  });
+
+  for (const duplicateId of duplicateIds) {
+    await ctx.db.delete(duplicateId);
+  }
+
+  if (canonical) {
+    await ctx.db.patch(canonical._id, {
+      token: args.token,
+      environment: args.environment,
+      platform: args.platform,
+      bundleId: args.bundleId,
+      deviceId: args.deviceId,
+      updatedAt,
+    });
+    return canonical._id;
+  }
+
+  return await ctx.db.insert("devicePushTokens", {
+    teamId,
+    userId: args.userId,
+    token: args.token,
+    environment: args.environment,
+    platform: args.platform,
+    bundleId: args.bundleId,
+    deviceId: args.deviceId,
+    updatedAt,
+  });
+}
+
+async function removePushTokenForUser(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    token: string;
+  },
+) {
+  const teamId = await resolveDefaultTeamId(ctx, args.userId);
+  const matchingRows = await ctx.db
+    .query("devicePushTokens")
+    .withIndex("by_token", (q) => q.eq("token", args.token))
+    .collect();
+
+  for (const row of matchingRows) {
+    if (row.userId === args.userId && row.teamId === teamId) {
+      await ctx.db.delete(row._id);
+    }
+  }
+}
+
+async function sendTestPushForUser(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    title: string;
+    body: string;
+  },
+) {
+  const teamId = await resolveDefaultTeamId(ctx, args.userId);
+  const tokens = await ctx.db
+    .query("devicePushTokens")
+    .withIndex("by_team_user_updated", (q) =>
+      q.eq("teamId", teamId).eq("userId", args.userId),
+    )
+    .order("desc")
+    .collect();
+
+  if (tokens.length === 0) {
+    throw new ConvexError("No push token registered");
+  }
+
+  await ctx.scheduler.runAfter(0, internal.pushNotificationsActions.sendTestPush, {
+    tokens: tokens.map((token) => ({
+      token: token.token,
+      environment: token.environment,
+      bundleId: token.bundleId,
+      deviceId: token.deviceId,
+    })),
+    title: args.title,
+    body: args.body,
+  });
+
+  return { scheduledCount: tokens.length };
+}
+
 export const upsert = authMutation({
   args: {
     token: v.string(),
@@ -85,47 +194,24 @@ export const upsert = authMutation({
     deviceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveDefaultTeamId(ctx, userId);
-    const existingRows = await ctx.db
-      .query("devicePushTokens")
-      .withIndex("by_team_user_updated", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId),
-      )
-      .order("desc")
-      .collect();
-    const updatedAt = Date.now();
-    const { canonical, duplicateIds } = reconcilePushTokenRows(existingRows, {
+    return await upsertPushTokenForUser(ctx, {
+      userId: ctx.identity.subject,
       ...args,
-      updatedAt,
     });
+  },
+});
 
-    for (const duplicateId of duplicateIds) {
-      await ctx.db.delete(duplicateId);
-    }
-
-    if (canonical) {
-      await ctx.db.patch(canonical._id, {
-        token: args.token,
-        environment: args.environment,
-        platform: args.platform,
-        bundleId: args.bundleId,
-        deviceId: args.deviceId,
-        updatedAt,
-      });
-      return canonical._id;
-    }
-
-    return await ctx.db.insert("devicePushTokens", {
-      teamId,
-      userId,
-      token: args.token,
-      environment: args.environment,
-      platform: args.platform,
-      bundleId: args.bundleId,
-      deviceId: args.deviceId,
-      updatedAt,
-    });
+export const upsertForUserInternal = internalMutation({
+  args: {
+    userId: v.string(),
+    token: v.string(),
+    environment: v.union(v.literal("development"), v.literal("production")),
+    platform: v.string(),
+    bundleId: v.string(),
+    deviceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await upsertPushTokenForUser(ctx, args);
   },
 });
 
@@ -134,18 +220,20 @@ export const remove = authMutation({
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveDefaultTeamId(ctx, userId);
-    const matchingRows = await ctx.db
-      .query("devicePushTokens")
-      .withIndex("by_token", (q) => q.eq("token", args.token))
-      .collect();
+    await removePushTokenForUser(ctx, {
+      userId: ctx.identity.subject,
+      token: args.token,
+    });
+  },
+});
 
-    for (const row of matchingRows) {
-      if (row.userId === userId && row.teamId === teamId) {
-        await ctx.db.delete(row._id);
-      }
-    }
+export const removeForUserInternal = internalMutation({
+  args: {
+    userId: v.string(),
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await removePushTokenForUser(ctx, args);
   },
 });
 
@@ -155,35 +243,21 @@ export const sendTest = authMutation({
     body: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveDefaultTeamId(ctx, userId);
-    const tokens = await ctx.db
-      .query("devicePushTokens")
-      .withIndex("by_team_user_updated", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId),
-      )
-      .order("desc")
-      .collect();
+    return await sendTestPushForUser(ctx, {
+      userId: ctx.identity.subject,
+      title: args.title,
+      body: args.body,
+    });
+  },
+});
 
-    if (tokens.length === 0) {
-      throw new ConvexError("No push token registered");
-    }
-
-    await ctx.scheduler.runAfter(
-      0,
-      internal.pushNotificationsActions.sendTestPush,
-      {
-        tokens: tokens.map((token) => ({
-          token: token.token,
-          environment: token.environment,
-          bundleId: token.bundleId,
-          deviceId: token.deviceId,
-        })),
-        title: args.title,
-        body: args.body,
-      },
-    );
-
-    return { scheduledCount: tokens.length };
+export const sendTestForUserInternal = internalMutation({
+  args: {
+    userId: v.string(),
+    title: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await sendTestPushForUser(ctx, args);
   },
 });

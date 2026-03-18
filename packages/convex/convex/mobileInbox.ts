@@ -32,6 +32,10 @@ export function buildMobileInboxRows(args: {
         workspace.latestEventSeq,
         lastReadEventSeq,
       );
+      const unreadCount = Math.max(
+        0,
+        workspace.latestEventSeq - lastReadEventSeq,
+      );
 
       return {
         kind: "workspace" as const,
@@ -45,7 +49,7 @@ export function buildMobileInboxRows(args: {
         latestEventSeq: workspace.latestEventSeq,
         lastReadEventSeq,
         unread,
-        unreadCount: unread ? 1 : 0,
+        unreadCount,
         machineDisplayName: machine?.displayName ?? workspace.machineId,
         machineStatus: machine ? resolveMachineStatus(machine, now) : "unknown",
         tailscaleHostname: machine?.tailscaleHostname,

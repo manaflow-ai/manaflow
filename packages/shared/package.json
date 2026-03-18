@@ -18,6 +18,10 @@
       "import": "./src/socket-client.ts",
       "types": "./src/socket-client.ts"
     },
+    "./mobile-contracts": {
+      "import": "./src/mobile-contracts.ts",
+      "types": "./src/mobile-contracts.ts"
+    },
     "./node/socket": {
       "import": "./src/node/socket-server.ts",
       "types": "./src/node/socket-server.ts"

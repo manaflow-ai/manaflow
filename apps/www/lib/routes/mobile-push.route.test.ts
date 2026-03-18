@@ -29,7 +29,7 @@ describe("mobilePushRouter", () => {
       },
       body: JSON.stringify(MobilePushRegisterRequestSchema.parse({
         token: "token_123",
-        environment: "sandbox",
+        environment: "development",
         platform: "ios",
         bundleId: "dev.cmux.app.dev",
         deviceId: "device_123",
@@ -69,7 +69,7 @@ describe("mobilePushRouter", () => {
   });
 
   it("sends test pushes through the HTTP boundary", async () => {
-    const sendTest = vi.fn(async () => {});
+    const sendTest = vi.fn(async () => ({ scheduledCount: 1 }));
     const app = new OpenAPIHono();
     app.route(
       "/",

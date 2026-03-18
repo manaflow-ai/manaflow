@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
+import type { MutationCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
 import { resolveTeamIdLoose } from "../_shared/team";
 
@@ -34,6 +35,59 @@ export function buildWorkspaceRows(
       };
     })
     .sort((lhs, rhs) => rhs.lastActivityAt - lhs.lastActivityAt);
+}
+
+async function markReadForUser(
+  ctx: MutationCtx,
+  args: {
+    teamId: string;
+    userId: string;
+    workspaceId: string;
+    latestEventSeq?: number;
+  },
+) {
+  const workspace = await ctx.db
+    .query("mobileWorkspaces")
+    .withIndex("by_team_user_workspace", (q) =>
+      q
+        .eq("teamId", args.teamId)
+        .eq("userId", args.userId)
+        .eq("workspaceId", args.workspaceId),
+    )
+    .first();
+
+  if (!workspace) {
+    throw new ConvexError("Workspace not found");
+  }
+
+  const state = await ctx.db
+    .query("mobileUserWorkspaceState")
+    .withIndex("by_team_user_workspace", (q) =>
+      q
+        .eq("teamId", args.teamId)
+        .eq("userId", args.userId)
+        .eq("workspaceId", args.workspaceId),
+    )
+    .first();
+
+  const lastReadEventSeq = args.latestEventSeq ?? workspace.latestEventSeq;
+  const updatedAt = Date.now();
+
+  if (state) {
+    await ctx.db.patch(state._id, {
+      lastReadEventSeq,
+      updatedAt,
+    });
+    return state._id;
+  }
+
+  return await ctx.db.insert("mobileUserWorkspaceState", {
+    teamId: args.teamId,
+    userId: args.userId,
+    workspaceId: args.workspaceId,
+    lastReadEventSeq,
+    updatedAt,
+  });
 }
 
 export const listForUser = authQuery({
@@ -73,48 +127,24 @@ export const markRead = authMutation({
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const workspace = await ctx.db
-      .query("mobileWorkspaces")
-      .withIndex("by_team_user_workspace", (q) =>
-        q
-          .eq("teamId", teamId)
-          .eq("userId", userId)
-          .eq("workspaceId", args.workspaceId),
-      )
-      .first();
-
-    if (!workspace) {
-      throw new ConvexError("Workspace not found");
-    }
-
-    const state = await ctx.db
-      .query("mobileUserWorkspaceState")
-      .withIndex("by_team_user_workspace", (q) =>
-        q
-          .eq("teamId", teamId)
-          .eq("userId", userId)
-          .eq("workspaceId", args.workspaceId),
-      )
-      .first();
-
-    const lastReadEventSeq = args.latestEventSeq ?? workspace.latestEventSeq;
-    const updatedAt = Date.now();
-
-    if (state) {
-      await ctx.db.patch(state._id, {
-        lastReadEventSeq,
-        updatedAt,
-      });
-      return state._id;
-    }
-
-    return await ctx.db.insert("mobileUserWorkspaceState", {
+    return await markReadForUser(ctx, {
       teamId,
       userId,
       workspaceId: args.workspaceId,
-      lastReadEventSeq,
-      updatedAt,
+      latestEventSeq: args.latestEventSeq,
     });
+  },
+});
+
+export const markReadInternal = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    workspaceId: v.string(),
+    latestEventSeq: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await markReadForUser(ctx, args);
   },
 });
 

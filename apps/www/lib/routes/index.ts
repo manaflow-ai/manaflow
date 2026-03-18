@@ -20,6 +20,8 @@ export { healthRouter } from "./health.route";
 export { iframePreflightRouter } from "./iframe-preflight.route";
 export { mobileHeartbeatRouter } from "./mobile-heartbeat.route";
 export { mobileMachineSessionRouter } from "./mobile-machine-session.route";
+export { mobileMarkReadRouter } from "./mobile-mark-read.route";
+export { mobilePushRouter } from "./mobile-push.route";
 export { morphRouter } from "./morph.route";
 export { sandboxesRouter } from "./sandboxes.route";
 export { teamsRouter } from "./teams.route";

@@ -1,23 +1,9 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import {
+  MobileMachineSessionRequestSchema,
+  MobileMachineSessionResponseSchema,
+} from "@cmux/shared/mobile-contracts";
 import { SignJWT, jwtVerify } from "jose";
-
-const MachineSessionBody = z
-  .object({
-    teamSlugOrId: z.string(),
-    machineId: z.string(),
-    displayName: z.string().optional(),
-  })
-  .openapi("MobileMachineSessionBody");
-
-const MachineSessionResponse = z
-  .object({
-    token: z.string(),
-    teamId: z.string(),
-    userId: z.string(),
-    machineId: z.string(),
-    expiresAt: z.number(),
-  })
-  .openapi("MobileMachineSessionResponse");
 
 type MachineSessionClaims = {
   teamId: string;
@@ -99,7 +85,7 @@ export function createMobileMachineSessionRouter(options?: {
         body: {
           content: {
             "application/json": {
-              schema: MachineSessionBody,
+              schema: MobileMachineSessionRequestSchema,
             },
           },
           required: true,
@@ -110,7 +96,7 @@ export function createMobileMachineSessionRouter(options?: {
           description: "Machine session minted",
           content: {
             "application/json": {
-              schema: MachineSessionResponse,
+              schema: MobileMachineSessionResponseSchema,
             },
           },
         },

@@ -87,6 +87,7 @@ describe("mobile dogfood schema", () => {
       "workspace_old",
     ]);
     expect(rows[0]?.unread).toBe(true);
+    expect(rows[0]?.unreadCount).toBe(2);
     expect(rows[0]?.machineDisplayName).toBe("Orb");
   });
 

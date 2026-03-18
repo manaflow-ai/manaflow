@@ -24,7 +24,9 @@ import {
   healthRouter,
   morphRouter,
   mobileHeartbeatRouter,
+  mobileMarkReadRouter,
   mobileMachineSessionRouter,
+  mobilePushRouter,
   sandboxesRouter,
   teamsRouter,
   usersRouter,
@@ -142,6 +144,8 @@ app.route("/", githubOAuthTokenRouter);
 app.route("/", githubBranchesRouter);
 app.route("/", mobileMachineSessionRouter);
 app.route("/", mobileHeartbeatRouter);
+app.route("/", mobileMarkReadRouter);
+app.route("/", mobilePushRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);

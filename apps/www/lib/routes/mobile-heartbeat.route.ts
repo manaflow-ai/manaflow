@@ -1,38 +1,10 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import {
+  MobileAcceptedResponseSchema,
+  MobileHeartbeatPayloadSchema,
+  MobileWorkspaceHeartbeatRow,
+} from "@cmux/shared/mobile-contracts";
 import { verifyMachineSessionToken } from "./mobile-machine-session.route";
-
-const HeartbeatWorkspace = z.object({
-  workspaceId: z.string(),
-  taskId: z.string().optional(),
-  taskRunId: z.string().optional(),
-  title: z.string(),
-  preview: z.string().optional(),
-  phase: z.string(),
-  tmuxSessionName: z.string(),
-  lastActivityAt: z.number(),
-  latestEventSeq: z.number(),
-  lastEventAt: z.number().optional(),
-});
-
-const HeartbeatBody = z
-  .object({
-    machineId: z.string(),
-    displayName: z.string(),
-    tailscaleHostname: z.string().optional(),
-    tailscaleIPs: z.array(z.string()),
-    status: z.enum(["online", "offline", "unknown"]),
-    lastSeenAt: z.number().optional(),
-    lastWorkspaceSyncAt: z.number().optional(),
-    directConnect: z
-      .object({
-        directPort: z.number(),
-        directTlsPins: z.array(z.string()),
-        ticketSecret: z.string(),
-      })
-      .optional(),
-    workspaces: z.array(HeartbeatWorkspace),
-  })
-  .openapi("MobileHeartbeatBody");
 
 function getConvexHeartbeatConfig() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -63,7 +35,7 @@ export async function publishMobileHeartbeatToConvex(args: {
     directTlsPins: string[];
     ticketSecret: string;
   };
-  workspaces: Array<z.infer<typeof HeartbeatWorkspace>>;
+  workspaces: MobileWorkspaceHeartbeatRow[];
 }) {
   const { convexUrl, deployKey } = getConvexHeartbeatConfig();
   const endpoint = convexUrl.replace(
@@ -117,14 +89,21 @@ export function createMobileHeartbeatRouter(options?: {
         body: {
           content: {
             "application/json": {
-              schema: HeartbeatBody,
+              schema: MobileHeartbeatPayloadSchema,
             },
           },
           required: true,
         },
       },
       responses: {
-        202: { description: "Heartbeat accepted" },
+        202: {
+          description: "Heartbeat accepted",
+          content: {
+            "application/json": {
+              schema: MobileAcceptedResponseSchema,
+            },
+          },
+        },
         401: { description: "Unauthorized" },
       },
     }),
