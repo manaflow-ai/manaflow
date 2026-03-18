@@ -4,6 +4,7 @@ import type { RequestCookie } from "next/dist/compiled/@edge-runtime/cookies";
 
 import { env } from "@/lib/utils/www-env";
 import { stackServerApp } from "@/lib/utils/stack";
+import { buildNativeAppHref, isAllowedNativeAppHref } from "@/lib/utils/native-app-deeplink";
 import { OpenCmuxClient } from "./OpenCmuxClient";
 import { CheckSessionStorageRedirect } from "./CheckSessionStorageRedirect";
 
@@ -161,8 +162,6 @@ type AfterSignInPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-const CMUX_SCHEME = "manaflow://";
-
 function getSingleValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
     return value[0] ?? null;
@@ -200,23 +199,6 @@ function getSafeRedirectPath(target: string): string | null {
 
   // Reject absolute URLs
   return null;
-}
-
-function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | undefined, stackAccessCookie: string | undefined): string | null {
-  if (!stackRefreshToken || !stackAccessCookie) {
-    return baseHref;
-  }
-
-  const pairedHref = baseHref ?? `${CMUX_SCHEME}auth-callback`;
-
-  try {
-    const url = new URL(pairedHref);
-    url.searchParams.set("stack_refresh", stackRefreshToken);
-    url.searchParams.set("stack_access", stackAccessCookie);
-    return url.toString();
-  } catch {
-    return `${CMUX_SCHEME}auth-callback?stack_refresh=${encodeURIComponent(stackRefreshToken)}&stack_access=${encodeURIComponent(stackAccessCookie)}`;
-  }
 }
 
 export default async function AfterSignInPage({ searchParams: searchParamsPromise }: AfterSignInPageProps) {
@@ -297,14 +279,13 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
   // then fall back to Electron deep link (default for desktop users)
   if (!afterAuthReturnToRaw) {
     // Return a client component that checks sessionStorage, with electron deeplink as fallback
-    const electronFallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessCookie);
+    const electronFallbackHref = buildNativeAppHref(null, stackRefreshToken, stackAccessCookie);
     return <CheckSessionStorageRedirect fallbackPath="/" electronFallbackHref={electronFallbackHref} />;
   }
 
-  // Handle Electron deep link redirects
-  if (afterAuthReturnToRaw?.startsWith(CMUX_SCHEME)) {
-    console.log("[After Sign In] Opening Electron app with deep link");
-    const cmuxHref = buildCmuxHref(afterAuthReturnToRaw, stackRefreshToken, stackAccessCookie);
+  if (isAllowedNativeAppHref(afterAuthReturnToRaw)) {
+    console.log("[After Sign In] Opening native app with deep link");
+    const cmuxHref = buildNativeAppHref(afterAuthReturnToRaw, stackRefreshToken, stackAccessCookie);
     if (cmuxHref) {
       return <OpenCmuxClient href={cmuxHref} />;
     }
@@ -323,7 +304,7 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
 
   // Fallback: try to open Electron app
   console.log("[After Sign In] No return path, using fallback");
-  const fallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessCookie);
+  const fallbackHref = buildNativeAppHref(null, stackRefreshToken, stackAccessCookie);
   if (fallbackHref) {
     return <OpenCmuxClient href={fallbackHref} />;
   }
