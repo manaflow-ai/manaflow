@@ -18,6 +18,12 @@ type MachineSessionClaims = {
 
 function getMobileMachineJwtSecret() {
   const secret = process.env.MOBILE_MACHINE_JWT_SECRET;
+  if (secret) {
+    return secret;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    return "cmux-local-dev-mobile-machine-jwt-secret";
+  }
   if (!secret) {
     throw new Error("MOBILE_MACHINE_JWT_SECRET is required");
   }

@@ -41,6 +41,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { relatedProjects } from "@vercel/related-projects";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { decodeJwt } from "jose";
@@ -188,6 +189,9 @@ setupHonoErrorHandler(app);
 // Error handler
 app.onError((err, c) => {
   console.error(`${err}`);
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
   return c.json(
     {
       code: 500,

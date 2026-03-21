@@ -14,7 +14,11 @@ import { verifyMachineSessionToken } from "./mobile-machine-session.route";
 function getConvexHeartbeatConfig() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const deployKey = process.env.CONVEX_DEPLOY_KEY;
-  const jwtSecret = process.env.MOBILE_MACHINE_JWT_SECRET;
+  const jwtSecret =
+    process.env.MOBILE_MACHINE_JWT_SECRET ??
+    (process.env.NODE_ENV !== "production"
+      ? "cmux-local-dev-mobile-machine-jwt-secret"
+      : undefined);
 
   if (!convexUrl || !deployKey || !jwtSecret) {
     throw new Error(
