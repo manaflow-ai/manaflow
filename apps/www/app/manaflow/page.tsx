@@ -49,7 +49,7 @@ export default function ManaflowPage() {
         <img
           src="/cmux-screenshot.jpg"
           alt="cmux — the terminal built for coding agents"
-          className="mt-3 w-full rounded-lg -ml-4"
+          className="mt-3 w-full rounded-lg -ml-1.5 sm:-ml-4"
         />
 
         <div className="mt-6 flex gap-4 text-sm">
