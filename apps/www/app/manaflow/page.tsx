@@ -47,7 +47,7 @@ export default function ManaflowPage() {
           The open source terminal built for coding agents.
         </p>
         <img
-          src="/cmux-screenshot.jpg"
+          src="/cmux-screenshot.webp"
           alt="cmux — the terminal built for coding agents"
           className="mt-3 w-full rounded-lg -ml-2.5 sm:-ml-4"
         />
