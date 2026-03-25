@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 
 export default function ManaflowPage() {
   return (
-    <div className="min-h-screen bg-white px-4 py-10 text-black sm:py-16" style={{ fontFamily: "var(--font-geist-sans), sans-serif" }}>
+    <div className="bg-white px-4 py-10 text-black sm:min-h-screen sm:py-16" style={{ fontFamily: "var(--font-geist-sans), sans-serif" }}>
       <div className="mx-auto max-w-xl">
         <h1 className="mb-2 text-2xl font-bold sm:text-3xl">Manaflow</h1>
         <p className="mb-5 text-sm text-neutral-600 sm:mb-6 sm:text-base">
