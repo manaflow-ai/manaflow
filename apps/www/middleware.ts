@@ -9,6 +9,7 @@ function deprecationMiddleware(request: NextRequest) {
 
   // Block ALL API routes, analytics proxies, and error tunnels
   if (
+    pathname === "/api" ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/iiiii/") ||
     pathname.startsWith("/mtrerr")
@@ -40,4 +41,15 @@ export function middleware(request: NextRequest) {
   return proxy(request);
 }
 
-export { proxyConfig as config };
+// When deprecated, match all paths including /api/* (which proxyConfig excludes).
+// When not deprecated, use the original proxy matcher.
+export const config = MANAFLOW_DEPRECATED
+  ? {
+      matcher: [
+        "/api/:path*",
+        "/iiiii/:path*",
+        "/mtrerr",
+        "/((?!_next/static|_next/image|favicon.ico).*)",
+      ],
+    }
+  : proxyConfig;

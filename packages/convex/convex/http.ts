@@ -1,4 +1,5 @@
-import { httpAction, httpRouter } from "convex/server";
+import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server";
 import {
   crownEvaluate,
   crownSummarize,
