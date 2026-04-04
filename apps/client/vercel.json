@@ -1,8 +1,9 @@
 {
-  "rewrites": [
+  "redirects": [
     {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "https://manaflow.com",
+      "statusCode": 307
     }
   ],
   "relatedProjects": ["prj_2WNSLqIZWRGIIRMQLQrDom5DhivV"]
