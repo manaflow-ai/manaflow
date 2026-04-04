@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { MANAFLOW_DEPRECATED } from "@/lib/deprecation";
 import { env } from "@/lib/utils/www-env";
 
 /**
@@ -25,7 +26,42 @@ function hasStackCookie(
   );
 }
 
+function deprecationProxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const hostname = request.nextUrl.hostname;
+
+  // Block ALL API routes, analytics proxies, and error tunnels
+  if (
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/iiiii/") ||
+    pathname.startsWith("/mtrerr")
+  ) {
+    return NextResponse.json(
+      { error: "Manaflow is temporarily unavailable" },
+      { status: 503 }
+    );
+  }
+
+  // manaflow.com: show the existing landing page, don't redirect to itself
+  if (hostname === "manaflow.com" || hostname === "www.manaflow.com") {
+    if (pathname === "/") {
+      return NextResponse.rewrite(new URL("/manaflow", request.url));
+    }
+    // Let the manaflow landing page and its assets render
+    return NextResponse.next();
+  }
+
+  // Everything else (cmux.sh, 0github.com, preview.new, cloudrouter.dev, etc.)
+  // gets a temporary redirect to manaflow.com
+  return NextResponse.redirect("https://manaflow.com", 307);
+}
+
 export function proxy(request: NextRequest) {
+  if (MANAFLOW_DEPRECATED) {
+    return deprecationProxy(request);
+  }
+
   const { pathname } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
 
@@ -108,26 +144,16 @@ export function proxy(request: NextRequest) {
   return NextResponse.next();
 }
 
+// TEMPORARY DEPRECATION: matcher includes /api/* so the deprecation guard runs.
+// To restore, replace with the original matcher that excludes api paths:
+//   "/:owner/:repo/pull/:number",
+//   "/:owner/:repo/compare/:path*",
+//   "/((?!api|_next/static|_next/image|favicon.ico).*)",
 export const config = {
   matcher: [
-    /*
-     * Match all PR review and comparison pages:
-     * - /:owner/:repo/pull/:number
-     * - /:owner/:repo/compare/...
-     * But exclude:
-     * - /api routes
-     * - /_next (Next.js internals)
-     * - Static files
-     */
-    "/:owner/:repo/pull/:number",
-    "/:owner/:repo/compare/:path*",
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    "/((?!api|_next/static|_next/image|favicon.ico).*)",
+    "/api/:path*",
+    "/iiiii/:path*",
+    "/mtrerr",
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };
