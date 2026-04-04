@@ -637,8 +637,20 @@ function rewriteLoopbackRedirect(
   });
 }
 
+// =============================================================================
+// TEMPORARY DEPRECATION FLAG
+// Set to false to restore normal edge-router operation.
+// Search for "MANAFLOW_DEPRECATED" across the repo to find all references.
+// =============================================================================
+const MANAFLOW_DEPRECATED = true;
+
 export default {
   async fetch(request: Request): Promise<Response> {
+    // When deprecated, redirect everything to manaflow.com
+    if (MANAFLOW_DEPRECATED) {
+      return Response.redirect("https://manaflow.com", 307);
+    }
+
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
 

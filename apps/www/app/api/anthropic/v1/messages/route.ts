@@ -1,3 +1,4 @@
+import { MANAFLOW_DEPRECATED } from "@/lib/deprecation";
 import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
 import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "@cmux/shared/utils/anthropic";
 import { env } from "@/lib/utils/www-env";
@@ -84,6 +85,13 @@ function getSource(request: NextRequest): AnthropicProxySource {
 }
 
 export async function POST(request: NextRequest) {
+  if (MANAFLOW_DEPRECATED) {
+    return NextResponse.json(
+      { error: "Manaflow is temporarily unavailable" },
+      { status: 503 },
+    );
+  }
+
   const startTime = Date.now();
   const source = getSource(request);
   let tokenPayload: TaskRunTokenPayload | null = null;

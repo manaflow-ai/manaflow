@@ -1,6 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { SENTRY_RELEASE } from "./lib/sentry-release";
+import { MANAFLOW_DEPRECATED } from "./lib/deprecation";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["morphcloud", "ssh2", "node-ssh", "cpu-features"],
@@ -14,6 +15,11 @@ const nextConfig: NextConfig = {
     "refractor",
   ],
   async rewrites() {
+    // TEMPORARY DEPRECATION: PostHog proxy rewrites disabled to prevent analytics API calls.
+    // To restore: remove the MANAFLOW_DEPRECATED guard.
+    if (MANAFLOW_DEPRECATED) {
+      return [];
+    }
     return [
       {
         source: "/iiiii/static/:path*",

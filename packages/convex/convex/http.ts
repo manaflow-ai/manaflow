@@ -1,4 +1,4 @@
-import { httpRouter } from "convex/server";
+import { httpAction, httpRouter } from "convex/server";
 import {
   crownEvaluate,
   crownSummarize,
@@ -61,156 +61,177 @@ import {
 } from "./devbox_v2_http";
 import { ingestHeartbeat as mobileIngestHeartbeat } from "./mobile_http";
 
+// =============================================================================
+// TEMPORARY DEPRECATION FLAG
+// Set to false to restore normal Convex HTTP operation.
+// Search for "MANAFLOW_DEPRECATED" across the repo to find all references.
+// =============================================================================
+const MANAFLOW_DEPRECATED = true;
+
+const deprecatedHandler = httpAction(async () => {
+  return new Response(
+    JSON.stringify({ error: "Manaflow is temporarily unavailable" }),
+    { status: 503, headers: { "Content-Type": "application/json" } },
+  );
+});
+
+// Helper: wrap handler with deprecation guard. When MANAFLOW_DEPRECATED is true,
+// all routes return 503. To restore: set MANAFLOW_DEPRECATED = false and replace
+// `d(handler)` back to `handler` (or just leave it, the wrapper becomes a no-op).
+function d(handler: ReturnType<typeof httpAction>) {
+  return MANAFLOW_DEPRECATED ? deprecatedHandler : handler;
+}
+
 const http = httpRouter();
 
 http.route({
   path: "/github_webhook",
   method: "POST",
-  handler: githubWebhook,
+  handler: d(githubWebhook),
 });
 
 http.route({
   path: "/stack_webhook",
   method: "POST",
-  handler: stackWebhook,
+  handler: d(stackWebhook),
 });
 
 http.route({
   path: "/api/crown/evaluate-agents",
   method: "POST",
-  handler: crownEvaluate,
+  handler: d(crownEvaluate),
 });
 
 http.route({
   path: "/api/crown/summarize",
   method: "POST",
-  handler: crownSummarize,
+  handler: d(crownSummarize),
 });
 
 http.route({
   path: "/api/crown/check",
   method: "POST",
-  handler: crownWorkerCheck,
+  handler: d(crownWorkerCheck),
 });
 
 http.route({
   path: "/api/crown/finalize",
   method: "POST",
-  handler: crownWorkerFinalize,
+  handler: d(crownWorkerFinalize),
 });
 
 http.route({
   path: "/api/crown/complete",
   method: "POST",
-  handler: crownWorkerComplete,
+  handler: d(crownWorkerComplete),
 });
 
 http.route({
   path: "/api/notifications/agent-stopped",
   method: "POST",
-  handler: agentStopped,
+  handler: d(agentStopped),
 });
 
 http.route({
   path: "/api/screenshots/upload",
   method: "POST",
-  handler: uploadScreenshot,
+  handler: d(uploadScreenshot),
 });
 
 http.route({
   path: "/api/screenshots/upload-url",
   method: "POST",
-  handler: createScreenshotUploadUrl,
+  handler: d(createScreenshotUploadUrl),
 });
 
 http.route({
   path: "/api/code-review/callback",
   method: "POST",
-  handler: codeReviewJobCallback,
+  handler: d(codeReviewJobCallback),
 });
 
 http.route({
   path: "/api/code-review/file-callback",
   method: "POST",
-  handler: codeReviewFileCallback,
+  handler: d(codeReviewFileCallback),
 });
 
 http.route({
   path: "/github_setup",
   method: "GET",
-  handler: githubSetup,
+  handler: d(githubSetup),
 });
 
 http.route({
   path: "/api/task-runs/report-environment-error",
   method: "POST",
-  handler: reportEnvironmentError,
+  handler: d(reportEnvironmentError),
 });
 
 http.route({
   path: "/api/preview/jobs/dispatch",
   method: "POST",
-  handler: dispatchPreviewJob,
+  handler: d(dispatchPreviewJob),
 });
 
 http.route({
   path: "/api/preview/update-status",
   method: "POST",
-  handler: updatePreviewStatus,
+  handler: d(updatePreviewStatus),
 });
 
 http.route({
   path: "/api/preview/create-screenshot-set",
   method: "POST",
-  handler: createScreenshotSet,
+  handler: d(createScreenshotSet),
 });
 
 http.route({
   path: "/api/preview/complete",
   method: "POST",
-  handler: completePreviewJob,
+  handler: d(completePreviewJob),
 });
 
 http.route({
   path: "/api/preview/test-task",
   method: "POST",
-  handler: createTestPreviewTask,
+  handler: d(createTestPreviewTask),
 });
 
 http.route({
   path: "/api/host-screenshot-collector/sync",
   method: "POST",
-  handler: syncHostScreenshotCollectorRelease,
+  handler: d(syncHostScreenshotCollectorRelease),
 });
 
 http.route({
   path: "/api/host-screenshot-collector/latest",
   method: "GET",
-  handler: getLatestHostScreenshotCollector,
+  handler: d(getLatestHostScreenshotCollector),
 });
 
 http.route({
   path: "/api/anthropic/v1/messages",
   method: "POST",
-  handler: anthropicProxy,
+  handler: d(anthropicProxy),
 });
 
 http.route({
   path: "/api/anthropic/v1/messages/count_tokens",
   method: "POST",
-  handler: anthropicCountTokens,
+  handler: d(anthropicCountTokens),
 });
 
 http.route({
   path: "/api/anthropic/api/event_logging/batch",
   method: "POST",
-  handler: anthropicEventLogging,
+  handler: d(anthropicEventLogging),
 });
 
 http.route({
   path: "/api/mobile/heartbeat",
   method: "POST",
-  handler: mobileIngestHeartbeat,
+  handler: d(mobileIngestHeartbeat),
 });
 
 // Media proxy endpoint for serving storage files with proper Content-Type headers
@@ -219,7 +240,7 @@ http.route({
 http.route({
   pathPrefix: "/api/media/",
   method: "GET",
-  handler: serveMedia,
+  handler: d(serveMedia),
 });
 
 // =============================================================================
@@ -229,26 +250,26 @@ http.route({
 http.route({
   path: "/api/v1/devbox/instances",
   method: "POST",
-  handler: devboxCreateInstance,
+  handler: d(devboxCreateInstance),
 });
 
 http.route({
   path: "/api/v1/devbox/instances",
   method: "GET",
-  handler: devboxListInstances,
+  handler: d(devboxListInstances),
 });
 
 // Instance-specific routes use pathPrefix to capture the instance ID
 http.route({
   pathPrefix: "/api/v1/devbox/instances/",
   method: "GET",
-  handler: devboxInstanceGetRouter,
+  handler: d(devboxInstanceGetRouter),
 });
 
 http.route({
   pathPrefix: "/api/v1/devbox/instances/",
   method: "POST",
-  handler: devboxInstanceActionRouter,
+  handler: d(devboxInstanceActionRouter),
 });
 
 // =============================================================================
@@ -258,56 +279,56 @@ http.route({
 http.route({
   path: "/api/v1/cmux/instances",
   method: "POST",
-  handler: cmuxCreateInstance,
+  handler: d(cmuxCreateInstance),
 });
 
 http.route({
   path: "/api/v1/cmux/instances",
   method: "GET",
-  handler: cmuxListInstances,
+  handler: d(cmuxListInstances),
 });
 
 http.route({
   path: "/api/v1/cmux/snapshots",
   method: "GET",
-  handler: cmuxListSnapshots,
+  handler: d(cmuxListSnapshots),
 });
 
 http.route({
   pathPrefix: "/api/v1/cmux/snapshots/",
   method: "GET",
-  handler: cmuxGetSnapshot,
+  handler: d(cmuxGetSnapshot),
 });
 
 http.route({
   path: "/api/v1/cmux/config",
   method: "GET",
-  handler: cmuxGetConfig,
+  handler: d(cmuxGetConfig),
 });
 
 http.route({
   path: "/api/v1/cmux/me",
   method: "GET",
-  handler: cmuxGetMe,
+  handler: d(cmuxGetMe),
 });
 
 // Instance-specific routes use pathPrefix to capture the instance ID
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "GET",
-  handler: cmuxInstanceGetRouter,
+  handler: d(cmuxInstanceGetRouter),
 });
 
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "POST",
-  handler: cmuxInstanceActionRouter,
+  handler: d(cmuxInstanceActionRouter),
 });
 
 http.route({
   pathPrefix: "/api/v1/cmux/instances/",
   method: "DELETE",
-  handler: cmuxInstanceDeleteRouter,
+  handler: d(cmuxInstanceDeleteRouter),
 });
 
 // =============================================================================
@@ -317,44 +338,44 @@ http.route({
 http.route({
   path: "/api/v2/devbox/instances",
   method: "POST",
-  handler: devboxV2CreateInstance,
+  handler: d(devboxV2CreateInstance),
 });
 
 http.route({
   path: "/api/v2/devbox/instances",
   method: "GET",
-  handler: devboxV2ListInstances,
+  handler: d(devboxV2ListInstances),
 });
 
 http.route({
   path: "/api/v2/devbox/config",
   method: "GET",
-  handler: devboxV2GetConfig,
+  handler: d(devboxV2GetConfig),
 });
 
 http.route({
   path: "/api/v2/devbox/templates",
   method: "GET",
-  handler: devboxV2ListTemplates,
+  handler: d(devboxV2ListTemplates),
 });
 
 http.route({
   path: "/api/v2/devbox/me",
   method: "GET",
-  handler: devboxV2GetMe,
+  handler: d(devboxV2GetMe),
 });
 
 // Instance-specific routes use pathPrefix to capture the instance ID
 http.route({
   pathPrefix: "/api/v2/devbox/instances/",
   method: "GET",
-  handler: devboxV2InstanceGetRouter,
+  handler: d(devboxV2InstanceGetRouter),
 });
 
 http.route({
   pathPrefix: "/api/v2/devbox/instances/",
   method: "POST",
-  handler: devboxV2InstanceActionRouter,
+  handler: d(devboxV2InstanceActionRouter),
 });
 
 export default http;

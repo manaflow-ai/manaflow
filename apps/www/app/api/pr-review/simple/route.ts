@@ -1,3 +1,4 @@
+import { MANAFLOW_DEPRECATED } from "@/lib/deprecation";
 import { NextRequest, NextResponse } from "next/server";
 
 import { stackServerApp } from "@/lib/utils/stack";
@@ -42,6 +43,13 @@ function parsePrNumber(raw: string | null): number | null {
 }
 
 export async function GET(request: NextRequest) {
+  if (MANAFLOW_DEPRECATED) {
+    return NextResponse.json(
+      { error: "Manaflow is temporarily unavailable" },
+      { status: 503 },
+    );
+  }
+
   try {
     const { searchParams } = request.nextUrl;
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
