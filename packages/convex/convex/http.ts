@@ -53,6 +53,7 @@ import {
 } from "./cmux_http";
 import {
   createInstance as devboxV2CreateInstance,
+  captureTelemetry as devboxV2CaptureTelemetry,
   listInstances as devboxV2ListInstances,
   listTemplates as devboxV2ListTemplates,
   getConfig as devboxV2GetConfig,
@@ -364,6 +365,12 @@ http.route({
   path: "/api/v2/devbox/me",
   method: "GET",
   handler: d(devboxV2GetMe),
+});
+
+http.route({
+  path: "/api/v2/devbox/telemetry",
+  method: "POST",
+  handler: devboxV2CaptureTelemetry,
 });
 
 // Instance-specific routes use pathPrefix to capture the instance ID
