@@ -26,6 +26,7 @@ export * from "./pull-request-state";
 export * from "./iframe-preflight";
 export * from "./morph-snapshots";
 export * from "./e2b-templates";
+export * from "./vercel-templates";
 export * from "./screenshots/types";
 export * from "./config/host-config";
 // Note: useNetwork hook is NOT exported here to avoid SSR issues.

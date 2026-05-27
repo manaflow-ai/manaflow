@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-02-14T00:00:00Z",
+  "templates": [
+    {
+      "templateId": "vercel-sandbox-node24",
+      "label": "Node.js 24",
+      "runtime": "node24",
+      "cpu": "2 vCPU",
+      "memory": "4 GB RAM",
+      "description": "Vercel Sandbox with Node.js 24 runtime. Fast startup, ephemeral microVM. Good for web development, API testing, and general Node.js tasks.",
+      "useCases": ["web-dev", "api-testing", "node-tasks"],
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-14T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "templateId": "vercel-sandbox-node22",
+      "label": "Node.js 22",
+      "runtime": "node22",
+      "cpu": "2 vCPU",
+      "memory": "4 GB RAM",
+      "description": "Vercel Sandbox with Node.js 22 LTS runtime. Stable, production-grade runtime for Node.js development and testing.",
+      "useCases": ["web-dev", "api-testing", "node-tasks", "lts"],
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-14T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "templateId": "vercel-sandbox-python",
+      "label": "Python 3.13",
+      "runtime": "python3.13",
+      "cpu": "2 vCPU",
+      "memory": "4 GB RAM",
+      "description": "Vercel Sandbox with Python 3.13 runtime. For scripting, data processing, and Python development.",
+      "useCases": ["scripting", "data-processing", "python-dev"],
+      "versions": [
+        {
+          "version": 1,
+          "capturedAt": "2026-02-14T00:00:00Z"
+        }
+      ]
+    }
+  ]
+}
