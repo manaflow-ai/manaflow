@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { FadeInImage } from "./fade-in-image";
+
 export const metadata: Metadata = {
   title: "Manaflow - Open Source Applied AI Lab",
   description:
@@ -46,7 +48,7 @@ export default function ManaflowPage() {
         <p className="mt-1 text-xs text-neutral-600 sm:text-sm">
           The open source terminal built for coding agents.
         </p>
-        <img
+        <FadeInImage
           src="/cmux-screenshot.webp"
           alt="cmux — the terminal built for coding agents"
           width={3840}
