@@ -98,6 +98,8 @@ import {
   HEATMAP_MODEL_QUERY_KEY,
   HEATMAP_LANGUAGE_QUERY_KEY,
   TOOLTIP_LANGUAGE_OPTIONS,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  detectBrowserLanguage,
   getInitialTooltipLanguage,
   normalizeHeatmapModelQueryValue,
   TOOLTIP_LANGUAGE_STORAGE_KEY,
@@ -608,6 +610,25 @@ export function PullRequestDiffViewer({
       key: TOOLTIP_LANGUAGE_STORAGE_KEY,
       defaultValue: getInitialTooltipLanguage(),
     });
+  // Detect browser language only on first visit (when no stored preference exists)
+  const hasInitializedLanguageRef = useRef(false);
+  useEffect(() => {
+    if (hasInitializedLanguageRef.current) {
+      return;
+    }
+    hasInitializedLanguageRef.current = true;
+    const STORAGE_KEY = "cmux-tooltip-language";
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored === null) {
+        // First visit: detect browser language and persist it
+        const detected = detectBrowserLanguage();
+        setTooltipLanguagePreference(detected);
+      }
+    } catch (error) {
+      console.error("[tooltip-language] Failed to check storage", error);
+    }
+  }, [setTooltipLanguagePreference]);
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
     normalizedHeatmapModelPreference
   );
@@ -638,7 +659,7 @@ export function PullRequestDiffViewer({
       }
 
       const model = options?.modelOverride ?? heatmapModelPreferenceRef.current;
-      // Use synchronous language getter to get the correct language from localStorage
+      // Use getInitialTooltipLanguage() to synchronously read the correct language
       // or browser detection, avoiding race conditions on initial mount.
       const language =
         options?.languageOverride ?? getInitialTooltipLanguage();
@@ -1045,8 +1066,9 @@ export function PullRequestDiffViewer({
   // Skip Convex queries on 0github.com since teamSlugOrId is the GitHub owner, not a real team.
   // Also skip when is0Github is null (unknown during SSR/hydration) to avoid premature queries.
   // The streaming heatmap review works independently of these queries.
-  // Cache lookups use tooltipLanguagePreference which is now correctly initialized via
-  // getInitialTooltipLanguage() to avoid race conditions.
+  // Also skip when language is not default - the cache only has English data since the streaming
+  // API doesn't persist results. Non-English users will only see streamed results.
+  const shouldSkipCache = tooltipLanguagePreference !== DEFAULT_TOOLTIP_LANGUAGE;
 
   const prQueryArgs = useMemo(
     () =>
@@ -1054,7 +1076,8 @@ export function PullRequestDiffViewer({
       is0Github === true ||
       normalizedJobType !== "pull_request" ||
       prNumber === null ||
-      prNumber === undefined
+      prNumber === undefined ||
+      shouldSkipCache
         ? ("skip" as const)
         : {
             teamSlugOrId,
@@ -1071,6 +1094,7 @@ export function PullRequestDiffViewer({
       repoFullName,
       prNumber,
       tooltipLanguagePreference,
+      shouldSkipCache,
       commitRef,
       baseCommitRef,
     ]
@@ -1081,7 +1105,8 @@ export function PullRequestDiffViewer({
       is0Github === null ||
       is0Github === true ||
       normalizedJobType !== "comparison" ||
-      !comparisonSlug
+      !comparisonSlug ||
+      shouldSkipCache
         ? ("skip" as const)
         : {
             teamSlugOrId,
@@ -1098,6 +1123,7 @@ export function PullRequestDiffViewer({
       repoFullName,
       comparisonSlug,
       tooltipLanguagePreference,
+      shouldSkipCache,
       commitRef,
       baseCommitRef,
     ]
