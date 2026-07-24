@@ -13,13 +13,16 @@ describe("theme view transitions", () => {
         prefersReducedMotion: false,
         visibilityState: "hidden",
         hasViewTransitionAPI: true,
-      })
+      }),
     ).toBe(false);
   });
 
   it("observes rejected transition promises without rethrowing", async () => {
     const rejected = Promise.reject(
-      new DOMException("Transition was aborted because of invalid state", "InvalidStateError")
+      new DOMException(
+        "Transition was aborted because of invalid state",
+        "InvalidStateError",
+      ),
     );
 
     await expect(
@@ -27,7 +30,7 @@ describe("theme view transitions", () => {
         ready: rejected,
         updateCallbackDone: Promise.resolve(),
         finished: Promise.resolve(),
-      })
+      }),
     ).resolves.toBeUndefined();
   });
 });

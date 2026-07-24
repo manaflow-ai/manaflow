@@ -9,7 +9,7 @@ describe("buildContainerSettingsUpdatePayload", () => {
         teamSlugOrId: "team-slug",
         maxRunningContainers: 7,
         autoCleanupEnabled: false,
-      })
+      }),
     ).toEqual({
       maxRunningContainers: 7,
       autoCleanupEnabled: false,
