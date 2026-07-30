@@ -1,28 +1,29 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { FadeInImage } from "./fade-in-image";
 
 export const metadata: Metadata = {
   title: "Manaflow - Open Source Applied AI Lab",
-  description:
-    "Open source applied AI lab building next-gen devtools",
+  description: "Open source applied AI lab building next-gen devtools",
   openGraph: {
     title: "Manaflow - Open Source Applied AI Lab",
-    description:
-      "Open source applied AI lab building next-gen devtools",
+    description: "Open source applied AI lab building next-gen devtools",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Manaflow - Open Source Applied AI Lab",
-    description:
-      "Open source applied AI lab building next-gen devtools",
+    description: "Open source applied AI lab building next-gen devtools",
   },
 };
 
 export default function ManaflowPage() {
   return (
-    <div className="min-h-dvh overscroll-none bg-white px-4 py-10 text-black sm:min-h-screen sm:py-16" style={{ fontFamily: "var(--font-geist-sans), sans-serif" }}>
+    <div
+      className="min-h-dvh overscroll-none bg-white px-4 py-10 text-black sm:min-h-screen sm:py-16"
+      style={{ fontFamily: "var(--font-geist-sans), sans-serif" }}
+    >
       <div className="mx-auto max-w-xl">
         <h1 className="mb-2 text-2xl font-bold sm:text-3xl">Manaflow</h1>
         <p className="mb-5 text-sm text-neutral-600 sm:mb-6 sm:text-base">
@@ -86,6 +87,23 @@ export default function ManaflowPage() {
             className="text-neutral-500 hover:text-black hover:underline"
           >
             linkedin
+          </a>
+        </div>
+        <div className="mt-5 border-t border-neutral-200 pt-4 text-xs sm:mt-6 sm:text-sm">
+          <Link
+            href="/company-information"
+            className="text-neutral-500 hover:text-black hover:underline"
+          >
+            company information
+          </Link>
+          <span className="mx-2 text-neutral-300" aria-hidden>
+            ·
+          </span>
+          <a
+            href="mailto:founders@manaflow.com"
+            className="text-neutral-500 hover:text-black hover:underline"
+          >
+            contact
           </a>
         </div>
       </div>
