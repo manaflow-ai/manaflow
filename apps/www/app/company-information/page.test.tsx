@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import CompanyInformationPage, { metadata } from "./page";
+import ManaflowPage from "../manaflow/page";
 
 describe("company information", () => {
   it("publishes the legal entity, contact, address, and both domains", () => {
@@ -21,5 +22,15 @@ describe("company information", () => {
     expect(metadata.alternates?.canonical).toBe(
       "https://manaflow.com/company-information",
     );
+  });
+
+  it("keeps the direct page out of search indexes", () => {
+    expect(metadata.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("does not link the direct page from the public Manaflow page", () => {
+    const html = renderToStaticMarkup(<ManaflowPage />);
+
+    expect(html).not.toContain('href="/company-information"');
   });
 });

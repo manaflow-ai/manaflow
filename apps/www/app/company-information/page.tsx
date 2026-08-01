@@ -12,6 +12,10 @@ export const metadata: Metadata = {
   title: "Company information — Manaflow",
   description:
     "Legal entity, address, contact, and domain information for Manaflow and cmux",
+  robots: {
+    index: false,
+    follow: false,
+  },
   alternates: {
     canonical: "https://manaflow.com/company-information",
   },

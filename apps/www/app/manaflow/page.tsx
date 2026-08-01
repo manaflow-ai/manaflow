@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
 import { FadeInImage } from "./fade-in-image";
 
@@ -90,15 +89,6 @@ export default function ManaflowPage() {
           </a>
         </div>
         <div className="mt-5 border-t border-neutral-200 pt-4 text-xs sm:mt-6 sm:text-sm">
-          <Link
-            href="/company-information"
-            className="text-neutral-500 hover:text-black hover:underline"
-          >
-            company information
-          </Link>
-          <span className="mx-2 text-neutral-300" aria-hidden>
-            ·
-          </span>
           <a
             href="mailto:founders@manaflow.com"
             className="text-neutral-500 hover:text-black hover:underline"
