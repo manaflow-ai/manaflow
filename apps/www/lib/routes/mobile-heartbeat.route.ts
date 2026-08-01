@@ -14,15 +14,22 @@ const HeartbeatWorkspace = z.object({
   lastEventAt: z.number().optional(),
 });
 
+const HeartbeatDirectConnect = z.object({
+  directPort: z.number(),
+  directTlsPins: z.array(z.string()),
+  ticketSecret: z.string(),
+});
+
 const HeartbeatBody = z
   .object({
     machineId: z.string(),
     displayName: z.string(),
     tailscaleHostname: z.string().optional(),
     tailscaleIPs: z.array(z.string()),
-    status: z.enum(["online", "offline", "unknown"]),
+    status: z.string(),
     lastSeenAt: z.number().optional(),
     lastWorkspaceSyncAt: z.number().optional(),
+    directConnect: HeartbeatDirectConnect.optional(),
     workspaces: z.array(HeartbeatWorkspace),
   })
   .openapi("MobileHeartbeatBody");
@@ -48,9 +55,10 @@ export async function publishMobileHeartbeatToConvex(args: {
   displayName: string;
   tailscaleHostname?: string;
   tailscaleIPs: string[];
-  status: "online" | "offline" | "unknown";
+  status: string;
   lastSeenAt: number;
   lastWorkspaceSyncAt?: number;
+  directConnect?: z.infer<typeof HeartbeatDirectConnect>;
   workspaces: Array<z.infer<typeof HeartbeatWorkspace>>;
 }) {
   const { convexUrl, deployKey } = getConvexHeartbeatConfig();
@@ -138,6 +146,7 @@ export function createMobileHeartbeatRouter(options?: {
         status: body.status,
         lastSeenAt: body.lastSeenAt ?? now(),
         lastWorkspaceSyncAt: body.lastWorkspaceSyncAt ?? now(),
+        directConnect: body.directConnect,
         workspaces: body.workspaces,
       });
 

@@ -22,8 +22,11 @@ import {
   githubOAuthTokenRouter,
   healthRouter,
   morphRouter,
+  mobileAnalyticsRouter,
   mobileHeartbeatRouter,
   mobileMachineSessionRouter,
+  mobilePushRouter,
+  mobileWorkspaceReadRouter,
   sandboxesRouter,
   teamsRouter,
   usersRouter,
@@ -138,8 +141,11 @@ app.route("/", githubPrsFileContentsBatchRouter);
 app.route("/", githubInstallStateRouter);
 app.route("/", githubOAuthTokenRouter);
 app.route("/", githubBranchesRouter);
+app.route("/", mobileAnalyticsRouter);
 app.route("/", mobileMachineSessionRouter);
 app.route("/", mobileHeartbeatRouter);
+app.route("/", mobilePushRouter);
+app.route("/", mobileWorkspaceReadRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);
