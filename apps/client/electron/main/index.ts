@@ -58,6 +58,7 @@ import {
 } from "./stack-auth-cookies";
 import { computeSetAsDefaultProtocolClientCall } from "./protocol-registration";
 import { getMobileMachineInfo } from "./mobile-machine-info";
+import { isProtocolWindowUsable } from "./protocol-window-lifecycle";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:manaflow";
@@ -91,13 +92,17 @@ const LOG_ROTATION: LogRotationOptions = {
   maxBackups: 3,
 };
 
-
 let rendererLoaded = false;
 let pendingProtocolUrl: string | null = null;
 let mainWindow: BrowserWindow | null = null;
 let previewReloadMenuItem: MenuItem | null = null;
 let previewBackMenuItem: MenuItem | null = null;
 let previewForwardMenuItem: MenuItem | null = null;
+
+function getUsableMainWindow(): BrowserWindow | null {
+  const window = mainWindow;
+  return isProtocolWindowUsable(window) ? window : null;
+}
 let previewFocusAddressMenuItem: MenuItem | null = null;
 let previewReloadMenuVisible = false;
 let historyBackMenuItem: MenuItem | null = null;
@@ -125,20 +130,20 @@ function writeMainLogLine(level: "LOG" | "WARN" | "ERROR", line: string): void {
   appendLogWithRotation(
     mainLogPath,
     `[${getTimestamp()}] [MAIN] [${level}] ${line}\n`,
-    LOG_ROTATION
+    LOG_ROTATION,
   );
 }
 
 function writeRendererLogLine(
   level: "info" | "warning" | "error" | "debug",
-  line: string
+  line: string,
 ): void {
   if (!rendererLogPath) ensureLogFiles();
   if (!rendererLogPath) return;
   appendLogWithRotation(
     rendererLogPath,
     `[${getTimestamp()}] [RENDERER] [${level.toUpperCase()}] ${line}\n`,
-    LOG_ROTATION
+    LOG_ROTATION,
   );
 }
 
@@ -242,7 +247,7 @@ function setupPreviewProxyCertificateTrust(): void {
   // Actually, let's just do it here and hope it works for new requests, or move it out.
   // Documentation says "This switch must be set before the app is ready".
   // So we should call a separate function for it.
-  
+
   app.on(
     "certificate-error",
     (event, _webContents, url, error, certificate, callback) => {
@@ -257,7 +262,7 @@ function setupPreviewProxyCertificateTrust(): void {
       } else {
         callback(false);
       }
-    }
+    },
   );
 }
 
@@ -265,7 +270,10 @@ function setupSpkiWhitelist() {
   try {
     const certManager = new CertificateManager();
     const fingerprint = certManager.getCaSpkiFingerprint();
-    app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", fingerprint);
+    app.commandLine.appendSwitch(
+      "ignore-certificate-errors-spki-list",
+      fingerprint,
+    );
     console.log("[MAIN] Added SPKI whitelist for proxy CA:", fingerprint);
   } catch (error) {
     console.error("[MAIN] Failed to setup SPKI whitelist", error);
@@ -298,7 +306,7 @@ function formatArgs(args: unknown[]): string {
   const ts = new Date().toISOString();
   const body = args
     .map((a) =>
-      typeof a === "string" ? a : util.inspect(a, { depth: 3, colors: false })
+      typeof a === "string" ? a : util.inspect(a, { depth: 3, colors: false }),
     )
     .join(" ");
   return `[${ts}] ${body}`;
@@ -327,7 +335,7 @@ export function mainError(...args: unknown[]) {
 
 function sendShortcutToFocusedWindow(
   eventName: string,
-  payload?: unknown
+  payload?: unknown,
 ): boolean {
   try {
     const target = getActiveBrowserWindow();
@@ -364,7 +372,7 @@ ipcMain.handle(
   async (_event, visible: unknown) => {
     setPreviewReloadMenuVisibility(Boolean(visible));
     return { ok: true };
-  }
+  },
 );
 
 function emitAutoUpdateToastIfPossible(): void {
@@ -373,7 +381,7 @@ function emitAutoUpdateToastIfPossible(): void {
   try {
     mainWindow.webContents.send(
       "cmux:event:auto-update:ready",
-      queuedAutoUpdateToast
+      queuedAutoUpdateToast,
     );
     queuedAutoUpdateToast = null;
   } catch (error) {
@@ -395,7 +403,7 @@ function resolveSemverVersion(value: string | null | undefined): string | null {
 }
 
 function isUpdateNewerThanCurrent(
-  info: UpdateInfo | null | undefined
+  info: UpdateInfo | null | undefined,
 ): boolean {
   if (!info) return false;
 
@@ -433,7 +441,7 @@ function isUpdateNewerThanCurrent(
 
 function logUpdateCheckResult(
   context: string,
-  result: UpdateCheckResult | null | undefined
+  result: UpdateCheckResult | null | undefined,
 ): void {
   if (!result) {
     mainLog(`${context} completed`, { updateAvailable: false });
@@ -483,7 +491,7 @@ function registerAutoUpdateIpcHandlers(): void {
   ipcMain.handle("cmux:auto-update:check", async () => {
     if (!app.isPackaged) {
       mainLog(
-        "Auto-update check requested while app is not packaged; ignoring request"
+        "Auto-update check requested while app is not packaged; ignoring request",
       );
       return { ok: false, reason: "not-packaged" as const };
     }
@@ -514,7 +522,7 @@ function registerAutoUpdateIpcHandlers(): void {
   ipcMain.handle("cmux:auto-update:install", async () => {
     if (!app.isPackaged) {
       mainLog(
-        "Auto-update install requested while app is not packaged; ignoring request"
+        "Auto-update install requested while app is not packaged; ignoring request",
       );
       return { ok: false, reason: "not-packaged" as const };
     }
@@ -569,7 +577,6 @@ function registerAppIpcHandlers(): void {
   });
 }
 
-
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
     mainLog("Skipping auto-updates in development");
@@ -618,15 +625,15 @@ function setupAutoUpdates(): void {
 
   autoUpdater.on("checking-for-update", () => mainLog("Checking for update…"));
   autoUpdater.on("update-available", (info) =>
-    mainLog("Update available", info?.version)
+    mainLog("Update available", info?.version),
   );
   autoUpdater.on("update-not-available", () => mainLog("No updates available"));
   autoUpdater.on("error", (err) => mainWarn("Updater error", err));
   autoUpdater.on("download-progress", (p) =>
     mainLog(
       "Update download progress",
-      `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`
-    )
+      `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`,
+    ),
   );
   autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     const version =
@@ -643,7 +650,7 @@ function setupAutoUpdates(): void {
         {
           version,
           currentVersion: app.getVersion(),
-        }
+        },
       );
       return;
     }
@@ -657,7 +664,7 @@ function setupAutoUpdates(): void {
   autoUpdater
     .checkForUpdatesAndNotify()
     .then((result) =>
-      logUpdateCheckResult("Initial checkForUpdatesAndNotify", result)
+      logUpdateCheckResult("Initial checkForUpdatesAndNotify", result),
     )
     .catch((e) => mainWarn("checkForUpdatesAndNotify failed", e));
   const CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -667,14 +674,14 @@ function setupAutoUpdates(): void {
     autoUpdater
       .checkForUpdates()
       .then((result) =>
-        logUpdateCheckResult("Scheduled checkForUpdates", result)
+        logUpdateCheckResult("Scheduled checkForUpdates", result),
       )
       .catch((e) => mainWarn("Periodic checkForUpdates failed", e));
   }, CHECK_INTERVAL_MS); // 30 minutes
 }
 
 async function handleOrQueueProtocolUrl(url: string) {
-  if (mainWindow && rendererLoaded) {
+  if (getUsableMainWindow() && rendererLoaded) {
     mainLog("Handling protocol URL immediately", { url });
     await handleProtocolUrl(url);
   } else {
@@ -703,13 +710,21 @@ function createWindow(): void {
 
   // Use only the icon from manaflow-logos iconset.
   const iconPng = resolveResourcePath(
-    "manaflow-logos/manaflow.iconset/icon_512x512.png"
+    "manaflow-logos/manaflow.iconset/icon_512x512.png",
   );
   if (process.platform !== "darwin") {
     windowOptions.icon = iconPng;
   }
 
-  mainWindow = new BrowserWindow(windowOptions);
+  rendererLoaded = false;
+  const createdWindow = new BrowserWindow(windowOptions);
+  mainWindow = createdWindow;
+  createdWindow.on("closed", () => {
+    if (mainWindow === createdWindow) {
+      mainWindow = null;
+      rendererLoaded = false;
+    }
+  });
 
   // Capture renderer console output into renderer.log
   mainWindow.webContents.on(
@@ -720,7 +735,7 @@ function createWindow(): void {
         : "";
       const msg = src ? `${message} (${src})` : message;
       writeRendererLogLine(level, msg);
-    }
+    },
   );
 
   mainWindow.on("ready-to-show", () => {
@@ -754,7 +769,7 @@ function createWindow(): void {
       validatedURL,
       isMainFrame,
       frameProcessId,
-      frameRoutingId
+      frameRoutingId,
     ) => {
       mainWarn("did-fail-load", {
         errorCode,
@@ -764,7 +779,7 @@ function createWindow(): void {
         frameProcessId,
         frameRoutingId,
       });
-    }
+    },
   );
 
   mainWindow.webContents.on("did-navigate", (_e, url) => {
@@ -805,7 +820,7 @@ app.on("browser-window-focus", (_event, window) => {
       { windowId: window.id };
     window.webContents.send(
       `cmux:event:${ELECTRON_WINDOW_FOCUS_EVENT}`,
-      payload
+      payload,
     );
   } catch (error) {
     mainWarn("Failed to emit window focus event to renderer", error);
@@ -1021,7 +1036,7 @@ app.whenReady().then(async () => {
   // Set Dock icon from iconset on macOS.
   if (process.platform === "darwin") {
     const iconPng = resolveResourcePath(
-      "manaflow-logos/manaflow.iconset/icon_512x512.png"
+      "manaflow-logos/manaflow.iconset/icon_512x512.png",
     );
     const img = nativeImage.createFromPath(iconPng);
     if (!img.isEmpty()) app.dock?.setIcon(img);
@@ -1047,9 +1062,10 @@ app.whenReady().then(async () => {
       return net.fetch(request);
     }
 
-    const pathname = url.pathname === "/" ? "/index-electron.html" : url.pathname;
+    const pathname =
+      url.pathname === "/" ? "/index-electron.html" : url.pathname;
     const fsPath = path.normalize(
-      path.join(baseDir, decodeURIComponent(pathname))
+      path.join(baseDir, decodeURIComponent(pathname)),
     );
     const rel = path.relative(baseDir, fsPath);
     if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
@@ -1092,7 +1108,7 @@ app.whenReady().then(async () => {
             const dispatched = sendShortcutToFocusedWindow("preview-reload");
             if (!dispatched) {
               mainWarn(
-                "Reload Preview shortcut triggered with no active renderer"
+                "Reload Preview shortcut triggered with no active renderer",
               );
             }
           },
@@ -1190,7 +1206,7 @@ app.whenReady().then(async () => {
         ],
       },
       viewMenu,
-      { role: "windowMenu" }
+      { role: "windowMenu" },
     );
     template.push({
       role: "help",
@@ -1276,7 +1292,7 @@ function jwksForIssuer(issuer: string) {
 }
 
 async function verifyJwtAndGetPayload(
-  token: string
+  token: string,
 ): Promise<JWTPayload | null> {
   try {
     const decoded = decodeJwt(token);
@@ -1292,7 +1308,7 @@ async function verifyJwtAndGetPayload(
 }
 
 async function handleProtocolUrl(url: string): Promise<void> {
-  if (!mainWindow) {
+  if (!getUsableMainWindow()) {
     // Should not happen due to queuing, but guard anyway
     mainWarn("handleProtocolUrl called with no window; queueing", { url });
     pendingProtocolUrl = url;
@@ -1321,19 +1337,24 @@ async function handleProtocolUrl(url: string): Promise<void> {
     // may be a JSON array string (`["refresh","access"]`) so skip verification.
     const refreshPayload = await verifyJwtAndGetPayload(stackRefresh);
     if (!refreshPayload) {
-      mainWarn("JWT verification failed - refresh token may be opaque/malformed", {
-        refreshLength: stackRefresh.length,
-      });
+      mainWarn(
+        "JWT verification failed - refresh token may be opaque/malformed",
+        {
+          refreshLength: stackRefresh.length,
+        },
+      );
     }
 
     // Stack Auth SDK expects structured refresh cookies and a paired access cookie
     // value. Using these formats avoids refresh-token rotation issues on Electron.
-    const win = mainWindow;
+    const win = getUsableMainWindow();
     if (!win) {
-      mainWarn("Aborting cookie set due to missing window");
+      mainWarn("Deferring cookie set until a live window is available");
+      pendingProtocolUrl = url;
       return;
     }
     const currentUrl = new URL(win.webContents.getURL());
+    const cookieSession = win.webContents.session;
     const cookieOrigin = `${currentUrl.origin}/`;
     const cookieHost = currentUrl.hostname;
     const isSecure = currentUrl.protocol === "https:";
@@ -1348,7 +1369,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
     // migrates away from legacy cookie paths (e.g. /index-electron.html) that
     // can prevent Stack Auth from deleting rotated refresh tokens.
     try {
-      const allCookies = await win.webContents.session.cookies.get({});
+      const allCookies = await cookieSession.cookies.get({});
       const relevantCookies = allCookies.filter((cookie) => {
         if (!cookie.domain) return false;
         const domain = cookie.domain?.startsWith(".")
@@ -1379,7 +1400,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
             : currentUrl.protocol.replace(":", "");
           const removalUrl = `${scheme}://${domain}${cookie.path}`;
           try {
-            await win.webContents.session.cookies.remove(removalUrl, cookie.name);
+            await cookieSession.cookies.remove(removalUrl, cookie.name);
           } catch (removeError) {
             // Best-effort cleanup; don't block login.
             mainWarn("Failed to remove cookie", {
@@ -1388,7 +1409,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
               error: removeError,
             });
           }
-        })
+        }),
       );
     } catch (clearError) {
       mainWarn("Failed to enumerate/clear Stack Auth cookies", clearError);
@@ -1406,7 +1427,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
     const nowSeconds = Math.floor(Date.now() / 1000);
     try {
       await Promise.all([
-        win.webContents.session.cookies.set({
+        cookieSession.cookies.set({
           url: cookieOrigin,
           name: cookieSpecs.refresh.name,
           value: cookieSpecs.refresh.value,
@@ -1416,7 +1437,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
           httpOnly: cookieSpecs.refresh.httpOnly,
           path: cookieSpecs.refresh.path,
         }),
-        win.webContents.session.cookies.set({
+        cookieSession.cookies.set({
           url: cookieOrigin,
           name: cookieSpecs.access.name,
           value: cookieSpecs.access.value,
@@ -1426,7 +1447,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
           httpOnly: cookieSpecs.access.httpOnly,
           path: cookieSpecs.access.path,
         }),
-        win.webContents.session.cookies.set({
+        cookieSession.cookies.set({
           url: cookieOrigin,
           name: cookieSpecs.isHttps.name,
           value: cookieSpecs.isHttps.value,
@@ -1444,7 +1465,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
     }
 
     mainLog("Reloading renderer to apply auth cookies");
-    win.webContents.reload();
+    getUsableMainWindow()?.webContents.reload();
     return;
   }
 
@@ -1454,12 +1475,20 @@ async function handleProtocolUrl(url: string): Promise<void> {
         team: urlObj.searchParams.get("team"),
       });
       // Bring app to front and refresh to pick up new connections
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      const win = getUsableMainWindow();
+      if (!win) {
+        mainWarn(
+          "Deferring GitHub completion until a live window is available",
+        );
+        pendingProtocolUrl = url;
+        return;
+      }
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
       const team = urlObj.searchParams.get("team");
       try {
-        mainWindow.webContents.send("cmux:event:github-connect-complete", {
+        win.webContents.send("cmux:event:github-connect-complete", {
           team,
         });
       } catch (emitErr) {
