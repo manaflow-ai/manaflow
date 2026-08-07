@@ -388,6 +388,22 @@ Examples:
 			openURL(openableURL)
 		}
 
+		startSource := "empty"
+		if gitURL != "" {
+			startSource = "git"
+		} else if syncPath != "" {
+			startSource = "local_path"
+		}
+
+		captureTeamEvent(teamSlug, "cloudrouter_sandbox_created", map[string]interface{}{
+			"provider":    providerLabel,
+			"status":      resp.Status,
+			"has_gpu":     resp.GPU != "",
+			"gpu_type":    resp.GPU,
+			"source":      startSource,
+			"auto_opened": startFlagOpen && openableURL != "",
+		})
+
 		return nil
 	},
 }
