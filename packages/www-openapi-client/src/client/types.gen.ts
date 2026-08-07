@@ -1178,6 +1178,10 @@ export type PostApiDevServerStartData = {
      */
     body: {
         /**
+         * Team slug or ID for authorization
+         */
+        teamSlugOrId: string;
+        /**
          * GitHub repository URL
          */
         repoUrl: string;
@@ -1232,6 +1236,14 @@ export type PostApiDevServerStartData = {
 };
 
 export type PostApiDevServerStartErrors = {
+    /**
+     * Unauthorized - authentication required
+     */
+    401: unknown;
+    /**
+     * Forbidden - not a member of the specified team
+     */
+    403: unknown;
     /**
      * Failed to start development server
      */
@@ -2678,6 +2690,10 @@ export type PostApiSandboxesByIdStopErrors = {
      */
     401: unknown;
     /**
+     * Forbidden - not authorized to access this instance
+     */
+    403: unknown;
+    /**
      * Not found
      */
     404: unknown;
@@ -2710,6 +2726,14 @@ export type GetApiSandboxesByIdStatusErrors = {
      * Unauthorized
      */
     401: unknown;
+    /**
+     * Forbidden - not authorized to access this instance
+     */
+    403: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
     /**
      * Failed to get status
      */
@@ -2747,6 +2771,14 @@ export type PostApiSandboxesByIdPublishDevcontainerErrors = {
      * Unauthorized
      */
     401: unknown;
+    /**
+     * Forbidden - not authorized to access this instance
+     */
+    403: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
     /**
      * Failed to publish devcontainer networking
      */
