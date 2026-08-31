@@ -418,6 +418,8 @@ jobs:
           path-to-signatures: 'signatures/version1/cla.json'
           # Pin the document to this workflow revision so later edits cannot
           # change the terms shown for an existing signature request.
+          # If CLA terms change, use a new versioned ledger path and require
+          # contributors to re-consent before accepting new signatures.
           path-to-document: 'https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           # Keep locking in the explicit job below so it shares the signature
@@ -445,6 +447,9 @@ jobs:
     # replace a pending merge-lock run in the signer queue.
     # The lock preflight keeps base and opener identity immutable while it
     # permits a merged source head to advance or disappear.
+    # Dependabot-created pull_request_target runs can receive a read-only token;
+    # a trusted post-merge worker or dedicated Dependabot secret may be needed
+    # to lock those merged conversations.
     concurrency:
       group: "cla-lock-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
       cancel-in-progress: false
