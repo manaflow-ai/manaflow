@@ -41,10 +41,10 @@ jobs:
       cancel-in-progress: false
     permissions: {}
     outputs:
-      admitted: ${{ steps.admit.outputs.admitted }}
+      admitted: ${{ steps.validate-trigger.outputs.admitted }}
     steps:
       - name: "Validate exact CLA trigger"
-        id: admit
+        id: validate-trigger
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action || '' }}
@@ -153,6 +153,7 @@ jobs:
 
       - name: "Validate live pull request before CLA validation"
         id: cla_preflight
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -254,6 +255,7 @@ jobs:
 
       - name: "Validate historical CLA declarations"
         id: cla_history
+        if: success()
         # Bound and shape-check comment history before the maintained action.
         # The action owns exact raw signing matches and canonical bot-marker
         # identity. Do not inspect marker or broad-match text here, because an
@@ -382,6 +384,7 @@ jobs:
 
       - name: "Validate exact CLA comment"
         id: cla_comment
+        if: success()
         env:
           EVENT_NAME: ${{ github.event_name }}
           COMMENT_BODY: ${{ github.event.comment.body || '' }}
@@ -415,6 +418,7 @@ jobs:
         # worker can target the exact live PR head, so this job has no Actions
         # API permission by design.
         if: >-
+          success() &&
           steps.cla_preflight.outputs.validated == 'true' &&
           steps.cla_history.outputs.validated == 'true' &&
           steps.cla_comment.outputs.validated == 'true' &&
