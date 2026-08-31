@@ -140,12 +140,36 @@ jobs:
           echo "CLA preflight passed: ${commits} commits (maximum 100)."
           echo "validated=true" >> "${GITHUB_OUTPUT}"
 
+      - name: "Validate exact CLA comment"
+        id: cla_comment
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "issue_comment" ]]; then
+            # GitHub expression equality is case-insensitive. Use a shell
+            # comparison here so the archived action receives only the exact
+            # supported command or signature phrase.
+            shopt -u nocasematch
+            case "${COMMENT_BODY}" in
+              'recheck'|'I have read the CLA Document and I hereby sign the CLA')
+                ;;
+              *)
+                echo "::error title=CLA comment policy::The issue comment must be exactly recheck or the approved CLA signature phrase."
+                exit 1
+                ;;
+            esac
+          fi
+          echo "validated=true" >> "${GITHUB_OUTPUT}"
+
       - name: "CLA Assistant"
         # The action handles signing and status updates. Merged pull requests
         # use the separate lock job below because the archived action sends an
         # invalid lock request.
         if: >-
           steps.cla_preflight.outputs.validated == 'true' &&
+          steps.cla_comment.outputs.validated == 'true' &&
           (
             (
               github.event_name == 'pull_request_target' &&
@@ -183,6 +207,7 @@ jobs:
           # signatures live on the unprotected cla-signatures branch so
           # required checks on main don't block the bot's signature commits.
           branch: 'cla-signatures'
+          required-base-ref: 'main'
 
   LockMergedPullRequest:
     name: "Lock merged pull request"
