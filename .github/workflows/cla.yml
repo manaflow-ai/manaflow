@@ -49,7 +49,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         run: |
           set -euo pipefail
-          if ! commits="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.commits')"; then
+          if ! commits="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.commits' 2>/dev/null)"; then
             echo "::error title=CLA preflight failed::Could not read pull request ${PR_NUMBER} from GitHub." >&2
             exit 1
           fi
@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           issue_endpoint="repos/${GH_REPO}/issues/${PR_NUMBER}"
           lock_endpoint="${issue_endpoint}/lock"
-          if ! locked="$(gh api "${issue_endpoint}" --jq '.locked')"; then
+          if ! locked="$(gh api "${issue_endpoint}" --jq '.locked' 2>/dev/null)"; then
             echo "::error title=CLA lock failed::Could not read lock state for pull request ${PR_NUMBER}." >&2
             exit 1
           fi
@@ -129,11 +129,11 @@ jobs:
             --header 'Accept: application/vnd.github+json' \
             --header 'X-GitHub-Api-Version: 2022-11-28' \
             "${lock_endpoint}" \
-            --field lock_reason=resolved; then
+            --field lock_reason=resolved 2>/dev/null; then
             echo "::error title=CLA lock failed::Could not lock pull request ${PR_NUMBER}." >&2
             exit 1
           fi
-          if ! locked_after="$(gh api "${issue_endpoint}" --jq '.locked')"; then
+          if ! locked_after="$(gh api "${issue_endpoint}" --jq '.locked' 2>/dev/null)"; then
             echo "::error title=CLA lock failed::Could not verify lock state for pull request ${PR_NUMBER}." >&2
             exit 1
           fi
