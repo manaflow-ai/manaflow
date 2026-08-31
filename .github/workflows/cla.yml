@@ -155,6 +155,10 @@ jobs:
         # types and accepted trimmed, lower-case, and wrapped declarations.
         # Inspect bounded history first so a stale or malformed comment cannot
         # become a signature before the exact-comment step and action run.
+        # Fail closed on untrusted marker or broad-match text. The archived
+        # matcher treats those strings as authorization, so ignoring them
+        # would permit a spoofed historical signature. Remove unsafe comments
+        # before requesting a new check.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
