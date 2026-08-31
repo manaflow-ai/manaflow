@@ -19,7 +19,10 @@ jobs:
     # This job is unprivileged. Its expression is coarse admission; the shell
     # step is the exact, case-sensitive authority for comment text. Human
     # comments that are not an exact command are ignored with admitted=false,
-    # while malformed event data fails closed.
+    # while malformed event data fails closed. Keep the body predicate here so
+    # ordinary public comments do not enter the admission concurrency queue;
+    # the shell repeats the byte-exact check because expression equality is
+    # case-insensitive.
     if: >-
       (
         github.event_name == 'pull_request_target' &&
