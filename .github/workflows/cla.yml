@@ -27,6 +27,37 @@ jobs:
     name: "CLA Assistant"
     runs-on: ubuntu-latest
     steps:
+      - name: "Check commit count before CLA validation"
+        if: >-
+          (
+            github.event_name == 'pull_request_target' &&
+            github.event.action != 'closed'
+          ) ||
+          (
+            github.event_name == 'issue_comment' &&
+            github.event.issue.pull_request &&
+            (
+              github.event.comment.body == 'recheck' ||
+              github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
+            )
+          )
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          commits="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.commits')"
+          if ! [[ "${commits}" =~ ^[0-9]+$ ]]; then
+            echo "::error title=CLA preflight failed::GitHub returned an invalid commit count for pull request ${PR_NUMBER}." >&2
+            exit 1
+          fi
+          if (( commits > 100 )); then
+            echo "::error title=CLA preflight failed::Pull request ${PR_NUMBER} has ${commits} commits. The pinned CLA Assistant inspects only the first 100 commits; squash or split the pull request before requesting CLA validation." >&2
+            exit 1
+          fi
+          echo "CLA preflight passed: ${commits} commits (maximum 100)."
+
       - name: "CLA Assistant"
         # The action handles signing and status updates. Merged pull requests
         # use the explicit lock step below because the archived action sends
