@@ -1,4 +1,4 @@
-name: "CLA Assistant"
+name: "CLA Assistant v2"
 on:
   issue_comment:
     types: [created]
@@ -11,7 +11,7 @@ permissions: {}
 
 jobs:
   CLAAssistant:
-    name: "CLA Assistant"
+    name: "CLA Assistant v2"
     if: >-
       (
         github.event_name == 'pull_request_target' &&
@@ -163,7 +163,7 @@ jobs:
           fi
           echo "validated=true" >> "${GITHUB_OUTPUT}"
 
-      - name: "CLA Assistant"
+      - name: "CLA Assistant v2"
         # The action handles signing and status updates. Merged pull requests
         # use the separate lock job below because the archived action sends an
         # invalid lock request.
