@@ -4,7 +4,8 @@ on:
     types: [created]
   pull_request_target:
     branches: [main]
-    types: [opened,closed,reopened,synchronize]
+    # Retargeting and other edits must run the same fail-closed validation.
+    types: [opened,closed,edited,reopened,synchronize]
 
 # Keep the default token empty. Each job grants only the permissions it uses.
 permissions: {}
@@ -31,7 +32,7 @@ jobs:
     # Scope concurrency to this repository and Pull Request. GitHub keeps one
     # running and one pending run for this group; cancel-in-progress=false
     # preserves the running update while a newer event may replace the pending
-    # update. The maintained action retries bounded ledger conflicts.
+    # update. The maintained action handles bounded ledger writes.
     concurrency:
       group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
@@ -54,6 +55,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
           EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
           EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || '' }}
           EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
@@ -64,6 +66,16 @@ jobs:
           if ! [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error title=CLA preflight failed::Invalid pull request number."
             exit 1
+          fi
+          if [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
+            case "${EVENT_ACTION}" in
+              opened|edited|reopened|synchronize)
+                ;;
+              *)
+                echo "::error title=CLA preflight failed::Unsupported pull_request_target action."
+                exit 1
+                ;;
+            esac
           fi
 
           pr_endpoint="repos/${GH_REPO}/pulls/${PR_NUMBER}"
@@ -321,7 +333,10 @@ jobs:
       - name: "CLA Assistant v2"
         # The action handles signing and status updates. Merged pull requests
         # use the separate lock job below so lock writes share serialization
-        # and the workflow's live identity checks.
+        # and the workflow's live identity checks. All repository, base, head,
+        # and opener predicates run in the preflight step above. Keep this
+        # gate to event shape so malformed payloads fail in a running step,
+        # rather than becoming a skipped-success required check.
         if: >-
           steps.cla_preflight.outputs.validated == 'true' &&
           steps.cla_history.outputs.validated == 'true' &&
@@ -329,13 +344,7 @@ jobs:
           (
             (
               github.event_name == 'pull_request_target' &&
-              github.event.action != 'closed' &&
-              github.event.pull_request.state == 'open' &&
-              github.event.pull_request.base.ref == 'main' &&
-              github.event.pull_request.base.repo.full_name == github.repository &&
-              github.event.pull_request.head.repo.full_name != '' &&
-              github.event.pull_request.head.repo.id > 0 &&
-              github.event.pull_request.head.sha != ''
+              github.event.action != 'closed'
             ) ||
             (
               github.event_name == 'issue_comment' &&
@@ -347,7 +356,7 @@ jobs:
               )
             )
           )
-        uses: manaflow-ai/cla-github-action@a34b7274a1f68a0d7bcb11e62a5f1454ea15515c # reviewed maintained action
+        uses: manaflow-ai/cla-github-action@c327a6f4071730000bf03f9f85c87d30e1fe8084 # reviewed maintained runtime action, source and dist pinned together
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -379,6 +388,8 @@ jobs:
     # Locking a merged PR does not need signature or repository-write access.
     # Use the same repository-and-PR group so its lock and signature updates
     # cannot race for this Pull Request.
+    # The lock preflight keeps base and opener identity immutable while it
+    # permits a merged source head to advance or disappear.
     concurrency:
       group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
@@ -390,8 +401,122 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          EVENT_REPOSITORY: ${{ github.event.repository.full_name || '' }}
+          EVENT_REPOSITORY_ID: ${{ github.event.repository.id || '' }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          EVENT_PR_STATE: ${{ github.event.pull_request.state || '' }}
+          EVENT_PR_MERGED: ${{ github.event.pull_request.merged || '' }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || '' }}
+          EVENT_BASE_REPOSITORY_ID: ${{ github.event.pull_request.base.repo.id || '' }}
+          EVENT_OPENER_LOGIN: ${{ github.event.pull_request.user.login || '' }}
+          EVENT_OPENER_ID: ${{ github.event.pull_request.user.id || '' }}
         run: |
           set -euo pipefail
+          # The event is untrusted. Validate the immutable event identity and
+          # the live merged Pull Request before writing the lock. The live
+          # source head is intentionally not compared with the event head:
+          # GitHub can advance or delete that source after a merge.
+          is_safe_positive_integer() {
+            local value="$1"
+            [[ "${value}" =~ ^[1-9][0-9]*$ ]] || return 1
+            if (( ${#value} > 16 )); then
+              return 1
+            fi
+            if (( ${#value} == 16 )) && (( value > 9007199254740991 )); then
+              return 1
+            fi
+          }
+
+          fail_lock_preflight() {
+            echo "::error title=CLA lock preflight failed::The closed pull_request_target identity did not pass live validation." >&2
+            exit 1
+          }
+
+          is_safe_positive_integer "${PR_NUMBER}" || fail_lock_preflight
+          if [[ "${EVENT_NAME}" != "pull_request_target" ||
+                "${EVENT_ACTION}" != "closed" ||
+                "${EVENT_PR_STATE}" != "closed" ||
+                "${EVENT_PR_MERGED}" != "true" ||
+                "${EVENT_PR_NUMBER}" != "${PR_NUMBER}" ||
+                -z "${EVENT_REPOSITORY}" ||
+                "${EVENT_REPOSITORY,,}" != "${GH_REPO,,}" ||
+                -z "${EVENT_BASE_REF}" ||
+                -z "${EVENT_BASE_REPOSITORY}" ||
+                -z "${EVENT_BASE_REPOSITORY_ID}" ||
+                -z "${EVENT_OPENER_LOGIN}" ||
+                -z "${EVENT_OPENER_ID}" ]]; then
+            fail_lock_preflight
+          fi
+          is_safe_positive_integer "${EVENT_REPOSITORY_ID}" || fail_lock_preflight
+          is_safe_positive_integer "${EVENT_BASE_REPOSITORY_ID}" || fail_lock_preflight
+          is_safe_positive_integer "${EVENT_OPENER_ID}" || fail_lock_preflight
+
+          pr_endpoint="repos/${GH_REPO}/pulls/${PR_NUMBER}"
+          if ! live_pr_json="$(gh api "${pr_endpoint}" --jq '
+            {
+              number: .number,
+              state: (.state // ""),
+              merged: (.merged_at != null),
+              base_ref: (.base.ref // ""),
+              base_repo: (if .base.repo == null then null else (.base.repo.full_name // "") end),
+              base_repo_id: (if .base.repo == null then null else (.base.repo.id // null) end),
+              head_sha: (.head.sha // ""),
+              head_ref: (.head.ref // ""),
+              head_repo: (if .head.repo == null then null else (.head.repo.full_name // "") end),
+              head_repo_id: (if .head.repo == null then null else (.head.repo.id // null) end),
+              opener_login: (if .user == null then "" else (.user.login // "") end),
+              opener_id: (if .user == null then null else (.user.id // null) end)
+            }
+          ' 2>/dev/null)"; then
+            fail_lock_preflight
+          fi
+
+          if ! jq -e --arg pr "${PR_NUMBER}" --arg repo "${GH_REPO}" '
+            def safe_id:
+              type == "number" and floor == . and . > 0 and . <= 9007199254740991;
+            def nonempty_string:
+              type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0);
+            (.number | type == "number") and
+            ((.number | tostring) == $pr) and
+            (.state == "closed") and
+            (.merged == true) and
+            (.base_ref | nonempty_string) and
+            (.base_repo | nonempty_string) and
+            ((.base_repo | ascii_downcase) == ($repo | ascii_downcase)) and
+            (.base_repo_id | safe_id) and
+            (.head_sha | nonempty_string) and
+            (.head_ref | nonempty_string) and
+            (if .head_repo == null then true else
+              (.head_repo | nonempty_string) and
+              (.head_repo_id | safe_id)
+            end) and
+            (.opener_login | nonempty_string) and
+            (.opener_id | safe_id)
+          ' <<<"${live_pr_json}" >/dev/null 2>&1; then
+            fail_lock_preflight
+          fi
+
+          if ! live_base_ref="$(jq -er '.base_ref | strings' <<<"${live_pr_json}" 2>/dev/null)" ||
+             ! live_base_repo="$(jq -er '.base_repo | strings' <<<"${live_pr_json}" 2>/dev/null)" ||
+             ! live_base_repo_id="$(jq -er '.base_repo_id | numbers | tostring' <<<"${live_pr_json}" 2>/dev/null)" ||
+             ! live_opener_login="$(jq -er '.opener_login | strings' <<<"${live_pr_json}" 2>/dev/null)" ||
+             ! live_opener_id="$(jq -er '.opener_id | numbers | tostring' <<<"${live_pr_json}" 2>/dev/null)"; then
+            fail_lock_preflight
+          fi
+          is_safe_positive_integer "${live_base_repo_id}" || fail_lock_preflight
+          is_safe_positive_integer "${live_opener_id}" || fail_lock_preflight
+          if [[ "${EVENT_BASE_REF}" != "${live_base_ref}" ||
+                "${EVENT_BASE_REPOSITORY,,}" != "${live_base_repo,,}" ||
+                "${EVENT_BASE_REPOSITORY_ID}" != "${live_base_repo_id}" ||
+                "${EVENT_REPOSITORY_ID}" != "${live_base_repo_id}" ||
+                "${EVENT_OPENER_ID}" != "${live_opener_id}" ||
+                "${EVENT_OPENER_LOGIN,,}" != "${live_opener_login,,}" ]]; then
+            fail_lock_preflight
+          fi
+
           issue_endpoint="repos/${GH_REPO}/issues/${PR_NUMBER}"
           lock_endpoint="${issue_endpoint}/lock"
           if ! locked="$(gh api "${issue_endpoint}" --jq '.locked' 2>/dev/null)"; then
@@ -406,7 +531,7 @@ jobs:
             false)
             ;;
             *)
-            echo "::error title=CLA lock failed::GitHub returned an invalid lock state for pull request ${PR_NUMBER}: ${locked}." >&2
+            echo "::error title=CLA lock failed::GitHub returned an invalid lock state for this pull request." >&2
             exit 1
             ;;
           esac
