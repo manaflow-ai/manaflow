@@ -151,14 +151,10 @@ jobs:
 
       - name: "Validate historical CLA declarations"
         id: cla_history
-        # Legacy CLA Assistant behavior rescanned issue comments on both event
-        # types and accepted trimmed, lower-case, and wrapped declarations.
-        # Inspect bounded history first so a stale or malformed comment cannot
-        # become a signature before the exact-comment step and action run.
-        # Fail closed on untrusted marker or broad-match text. The archived
-        # matcher treats those strings as authorization, so ignoring them
-        # would permit a spoofed historical signature. Remove unsafe comments
-        # before requesting a new check.
+        # Bound and shape-check comment history before the maintained action.
+        # The action owns exact raw signing matches and canonical bot-marker
+        # identity. Do not inspect marker or broad-match text here, because an
+        # ordinary public comment must not block later CLA checks.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -187,7 +183,6 @@ jobs:
 
           scan_comments_page() {
             local page_number="$1"
-            local unsafe_stats unsafe_count marker_count non_exact_count non_human_count
 
             if ! jq -e 'type == "array" and all(.[];
               type == "object" and
@@ -216,52 +211,6 @@ jobs:
             total_comments=$((total_comments + page_count))
             if (( total_comments > max_comments )); then
               echo "::error title=CLA history limit::This pull request has more than ${max_comments} comments. Remove old comments before requesting a CLA check."
-              return 1
-            fi
-
-            if ! unsafe_stats="$(jq -r --arg phrase "${CLA_SIGN_PHRASE}" '
-              [ .[]
-                | (.body // "") as $body
-                | ($body | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $normalized
-                | ($phrase | ascii_downcase) as $expected
-                | ($normalized == $expected or
-                   ($normalized | test("^.*i\\s+have\\s+read\\s+the\\s+cla\\s+document\\s+and\\s+i\\s+hereby\\s+sign\\s+the\\s+cla.*$"))) as $candidate
-                | (($body | ascii_downcase | contains("cla assistant lite bot")) or
-                   ($body | ascii_downcase | contains("dco assistant lite bot"))) as $marker
-                | (((.user.login | ascii_downcase) == "github-actions[bot]") and
-                   .user.type == "Bot" and .user.id == 41898282) as $canonical_bot
-                | select(
-                    ($marker and ($canonical_bot | not)) or
-                    ($candidate and ($canonical_bot | not) and
-                     (($body != $phrase) or .user.type != "User"))
-                  )
-                | {
-                    marker: $marker,
-                    non_exact: ($candidate and ($body != $phrase)),
-                    non_human: ($candidate and (.user.type != "User"))
-                  }
-              ]
-              | [length, (map(select(.marker)) | length), (map(select(.non_exact)) | length), (map(select(.non_human)) | length)]
-              | @tsv
-            ' <<<"${page_json}" 2>/dev/null)"; then
-              echo "::error title=CLA history preflight failed::Could not validate historical comment bodies on page ${page_number}."
-              return 1
-            fi
-            if ! IFS=$'\t' read -r unsafe_count marker_count non_exact_count non_human_count <<<"${unsafe_stats}" ||
-               ! [[ "${unsafe_count}" =~ ^[0-9]+$ && "${marker_count}" =~ ^[0-9]+$ && "${non_exact_count}" =~ ^[0-9]+$ && "${non_human_count}" =~ ^[0-9]+$ ]]; then
-              echo "::error title=CLA history preflight failed::Could not count historical CLA comment candidates on page ${page_number}."
-              return 1
-            fi
-            if (( unsafe_count > 0 )); then
-              if (( marker_count > 0 )); then
-                echo "::error title=CLA historical comment policy::A historical comment contains a legacy CLA or DCO Assistant bot marker from a non-canonical actor."
-              fi
-              if (( non_exact_count > 0 )); then
-                echo "::error title=CLA historical comment policy::A historical comment matches a legacy trimmed/lower-case/broad CLA matcher but is not the exact signing phrase."
-              fi
-              if (( non_human_count > 0 )); then
-                echo "::error title=CLA historical comment policy::A historical CLA candidate was authored by a non-human account."
-              fi
               return 1
             fi
           }
