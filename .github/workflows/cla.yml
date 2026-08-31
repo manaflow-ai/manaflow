@@ -30,7 +30,11 @@ jobs:
         github.event.issue.pull_request &&
         github.event.issue.state == 'open' &&
         github.event.comment.user.type == 'User' &&
-        github.event.comment.user.id > 0
+        github.event.comment.user.id > 0 &&
+        (
+          github.event.comment.body == 'recheck' ||
+          github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
+        )
       )
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -113,7 +117,11 @@ jobs:
           github.event.issue.pull_request &&
           github.event.issue.state == 'open' &&
           github.event.comment.user.type == 'User' &&
-          github.event.comment.user.id > 0
+          github.event.comment.user.id > 0 &&
+          (
+            github.event.comment.body == 'recheck' ||
+            github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
+          )
         )
       ) &&
       (
