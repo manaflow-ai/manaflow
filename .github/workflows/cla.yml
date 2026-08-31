@@ -122,12 +122,14 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Serialize signature writes per repository and Pull Request. GitHub keeps
+    # Serialize signature writes per repository, event class, and Pull Request.
+    # Keeping issue comments apart from pull-request lifecycle events prevents
+    # a comment run from replacing a pending lifecycle validation. GitHub keeps
     # one running and one pending run for this group; cancel-in-progress=false
     # preserves the running update while a newer event may replace the pending
     # update. The maintained action handles bounded ledger writes.
     concurrency:
-      group: "cla-signatures-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
+      group: "cla-signatures-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.event_name }}"
       cancel-in-progress: false
     permissions:
       # The maintained in-organization action validates the live Pull Request
