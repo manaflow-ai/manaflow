@@ -40,7 +40,6 @@ jobs:
       # with this set to read, despite the endpoint documentation allowing
       # issues:write. Keep write until that live behavior changes.
       pull-requests: write
-      statuses: write
     steps:
       - name: "Check commit count before CLA validation"
         env:
@@ -49,7 +48,10 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         run: |
           set -euo pipefail
-          commits="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.commits')"
+          if ! commits="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.commits')"; then
+            echo "::error title=CLA preflight failed::Could not read pull request ${PR_NUMBER} from GitHub." >&2
+            exit 1
+          fi
           if ! [[ "${commits}" =~ ^[0-9]+$ ]]; then
             echo "::error title=CLA preflight failed::GitHub returned an invalid commit count for pull request ${PR_NUMBER}." >&2
             exit 1
@@ -69,7 +71,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: 'signatures/version1/cla.json'
-          path-to-document: 'https://github.com/manaflow-ai/manaflow/blob/main/CLA.md'
+          # Pin the document to this workflow revision so later edits cannot
+          # change the terms shown for an existing signature request.
+          path-to-document: 'https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           # The archived action calls the lock endpoint without the required
           # lock_reason. Disable that broken path and use the explicit job
@@ -87,6 +91,11 @@ jobs:
       github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     # Locking a merged PR does not need signature or repository-write access.
+    # Share the signature queue so lock and signature updates cannot race.
+    concurrency:
+      group: cla-signatures
+      queue: max
+      cancel-in-progress: false
     permissions:
       issues: write
     steps:
@@ -99,13 +108,35 @@ jobs:
           set -euo pipefail
           issue_endpoint="repos/${GH_REPO}/issues/${PR_NUMBER}"
           lock_endpoint="${issue_endpoint}/lock"
-          if [[ "$(gh api "${issue_endpoint}" --jq '.locked')" == "true" ]]; then
+          if ! locked="$(gh api "${issue_endpoint}" --jq '.locked')"; then
+            echo "::error title=CLA lock failed::Could not read lock state for pull request ${PR_NUMBER}." >&2
+            exit 1
+          fi
+          case "${locked}" in
+            true)
             echo "Pull request ${PR_NUMBER} is already locked"
             exit 0
-          fi
-          gh api --method PUT \
+            ;;
+            false)
+            ;;
+            *)
+            echo "::error title=CLA lock failed::GitHub returned an invalid lock state for pull request ${PR_NUMBER}: ${locked}." >&2
+            exit 1
+            ;;
+          esac
+          if ! gh api --method PUT \
             --header 'Accept: application/vnd.github+json' \
             --header 'X-GitHub-Api-Version: 2022-11-28' \
             "${lock_endpoint}" \
-            --field lock_reason=resolved
-          [[ "$(gh api "${issue_endpoint}" --jq '.locked')" == "true" ]]
+            --field lock_reason=resolved; then
+            echo "::error title=CLA lock failed::Could not lock pull request ${PR_NUMBER}." >&2
+            exit 1
+          fi
+          if ! locked_after="$(gh api "${issue_endpoint}" --jq '.locked')"; then
+            echo "::error title=CLA lock failed::Could not verify lock state for pull request ${PR_NUMBER}." >&2
+            exit 1
+          fi
+          if [[ "${locked_after}" != "true" ]]; then
+            echo "::error title=CLA lock failed::GitHub did not report pull request ${PR_NUMBER} as locked after the lock request." >&2
+            exit 1
+          fi
