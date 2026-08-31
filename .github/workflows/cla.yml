@@ -35,9 +35,9 @@ jobs:
       group: cla-signatures
       cancel-in-progress: false
     permissions:
-      # The archived action attempts a branch-based rerun after a contributor
-      # signs. That selection is unsafe. The exact-PR rerun worker is not
-      # deployed yet, so required-check recovery remains advisory.
+      # The maintained in-organization action validates the live Pull Request
+      # before it writes. Keep workflow rerun access out of this job; required
+      # check recovery is handled only by an exact, separately reviewed worker.
       actions: read
       contents: write
       issues: write
@@ -346,7 +346,7 @@ jobs:
               )
             )
           )
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        uses: manaflow-ai/cla-github-action@a34b7274a1f68a0d7bcb11e62a5f1454ea15515c # reviewed maintained action
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -355,9 +355,8 @@ jobs:
           # change the terms shown for an existing signature request.
           path-to-document: 'https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          # The archived action calls the lock endpoint without the required
-          # lock_reason. Disable that broken path and use the explicit job
-          # below, which supplies a valid reason and fails on API errors.
+          # Keep locking in the explicit job below so it shares the signature
+          # concurrency group and its live identity checks.
           lock-pullrequest-aftermerge: 'false'
           # signatures live on the unprotected cla-signatures branch so
           # required checks on main don't block the bot's signature commits.
