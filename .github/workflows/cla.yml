@@ -441,12 +441,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Locking a merged PR does not need signature or repository-write access.
-    # Use the same repository-and-PR group so lock and signature updates cannot
-    # race for this Pull Request.
+    # Keep a distinct repository-and-PR group. A later edited event must not
+    # replace a pending merge-lock run in the signer queue.
     # The lock preflight keeps base and opener identity immutable while it
     # permits a merged source head to advance or disappear.
     concurrency:
-      group: "cla-signatures-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
+      group: "cla-lock-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
       cancel-in-progress: false
     permissions:
       issues: write
