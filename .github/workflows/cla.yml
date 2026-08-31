@@ -3,6 +3,7 @@ on:
   issue_comment:
     types: [created]
   pull_request_target:
+    branches: [main]
     types: [opened,closed,reopened,synchronize]
 
 # Keep the default token empty. Each job grants only the permissions it uses.
@@ -14,7 +15,13 @@ jobs:
     if: >-
       (
         github.event_name == 'pull_request_target' &&
-        github.event.action != 'closed'
+        github.event.action != 'closed' &&
+        github.event.pull_request.state == 'open' &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.base.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.full_name != '' &&
+        github.event.pull_request.head.repo.id > 0 &&
+        github.event.pull_request.head.sha != ''
       ) ||
       (
         github.event_name == 'issue_comment' &&
@@ -42,13 +49,81 @@ jobs:
       # issues:write. Keep write until that live behavior changes.
       pull-requests: write
     steps:
-      - name: "Check commit count before CLA validation"
+      - name: "Validate live pull request before CLA validation"
+        id: cla_preflight
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || '' }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          EVENT_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id || '' }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
         run: |
           set -euo pipefail
+          if ! [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=CLA preflight failed::Invalid pull request number."
+            exit 1
+          fi
+
+          pr_endpoint="repos/${GH_REPO}/pulls/${PR_NUMBER}"
+          if ! pr_json="$(gh api "${pr_endpoint}" --jq '{number: (.number | tostring), state: .state, merged: (.merged_at != null), base_ref: (.base.ref // ""), base_repo: (.base.repo.full_name // ""), head_sha: (.head.sha // ""), head_repo: (.head.repo.full_name // ""), head_repo_id: (.head.repo.id // 0), commits: .commits}' 2>/dev/null)"; then
+            echo "::error title=CLA preflight failed::Could not read live pull request ${PR_NUMBER} from GitHub."
+            exit 1
+          fi
+
+          if ! returned_number="$(jq -er '.number | strings' <<<"${pr_json}" 2>/dev/null)" || [[ "${returned_number}" != "${PR_NUMBER}" ]]; then
+            echo "::error title=CLA preflight failed::GitHub returned an invalid pull request identity."
+            exit 1
+          fi
+          if ! state="$(jq -er '.state | strings' <<<"${pr_json}" 2>/dev/null)" || [[ "${state}" != "open" ]]; then
+            echo "::error title=CLA state policy::Pull request ${PR_NUMBER} is not open."
+            exit 1
+          fi
+          if ! merged="$(jq -er '.merged | tostring' <<<"${pr_json}" 2>/dev/null)" || [[ "${merged}" != "false" ]]; then
+            echo "::error title=CLA state policy::Pull request ${PR_NUMBER} is already merged or has an invalid merge state."
+            exit 1
+          fi
+          if ! base_ref="$(jq -er '.base_ref | strings' <<<"${pr_json}" 2>/dev/null)" || [[ "${base_ref}" != "main" ]]; then
+            echo "::error title=CLA base branch policy::CLA checks only support pull requests targeting main."
+            exit 1
+          fi
+          if ! base_repo="$(jq -er '.base_repo | strings' <<<"${pr_json}" 2>/dev/null)" || [[ -z "${base_repo}" || "${base_repo,,}" != "${GH_REPO,,}" ]]; then
+            echo "::error title=CLA repository policy::The live pull request base repository does not match this workflow repository."
+            exit 1
+          fi
+          if ! head_repo="$(jq -er '.head_repo | strings' <<<"${pr_json}" 2>/dev/null)" || [[ -z "${head_repo}" ]]; then
+            echo "::error title=CLA repository policy::The live pull request has no head repository."
+            exit 1
+          fi
+          if ! head_repo_id="$(jq -er '.head_repo_id | numbers' <<<"${pr_json}" 2>/dev/null)" || ! [[ "${head_repo_id}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=CLA repository policy::The live pull request has no valid head repository ID."
+            exit 1
+          fi
+          if ! head_sha="$(jq -er '.head_sha | strings' <<<"${pr_json}" 2>/dev/null)" || [[ -z "${head_sha}" ]]; then
+            echo "::error title=CLA preflight failed::The live pull request has no head commit."
+            exit 1
+          fi
+
+          if [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
+            if [[ -z "${EVENT_BASE_REF}" || -z "${EVENT_BASE_REPOSITORY}" ||
+                  -z "${EVENT_HEAD_REPOSITORY}" || -z "${EVENT_HEAD_REPOSITORY_ID}" ||
+                  -z "${EVENT_HEAD_SHA}" ]]; then
+              echo "::error title=CLA preflight failed::The pull_request_target payload is missing repository or commit identity."
+              exit 1
+            fi
+            if [[ "${EVENT_BASE_REF}" != "${base_ref}" ||
+                  "${EVENT_BASE_REPOSITORY,,}" != "${base_repo,,}" ||
+                  "${EVENT_HEAD_REPOSITORY,,}" != "${head_repo,,}" ||
+                  "${EVENT_HEAD_REPOSITORY_ID}" != "${head_repo_id}" ||
+                  "${EVENT_HEAD_SHA}" != "${head_sha}" ]]; then
+              echo "::error title=CLA preflight failed::The pull_request_target payload does not match the live pull request identity."
+              exit 1
+            fi
+          fi
+
           if ! commits="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.commits' 2>/dev/null)"; then
             echo "::error title=CLA preflight failed::Could not read pull request ${PR_NUMBER} from GitHub." >&2
             exit 1
@@ -62,11 +137,35 @@ jobs:
             exit 1
           fi
           echo "CLA preflight passed: ${commits} commits (maximum 100)."
+          echo "validated=true" >> "${GITHUB_OUTPUT}"
 
       - name: "CLA Assistant"
         # The action handles signing and status updates. Merged pull requests
         # use the separate lock job below because the archived action sends an
         # invalid lock request.
+        if: >-
+          steps.cla_preflight.outputs.validated == 'true' &&
+          (
+            (
+              github.event_name == 'pull_request_target' &&
+              github.event.action != 'closed' &&
+              github.event.pull_request.state == 'open' &&
+              github.event.pull_request.base.ref == 'main' &&
+              github.event.pull_request.base.repo.full_name == github.repository &&
+              github.event.pull_request.head.repo.full_name != '' &&
+              github.event.pull_request.head.repo.id > 0 &&
+              github.event.pull_request.head.sha != ''
+            ) ||
+            (
+              github.event_name == 'issue_comment' &&
+              github.event.issue.pull_request &&
+              github.event.issue.state == 'open' &&
+              (
+                github.event.comment.body == 'recheck' ||
+                github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
+              )
+            )
+          )
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
