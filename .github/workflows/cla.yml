@@ -34,7 +34,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       # The action inspects prior runs; its optional rerun request is best-effort.
-      actions: read
+      actions: write
       contents: write
       issues: write
       # GitHub's pull_request_target token denied issue comments for fork PRs
