@@ -91,7 +91,7 @@ jobs:
     needs: CLACommentGate
     name: "CLA Assistant v2"
     if: >-
-      needs.CLACommentGate.result == 'success' &&
+      always() &&
       (
         (
           github.event_name == 'pull_request_target' &&
@@ -135,6 +135,16 @@ jobs:
       # issues:write. Keep write until that live behavior changes.
       pull-requests: write
     steps:
+      - name: "Require CLA admission gate"
+        env:
+          CLA_GATE_RESULT: ${{ needs.CLACommentGate.result || '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${CLA_GATE_RESULT}" != "success" ]]; then
+            echo "::error title=CLA trigger policy::The unprivileged CLACommentGate did not succeed; refusing CLA writes."
+            exit 1
+          fi
+
       - name: "Validate live pull request before CLA validation"
         id: cla_preflight
         env:
