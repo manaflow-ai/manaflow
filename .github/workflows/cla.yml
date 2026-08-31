@@ -136,6 +136,133 @@ jobs:
           echo "CLA preflight passed: ${commits} commits (maximum 100)."
           echo "validated=true" >> "${GITHUB_OUTPUT}"
 
+      - name: "Validate historical CLA comments"
+        id: cla_history
+        # The archived action rescans issue comments on both event types and
+        # accepts trimmed, lower-case, and wrapped declarations. Inspect the
+        # bounded history first so a stale or malformed comment cannot become
+        # a signature before the exact-comment step and action run.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          CLA_SIGN_PHRASE: 'I have read the CLA Document and I hereby sign the CLA'
+        run: |
+          set -euo pipefail
+          if ! [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=CLA history preflight failed::Invalid pull request number."
+            exit 1
+          fi
+
+          comments_endpoint="repos/${GH_REPO}/issues/${PR_NUMBER}/comments"
+          page_size=100
+          page_limit=10
+          max_comments=1000
+          total_comments=0
+
+          scan_comments_page() {
+            local page_number="$1"
+            local unsafe_stats unsafe_count non_exact_count non_human_count
+
+            if ! jq -e 'type == "array"' <<<"${page_json}" >/dev/null 2>&1 ||
+               ! jq -e 'all(.[]; type == "object")' <<<"${page_json}" >/dev/null 2>&1 ||
+               ! jq -e 'all(.[]; (type == "object") and ((.body | type) == "string") and ((.user == null) or ((.user | type) == "object")))' <<<"${page_json}" >/dev/null 2>&1; then
+              echo "::error title=CLA history preflight failed::GitHub returned invalid comment data on page ${page_number}."
+              return 1
+            fi
+            if ! page_count="$(jq -er 'length | numbers' <<<"${page_json}" 2>/dev/null)" ||
+               ! [[ "${page_count}" =~ ^[0-9]+$ ]]; then
+              echo "::error title=CLA history preflight failed::Could not count comments on page ${page_number}."
+              return 1
+            fi
+            if (( page_count > page_size )); then
+              echo "::error title=CLA history preflight failed::GitHub returned more than ${page_size} comments on page ${page_number}."
+              return 1
+            fi
+            total_comments=$((total_comments + page_count))
+            if (( total_comments > max_comments )); then
+              echo "::error title=CLA history limit::This pull request has more than ${max_comments} comments. Remove old comments before requesting a CLA check."
+              return 1
+            fi
+
+            if ! unsafe_stats="$(jq -r --arg phrase "${CLA_SIGN_PHRASE}" '
+              [ .[]
+                | (.body // "") as $body
+                | ($body | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $normalized
+                | ($phrase | ascii_downcase) as $expected
+                | select(
+                    $normalized == $expected or
+                    ($normalized | test("^.*i\\s+have\\s+read\\s+the\\s+cla\\s+document\\s+and\\s+i\\s+hereby\\s+sign\\s+the\\s+cla.*$"))
+                  )
+                | select(
+                    ((.user.login // "" | tostring | ascii_downcase) != "github-actions[bot]" or
+                     (.user.type // "") != "Bot")
+                  )
+                | select(
+                    ($body != $phrase) or
+                    ((.user.type // "") != "User")
+                  )
+                | {
+                    non_exact: ($body != $phrase),
+                    non_human: ((.user.type // "") != "User")
+                  }
+              ]
+              | [length, (map(select(.non_exact)) | length), (map(select(.non_human)) | length)]
+              | @tsv
+            ' <<<"${page_json}" 2>/dev/null)"; then
+              echo "::error title=CLA history preflight failed::Could not validate historical comment bodies on page ${page_number}."
+              return 1
+            fi
+            if ! IFS=$'\t' read -r unsafe_count non_exact_count non_human_count <<<"${unsafe_stats}" ||
+               ! [[ "${unsafe_count}" =~ ^[0-9]+$ && "${non_exact_count}" =~ ^[0-9]+$ && "${non_human_count}" =~ ^[0-9]+$ ]]; then
+              echo "::error title=CLA history preflight failed::Could not count historical CLA comment candidates on page ${page_number}."
+              return 1
+            fi
+            if (( unsafe_count > 0 )); then
+              if (( non_exact_count > 0 )); then
+                echo "::error title=CLA historical comment policy::A historical comment matches the archived trimmed/lower-case/broad CLA matcher but is not the exact signing phrase."
+              fi
+              if (( non_human_count > 0 )); then
+                echo "::error title=CLA historical comment policy::A historical CLA candidate was authored by a non-human account."
+              fi
+              return 1
+            fi
+          }
+
+          # Read every bounded page even after a short page. This avoids
+          # missing a comment if the API view changes while comments are
+          # edited during the run.
+          for ((page_number = 1; page_number <= page_limit; page_number++)); do
+            if ! page_json="$(gh api "${comments_endpoint}?per_page=${page_size}&page=${page_number}" --jq '.' 2>/dev/null)"; then
+              echo "::error title=CLA history preflight failed::Could not query pull request comments on page ${page_number}."
+              exit 1
+            fi
+            if ! scan_comments_page "${page_number}"; then
+              exit 1
+            fi
+          done
+
+          # Probe one page beyond the bounded scan. A non-empty page means the
+          # history exceeded the cap, even if an earlier page was short due to
+          # concurrent comment edits or an inconsistent API response.
+          overflow_page=11
+          if ! overflow_json="$(gh api "${comments_endpoint}?per_page=${page_size}&page=${overflow_page}" --jq '.' 2>/dev/null)"; then
+            echo "::error title=CLA history preflight failed::Could not query the pull request comment overflow probe."
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and all(.[]; type == "object")' <<<"${overflow_json}" >/dev/null 2>&1 ||
+             ! overflow_count="$(jq -er 'length | numbers' <<<"${overflow_json}" 2>/dev/null)" ||
+             ! [[ "${overflow_count}" =~ ^[0-9]+$ ]]; then
+            echo "::error title=CLA history preflight failed::GitHub returned invalid comment data for the overflow probe."
+            exit 1
+          fi
+          if (( overflow_count > 0 )); then
+            echo "::error title=CLA history limit::This pull request has more than ${max_comments} comments. Remove old comments before requesting a CLA check."
+            exit 1
+          fi
+          echo "CLA historical comment validation passed: ${total_comments} comments checked."
+          echo "validated=true" >> "${GITHUB_OUTPUT}"
+
       - name: "Validate exact CLA comment"
         id: cla_comment
         env:
@@ -165,6 +292,7 @@ jobs:
         # invalid lock request.
         if: >-
           steps.cla_preflight.outputs.validated == 'true' &&
+          steps.cla_history.outputs.validated == 'true' &&
           steps.cla_comment.outputs.validated == 'true' &&
           (
             (
