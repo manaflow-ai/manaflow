@@ -377,9 +377,9 @@ jobs:
 
       - name: "CLA Assistant v2"
         # The action handles signing and status updates. Merged pull requests
-        # use the separate lock job below so lock writes share serialization
-        # and the workflow's live identity checks. All repository, base, head,
-        # and opener predicates run in the preflight step above. Keep this
+        # use the separate lock job below so lock writes get their own
+        # serialization and the workflow's live identity checks. All repository,
+        # base, head, and opener predicates run in the preflight step above. Keep this
         # gate to event shape so malformed payloads fail in a running step,
         # rather than becoming a skipped-success required check.
         # Issue-comment signatures are persisted by the maintained action. The
@@ -422,8 +422,8 @@ jobs:
           # contributors to re-consent before accepting new signatures.
           path-to-document: 'https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          # Keep locking in the explicit job below so it shares the signature
-          # concurrency group and its live identity checks.
+          # Keep locking in the explicit job below so it uses its own
+          # concurrency group and live identity checks.
           lock-pullrequest-aftermerge: 'false'
           # signatures live on the unprotected cla-signatures branch so
           # required checks on main don't block the bot's signature commits.
