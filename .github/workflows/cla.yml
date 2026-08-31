@@ -138,10 +138,10 @@ jobs:
 
       - name: "Validate historical CLA declarations"
         id: cla_history
-        # The archived action rescans issue comments on both event types and
-        # accepts trimmed, lower-case, and wrapped declarations. Inspect the
-        # bounded history first so a stale or malformed comment cannot become
-        # a signature before the exact-comment step and action run.
+        # Legacy CLA Assistant behavior rescanned issue comments on both event
+        # types and accepted trimmed, lower-case, and wrapped declarations.
+        # Inspect bounded history first so a stale or malformed comment cannot
+        # become a signature before the exact-comment step and action run.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -237,10 +237,10 @@ jobs:
             fi
             if (( unsafe_count > 0 )); then
               if (( marker_count > 0 )); then
-                echo "::error title=CLA historical comment policy::A historical comment contains the archived CLA or DCO Assistant bot marker from a non-canonical actor."
+                echo "::error title=CLA historical comment policy::A historical comment contains a legacy CLA or DCO Assistant bot marker from a non-canonical actor."
               fi
               if (( non_exact_count > 0 )); then
-                echo "::error title=CLA historical comment policy::A historical comment matches the archived trimmed/lower-case/broad CLA matcher but is not the exact signing phrase."
+                echo "::error title=CLA historical comment policy::A historical comment matches a legacy trimmed/lower-case/broad CLA matcher but is not the exact signing phrase."
               fi
               if (( non_human_count > 0 )); then
                 echo "::error title=CLA historical comment policy::A historical CLA candidate was authored by a non-human account."
@@ -303,7 +303,7 @@ jobs:
           set -euo pipefail
           if [[ "${EVENT_NAME}" == "issue_comment" ]]; then
             # GitHub expression equality is case-insensitive. Use a shell
-            # comparison here so the archived action receives only the exact
+            # comparison here so the CLA action receives only the exact
             # supported command or signature phrase.
             shopt -u nocasematch
             case "${COMMENT_BODY}" in
@@ -319,8 +319,8 @@ jobs:
 
       - name: "CLA Assistant v2"
         # The action handles signing and status updates. Merged pull requests
-        # use the separate lock job below because the archived action sends an
-        # invalid lock request.
+        # use the separate lock job below so lock writes share serialization
+        # and the workflow's live identity checks.
         if: >-
           steps.cla_preflight.outputs.validated == 'true' &&
           steps.cla_history.outputs.validated == 'true' &&
@@ -362,6 +362,10 @@ jobs:
           # required checks on main don't block the bot's signature commits.
           branch: 'cla-signatures'
           required-base-ref: 'main'
+          # Keep the impersonation guard explicit. The action requires the
+          # authenticated Pull Request opener to appear as an author or
+          # co-author unless a maintainer deliberately opts out.
+          require-opener-as-author: 'true'
 
   LockMergedPullRequest:
     name: "Lock merged pull request"
