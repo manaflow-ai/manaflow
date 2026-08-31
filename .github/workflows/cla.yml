@@ -17,28 +17,20 @@ jobs:
   CLACommentGate:
     name: "Validate CLA trigger"
     # This job is unprivileged. Its expression is coarse admission; the shell
-    # step is the exact, case-sensitive authority for comment text.
+    # step is the exact, case-sensitive authority for comment text. Human
+    # comments that are not an exact command are ignored with admitted=false,
+    # while malformed event data fails closed.
     if: >-
       (
         github.event_name == 'pull_request_target' &&
-        github.event.pull_request.state == 'open' &&
-        (
-          github.event.action == 'opened' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'edited'
-        )
+        github.event.action != 'closed'
       ) ||
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
         github.event.issue.state == 'open' &&
         github.event.comment.user.type == 'User' &&
-        github.event.comment.user.id > 0 &&
-        (
-          github.event.comment.body == 'recheck' ||
-          github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
-        )
+        github.event.comment.user.id > 0
       )
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -48,8 +40,11 @@ jobs:
       group: "cla-admission-${{ github.repository }}-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}"
       cancel-in-progress: false
     permissions: {}
+    outputs:
+      admitted: ${{ steps.admit.outputs.admitted }}
     steps:
       - name: "Validate exact CLA trigger"
+        id: admit
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action || '' }}
@@ -62,6 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -u nocasematch
+          admitted=false
           fail() {
             echo "::error title=CLA trigger policy::${1}"
             exit 1
@@ -70,22 +66,37 @@ jobs:
           sign_phrase='I have read the CLA Document and I hereby sign the CLA'
           if [[ "${EVENT_NAME}" == "issue_comment" ]]; then
             [[ "${EVENT_ISSUE_STATE}" == "open" && -n "${EVENT_ISSUE_PR_URL}" ]] || fail "The comment is not on an open pull request."
-            [[ "${COMMENT_USER_TYPE}" == "User" ]] || fail "Only a human GitHub user can trigger CLA comment processing."
-            [[ "${COMMENT_USER_ID}" =~ ^[1-9][0-9]*$ ]] || fail "The comment author has no valid GitHub user ID."
-            if (( ${#COMMENT_USER_ID} > 16 )) ||
+            # Non-human and malformed commenter identities are ignored. They
+            # must never reach the maintained action, but they are ordinary
+            # public comment traffic rather than a workflow error.
+            if [[ "${COMMENT_USER_TYPE}" != "User" ]] ||
+               ! [[ "${COMMENT_USER_ID}" =~ ^[1-9][0-9]*$ ]] ||
+               (( ${#COMMENT_USER_ID} > 16 )) ||
                (( ${#COMMENT_USER_ID} == 16 && COMMENT_USER_ID > 9007199254740991 )); then
-              fail "The comment author has an unsafe GitHub user ID."
+              printf 'admitted=%s\n' "${admitted}" >> "${GITHUB_OUTPUT}"
+              echo "CLA event ignored: commenter is not a safe human identity"
+              exit 0
             fi
-            [[ "${COMMENT_BODY}" == "recheck" || "${COMMENT_BODY}" == "${sign_phrase}" ]] || fail "Use the exact signing comment or the exact recheck command."
+            if [[ "${COMMENT_BODY}" == "recheck" || "${COMMENT_BODY}" == "${sign_phrase}" ]]; then
+              admitted=true
+            fi
           elif [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
             case "${EVENT_ACTION}" in
               opened|reopened|synchronize|edited) ;;
               *) fail "The pull request event is not an accepted CLA trigger." ;;
             esac
             [[ "${EVENT_PR_STATE}" == "open" ]] || fail "The pull request is not open for CLA signing."
+            admitted=true
           else
             fail "The event is not an accepted CLA trigger."
           fi
+
+          printf 'admitted=%s\n' "${admitted}" >> "${GITHUB_OUTPUT}"
+          if [[ "${admitted}" != "true" ]]; then
+            echo "CLA event ignored: comment body is not an exact command"
+            exit 0
+          fi
+          echo "CLA event admitted"
 
   CLAAssistant:
     needs: CLACommentGate
@@ -95,25 +106,19 @@ jobs:
       (
         (
           github.event_name == 'pull_request_target' &&
-          github.event.pull_request.state == 'open' &&
-          (
-            github.event.action == 'opened' ||
-            github.event.action == 'reopened' ||
-            github.event.action == 'synchronize' ||
-            github.event.action == 'edited'
-          )
+          github.event.action != 'closed'
         ) ||
         (
           github.event_name == 'issue_comment' &&
           github.event.issue.pull_request &&
           github.event.issue.state == 'open' &&
           github.event.comment.user.type == 'User' &&
-          github.event.comment.user.id > 0 &&
-          (
-            github.event.comment.body == 'recheck' ||
-            github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
-          )
+          github.event.comment.user.id > 0
         )
+      ) &&
+      (
+        needs.CLACommentGate.result != 'success' ||
+        needs.CLACommentGate.outputs.admitted == 'true'
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -138,10 +143,11 @@ jobs:
       - name: "Require CLA admission gate"
         env:
           CLA_GATE_RESULT: ${{ needs.CLACommentGate.result || '' }}
+          CLA_GATE_ADMITTED: ${{ needs.CLACommentGate.outputs.admitted || '' }}
         run: |
           set -euo pipefail
-          if [[ "${CLA_GATE_RESULT}" != "success" ]]; then
-            echo "::error title=CLA trigger policy::The unprivileged CLACommentGate did not succeed; refusing CLA writes."
+          if [[ "${CLA_GATE_RESULT}" != "success" || "${CLA_GATE_ADMITTED}" != "true" ]]; then
+            echo "::error title=CLA trigger policy::The unprivileged CLACommentGate did not admit this event; refusing CLA writes."
             exit 1
           fi
 
