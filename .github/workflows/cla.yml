@@ -4,7 +4,7 @@ on:
     types: [created]
   pull_request_target:
     branches: [main]
-    types: [opened,closed,reopened,synchronize]
+    types: [opened,closed,reopened,synchronize,edited]
 
 # Keep the default token empty. Each job grants only the permissions it uses.
 permissions: {}
@@ -33,6 +33,7 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Signature updates share one file. Queue every pending validation instead
     # of dropping all but the newest event.
     concurrency:
@@ -190,6 +191,7 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Locking a merged PR does not need signature or repository-write access.
     # Share the signature queue so lock and signature updates cannot race.
     concurrency:
