@@ -28,11 +28,11 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Signature updates share one file. Queue every pending validation instead
-    # of dropping all but the newest event.
+    # Signature updates share one file. GitHub keeps one running and one
+    # pending run for this group; cancel-in-progress=false preserves the
+    # running update while a newer event may replace the pending update.
     concurrency:
       group: cla-signatures
-      queue: max
       cancel-in-progress: false
     permissions:
       # The archived action attempts a branch-based rerun after a contributor
@@ -373,10 +373,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Locking a merged PR does not need signature or repository-write access.
-    # Share the signature queue so lock and signature updates cannot race.
+    # Share the signature group so lock and signature updates cannot race.
     concurrency:
       group: cla-signatures
-      queue: max
       cancel-in-progress: false
     permissions:
       issues: write
