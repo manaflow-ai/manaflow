@@ -5,18 +5,29 @@ on:
   pull_request_target:
     branches: [main]
     # Retargeting and other edits must run the same fail-closed validation.
-    types: [opened,closed,edited,reopened,synchronize]
+    types: [opened,closed,reopened,synchronize,edited]
 
 # Keep the default token empty. Each job grants only the permissions it uses.
 permissions: {}
 
+# Maintained action generation: v2.2, runtime and dist pinned at
+# bc206ed9b52ad0b0cbe85244ce522e5e9b65c10e.
+
 jobs:
-  CLAAssistant:
-    name: "CLA Assistant v2"
+  CLACommentGate:
+    name: "Validate CLA trigger"
+    # This job is unprivileged. Its expression is coarse admission; the shell
+    # step is the exact, case-sensitive authority for comment text.
     if: >-
       (
         github.event_name == 'pull_request_target' &&
-        github.event.action != 'closed'
+        github.event.pull_request.state == 'open' &&
+        (
+          github.event.action == 'opened' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'edited'
+        )
       ) ||
       (
         github.event_name == 'issue_comment' &&
@@ -28,13 +39,78 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Bound admission by repository, event class, and Pull Request. This keeps
+    # public comment traffic from sharing a queue with pull request events.
+    concurrency:
+      group: "cla-admission-${{ github.repository }}-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}"
+      cancel-in-progress: false
+    permissions: {}
+    steps:
+      - name: "Validate exact CLA trigger"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          EVENT_PR_STATE: ${{ github.event.pull_request.state || '' }}
+          EVENT_ISSUE_STATE: ${{ github.event.issue.state || '' }}
+          EVENT_ISSUE_PR_URL: ${{ github.event.issue.pull_request.url || '' }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+        run: |
+          set -euo pipefail
+          shopt -u nocasematch
+          fail() {
+            echo "::error title=CLA trigger policy::${1}"
+            exit 1
+          }
+
+          sign_phrase='I have read the CLA Document and I hereby sign the CLA'
+          if [[ "${EVENT_NAME}" == "issue_comment" ]]; then
+            [[ "${EVENT_ISSUE_STATE}" == "open" && -n "${EVENT_ISSUE_PR_URL}" ]] || fail "The comment is not on an open pull request."
+            [[ "${COMMENT_BODY}" == "recheck" || "${COMMENT_BODY}" == "${sign_phrase}" ]] || fail "Use the exact signing comment or the exact recheck command."
+          elif [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
+            case "${EVENT_ACTION}" in
+              opened|reopened|synchronize|edited) ;;
+              *) fail "The pull request event is not an accepted CLA trigger." ;;
+            esac
+            [[ "${EVENT_PR_STATE}" == "open" ]] || fail "The pull request is not open for CLA signing."
+          else
+            fail "The event is not an accepted CLA trigger."
+          fi
+
+  CLAAssistant:
+    needs: CLACommentGate
+    name: "CLA Assistant v2"
+    if: >-
+      needs.CLACommentGate.result == 'success' &&
+      (
+        (
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.state == 'open' &&
+          (
+            github.event.action == 'opened' ||
+            github.event.action == 'reopened' ||
+            github.event.action == 'synchronize' ||
+            github.event.action == 'edited'
+          )
+        ) ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          github.event.issue.state == 'open' &&
+          (
+            github.event.comment.body == 'recheck' ||
+            github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
+          )
+        )
+      )
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Scope concurrency to this repository and Pull Request. GitHub keeps one
-    # running and one pending run for this group; cancel-in-progress=false
+    # Serialize signature writes per repository and Pull Request. GitHub keeps
+    # one running and one pending run for this group; cancel-in-progress=false
     # preserves the running update while a newer event may replace the pending
     # update. The maintained action handles bounded ledger writes.
     concurrency:
-      group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
+      group: "cla-signatures-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
       cancel-in-progress: false
     permissions:
       # The maintained in-organization action validates the live Pull Request
@@ -317,7 +393,13 @@ jobs:
           (
             (
               github.event_name == 'pull_request_target' &&
-              github.event.action != 'closed'
+              github.event.pull_request.state == 'open' &&
+              (
+                github.event.action == 'opened' ||
+                github.event.action == 'reopened' ||
+                github.event.action == 'synchronize' ||
+                github.event.action == 'edited'
+              )
             ) ||
             (
               github.event_name == 'issue_comment' &&
@@ -329,7 +411,7 @@ jobs:
               )
             )
           )
-        uses: manaflow-ai/cla-github-action@c327a6f4071730000bf03f9f85c87d30e1fe8084 # reviewed maintained runtime action, source and dist pinned together
+        uses: manaflow-ai/cla-github-action@bc206ed9b52ad0b0cbe85244ce522e5e9b65c10e # reviewed maintained runtime action, source and dist pinned together
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -359,12 +441,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Locking a merged PR does not need signature or repository-write access.
-    # Use the same repository-and-PR group so its lock and signature updates
-    # cannot race for this Pull Request.
+    # Use the same repository-and-PR group so lock and signature updates cannot
+    # race for this Pull Request.
     # The lock preflight keeps base and opener identity immutable while it
     # permits a merged source head to advance or disappear.
     concurrency:
-      group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
+      group: "cla-signatures-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
       cancel-in-progress: false
     permissions:
       issues: write
