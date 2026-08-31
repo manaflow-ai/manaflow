@@ -33,7 +33,7 @@ jobs:
       queue: max
       cancel-in-progress: false
     permissions:
-      # The action inspects prior runs; its optional rerun request is best-effort.
+      # The action reruns the prior failed CLA check after a contributor signs.
       actions: write
       contents: write
       issues: write
