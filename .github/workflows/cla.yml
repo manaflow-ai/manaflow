@@ -15,13 +15,7 @@ jobs:
     if: >-
       (
         github.event_name == 'pull_request_target' &&
-        github.event.action != 'closed' &&
-        github.event.pull_request.state == 'open' &&
-        github.event.pull_request.base.ref == 'main' &&
-        github.event.pull_request.base.repo.full_name == github.repository &&
-        github.event.pull_request.head.repo.full_name != '' &&
-        github.event.pull_request.head.repo.id > 0 &&
-        github.event.pull_request.head.sha != ''
+        github.event.action != 'closed'
       ) ||
       (
         github.event_name == 'issue_comment' &&
@@ -41,8 +35,10 @@ jobs:
       queue: max
       cancel-in-progress: false
     permissions:
-      # The action reruns the prior failed CLA check after a contributor signs.
-      actions: write
+      # The archived action attempts a branch-based rerun after a contributor
+      # signs. That selection is unsafe. The exact-PR rerun worker is not
+      # deployed yet, so required-check recovery remains advisory.
+      actions: read
       contents: write
       issues: write
       # GitHub's pull_request_target token denied issue comments for fork PRs
