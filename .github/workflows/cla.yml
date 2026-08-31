@@ -28,11 +28,12 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Signature updates share one file. GitHub keeps one running and one
-    # pending run for this group; cancel-in-progress=false preserves the
-    # running update while a newer event may replace the pending update.
+    # Scope concurrency to this repository and Pull Request. GitHub keeps one
+    # running and one pending run for this group; cancel-in-progress=false
+    # preserves the running update while a newer event may replace the pending
+    # update. The maintained action retries bounded ledger conflicts.
     concurrency:
-      group: cla-signatures
+      group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
     permissions:
       # The maintained in-organization action validates the live Pull Request
@@ -129,11 +130,11 @@ jobs:
             echo "::error title=CLA preflight failed::GitHub returned an invalid commit count for pull request ${PR_NUMBER}." >&2
             exit 1
           fi
-          if (( commits > 100 )); then
-            echo "::error title=CLA preflight failed::Pull request ${PR_NUMBER} has ${commits} commits. The pinned CLA Assistant inspects only the first 100 commits; squash or split the pull request before requesting CLA validation." >&2
+          if (( commits > 1000 )); then
+            echo "::error title=CLA preflight failed::Pull request ${PR_NUMBER} has ${commits} commits. The maintained CLA Assistant supports at most 1,000 commits; squash or split the pull request before requesting CLA validation." >&2
             exit 1
           fi
-          echo "CLA preflight passed: ${commits} commits (maximum 100)."
+          echo "CLA preflight passed: ${commits} commits (maximum 1,000)."
           echo "validated=true" >> "${GITHUB_OUTPUT}"
 
       - name: "Validate historical CLA declarations"
@@ -376,9 +377,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Locking a merged PR does not need signature or repository-write access.
-    # Share the signature group so lock and signature updates cannot race.
+    # Use the same repository-and-PR group so its lock and signature updates
+    # cannot race for this Pull Request.
     concurrency:
-      group: cla-signatures
+      group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
     permissions:
       issues: write
