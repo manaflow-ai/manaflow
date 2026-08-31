@@ -483,6 +483,11 @@ jobs:
           # allowlist-ids entry only for an approved automation opener; raw
           # names and emails are never trusted.
           require-opener-as-author: 'true'
+          # Verified in-organization maintainers Austin Wang (@austinywang,
+          # GitHub ID 38676809) and Abdulaziz Albahar (@azooz2003-bit, GitHub
+          # ID 67667005) may use the maintainer exemption. The action matches
+          # these numeric IDs only on authenticated Pull Request openers.
+          allowlist-ids: '38676809,67667005'
 
   LockMergedPullRequest:
     name: "Lock merged pull request"
