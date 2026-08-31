@@ -38,9 +38,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       # The maintained in-organization action validates the live Pull Request
-      # before it writes. Keep workflow rerun access out of this job; required
-      # check recovery is handled only by an exact, separately reviewed worker.
-      actions: read
+      # before it writes. This job has no Actions API access; required-check
+      # recovery is handled only by an exact, separately reviewed worker.
       contents: write
       issues: write
       # GitHub's pull_request_target token denied issue comments for fork PRs
@@ -184,18 +183,27 @@ jobs:
           scan_comments_page() {
             local page_number="$1"
 
-            if ! jq -e 'type == "array" and all(.[];
-              type == "object" and
-              (.body | type) == "string" and
-              (.user | type) == "object" and
-              (.user.login | type) == "string" and
-              (.user.login | length) > 0 and
-              (.user.type | type) == "string" and
-              (.user.type == "User" or .user.type == "Bot") and
-              (.user.id | type) == "number" and
-              (.user.id | tostring | test("^[1-9][0-9]*$")) and
-              (.user.id <= 9007199254740991)
-            )' <<<"${page_json}" >/dev/null 2>&1; then
+            if ! jq -e '
+              def safe_id:
+                type == "number" and floor == . and . > 0 and . <= 9007199254740991;
+              # GitHub can return a null user for deleted accounts and actor
+              # types beyond User/Bot (for example, Mannequin). The action
+              # skips null users and only calls string methods on named users.
+              def valid_comment:
+                type == "object" and
+                (.body == null or (.body | type) == "string") and
+                (
+                  .user == null or
+                  (
+                    (.user | type) == "object" and
+                    (.user.login | type) == "string" and
+                    (.user.login | length) > 0 and
+                    (.user.type == null or (.user.type | type) == "string") and
+                    (.user.id == null or (.user.id | safe_id))
+                  )
+                );
+              type == "array" and all(.[]; valid_comment)
+            ' <<<"${page_json}" >/dev/null 2>&1; then
               echo "::error title=CLA history preflight failed::GitHub returned invalid comment data on page ${page_number}."
               return 1
             fi
@@ -236,18 +244,26 @@ jobs:
             echo "::error title=CLA history preflight failed::Could not query the pull request comment overflow probe."
             exit 1
           fi
-          if ! jq -e 'type == "array" and all(.[];
-               type == "object" and
-               (.body | type) == "string" and
-               (.user | type) == "object" and
-               (.user.login | type) == "string" and
-               (.user.login | length) > 0 and
-               (.user.type | type) == "string" and
-               (.user.type == "User" or .user.type == "Bot") and
-               (.user.id | type) == "number" and
-               (.user.id | tostring | test("^[1-9][0-9]*$")) and
-               (.user.id <= 9007199254740991)
-             )' <<<"${overflow_json}" >/dev/null 2>&1 ||
+          if ! jq -e '
+               def safe_id:
+                 type == "number" and floor == . and . > 0 and . <= 9007199254740991;
+               # Keep the overflow probe schema check identical to the page
+               # check, including deleted and non-human commenter records.
+               def valid_comment:
+                 type == "object" and
+                 (.body == null or (.body | type) == "string") and
+                 (
+                   .user == null or
+                   (
+                     (.user | type) == "object" and
+                     (.user.login | type) == "string" and
+                     (.user.login | length) > 0 and
+                     (.user.type == null or (.user.type | type) == "string") and
+                     (.user.id == null or (.user.id | safe_id))
+                   )
+                 );
+               type == "array" and all(.[]; valid_comment)
+             ' <<<"${overflow_json}" >/dev/null 2>&1 ||
              ! overflow_count="$(jq -er 'length | numbers' <<<"${overflow_json}" 2>/dev/null)" ||
              ! [[ "${overflow_count}" =~ ^[0-9]+$ ]]; then
             echo "::error title=CLA history preflight failed::GitHub returned invalid comment data for the overflow probe."
@@ -290,6 +306,10 @@ jobs:
         # and opener predicates run in the preflight step above. Keep this
         # gate to event shape so malformed payloads fail in a running step,
         # rather than becoming a skipped-success required check.
+        # Issue-comment signatures are persisted by the maintained action. The
+        # required-check refresh remains advisory until a separately reviewed
+        # worker can target the exact live PR head, so this job has no Actions
+        # API permission by design.
         if: >-
           steps.cla_preflight.outputs.validated == 'true' &&
           steps.cla_history.outputs.validated == 'true' &&
