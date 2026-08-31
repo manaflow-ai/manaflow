@@ -136,7 +136,7 @@ jobs:
           echo "CLA preflight passed: ${commits} commits (maximum 100)."
           echo "validated=true" >> "${GITHUB_OUTPUT}"
 
-      - name: "Validate historical CLA comments"
+      - name: "Validate historical CLA declarations"
         id: cla_history
         # The archived action rescans issue comments on both event types and
         # accepts trimmed, lower-case, and wrapped declarations. Inspect the
@@ -146,11 +146,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_COMMENT_BODY: ${{ github.event.comment.body || '' }}
           CLA_SIGN_PHRASE: 'I have read the CLA Document and I hereby sign the CLA'
         run: |
           set -euo pipefail
           if ! [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error title=CLA history preflight failed::Invalid pull request number."
+            exit 1
+          fi
+          if [[ "${EVENT_NAME}" == "issue_comment" &&
+                "${EVENT_COMMENT_BODY}" != "recheck" &&
+                "${EVENT_COMMENT_BODY}" != "${CLA_SIGN_PHRASE}" ]]; then
+            echo "::error title=CLA comment policy::The issue comment must be exactly recheck or the approved CLA signature phrase."
             exit 1
           fi
 
@@ -162,11 +170,20 @@ jobs:
 
           scan_comments_page() {
             local page_number="$1"
-            local unsafe_stats unsafe_count non_exact_count non_human_count
+            local unsafe_stats unsafe_count marker_count non_exact_count non_human_count
 
-            if ! jq -e 'type == "array"' <<<"${page_json}" >/dev/null 2>&1 ||
-               ! jq -e 'all(.[]; type == "object")' <<<"${page_json}" >/dev/null 2>&1 ||
-               ! jq -e 'all(.[]; (type == "object") and ((.body | type) == "string") and ((.user == null) or ((.user | type) == "object")))' <<<"${page_json}" >/dev/null 2>&1; then
+            if ! jq -e 'type == "array" and all(.[];
+              type == "object" and
+              (.body | type) == "string" and
+              (.user | type) == "object" and
+              (.user.login | type) == "string" and
+              (.user.login | length) > 0 and
+              (.user.type | type) == "string" and
+              (.user.type == "User" or .user.type == "Bot") and
+              (.user.id | type) == "number" and
+              (.user.id | tostring | test("^[1-9][0-9]*$")) and
+              (.user.id <= 9007199254740991)
+            )' <<<"${page_json}" >/dev/null 2>&1; then
               echo "::error title=CLA history preflight failed::GitHub returned invalid comment data on page ${page_number}."
               return 1
             fi
@@ -190,35 +207,38 @@ jobs:
                 | (.body // "") as $body
                 | ($body | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $normalized
                 | ($phrase | ascii_downcase) as $expected
+                | ($normalized == $expected or
+                   ($normalized | test("^.*i\\s+have\\s+read\\s+the\\s+cla\\s+document\\s+and\\s+i\\s+hereby\\s+sign\\s+the\\s+cla.*$"))) as $candidate
+                | (($body | ascii_downcase | contains("cla assistant lite bot")) or
+                   ($body | ascii_downcase | contains("dco assistant lite bot"))) as $marker
+                | (((.user.login | ascii_downcase) == "github-actions[bot]") and
+                   .user.type == "Bot" and .user.id == 41898282) as $canonical_bot
                 | select(
-                    $normalized == $expected or
-                    ($normalized | test("^.*i\\s+have\\s+read\\s+the\\s+cla\\s+document\\s+and\\s+i\\s+hereby\\s+sign\\s+the\\s+cla.*$"))
-                  )
-                | select(
-                    ((.user.login // "" | tostring | ascii_downcase) != "github-actions[bot]" or
-                     (.user.type // "") != "Bot")
-                  )
-                | select(
-                    ($body != $phrase) or
-                    ((.user.type // "") != "User")
+                    ($marker and ($canonical_bot | not)) or
+                    ($candidate and ($canonical_bot | not) and
+                     (($body != $phrase) or .user.type != "User"))
                   )
                 | {
-                    non_exact: ($body != $phrase),
-                    non_human: ((.user.type // "") != "User")
+                    marker: $marker,
+                    non_exact: ($candidate and ($body != $phrase)),
+                    non_human: ($candidate and (.user.type != "User"))
                   }
               ]
-              | [length, (map(select(.non_exact)) | length), (map(select(.non_human)) | length)]
+              | [length, (map(select(.marker)) | length), (map(select(.non_exact)) | length), (map(select(.non_human)) | length)]
               | @tsv
             ' <<<"${page_json}" 2>/dev/null)"; then
               echo "::error title=CLA history preflight failed::Could not validate historical comment bodies on page ${page_number}."
               return 1
             fi
-            if ! IFS=$'\t' read -r unsafe_count non_exact_count non_human_count <<<"${unsafe_stats}" ||
-               ! [[ "${unsafe_count}" =~ ^[0-9]+$ && "${non_exact_count}" =~ ^[0-9]+$ && "${non_human_count}" =~ ^[0-9]+$ ]]; then
+            if ! IFS=$'\t' read -r unsafe_count marker_count non_exact_count non_human_count <<<"${unsafe_stats}" ||
+               ! [[ "${unsafe_count}" =~ ^[0-9]+$ && "${marker_count}" =~ ^[0-9]+$ && "${non_exact_count}" =~ ^[0-9]+$ && "${non_human_count}" =~ ^[0-9]+$ ]]; then
               echo "::error title=CLA history preflight failed::Could not count historical CLA comment candidates on page ${page_number}."
               return 1
             fi
             if (( unsafe_count > 0 )); then
+              if (( marker_count > 0 )); then
+                echo "::error title=CLA historical comment policy::A historical comment contains the archived CLA or DCO Assistant bot marker from a non-canonical actor."
+              fi
               if (( non_exact_count > 0 )); then
                 echo "::error title=CLA historical comment policy::A historical comment matches the archived trimmed/lower-case/broad CLA matcher but is not the exact signing phrase."
               fi
@@ -250,7 +270,18 @@ jobs:
             echo "::error title=CLA history preflight failed::Could not query the pull request comment overflow probe."
             exit 1
           fi
-          if ! jq -e 'type == "array" and all(.[]; type == "object")' <<<"${overflow_json}" >/dev/null 2>&1 ||
+          if ! jq -e 'type == "array" and all(.[];
+               type == "object" and
+               (.body | type) == "string" and
+               (.user | type) == "object" and
+               (.user.login | type) == "string" and
+               (.user.login | length) > 0 and
+               (.user.type | type) == "string" and
+               (.user.type == "User" or .user.type == "Bot") and
+               (.user.id | type) == "number" and
+               (.user.id | tostring | test("^[1-9][0-9]*$")) and
+               (.user.id <= 9007199254740991)
+             )' <<<"${overflow_json}" >/dev/null 2>&1 ||
              ! overflow_count="$(jq -er 'length | numbers' <<<"${overflow_json}" 2>/dev/null)" ||
              ! [[ "${overflow_count}" =~ ^[0-9]+$ ]]; then
             echo "::error title=CLA history preflight failed::GitHub returned invalid comment data for the overflow probe."
