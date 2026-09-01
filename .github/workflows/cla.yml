@@ -56,6 +56,7 @@ jobs:
       pull-requests: read
     outputs:
       admitted: ${{ steps.admission.outputs.admitted }}
+      ignored: ${{ steps.admission.outputs.ignored || '' }}
       trusted_recheck: ${{ steps.admission.outputs.trusted_recheck || '' }}
       signing: ${{ steps.admission.outputs.signing || '' }}
       signer_authorized: ${{ steps.signer_preflight.outputs.signer_authorized || '' }}
@@ -209,6 +210,7 @@ jobs:
       - CLALedgerWriter
     if: >-
       always() &&
+      needs.CLACommentGate.outputs.ignored != 'true' &&
       (
         (
           github.event_name == 'pull_request_target' &&
@@ -391,6 +393,7 @@ jobs:
       group: cla-lock-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     permissions:
+      contents: read
       issues: write
       pull-requests: read
     steps:

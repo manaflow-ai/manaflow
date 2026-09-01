@@ -56,6 +56,11 @@ if [[ "${EVENT_NAME:-}" == 'issue_comment' ]]; then
   # identity validation below.
   if [[ "${COMMENT_BODY:-}" != 'recheck' &&
         "${COMMENT_BODY:-}" != "${SIGN_PHRASE}" ]]; then
+    # GitHub Actions expression equality is case-insensitive. The workflow
+    # may therefore invoke this gate for a case-variant command that is not an
+    # exact declaration. Mark it explicitly so the required result job can be
+    # skipped instead of manufacturing a failed check for ordinary traffic.
+    emit ignored true
     emit admitted false
     echo 'CLA comment ignored: body is not an exact command'
     exit 0
