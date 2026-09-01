@@ -2,7 +2,7 @@
 
 Thank you for your interest in Manaflow, an open-source project of Manaflow, Inc. (the "Company"). To clarify the intellectual property license granted with Contributions from any person or entity, the Company must have on file a signed Contributor License Agreement ("CLA") from each Contributor, indicating agreement with the license terms below. This agreement is for your protection as a Contributor as well as the protection of the Company and its users. It does not change your rights to use your own Contributions for any other purpose.
 
-Please read this Agreement carefully before signing and keep a copy for your records. For contributions submitted through GitHub, your electronic signature is the exact pull request comment: "I have read the CLA Document and I hereby sign the CLA". Posting that comment confirms your acceptance of this Agreement; you do not need to return a separate signed copy.
+Please read this Agreement carefully before signing and keep a copy for your records. For contributions submitted through GitHub, your electronic signature is the exact pull request comment: "I have read the CLA Document v2.2 and I hereby sign the CLA". Posting that comment confirms your acceptance of this Agreement; you do not need to return a separate signed copy.
 
 This Agreement is maintained in English and the English version controls. Any translation is provided for convenience only and does not change the terms of this Agreement.
 
