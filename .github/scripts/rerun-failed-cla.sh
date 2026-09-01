@@ -529,6 +529,7 @@ if ! candidate_list_json="$(jq -c \
           else any($prs[]?;
             (.number | type == "number") and
             (.number | tostring) == $pr and
+            .base.ref == $base and
             ((.base.repo.full_name // "") == "" or
              .base.repo.full_name == $repo) and
             (.base.repo.id | type == "number") and

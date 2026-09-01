@@ -180,6 +180,15 @@ jobs:
       signature_recorded: ${{ steps.cla_action.outputs.signature_recorded }}
       cla_passed: ${{ steps.cla_action.outputs.cla_passed }}
     steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::Privileged CLA jobs require a GitHub-hosted runner"
+            exit 1
+          }
       - name: "Write CLA result"
         id: cla_action
         uses: manaflow-ai/cla-github-action@212a0f2dd659b24b48a30ba35966e06dc41736af
@@ -350,6 +359,15 @@ jobs:
       group: cla-rerun-${{ github.repository }}-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::Privileged CLA jobs require a GitHub-hosted runner"
+            exit 1
+          }
       - name: "Checkout trusted CLA rerun helper"
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -397,6 +415,15 @@ jobs:
       issues: write
       pull-requests: read
     steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::Privileged CLA jobs require a GitHub-hosted runner"
+            exit 1
+          }
       - name: "Lock merged pull request"
         uses: manaflow-ai/cla-github-action@212a0f2dd659b24b48a30ba35966e06dc41736af
         env:
