@@ -195,16 +195,28 @@ if [[ "${EVENT_NAME}" == 'pull_request_target' ]]; then
   nonempty "${EVENT_HEAD_REPOSITORY:-}" || fail 'Event head repository is missing'
   nonempty "${EVENT_HEAD_REPOSITORY_ID:-}" || fail 'Event head repository ID is missing'
   nonempty "${EVENT_HEAD_SHA:-}" || fail 'Event head SHA is missing'
+  safe_sha "${EVENT_BASE_SHA}" || fail 'Event base SHA is invalid'
+  safe_sha "${EVENT_HEAD_SHA}" || fail 'Event head SHA is invalid'
   [[ "${EVENT_PR_NUMBER:-}" == "${PR_NUMBER}" ]] || fail 'Event pull request number does not match'
   [[ "${EVENT_BASE_REF}" == "${live_base_ref}" &&
      "$(printf '%s' "${EVENT_BASE_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "${live_base_repo}" | tr '[:upper:]' '[:lower:]')" &&
      "${EVENT_BASE_REPOSITORY_ID}" == "${live_base_repo_id}" &&
-     "${EVENT_BASE_SHA}" == "${live_base_sha}" &&
      "${EVENT_HEAD_REF}" == "${live_head_ref}" &&
      "$(printf '%s' "${EVENT_HEAD_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "${live_head_repo}" | tr '[:upper:]' '[:lower:]')" &&
      "${EVENT_HEAD_REPOSITORY_ID}" == "${live_head_repo_id}" &&
      "${EVENT_HEAD_SHA}" == "${live_head_sha}" ]] ||
     fail 'Pull-request event does not match the live pull request'
+  if [[ "${EVENT_BASE_SHA}" != "${live_base_sha}" ]]; then
+    # The base branch can advance after GitHub creates a lifecycle event but
+    # before the queued runner starts. Do not fail a valid PR or pass a stale
+    # payload to the action. A later synchronize event or exact recheck can
+    # evaluate the current base through the live API.
+    emit base_stale true
+    emit ignored true
+    emit admitted false
+    echo 'CLA lifecycle event ignored: the base branch advanced before execution'
+    exit 0
+  fi
 fi
 
 emit head_sha "${live_head_sha}"
