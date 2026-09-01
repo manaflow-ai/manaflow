@@ -18,24 +18,32 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
       issues: read
-      id-token: write
       actions: read # Required for Claude to read CI results on PRs
+    # Collapse duplicate requests for one issue or pull request. The pinned
+    # action rejects actors without repository write access before Claude runs.
+    concurrency:
+      group: claude-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
+          # Keep secret-bearing Claude runs on trusted repository content.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@833fb0f8c9f6686b33d963a8bae0a94f4936ab2a # v1.0.211
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          model: "claude-opus-4-5-20251101"
+          claude_args: --model claude-opus-4-5-20251101
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
@@ -59,4 +67,3 @@ jobs:
           # Optional: Custom environment variables for Claude
           # claude_env: |
           #   NODE_ENV: test
-
