@@ -703,7 +703,9 @@ jobs:
       - name: Build native Rust addon
         working-directory: apps/server/native/core
         shell: pwsh
-        run: bunx --bun @napi-rs/cli build --platform --release
+        run: |
+          bunx --bun @napi-rs/cli build --platform --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Generate icons
         working-directory: apps/client
         run: bun run ./scripts/generate-icons.mjs
@@ -716,7 +718,9 @@ jobs:
         working-directory: apps/client
         run: |
           bunx electron-vite build -c electron.vite.config.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bunx electron-builder --config electron-builder.json --win --x64 --publish always --config.publish.provider=github --config.publish.owner="$env:RELEASE_OWNER" --config.publish.repo="$env:RELEASE_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   linux-x64:
     name: Linux x64

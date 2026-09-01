@@ -33,11 +33,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.sha }}
+          # Keep a local branch because release-pr.ts creates a child branch.
+          ref: refs/heads/main
           fetch-depth: 0
           fetch-tags: true
           # release-pr.ts supplies a transient auth header for git pushes.
           persist-credentials: false
+
+      - name: Verify main revision
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "main advanced while the workflow was starting" >&2
+            echo "expected $EXPECTED_SHA, checked out $actual_sha" >&2
+            exit 1
+          fi
 
       - name: Check for changes since last release
         id: release_changes
