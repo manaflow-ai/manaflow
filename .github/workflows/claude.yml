@@ -91,6 +91,7 @@ jobs:
           EVENT_COMMENT_USER_TYPE: ${{ github.event.comment.user.type }}
           EVENT_COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
           EVENT_COMMENT_URL: ${{ github.event.comment.url }}
+          EVENT_COMMENT_PR_URL: ${{ github.event.comment.pull_request_url }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -106,6 +107,7 @@ jobs:
           EVENT_REVIEW_USER_ID: ${{ github.event.review.user.id }}
           EVENT_REVIEW_USER_TYPE: ${{ github.event.review.user.type }}
           EVENT_REVIEW_ASSOCIATION: ${{ github.event.review.author_association }}
+          EVENT_REVIEW_PR_URL: ${{ github.event.review.pull_request_url }}
           EVENT_REVIEW_URL: ${{ github.event.review.url }}
         shell: bash
         run: |
@@ -246,6 +248,7 @@ jobs:
               has_trigger "$EVENT_COMMENT_BODY" || reject "The comment does not contain the Claude trigger"
               is_id "$EVENT_ISSUE_NUMBER" || fail_closed "The issue number is malformed"
               is_id "$EVENT_COMMENT_ID" || fail_closed "The comment ID is malformed"
+              [[ "$EVENT_ISSUE_URL" == "https://api.github.com/repos/$GH_REPO/issues/$EVENT_ISSUE_NUMBER" ]] || fail_closed "The event issue URL does not match the repository and issue number"
               [[ "$EVENT_COMMENT_USER_TYPE" == User ]] || reject "Bot comments cannot trigger Claude"
               is_id "$EVENT_COMMENT_USER_ID" || fail_closed "The comment author ID is malformed"
               is_trusted_association "$EVENT_COMMENT_ASSOCIATION" || reject "The comment author is not a trusted repository participant"
@@ -256,6 +259,10 @@ jobs:
                 .user.type == "User" and .user.id == $user_id and
                 (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
               ' <<<"$COMMENT_JSON" >/dev/null || fail_closed "The live comment no longer matches the triggering comment"
+              live_comment_url="$(jq -r '.url // empty' <<<"$COMMENT_JSON")"
+              [[ -z "$EVENT_COMMENT_URL" || "$EVENT_COMMENT_URL" == "$live_comment_url" ]] || fail_closed "The event comment URL does not match the live comment"
+              live_issue_association="$(jq -r '.author_association // empty' <<<"$ISSUE_JSON")"
+              [[ -z "$EVENT_ISSUE_ASSOCIATION" || "$EVENT_ISSUE_ASSOCIATION" == "$live_issue_association" ]] || fail_closed "The event issue association changed"
               live_issue_pr_url="$(jq -r '.pull_request.url // empty' <<<"$ISSUE_JSON")"
               if [[ -n "$EVENT_ISSUE_PR_URL" || -n "$live_issue_pr_url" ]]; then
                 [[ -n "$live_issue_pr_url" && "$live_issue_pr_url" == "$EVENT_ISSUE_PR_URL" ]] || fail_closed "The live issue is not the pull request from the event"
@@ -280,12 +287,15 @@ jobs:
               is_id "$EVENT_COMMENT_USER_ID" || fail_closed "The review comment author ID is malformed"
               is_trusted_association "$EVENT_COMMENT_ASSOCIATION" || reject "The review comment author is not a trusted repository participant"
               validate_pr "$EVENT_PR_NUMBER"
+              [[ -z "$EVENT_COMMENT_PR_URL" || "$EVENT_COMMENT_PR_URL" == "https://api.github.com/repos/$GH_REPO/pulls/$PR_NUMBER" ]] || fail_closed "The review comment pull request changed"
               REVIEW_COMMENT_JSON="$(api "repos/$GH_REPO/pulls/comments/$EVENT_COMMENT_ID")" || fail_closed "The live review comment could not be read"
               jq -e --arg pr_url "https://api.github.com/repos/$GH_REPO/pulls/$PR_NUMBER" --arg body "$EVENT_COMMENT_BODY" --argjson user_id "$EVENT_COMMENT_USER_ID" '
                 .pull_request_url == $pr_url and .body == $body and
                 .user.type == "User" and .user.id == $user_id and
                 (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
               ' <<<"$REVIEW_COMMENT_JSON" >/dev/null || fail_closed "The live review comment no longer matches the event"
+              live_review_comment_url="$(jq -r '.url // empty' <<<"$REVIEW_COMMENT_JSON")"
+              [[ -z "$EVENT_COMMENT_URL" || "$EVENT_COMMENT_URL" == "$live_review_comment_url" ]] || fail_closed "The event review comment URL does not match the live comment"
               [[ "$EVENT_SENDER_ID" == "$EVENT_COMMENT_USER_ID" ]] || fail_closed "The event sender does not match the live review comment author"
               output_pr
               ;;
@@ -296,6 +306,7 @@ jobs:
               is_id "$EVENT_REVIEW_USER_ID" || fail_closed "The review author ID is malformed"
               is_trusted_association "$EVENT_REVIEW_ASSOCIATION" || reject "The review author is not a trusted repository participant"
               validate_pr "$EVENT_PR_NUMBER"
+              [[ -z "$EVENT_REVIEW_PR_URL" || "$EVENT_REVIEW_PR_URL" == "https://api.github.com/repos/$GH_REPO/pulls/$PR_NUMBER" ]] || fail_closed "The review pull request changed"
               REVIEW_JSON="$(api "repos/$GH_REPO/pulls/$PR_NUMBER/reviews/$EVENT_REVIEW_ID")" || fail_closed "The live review could not be read"
               jq -e --arg pr_url "https://api.github.com/repos/$GH_REPO/pulls/$PR_NUMBER" --arg body "$EVENT_REVIEW_BODY" --argjson user_id "$EVENT_REVIEW_USER_ID" '
                 .pull_request_url == $pr_url and .body == $body and
