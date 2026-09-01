@@ -360,7 +360,7 @@ jobs:
       contents: read # Checkout the trusted base workspace.
       pull-requests: read # Read pull request metadata and CI context.
       issues: read # Read issue and comment context.
-      # Required by v1.0.211's default GitHub App authentication. The action
+      # Required by v1.0.212's default GitHub App authentication. The action
       # exchanges this short-lived OIDC token for a scoped App token. Keep this
       # only with the trusted-event gate above; removing it requires switching
       # to the less capable github_token input.
@@ -410,7 +410,7 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@833fb0f8c9f6686b33d963a8bae0a94f4936ab2a # v1.0.211
+        uses: anthropics/claude-code-action@781d62e9d5fbd78b24dcdfd42858332d485fe462 # v1.0.212
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: --model claude-opus-4-5-20251101
