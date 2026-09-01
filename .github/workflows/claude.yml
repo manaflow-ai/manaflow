@@ -15,6 +15,19 @@ on:
 # its App exchange. The App token's required write scopes are listed below.
 permissions: {}
 
+# Deduplicate webhook redeliveries without coalescing separate comments or
+# reviews. Each entity event has an immutable numeric ID; run_id is the safe
+# fallback for events without one. cancel-in-progress=false preserves a
+# distinct request while an earlier request for the same event is running.
+concurrency:
+  group: >-
+    claude-${{ github.repository_id }}-${{ github.event_name }}-${{
+      github.event.comment.id || github.event.review.id ||
+      github.event.issue.number || github.event.pull_request.number ||
+      github.run_id
+    }}
+  cancel-in-progress: false
+
 jobs:
   admission:
     name: Validate Claude request
