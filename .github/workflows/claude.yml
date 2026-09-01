@@ -10,32 +10,76 @@ on:
   pull_request_review:
     types: [submitted]
 
+# Deny every workflow-token scope by default. The Claude job grants only the
+# read scopes needed for checkout and context plus the OIDC scope required by
+# its App exchange. The App token's required write scopes are listed below.
+permissions: {}
+
 jobs:
   claude:
-    if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    name: Trusted Claude request
+    # These events load this workflow from the base repository. Keep the
+    # secret-bearing action behind a human, trusted-repository gate. A skipped
+    # job receives no runner, OIDC token, checkout, or repository secrets.
+    if: >-
+      github.event.repository.full_name == github.repository &&
+      github.event.sender.type == 'User' &&
+      (
+        (
+          github.event_name == 'issue_comment' &&
+          contains(github.event.comment.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+        ) ||
+        (
+          github.event_name == 'pull_request_review_comment' &&
+          contains(github.event.comment.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.base.repo.full_name == github.repository &&
+          github.event.pull_request.base.ref == github.event.repository.default_branch &&
+          github.event.pull_request.state == 'open'
+        ) ||
+        (
+          github.event_name == 'pull_request_review' &&
+          contains(github.event.review.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.base.repo.full_name == github.repository &&
+          github.event.pull_request.base.ref == github.event.repository.default_branch &&
+          github.event.pull_request.state == 'open'
+        ) ||
+        (
+          github.event_name == 'issues' &&
+          (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Do not coalesce requests here. GitHub keeps only one pending run in a
     # concurrency group and would silently discard a distinct user request.
     # The pinned action checks repository write access before it invokes Claude.
     permissions:
-      contents: read
-      pull-requests: read
-      issues: read
-      # The action exchanges a short-lived OIDC token for its scoped GitHub
-      # App token, even when Claude authentication uses OAuth.
-      id-token: write
+      contents: read # Checkout the trusted base workspace.
+      pull-requests: read # Read pull request metadata and CI context.
+      issues: read # Read issue and comment context.
+      # Required by v1.0.211's default GitHub App authentication. The action
+      # exchanges this short-lived OIDC token for a scoped App token. Keep this
+      # only with the trusted-event gate above; removing it requires switching
+      # to the less capable github_token input.
+      id-token: write # Required for the Claude GitHub App token exchange.
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          # The pinned action validates the actor before restoring protected
-          # Claude configuration paths from the PR base.
+          # Review events can default to a PR merge ref. Keep the action's
+          # workspace on the immutable base commit; the action fetches the PR
+          # branch only after its own permission checks.
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -48,6 +92,12 @@ jobs:
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
+            # These writes are required for the action's intended branch and
+            # tracking-comment behavior. Keep them explicit so a future action
+            # release cannot silently widen the requested App token.
+            contents: write
+            pull_requests: write
+            issues: write
             actions: read
           
           # Optional: Customize the trigger phrase (default: @claude)
