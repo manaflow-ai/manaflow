@@ -67,6 +67,15 @@ jobs:
       comment_created_at: ${{ steps.signer_preflight.outputs.comment_created_at || '' }}
       comment_author_id: ${{ steps.signer_preflight.outputs.comment_author_id || '' }}
     steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::CLA policy jobs require a GitHub-hosted runner"
+            exit 1
+          }
       - name: "Checkout trusted CLA admission policy"
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -246,6 +255,15 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::CLA policy jobs require a GitHub-hosted runner"
+            exit 1
+          }
       # Keep the generation marker on the required check's only step. The
       # marker must remain visible when this result fails because the writer
       # failed in the original pull_request_target run. The immutable rerun
@@ -299,6 +317,15 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::CLA policy jobs require a GitHub-hosted runner"
+            exit 1
+          }
       - name: "Mirror CLA Assistant compatibility result"
         env:
           RESULT: ${{ needs.CLAAssistant.result }}
@@ -413,7 +440,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: "Require GitHub-hosted runner"
         env:
