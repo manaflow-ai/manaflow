@@ -761,38 +761,38 @@ pub fn diff_refs(opts: GitDiffOptions) -> Result<Vec<DiffEntry>> {
                         }
                     }
                     "R" | "R100" | "R099" | "R098" | "R097" | "R096" | "R095" | "R094" | "R093"
-                    | "R092" | "R091" | "R090" => {
-                        if parts.len() >= 3 {
-                            let oldp = parts[1].to_string();
-                            let newp = parts[2].to_string();
-                            let mut e = DiffEntry {
-                                filePath: newp.clone(),
-                                oldPath: Some(oldp.clone()),
-                                status: "renamed".into(),
-                                additions: 0,
-                                deletions: 0,
-                                isBinary: false,
-                                ..Default::default()
-                            };
-                            if include {
-                                let new_s = crate::util::run_git(
-                                    &cwd,
-                                    &["show", &format!("{}:{}", head_oid, newp)],
-                                )
-                                .unwrap_or_default();
-                                let new_sz = new_s.len();
-                                e.newSize = Some(new_sz as i32);
-                                e.oldSize = Some(new_sz as i32);
-                                if new_sz <= max_bytes {
-                                    e.oldContent = Some(new_s.clone());
-                                    e.newContent = Some(new_s);
-                                    e.contentOmitted = Some(false);
-                                } else {
-                                    e.contentOmitted = Some(true);
-                                }
+                    | "R092" | "R091" | "R090"
+                        if parts.len() >= 3 =>
+                    {
+                        let oldp = parts[1].to_string();
+                        let newp = parts[2].to_string();
+                        let mut e = DiffEntry {
+                            filePath: newp.clone(),
+                            oldPath: Some(oldp.clone()),
+                            status: "renamed".into(),
+                            additions: 0,
+                            deletions: 0,
+                            isBinary: false,
+                            ..Default::default()
+                        };
+                        if include {
+                            let new_s = crate::util::run_git(
+                                &cwd,
+                                &["show", &format!("{}:{}", head_oid, newp)],
+                            )
+                            .unwrap_or_default();
+                            let new_sz = new_s.len();
+                            e.newSize = Some(new_sz as i32);
+                            e.oldSize = Some(new_sz as i32);
+                            if new_sz <= max_bytes {
+                                e.oldContent = Some(new_s.clone());
+                                e.newContent = Some(new_s);
+                                e.contentOmitted = Some(false);
+                            } else {
+                                e.contentOmitted = Some(true);
                             }
-                            fallback.push(e);
                         }
+                        fallback.push(e);
                     }
                     _ => {}
                 }

@@ -570,7 +570,7 @@ impl BubblewrapService {
         // 3. Try searching by prefix
         let guard = self.sandboxes.lock().await;
         let mut matched = None;
-        for (uuid, _) in guard.iter() {
+        for uuid in guard.keys() {
             let simple = uuid.simple().to_string();
             if simple.starts_with(id_str) {
                 if matched.is_some() {
@@ -2463,7 +2463,7 @@ impl SandboxService for BubblewrapService {
                             // Forward signal to all PTY child processes
                             let sessions = sessions.lock().await;
                             let mut sent_count = 0;
-                            for (_session_id, handle) in sessions.iter() {
+                            for handle in sessions.values() {
                                 if let Some(pid) = handle.child_pid {
                                     // Use libc to send the signal
                                     let result = unsafe { libc::kill(pid as i32, signum) };

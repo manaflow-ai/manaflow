@@ -118,10 +118,8 @@ pub(crate) fn markdown_to_lines(source: &str) -> Vec<Line<'static>> {
             MdEvent::Start(Tag::Item) => {
                 current_spans.push(Span::raw("• ".to_owned()));
             }
-            MdEvent::End(TagEnd::Item) => {
-                if !current_spans.is_empty() {
-                    lines.push(Line::from(std::mem::take(&mut current_spans)));
-                }
+            MdEvent::End(TagEnd::Item) if !current_spans.is_empty() => {
+                lines.push(Line::from(std::mem::take(&mut current_spans)));
             }
             _ => {}
         }
