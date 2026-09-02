@@ -1,0 +1,452 @@
+name: "CLA Assistant v3"
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    branches: [main]
+    types: [opened,closed,edited,ready_for_review,reopened,synchronize]
+
+permissions: {}
+
+# This marker includes the maintained action and the exact workflow revision.
+# The rerun worker uses the step name to reject a failed run that would replay
+# an older privileged workflow definition.
+env:
+  CLA_GENERATION: "v2.2-action-212a0f2dd659b24b48a30ba35966e06dc41736af-workflow-${{ github.workflow_sha }}"
+
+# Numeric IDs are immutable. They identify Austin Wang (@austinywang, 38676809)
+# and Abdulaziz Albahar (@azooz2003-bit, 67667005); names and e-mail addresses
+# are not safe identity inputs.
+
+jobs:
+  # This job has read-only permissions. It performs the exact event check and
+  # authenticates a new signing comment before any write-capable job starts.
+  CLACommentGate:
+    name: "Validate CLA trigger"
+    if: >-
+      (
+        github.event_name == 'pull_request_target' &&
+        (
+          github.event.action == 'opened' ||
+          github.event.action == 'edited' ||
+          github.event.action == 'ready_for_review' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'synchronize'
+        )
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.action == 'created' &&
+        github.event.issue.state == 'open' &&
+        github.event.issue.pull_request &&
+        github.event.comment.user.type == 'User' &&
+        (
+          github.event.comment.body == 'recheck' ||
+          github.event.comment.body == 'I have read the CLA Document v2.2 and I hereby sign the CLA'
+        )
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: cla-admission-${{ github.repository }}-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.admission.outputs.admitted }}
+      ignored: ${{ steps.admission.outputs.ignored || '' }}
+      base_stale: ${{ steps.admission.outputs.base_stale || '' }}
+      trusted_recheck: ${{ steps.admission.outputs.trusted_recheck || '' }}
+      signing: ${{ steps.admission.outputs.signing || '' }}
+      signer_authorized: ${{ steps.signer_preflight.outputs.signer_authorized || '' }}
+      signer_decision: ${{ steps.signer_preflight.outputs.signer_decision || '' }}
+      head_sha: ${{ steps.signer_preflight.outputs.head_sha || steps.admission.outputs.head_sha || '' }}
+      base_sha: ${{ steps.signer_preflight.outputs.base_sha || steps.admission.outputs.base_sha || '' }}
+      comment_id: ${{ steps.signer_preflight.outputs.comment_id || '' }}
+      comment_created_at: ${{ steps.signer_preflight.outputs.comment_created_at || '' }}
+      comment_author_id: ${{ steps.signer_preflight.outputs.comment_author_id || '' }}
+    steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::CLA policy jobs require a GitHub-hosted runner"
+            exit 1
+          }
+      - name: "Checkout trusted CLA admission policy"
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: manaflow-ai/manaflow
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/validate-cla-trigger.sh
+          sparse-checkout-cone-mode: false
+      - name: "Validate exact CLA trigger against live pull request"
+        id: admission
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_REPOSITORY: ${{ github.event.repository.full_name || '' }}
+          EVENT_REPOSITORY_ID: ${{ github.event.repository.id || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number || '' }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          EVENT_PR_STATE: ${{ github.event.pull_request.state || '' }}
+          EVENT_ISSUE_STATE: ${{ github.event.issue.state || '' }}
+          EVENT_ISSUE_PR_URL: ${{ github.event.issue.pull_request.url || '' }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || '' }}
+          EVENT_BASE_REPOSITORY_ID: ${{ github.event.pull_request.base.repo.id || '' }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref || '' }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          EVENT_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id || '' }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+          COMMENT_ID: ${{ github.event.comment.id || '' }}
+          COMMENT_CREATED_AT: ${{ github.event.comment.created_at || '' }}
+          COMMENT_UPDATED_AT: ${{ github.event.comment.updated_at || '' }}
+          COMMENT_AUTHOR_ID: ${{ github.event.comment.user.id || '' }}
+          COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login || '' }}
+          COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type || '' }}
+          COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association || '' }}
+        run: bash .github/scripts/validate-cla-trigger.sh
+
+      - name: "Authenticate exact CLA signer"
+        id: signer_preflight
+        if: >-
+          success() &&
+          steps.admission.outputs.signing == 'true'
+        uses: manaflow-ai/cla-github-action@212a0f2dd659b24b48a30ba35966e06dc41736af
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          mode: "signer-preflight"
+          path-to-signatures: "signatures/version2/cla.json"
+          path-to-document: "https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md"
+          branch: "cla-signatures"
+          required-base-ref: "main"
+          custom-pr-sign-comment: "I have read the CLA Document v2.2 and I hereby sign the CLA"
+          require-opener-as-author: "true"
+          allowlist-ids: "38676809,67667005"
+
+  # This is the only job with ledger and comment write permissions. It has no
+  # shell step, so policy text cannot execute with its token. The action repeats
+  # live PR/comment validation and binds a signing write to the exact head SHA
+  # observed by the read-only gate.
+  CLALedgerWriter:
+    name: "CLA ledger writer"
+    needs: CLACommentGate
+    if: >-
+      needs.CLACommentGate.result == 'success' &&
+      needs.CLACommentGate.outputs.admitted == 'true' &&
+      (
+        (
+          github.event_name == 'pull_request_target' &&
+          (
+            github.event.action == 'opened' ||
+            github.event.action == 'edited' ||
+            github.event.action == 'ready_for_review' ||
+            github.event.action == 'reopened' ||
+            github.event.action == 'synchronize'
+          )
+        ) ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.state == 'open' &&
+          github.event.issue.pull_request &&
+          github.event.comment.user.type == 'User' &&
+          (
+            (
+              github.event.comment.body == 'recheck' &&
+              needs.CLACommentGate.outputs.trusted_recheck == 'true'
+            ) ||
+              (
+                github.event.comment.body == 'I have read the CLA Document v2.2 and I hereby sign the CLA' &&
+                needs.CLACommentGate.outputs.signer_authorized == 'true' &&
+                needs.CLACommentGate.outputs.signer_decision == 'authorized' &&
+                needs.CLACommentGate.outputs.head_sha != '' &&
+                needs.CLACommentGate.outputs.base_sha != '' &&
+                needs.CLACommentGate.outputs.comment_id != '' &&
+                needs.CLACommentGate.outputs.comment_created_at != '' &&
+                needs.CLACommentGate.outputs.comment_author_id != ''
+            )
+          )
+        )
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: cla-signatures-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      signature_recorded: ${{ steps.cla_action.outputs.signature_recorded }}
+      cla_passed: ${{ steps.cla_action.outputs.cla_passed }}
+    steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::Privileged CLA jobs require a GitHub-hosted runner"
+            exit 1
+          }
+      - name: "Write CLA result"
+        id: cla_action
+        uses: manaflow-ai/cla-github-action@212a0f2dd659b24b48a30ba35966e06dc41736af
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: "https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md"
+          path-to-signatures: "signatures/version2/cla.json"
+          branch: "cla-signatures"
+          required-base-ref: "main"
+          custom-pr-sign-comment: "I have read the CLA Document v2.2 and I hereby sign the CLA"
+          allowlist-ids: "38676809,67667005"
+          require-opener-as-author: "true"
+          lock-pullrequest-aftermerge: "false"
+          expected-head-sha: "${{ needs.CLACommentGate.outputs.head_sha }}"
+          expected-base-sha: "${{ needs.CLACommentGate.outputs.base_sha }}"
+          expected-comment-id: "${{ needs.CLACommentGate.outputs.comment_id }}"
+          expected-comment-created-at: "${{ needs.CLACommentGate.outputs.comment_created_at }}"
+          expected-comment-author-id: "${{ needs.CLACommentGate.outputs.comment_author_id }}"
+
+  # This no-permission job owns the required v3 check context for the
+  # pull_request_target lifecycle only. Issue-comment runs execute on the
+  # default branch SHA, so they must never publish this required context; the
+  # rerun job below updates the original pull-request check instead.
+  CLAAssistant:
+    name: "CLA Assistant v3"
+    needs:
+      - CLACommentGate
+      - CLALedgerWriter
+    if: >-
+      always() &&
+      needs.CLACommentGate.outputs.ignored != 'true' &&
+      github.event_name == 'pull_request_target' &&
+      (
+        github.event.action == 'opened' ||
+        github.event.action == 'edited' ||
+        github.event.action == 'ready_for_review' ||
+        github.event.action == 'reopened' ||
+        github.event.action == 'synchronize'
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::CLA policy jobs require a GitHub-hosted runner"
+            exit 1
+          }
+      # Keep the generation marker on the required check's only step. The
+      # marker must remain visible when this result fails because the writer
+      # failed in the original pull_request_target run. The immutable rerun
+      # helper uses the rendered step name to reject older workflow runs.
+      - name: "CLA generation v2.2-action-212a0f2dd659b24b48a30ba35966e06dc41736af-workflow-${{ github.workflow_sha }}"
+        env:
+          GATE_RESULT: ${{ needs.CLACommentGate.result }}
+          ADMITTED: ${{ needs.CLACommentGate.outputs.admitted || '' }}
+          BASE_STALE: ${{ needs.CLACommentGate.outputs.base_stale || '' }}
+          WRITER_RESULT: ${{ needs.CLALedgerWriter.result }}
+          CLA_PASSED: ${{ needs.CLALedgerWriter.outputs.cla_passed || '' }}
+        run: |
+          set -euo pipefail
+          echo "CLA generation ${CLA_GENERATION}"
+          if [[ "${GATE_RESULT}" != "success" || "${ADMITTED}" != "true" ]]; then
+            if [[ "${BASE_STALE}" == "true" ]]; then
+              echo "::error::CLA trigger snapshot is stale; wait for a synchronize event or post the exact CLA declaration again"
+            else
+              echo "::error::CLA trigger admission failed"
+            fi
+            exit 1
+          fi
+          if [[ "${WRITER_RESULT}" != "success" || "${CLA_PASSED}" != "true" ]]; then
+            echo "::error::CLA ledger writer did not report cla_passed=true"
+            exit 1
+          fi
+
+  # Keep the old context during migration. It has no token and is not the
+  # required context after the v3 ruleset migration.
+  CLACompatibility:
+    name: "CLA Assistant"
+    needs:
+      - CLACommentGate
+      - CLAAssistant
+    if: >-
+      always() &&
+      needs.CLACommentGate.outputs.ignored != 'true' &&
+      github.event_name == 'pull_request_target' &&
+      (
+        github.event.action == 'opened' ||
+        github.event.action == 'edited' ||
+        github.event.action == 'ready_for_review' ||
+        github.event.action == 'reopened' ||
+        github.event.action == 'synchronize'
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::CLA policy jobs require a GitHub-hosted runner"
+            exit 1
+          }
+      - name: "Mirror CLA Assistant compatibility result"
+        env:
+          RESULT: ${{ needs.CLAAssistant.result }}
+        run: |
+          set -euo pipefail
+          [[ "${RESULT}" == "success" ]] || {
+            echo "::error::CLA Assistant v3 did not pass"
+            exit 1
+          }
+
+  # This job can refresh a failed check only through the immutable helper from
+  # the base workflow revision. It receives actions:write, never contents or
+  # comment write access, and its shell command and environment are fixed by
+  # the base-controlled policy validator.
+  RerunFailedCLA:
+    name: "Rerun failed CLA check"
+    needs:
+      - CLACommentGate
+      - CLALedgerWriter
+    if: >-
+      always() &&
+      needs.CLACommentGate.result == 'success' &&
+      needs.CLACommentGate.outputs.admitted == 'true' &&
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.state == 'open' &&
+      github.event.issue.pull_request &&
+      github.event.comment.user.type == 'User' &&
+      (
+        (
+          github.event.comment.body == 'recheck' &&
+          needs.CLACommentGate.outputs.trusted_recheck == 'true'
+        ) ||
+        (
+          github.event.comment.body == 'I have read the CLA Document v2.2 and I hereby sign the CLA' &&
+          needs.CLACommentGate.outputs.signer_authorized == 'true' &&
+          needs.CLACommentGate.outputs.signer_decision == 'authorized' &&
+          needs.CLACommentGate.outputs.head_sha != '' &&
+          needs.CLACommentGate.outputs.base_sha != '' &&
+          needs.CLACommentGate.outputs.comment_id != '' &&
+          needs.CLACommentGate.outputs.comment_created_at != '' &&
+          needs.CLACommentGate.outputs.comment_author_id != '' &&
+          needs.CLALedgerWriter.result == 'success' &&
+          needs.CLALedgerWriter.outputs.signature_recorded == 'true' &&
+          needs.CLALedgerWriter.outputs.cla_passed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+      issues: read
+      pull-requests: read
+    concurrency:
+      group: cla-rerun-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::Privileged CLA jobs require a GitHub-hosted runner"
+            exit 1
+          }
+      - name: "Checkout trusted CLA rerun helper"
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: manaflow-ai/manaflow
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/rerun-failed-cla.sh
+          sparse-checkout-cone-mode: false
+      - name: "Rerun exact failed pull_request_target run"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: manaflow-ai/manaflow
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
+          COMMENT_AUTHOR_ID: ${{ github.event.comment.user.id }}
+          COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login }}
+          COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}
+          COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+          WORKFLOW_PATH: ".github/workflows/cla.yml"
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          CLA_GENERATION: ${{ env.CLA_GENERATION }}
+          TARGET_EVENT: "pull_request_target"
+          TARGET_BASE_REF: "main"
+          SIGNATURE_RECORDED: ${{ needs.CLALedgerWriter.outputs.signature_recorded || '' }}
+          CLA_PASSED: ${{ needs.CLALedgerWriter.outputs.cla_passed || '' }}
+        run: bash .github/scripts/rerun-failed-cla.sh
+
+  LockMergedPullRequest:
+    name: "Lock merged pull request"
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: cla-lock-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: "Require GitHub-hosted runner"
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment || '' }}
+        run: |
+          set -euo pipefail
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]] || {
+            echo "::error::Privileged CLA jobs require a GitHub-hosted runner"
+            exit 1
+          }
+      - name: "Lock merged pull request"
+        uses: manaflow-ai/cla-github-action@212a0f2dd659b24b48a30ba35966e06dc41736af
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          mode: "sign"
+          path-to-signatures: "signatures/version2/cla.json"
+          path-to-document: "https://github.com/manaflow-ai/manaflow/blob/${{ github.workflow_sha }}/CLA.md"
+          branch: "cla-signatures"
+          required-base-ref: "main"
+          custom-pr-sign-comment: "I have read the CLA Document v2.2 and I hereby sign the CLA"
+          allowlist-ids: "38676809,67667005"
+          require-opener-as-author: "true"
+          lock-pullrequest-aftermerge: "true"

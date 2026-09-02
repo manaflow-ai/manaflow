@@ -1,0 +1,187 @@
+{
+  "issue": {
+    "state": "open",
+    "pull_request": {
+      "url": "https://api.github.com/repos/manaflow-ai/manaflow/pulls/42"
+    }
+  },
+  "comment": {
+    "id": 9001,
+    "issue_url": "https://api.github.com/repos/manaflow-ai/manaflow/issues/42",
+    "body": "recheck",
+    "user": {
+      "id": 1234,
+      "login": "contributor",
+      "type": "User"
+    },
+    "created_at": "2026-09-01T12:00:00Z",
+    "updated_at": "2026-09-01T12:00:00Z",
+    "author_association": "NONE"
+  },
+  "pull_request": {
+    "number": 42,
+    "state": "open",
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "manaflow-ai/manaflow",
+        "id": 1026429198
+      }
+    },
+    "head": {
+      "ref": "feature",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": {
+        "full_name": "fork-user/manaflow",
+        "id": 987654
+      }
+    },
+    "user": {
+      "login": "contributor",
+      "id": 1234
+    }
+  },
+  "run_pull_request": {
+    "number": 42,
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "manaflow-ai/manaflow",
+        "id": 1026429198
+      }
+    },
+    "head": {
+      "ref": "feature",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": {
+        "full_name": "fork-user/manaflow",
+        "id": 987654
+      }
+    }
+  },
+  "source_check_runs": {
+    "total_count": 1,
+    "check_runs": [
+      {
+        "id": 8800,
+        "name": "CLA Assistant v3",
+        "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "conclusion": "failure",
+        "app": {
+          "slug": "github-actions"
+        },
+        "details_url": "https://github.com/manaflow-ai/manaflow/actions/runs/700/job/8800"
+      }
+    ]
+  },
+  "workflows": {
+    "total_count": 1,
+    "workflows": [
+      {
+        "id": 9000,
+        "path": ".github/workflows/cla.yml",
+        "state": "active"
+      }
+    ]
+  },
+  "runs": {
+    "total_count": 1,
+    "workflow_runs": [
+      {
+        "id": 700,
+        "path": ".github/workflows/cla.yml",
+        "event": "pull_request_target",
+        "workflow_id": 9000,
+        "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "head_branch": "feature",
+        "head_repository": {
+          "full_name": "fork-user/manaflow",
+          "id": 987654
+        },
+        "pull_requests": [],
+        "status": "completed",
+        "conclusion": "failure",
+        "created_at": "2026-09-01T11:00:00Z",
+        "head_commit": {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    ]
+  },
+  "run": {
+    "id": 700,
+    "path": ".github/workflows/cla.yml",
+    "event": "pull_request_target",
+    "workflow_id": 9000,
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "head_branch": "feature",
+    "head_repository": {
+      "full_name": "fork-user/manaflow",
+      "id": 987654
+    },
+    "pull_requests": [],
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-09-01T11:00:00Z",
+    "head_commit": {
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "jobs": {
+    "total_count": 1,
+    "jobs": [
+      {
+        "id": 8800,
+        "run_id": 700,
+        "name": "CLA Assistant v3",
+        "status": "completed",
+        "conclusion": "failure",
+        "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "steps": [
+          {
+            "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed"
+          }
+        ]
+      }
+    ]
+  },
+  "success_jobs": {
+    "total_count": 1,
+    "jobs": [
+      {
+        "id": 8810,
+        "run_id": 701,
+        "name": "CLA Assistant v3",
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "steps": [
+          {
+            "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed"
+          }
+        ]
+      }
+    ]
+  },
+  "job": {
+    "id": 8800,
+    "run_id": 700,
+    "name": "CLA Assistant v3",
+    "status": "completed",
+    "conclusion": "failure",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "steps": [
+      {
+        "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "completed"
+      }
+    ]
+  },
+  "ledger": {
+    "type": "file",
+    "encoding": "base64",
+    "content": "e30="
+  }
+}

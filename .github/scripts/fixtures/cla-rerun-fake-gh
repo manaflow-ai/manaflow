@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "${1:-}" == "api" ]] || {
+  echo "fixture only supports gh api" >&2
+  exit 2
+}
+
+fixture="${CLA_FIXTURE:?CLA_FIXTURE is required}"
+endpoint=""
+method="GET"
+previous=""
+workflow_sha="${CLA_FIXTURE_WORKFLOW_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+[[ "${workflow_sha}" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "fixture workflow SHA is invalid" >&2
+  exit 2
+}
+generation_marker="CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-${workflow_sha}"
+for argument in "$@"; do
+  if [[ "${previous}" == "--method" ]]; then
+    method="${argument}"
+  elif [[ "${argument}" == repos/* ]]; then
+    endpoint="${argument}"
+  fi
+  previous="${argument}"
+done
+[[ -n "${endpoint}" ]] || {
+  echo "fixture endpoint is missing" >&2
+  exit 2
+}
+
+if [[ "${CLA_FIXTURE_OVERSIZE_ENDPOINT:-}" == "${endpoint}" ]]; then
+  printf '{"oversized":"'
+  head -c 8000001 /dev/zero | tr '\0' x
+  printf '"}\n'
+  exit 0
+fi
+
+if [[ "${method}" == "POST" ]]; then
+  printf '%s\n' "${endpoint}" >"${CLA_POST_LOG:?CLA_POST_LOG is required}"
+  printf '%s\n' '{}'
+  exit 0
+fi
+
+if [[ "${endpoint}" == *"/issues/comments/9001"* ]]; then
+  jq -c '.comment' "${fixture}"
+elif [[ "${endpoint}" == *"/issues/42"* ]]; then
+  jq -c '.issue' "${fixture}"
+elif [[ "${endpoint}" == *"/pulls/42"* ]]; then
+  jq -c '.pull_request' "${fixture}"
+elif [[ "${endpoint}" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pulls"* ]]; then
+  printf '%s\n' '[]'
+elif [[ "${endpoint}" == *"/pulls"* ]]; then
+  printf '%s\n' '[{"number":42,"state":"open","base":{"ref":"main","repo":{"full_name":"manaflow-ai/manaflow","id":1026429198}},"head":{"ref":"feature","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork-user/manaflow","id":987654}}}]'
+elif [[ "${endpoint}" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs"* ]]; then
+  if [[ "${CLA_FIXTURE_NO_SOURCE_CHECK:-false}" == "true" ]]; then
+    printf '%s\n' '{"check_runs":[]}'
+  elif [[ "${CLA_FIXTURE_WRONG_SOURCE_JOB:-false}" == "true" ]]; then
+    jq -c '.source_check_runs | .check_runs[0].details_url = "https://github.com/manaflow-ai/manaflow/actions/runs/700/job/8801"' "${fixture}"
+  elif [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ||
+          "${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" ||
+          "${CLA_FIXTURE_ACTIVE_SOURCE_RUN:-false}" == "true" ]]; then
+    jq -c '.source_check_runs | .check_runs += [{
+      "id": 8810,
+      "name": "CLA Assistant v3",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "conclusion": "success",
+      "app": {"slug": "github-actions"},
+      "details_url": "https://github.com/manaflow-ai/manaflow/actions/runs/701/job/8810"
+    }]' "${fixture}" | if [[ "${CLA_FIXTURE_ACTIVE_SOURCE_RUN:-false}" == "true" ]]; then
+      jq -c '.check_runs[-1].status = "in_progress" | .check_runs[-1].conclusion = null'
+    else
+      cat
+    fi
+  else
+    jq -c '.source_check_runs' "${fixture}"
+  fi
+elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
+  runs_call_count=1
+  if [[ "${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" ||
+        "${CLA_FIXTURE_ACTIVE_SOURCE_RUN:-false}" == "true" ]]; then
+    runs_call_log="${CLA_FIXTURE_RUNS_CALL_LOG:?CLA_FIXTURE_RUNS_CALL_LOG is required}"
+    if [[ -f "${runs_call_log}" ]]; then
+      runs_call_count="$(<"${runs_call_log}")"
+      [[ "${runs_call_count}" =~ ^[0-9]+$ ]] || {
+        echo "fixture workflow run call count is invalid" >&2
+        exit 2
+      }
+      runs_call_count=$((runs_call_count + 1))
+    fi
+    printf '%s\n' "${runs_call_count}" >"${runs_call_log}"
+  fi
+  if [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ||
+        ("${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" && ${runs_call_count} -ge 2) ]]; then
+    runs_json="$(jq -c '.runs | .workflow_runs += [{
+      "id": 701,
+      "path": ".github/workflows/cla.yml",
+      "event": "pull_request_target",
+      "workflow_id": 9000,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "head_branch": "feature",
+      "head_repository": {"full_name": "fork-user/manaflow", "id": 987654},
+      "pull_requests": [],
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-01T11:30:00Z"
+    }]' "${fixture}")"
+  elif [[ "${CLA_FIXTURE_ACTIVE_SOURCE_RUN:-false}" == "true" && ${runs_call_count} -ge 2 ]]; then
+    runs_json="$(jq -c '.runs | .workflow_runs += [{
+      "id": 701,
+      "path": ".github/workflows/cla.yml",
+      "event": "pull_request_target",
+      "workflow_id": 9000,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "head_branch": "feature",
+      "head_repository": {"full_name": "fork-user/manaflow", "id": 987654},
+      "pull_requests": [],
+      "status": "in_progress",
+      "conclusion": null,
+      "created_at": "2026-09-01T11:30:00Z"
+    }]' "${fixture}")"
+  else
+    runs_json="$(jq -c '.runs' "${fixture}")"
+  fi
+  if [[ "${CLA_FIXTURE_DEFAULT_SHA_COMMENT_RUN:-false}" == "true" ]]; then
+    runs_json="$(jq -c '.workflow_runs += [{
+      "id": 702,
+      "path": ".github/workflows/cla.yml",
+      "event": "issue_comment",
+      "workflow_id": 9000,
+      "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+      "head_branch": "main",
+      "head_repository": {"full_name": "manaflow-ai/manaflow", "id": 1026429198},
+      "pull_requests": [],
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-01T12:30:00Z"
+    }]' <<<"${runs_json}")"
+  fi
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    run_pull_request="$(jq -c '.run_pull_request' "${fixture}")"
+    runs_json="$(jq -c --argjson run_pull_request "${run_pull_request}" \
+      '.workflow_runs[0].pull_requests = [$run_pull_request] | .workflow_runs[0].head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+      <<<"${runs_json}")"
+  fi
+  printf '%s\n' "${runs_json}"
+elif [[ "${endpoint}" == *"/actions/workflows"* ]]; then
+  jq -c '.workflows' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/runs/700/jobs"* ]]; then
+  jobs_json="$(jq -c --arg generation_marker "${generation_marker}" \
+    '.jobs.jobs[0].steps[0].name = $generation_marker | .jobs' "${fixture}")"
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    jobs_json="$(jq -c '.jobs[0].head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"${jobs_json}")"
+  fi
+  printf '%s\n' "${jobs_json}"
+elif [[ "${endpoint}" == *"/actions/runs/701/jobs"* ]]; then
+  jq -c --arg generation_marker "${generation_marker}" \
+    '.success_jobs.jobs[0].steps[0].name = $generation_marker | .success_jobs' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/runs/700"* ]]; then
+  run_json="$(jq -c '.run' "${fixture}")"
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    run_pull_request="$(jq -c '.run_pull_request' "${fixture}")"
+    run_json="$(jq -c --argjson run_pull_request "${run_pull_request}" \
+      '.pull_requests = [$run_pull_request] | .head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+      <<<"${run_json}")"
+  fi
+  printf '%s\n' "${run_json}"
+elif [[ "${endpoint}" == *"/actions/jobs/8800"* ]]; then
+  job_json="$(jq -c --arg generation_marker "${generation_marker}" \
+    '.job.steps[0].name = $generation_marker | .job' "${fixture}")"
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    job_json="$(jq -c '.head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"${job_json}")"
+  fi
+  printf '%s\n' "${job_json}"
+else
+  echo "unmatched fixture endpoint: ${endpoint}" >&2
+  exit 2
+fi
