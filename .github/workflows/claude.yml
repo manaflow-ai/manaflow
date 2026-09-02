@@ -10,9 +10,11 @@ on:
   pull_request_review:
     types: [submitted]
 
-# Deny every workflow-token scope by default. The Claude job grants only the
-# read scopes needed for checkout and context plus the OIDC scope required by
-# its App exchange. The App token's required write scopes are listed below.
+# Deny every workflow-token scope by default. The admission job grants only
+# read access. The Claude job grants the three write scopes the action needs for
+# its branch and comment workflow, plus read access to Actions results. It
+# passes that explicitly scoped, short-lived workflow token to the action, so
+# no OIDC App-token exchange can silently widen these permissions.
 permissions: {}
 
 # Deduplicate webhook redeliveries without coalescing separate comments or
@@ -352,20 +354,18 @@ jobs:
       needs.admission.result == 'success' &&
       needs.admission.outputs.admitted == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # --max-turns is the graceful work bound. The job timeout is an emergency
+    # ceiling for a stuck runner or tool and is intentionally longer than the
+    # normal request budget so Claude can finish cleanup and reporting.
+    timeout-minutes: 30
     # Do not coalesce requests here. GitHub keeps only one pending run in a
     # concurrency group and would silently discard a distinct user request.
     # The pinned action checks repository write access before it invokes Claude.
     permissions:
-      contents: read # Checkout the trusted base workspace.
-      pull-requests: read # Read pull request metadata and CI context.
-      issues: read # Read issue and comment context.
-      # Required by v1.0.212's default GitHub App authentication. The action
-      # exchanges this short-lived OIDC token for a scoped App token. Keep this
-      # only with the trusted-event gate above; removing it requires switching
-      # to the less capable github_token input.
-      id-token: write # Required for the Claude GitHub App token exchange.
-      actions: read # Required for Claude to read CI results on PRs
+      contents: write # Create the action's branch and commit changes.
+      pull-requests: write # Update pull requests and review comments.
+      issues: write # Create and update issue/PR tracking comments.
+      actions: read # Read CI results on pull requests.
     steps:
       - name: Revalidate live pull request before privileged action
         if: ${{ needs.admission.outputs.pr_number != '' }}
@@ -413,16 +413,18 @@ jobs:
         uses: anthropics/claude-code-action@781d62e9d5fbd78b24dcdfd42858332d485fe462 # v1.0.212
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: --model claude-opus-4-5-20251101
+          # Use the job-scoped workflow token instead of the action's OIDC
+          # exchange. Its effective permissions are bounded by the job block
+          # above and cannot be widened by additional_permissions.
+          github_token: ${{ github.token }}
+          claude_args: |
+            --model claude-opus-4-5-20251101
+            --max-turns 20
 
-          # This is an optional setting that allows Claude to read CI results on PRs
+          # This is an optional setting that allows Claude to read CI results on PRs.
+          # All write scopes are declared at job level and are intentionally not
+          # requested through the action's App-token exchange.
           additional_permissions: |
-            # These writes are required for the action's intended branch and
-            # tracking-comment behavior. Keep them explicit so a future action
-            # release cannot silently widen the requested App token.
-            contents: write
-            pull_requests: write
-            issues: write
             actions: read
           
           # Optional: Customize the trigger phrase (default: @claude)
