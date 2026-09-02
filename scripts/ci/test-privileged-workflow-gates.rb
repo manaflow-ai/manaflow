@@ -199,6 +199,13 @@ end
 unless release_script.include?("refs/heads/${branchName}:refs/heads/${branchName}")
   errors << "scripts/release-pr.ts must fetch an existing release branch before retry"
 end
+unless release_script.include?("function commitAsActionsBot") &&
+       release_script.include?("GIT_AUTHOR_NAME: actionsBotName") &&
+       release_script.include?("GIT_AUTHOR_EMAIL: actionsBotEmail") &&
+       release_script.include?("GIT_COMMITTER_NAME: actionsBotName") &&
+       release_script.include?("GIT_COMMITTER_EMAIL: actionsBotEmail")
+  errors << "scripts/release-pr.ts must set the trusted Actions identity for generated commits"
+end
 
 %w[mac-arm64 mac-universal windows-x64 linux-x64].each do |job_id|
   environment = release_updates.fetch("jobs").fetch(job_id).fetch("environment", nil)

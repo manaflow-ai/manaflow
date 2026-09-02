@@ -237,6 +237,21 @@ function updateVersionFile(version: string): void {
   run("git", ["add", packagePath]);
 }
 
+function commitAsActionsBot(version: string): void {
+  // Set both identities in the child environment. Runner-global git config and
+  // inherited GIT_* variables are not trusted inputs to the release contract.
+  run("git", ["commit", "-m", `chore: release v${version}`], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: actionsBotName,
+      GIT_AUTHOR_EMAIL: actionsBotEmail,
+      GIT_COMMITTER_NAME: actionsBotName,
+      GIT_COMMITTER_EMAIL: actionsBotEmail,
+    },
+  });
+}
+
 function verifyGeneratedReleaseCommit(
   releaseSha: string,
   baseSha: string,
@@ -660,9 +675,7 @@ async function main(): Promise<void> {
 
   run("git", ["checkout", "-b", branchName], { stdio: "inherit" });
 
-  run("git", ["commit", "-m", `chore: release v${newVersion}`], {
-    stdio: "inherit",
-  });
+  commitAsActionsBot(newVersion);
 
   const releaseSha = run("git", ["rev-parse", "HEAD"]).stdout.trim();
   verifyGeneratedReleaseCommit(releaseSha, baseSha, newVersion);
