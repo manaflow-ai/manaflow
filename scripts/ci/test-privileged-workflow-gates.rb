@@ -154,6 +154,10 @@ trigger_text = stringify(build_release)
 %w[release_ref release_sha release_base_sha caller_sha].each do |key|
   errors << "release-pr.yml does not forward #{key}" unless trigger_text.include?(key)
 end
+unless trigger_text.include?("release_pr_state == 'existing'") &&
+       trigger_text.include?("release_pr_draft == 'true'")
+  errors << "release-pr.yml must permit retries only for existing draft releases"
+end
 if build_release["secrets"] == "inherit" || trigger_text.match?(/secrets:\s*inherit/)
   errors << "release-pr.yml must not inherit caller secrets"
 end
@@ -174,6 +178,12 @@ release_script = File.read("scripts/release-pr.ts")
 unless release_script.include?("verifyGeneratedReleaseCommit")
   errors << "scripts/release-pr.ts must validate the generated commit before pushing"
 end
+unless release_script.include?("writeGithubOutput(\"release_pr_draft\", String(existing.draft))")
+  errors << "scripts/release-pr.ts must expose existing draft state"
+end
+unless release_script.include?("refs/heads/${branchName}:refs/heads/${branchName}")
+  errors << "scripts/release-pr.ts must fetch an existing release branch before retry"
+end
 
 %w[mac-arm64 mac-universal windows-x64 linux-x64].each do |job_id|
   environment = release_updates.fetch("jobs").fetch(job_id).fetch("environment", nil)
@@ -185,6 +195,9 @@ unless stringify(release_updates.fetch("jobs").fetch("prepare-release")).include
   errors << "release-updates.yml does not bind caller_sha to github.sha"
 end
 prepare_release_text = stringify(release_updates.fetch("jobs").fetch("prepare-release"))
+if prepare_release_text.include?("inputs.release_base_sha == inputs.caller_sha")
+  errors << "release-updates.yml must allow a validated release base ancestor"
+end
 unless prepare_release_text.include?('--target "$SOURCE_SHA"')
   errors << "release-updates.yml does not bind a new release tag to the verified source SHA"
 end

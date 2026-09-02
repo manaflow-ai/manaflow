@@ -105,15 +105,17 @@ run_called_gate_in() {
   local caller_ref="${5:-refs/heads/main}"
   local workflow_ref="${6:-manaflow-ai/manaflow/.github/workflows/release-pr.yml@$caller_ref}"
   local protected="${7:-true}"
+  local caller_sha="${8:-$source_sha}"
+  local workflow_sha_value="${9:-$caller_sha}"
   (
     cd "$gate_repo"
     git checkout --quiet --detach "$event_sha"
     GITHUB_REPOSITORY=manaflow-ai/manaflow \
     GITHUB_REF="$caller_ref" \
     GITHUB_REF_TYPE=branch \
-    GITHUB_SHA="$source_sha" \
+    GITHUB_SHA="$caller_sha" \
     GITHUB_WORKFLOW_REF="$workflow_ref" \
-    GITHUB_WORKFLOW_SHA="$workflow_sha" \
+    GITHUB_WORKFLOW_SHA="$workflow_sha_value" \
     GITHUB_EVENT_NAME="$event_name" \
     GITHUB_REF_PROTECTED="$protected" \
     TRUSTED_BASE_SHA="$base_sha" \
@@ -125,7 +127,7 @@ run_called_gate_in() {
     TRUSTED_REF_KIND=release-branch \
     TRUSTED_REF_PROTECTED="$protected" \
     TRUSTED_SOURCE_SHA="$event_sha" \
-    TRUSTED_WORKFLOW_SHA="$workflow_sha" \
+    TRUSTED_WORKFLOW_SHA="$workflow_sha_value" \
     TRUSTED_WORKFLOW_PATH=.github/workflows/release-pr.yml \
     "$GATE_SCRIPT"
   )
@@ -169,7 +171,8 @@ fi
 # The gate must fetch the current protected-main commit before checking ancestry.
 shallow_dir="$tmp_dir/shallow"
 git clone --quiet --no-local --depth=3 --branch release/v1.2.3 "$remote_dir" "$shallow_dir"
-if ! run_called_gate_in "$shallow_dir" >/dev/null; then
+main_advance_sha="$(git -C "$repo_dir" rev-parse main)"
+if ! run_called_gate_in "$shallow_dir" workflow_call refs/heads/release/v1.2.3 "$release_sha" "$source_sha" refs/heads/main "manaflow-ai/manaflow/.github/workflows/release-pr.yml@refs/heads/main" true "$main_advance_sha" "$main_advance_sha" >/dev/null; then
   echo "FAIL: release call should fetch an advanced protected main commit" >&2
   exit 1
 fi

@@ -43,8 +43,7 @@ jobs:
       startsWith(inputs.release_ref, 'release/v') &&
       inputs.release_sha != '' &&
       inputs.release_base_sha != '' &&
-      inputs.caller_sha == github.sha &&
-      inputs.release_base_sha == inputs.caller_sha
+      inputs.caller_sha == github.sha
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.tag }}
@@ -78,6 +77,12 @@ jobs:
             echo "Caller SHA does not match the protected workflow SHA" >&2
             exit 1
           }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
           trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
           git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
           chmod 700 "$trusted_gate"
@@ -289,8 +294,7 @@ jobs:
       startsWith(inputs.release_ref, 'release/v') &&
       inputs.release_sha != '' &&
       inputs.release_base_sha != '' &&
-      inputs.caller_sha == github.sha &&
-      inputs.release_base_sha == inputs.caller_sha
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to upload signed artifacts to the GitHub release.
@@ -326,6 +330,12 @@ jobs:
             echo "Caller SHA does not match the protected workflow SHA" >&2
             exit 1
           }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
           trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
           git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
           chmod 700 "$trusted_gate"
@@ -462,8 +472,7 @@ jobs:
       startsWith(inputs.release_ref, 'release/v') &&
       inputs.release_sha != '' &&
       inputs.release_base_sha != '' &&
-      inputs.caller_sha == github.sha &&
-      inputs.release_base_sha == inputs.caller_sha
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to upload signed artifacts to the GitHub release.
@@ -500,6 +509,12 @@ jobs:
             echo "Caller SHA does not match the protected workflow SHA" >&2
             exit 1
           }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
           trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
           git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
           chmod 700 "$trusted_gate"
@@ -781,8 +796,7 @@ jobs:
       startsWith(inputs.release_ref, 'release/v') &&
       inputs.release_sha != '' &&
       inputs.release_base_sha != '' &&
-      inputs.caller_sha == github.sha &&
-      inputs.release_base_sha == inputs.caller_sha
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to publish the Windows artifact to the GitHub release.
@@ -818,6 +832,12 @@ jobs:
             echo "Caller SHA does not match the protected workflow SHA" >&2
             exit 1
           }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
           trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
           git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
           chmod 700 "$trusted_gate"
@@ -885,8 +905,7 @@ jobs:
       startsWith(inputs.release_ref, 'release/v') &&
       inputs.release_sha != '' &&
       inputs.release_base_sha != '' &&
-      inputs.caller_sha == github.sha &&
-      inputs.release_base_sha == inputs.caller_sha
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to publish the Linux artifact to the GitHub release.
@@ -919,6 +938,12 @@ jobs:
             echo "Caller SHA does not match the protected workflow SHA" >&2
             exit 1
           }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
           trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
           git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
           chmod 700 "$trusted_gate"

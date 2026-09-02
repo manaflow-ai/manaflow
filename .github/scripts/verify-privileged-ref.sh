@@ -126,11 +126,21 @@ checked_out_sha="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || \
   die "the checkout is not a commit"
 [[ "$checked_out_sha" == "$event_sha" ]] || \
   die "checked out $checked_out_sha, expected $event_sha"
+if ! git cat-file -e "$TRUSTED_BASE_SHA^{commit}" 2>/dev/null; then
+  GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_BASE_SHA" >/dev/null 2>&1 || \
+    die "unable to fetch trusted base commit"
+fi
 git cat-file -e "$TRUSTED_BASE_SHA^{commit}" 2>/dev/null || \
   die "trusted base is not available locally"
 git merge-base --is-ancestor "$TRUSTED_BASE_SHA" "$event_sha" || \
   die "checked out revision is not based on the trusted base SHA"
 
+if ! git cat-file -e "$workflow_sha^{commit}" 2>/dev/null; then
+  GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$workflow_sha" >/dev/null 2>&1 || \
+    die "unable to fetch trusted workflow commit"
+fi
+git cat-file -e "$workflow_sha^{commit}" 2>/dev/null || \
+  die "trusted workflow commit is not available locally"
 git cat-file -e "$workflow_sha:$TRUSTED_WORKFLOW_PATH" 2>/dev/null || \
   die "workflow file is missing from workflow SHA"
 git cat-file -e "HEAD:$TRUSTED_WORKFLOW_PATH" 2>/dev/null || \
@@ -156,8 +166,13 @@ if [[ "$called_workflow_path" != "$TRUSTED_WORKFLOW_PATH" ]]; then
     die "called workflow file changed after the trusted workflow revision"
 fi
 
-git merge-base --is-ancestor "$workflow_sha" "$event_sha" || \
-  die "workflow SHA is not an ancestor of the checked-out revision"
+if [[ "$TRUSTED_REF_KIND" == "release-branch" ]]; then
+  git merge-base --is-ancestor "$TRUSTED_BASE_SHA" "$workflow_sha" || \
+    die "workflow SHA is not based on the trusted release base"
+else
+  git merge-base --is-ancestor "$workflow_sha" "$event_sha" || \
+    die "workflow SHA is not an ancestor of the checked-out revision"
+fi
 
 # Confirm that the remote ref still resolves to this exact commit. This closes
 # the dispatch race where a mutable branch or tag moves after GitHub creates a
@@ -189,6 +204,8 @@ if [[ "$TRUSTED_REF_KIND" == "tag" ]]; then
   fi
   git cat-file -e "$main_sha^{commit}" 2>/dev/null || \
     die "protected main commit is not available locally"
+  git merge-base --is-ancestor "$workflow_sha" "$main_sha" || \
+    die "trusted workflow SHA is not reachable from protected main"
   git merge-base --is-ancestor "$event_sha" "$main_sha" || \
     die "tag revision is not reachable from protected main"
 fi
@@ -210,6 +227,8 @@ if [[ "$TRUSTED_REF_KIND" == "release-branch" ]]; then
   fi
   git cat-file -e "$main_sha^{commit}" 2>/dev/null || \
     die "protected main commit is not available locally"
+  git merge-base --is-ancestor "$workflow_sha" "$main_sha" || \
+    die "trusted workflow SHA is not reachable from protected main"
   git merge-base --is-ancestor "$TRUSTED_BASE_SHA" "$main_sha" || \
     die "trusted release base is not reachable from the current protected main revision"
   release_parent="$(git rev-parse --verify "$event_sha^1" 2>/dev/null)" || \

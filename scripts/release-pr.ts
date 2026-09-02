@@ -43,6 +43,14 @@ type Repository = {
 type PullRequest = {
   html_url: string;
   number: number;
+  draft: boolean;
+  user?: { login?: string };
+  head?: {
+    ref?: string;
+    sha?: string;
+    repo?: { full_name?: string } | null;
+  };
+  base?: { ref?: string };
 };
 
 function writeGithubOutput(key: string, value: string): void {
@@ -337,6 +345,34 @@ async function findExistingPullRequest(
   return pulls[0] ?? null;
 }
 
+function verifyExistingReleasePullRequest(
+  pullRequest: PullRequest,
+  branchName: string,
+  baseBranch: string,
+  releaseSha: string,
+  repo: Repository,
+): void {
+  const expectedRepository = `${repo.owner}/${repo.name}`;
+  if (!pullRequest.draft) {
+    throw new Error(
+      "Existing release PR is not a draft; refusing an automatic retry.",
+    );
+  }
+  if (pullRequest.user?.login !== actionsBotName) {
+    throw new Error("Existing release PR was not created by the Actions bot.");
+  }
+  if (
+    pullRequest.head?.ref !== branchName ||
+    pullRequest.head.repo?.full_name !== expectedRepository ||
+    pullRequest.head.sha !== releaseSha ||
+    pullRequest.base?.ref !== baseBranch
+  ) {
+    throw new Error(
+      "Existing release PR provenance does not match the generated release branch.",
+    );
+  }
+}
+
 async function createPullRequest(
   repo: Repository,
   token: string,
@@ -462,6 +498,8 @@ async function main(): Promise<void> {
     );
   }
 
+  const baseBranch = getBaseBranch();
+
   const localTagCheck = run(
     "git",
     ["rev-parse", "-q", "--verify", `refs/tags/v${newVersion}`],
@@ -494,12 +532,33 @@ async function main(): Promise<void> {
     const token = ensureToken();
     const existing = await findExistingPullRequest(branchName, repo, token);
     if (existing) {
+      runGit(
+        [
+          "fetch",
+          firstRemote,
+          `refs/heads/${branchName}:refs/heads/${branchName}`,
+        ],
+        { stdio: "inherit" },
+      );
+      const releaseSha = run("git", [
+        "rev-parse",
+        "--verify",
+        `refs/heads/${branchName}^{commit}`,
+      ]).stdout.trim();
+      verifyExistingReleasePullRequest(
+        existing,
+        branchName,
+        baseBranch,
+        releaseSha,
+        repo,
+      );
       console.log(
         `Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`,
       );
       writeGithubOutput("release_branch", branchName);
       writeGithubOutput("release_version", newVersion);
       writeGithubOutput("release_pr_state", "existing");
+      writeGithubOutput("release_pr_draft", String(existing.draft));
       writeGithubOutput("release_pr_number", existing.number.toString());
       writeGithubOutput("release_pr_url", existing.html_url);
       writeGithubOutput("release_branch_created", "false");
@@ -528,11 +587,11 @@ async function main(): Promise<void> {
 
   writeGithubOutput("release_branch", branchName);
   writeGithubOutput("release_version", newVersion);
+  writeGithubOutput("release_pr_draft", "true");
   writeGithubOutput("release_branch_created", "true");
 
   const repo = resolveRepository();
   const token = ensureToken();
-  const baseBranch = getBaseBranch();
 
   const pullRequest = await createPullRequest(
     repo,
