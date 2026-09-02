@@ -57,7 +57,7 @@ end
 def contains_secret_reference?(value)
   found = false
   walk(value) do |node|
-    found ||= node.is_a?(String) && node.match?(/\$\{\{\s*secrets(?:\.|\[)/)
+    found ||= node.is_a?(String) && node.match?(/\$\{\{[^}]*\bsecrets\b/)
   end
   found
 end
