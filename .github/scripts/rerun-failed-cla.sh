@@ -522,7 +522,7 @@ refresh_source_check_bindings() {
             .name == $assistant_job and
             (.head_sha | type == "string") and
             .head_sha == $sha and
-            .conclusion == "failure" and
+            (.conclusion == "success" or .conclusion == "failure") and
             (.app.slug | type == "string") and
             .app.slug == "github-actions" and
             (.details_url | type == "string") and
@@ -641,7 +641,11 @@ fi
 # jq programs consume independently fetched API responses; sharing a mutable
 # transformed result would make a later TOCTOU recheck look authoritative when
 # it is only a copy of the earlier response.
-if ! candidate_list_json="$(jq -c \
+#
+# Keep successful runs in the bounded candidate snapshot long enough to mark
+# an older failure as superseded. A later successful run for this exact PR
+# head means there is no failed CLA context left to refresh.
+if ! run_failure_candidates_json="$(jq -c \
     --arg path "${WORKFLOW_PATH}" \
     --arg event "${TARGET_EVENT}" \
     --arg sha "${head_sha}" \
@@ -705,25 +709,40 @@ if ! candidate_list_json="$(jq -c \
             .workflow_id == ($workflow_id | tonumber) and
             (.head_sha | type == "string") and
             (.head_sha | test("^[0-9a-f]{40}$")) and
-            (.id | type == "number") and
-            .id > 0 and
+            (.id | type == "number" and floor == . and . > 0 and . <= 9007199254740991) and
             .status == "completed" and
-            .conclusion == "failure" and
+            (.conclusion | type == "string") and
             (.created_at | type == "string") and
             .created_at <= $before and
             run_binds_to_pr
           )
-      ]
+      ] as $bound_runs
+      | [
+          $bound_runs[]
+          | select(.conclusion == "failure")
+          | . as $failed
+          | . + {
+              superseded: any($bound_runs[]?;
+                .conclusion == "success" and
+                (
+                  .created_at > $failed.created_at or
+                  (.created_at == $failed.created_at and .id > $failed.id)
+                )
+              )
+            }
+        ]
       | sort_by([.created_at, .id])
     ' <<<"${runs_json}")"; then
   fail "Could not validate CLA workflow run data"
 fi
+if ! candidate_list_json="$(jq -c '[.[] | select(.superseded != true)]' <<<"${run_failure_candidates_json}")"; then
+  fail "Could not filter superseded CLA workflow runs"
+fi
+superseded_failure_count="$(jq -r '[.[] | select(.superseded == true)] | length' <<<"${run_failure_candidates_json}")"
+[[ "${superseded_failure_count}" =~ ^[0-9]+$ ]] || fail "Could not count superseded CLA workflow runs"
 candidate_count="$(jq -r 'length' <<<"${candidate_list_json}")"
 [[ "${candidate_count}" =~ ^[0-9]+$ ]] || fail "Could not count matching CLA workflow runs"
 if [[ "${candidate_count}" == "0" ]]; then
-  if [[ "${run_window_full}" == true ]]; then
-    fail "The GitHub workflow-run result window is full after ${MAX_RUN_PAGES} pages and contains no matching failed CLA run; push a new commit or ask an administrator to prune old runs before requesting a rerun"
-  fi
   # Do not silently treat a failed run with an empty association and a
   # different execution SHA as a successful no-op. It is not eligible for a
   # rerun, but it still needs an explicit fail-closed migration/error path.
@@ -780,6 +799,15 @@ if [[ "${candidate_count}" == "0" ]]; then
   [[ "${empty_execution_mismatch_count}" =~ ^[0-9]+$ ]] || fail "Could not count unbound CLA workflow runs"
   if (( empty_execution_mismatch_count > 0 )); then
     fail "The workflow run has no pull request association and its execution SHA does not match the current pull request head"
+  fi
+  if (( superseded_failure_count > 0 )); then
+    # A newer successful run already published the current CLA result. Do not
+    # replay an older failed attempt, even when the history window is full.
+    echo "No failed CLA run exists for this pull request head; a newer successful run superseded the failed attempt"
+    exit 0
+  fi
+  if [[ "${run_window_full}" == true ]]; then
+    fail "The GitHub workflow-run result window is full after ${MAX_RUN_PAGES} pages and contains no matching failed CLA run; push a new commit or ask an administrator to prune old runs before requesting a rerun"
   fi
   # A run from before this workflow generation cannot be safely
   # rerun: GitHub reruns the old workflow revision, which could

@@ -71,6 +71,14 @@ fi
 rg -q 'older workflow generation' "${temp_dir}/old-generation.log"
 
 rm -f -- "${temp_dir}/post.log"
+if ! env "${common_env[@]}" CLA_FIXTURE_NEWER_SUCCESS=true bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/superseded.log" 2>&1; then
+  echo "an older failure was not treated as superseded by a newer successful run" >&2
+  exit 1
+fi
+[[ ! -e "${temp_dir}/post.log" ]]
+rg -q 'newer successful run superseded the failed attempt' "${temp_dir}/superseded.log"
+
+rm -f -- "${temp_dir}/post.log"
 if env "${common_env[@]}" CLA_FIXTURE_OVERSIZE_ENDPOINT='repos/manaflow-ai/manaflow/actions/runs/700/jobs' bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/oversize.log" 2>&1; then
   echo "oversized direct API response was accepted" >&2
   exit 1
