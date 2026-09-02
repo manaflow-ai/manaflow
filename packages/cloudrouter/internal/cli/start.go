@@ -53,6 +53,36 @@ var sizePresets = map[string]sizePreset{
 	"xlarge": {CPU: 16, MemoryMiB: 65536, DiskGB: 160, Label: "16 vCPU, 64 GB RAM, 160 GB disk"},
 }
 
+// resolveStartArgument preserves the path-or-URL contract of the start command.
+// Existing local directories take precedence over GitHub shorthand, because a
+// relative path such as src/app is also syntactically owner/repo shorthand.
+func resolveStartArgument(arg string) (syncPath, gitURL string, err error) {
+	absPath, err := filepath.Abs(arg)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid path: %w", err)
+	}
+
+	info, statErr := os.Stat(absPath)
+	if statErr == nil {
+		if !info.IsDir() {
+			return "", "", fmt.Errorf("path must be a directory")
+		}
+		return absPath, "", nil
+	}
+	if !os.IsNotExist(statErr) {
+		return "", "", fmt.Errorf("path not found: %w", statErr)
+	}
+
+	if !isGitURL(arg) {
+		return "", "", fmt.Errorf("path not found: %w", statErr)
+	}
+	gitURL, err = normalizeGitSource(arg)
+	if err != nil {
+		return "", "", err
+	}
+	return "", gitURL, nil
+}
+
 var startCmd = &cobra.Command{
 	Use:     "start [path-or-git-url]",
 	Aliases: []string{"create", "new"},
@@ -119,37 +149,15 @@ Examples:
 			}
 		} else if len(args) > 0 {
 			arg := args[0]
-
-			// Check if argument is a git URL
-			if isGitURL(arg) {
-				gitURL, err = normalizeGitSource(arg)
-				if err != nil {
-					return err
-				}
-				// Extract repo name for sandbox name
-				if name == "" {
+			syncPath, gitURL, err = resolveStartArgument(arg)
+			if err != nil {
+				return err
+			}
+			if name == "" {
+				if gitURL != "" {
 					name = gitSourceName(gitURL)
-				}
-			} else {
-				// It's a local path
-				absPath, err := filepath.Abs(arg)
-				if err != nil {
-					return fmt.Errorf("invalid path: %w", err)
-				}
-
-				// Check path exists and is a directory
-				info, err := os.Stat(absPath)
-				if err != nil {
-					return fmt.Errorf("path not found: %w", err)
-				}
-				if !info.IsDir() {
-					return fmt.Errorf("path must be a directory")
-				}
-				syncPath = absPath
-
-				// Use directory name as sandbox name if not specified
-				if name == "" {
-					name = filepath.Base(absPath)
+				} else {
+					name = filepath.Base(syncPath)
 				}
 			}
 		}
