@@ -175,9 +175,12 @@ ENV PATH="/usr/local/go/bin:$PATH"
 # Build Go worker daemon (standalone binary, no internal dependencies)
 COPY go.mod go.sum /tmp/worker-build/
 COPY cmd/worker /tmp/worker-build/cmd/worker/
+# The worker applies PR_SET_NO_NEW_PRIVS to every Go runtime thread. A cgo
+# binary can contain threads outside that runtime, so build this daemon
+# statically and fail closed rather than leave an unprotected thread behind.
 RUN cd /tmp/worker-build && \
     go mod download && \
-    go build -ldflags="-s -w" -o /usr/local/bin/worker-daemon ./cmd/worker && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/worker-daemon ./cmd/worker && \
     rm -rf /tmp/worker-build
 
 # Install JupyterLab + basic data science packages

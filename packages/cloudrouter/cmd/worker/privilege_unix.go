@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -50,15 +52,15 @@ func dropPrivilegesToWorkerUser() error {
 	if euid == 0 {
 		// Do not carry capabilities across the identity transition. A retained
 		// capability can bypass the UID checks below and recreate a root shell.
-		if err := unix.Prctl(unix.PR_SET_KEEPCAPS, 0, 0, 0, 0); err != nil {
+		if _, err := allThreadsPrctl(unix.PR_SET_KEEPCAPS, 0); err != nil {
 			return fmt.Errorf("disable retained capabilities: %w", err)
 		}
-		if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil && err != unix.EINVAL {
+		if _, err := allThreadsPrctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL); err != nil && err != syscall.EINVAL {
 			return fmt.Errorf("clear ambient capabilities: %w", err)
 		}
 		for capability := 0; capability <= unix.CAP_LAST_CAP; capability++ {
-			err := unix.Prctl(unix.PR_CAPBSET_DROP, uintptr(capability), 0, 0, 0)
-			if err != nil && err != unix.EINVAL {
+			_, err := allThreadsPrctl(unix.PR_CAPBSET_DROP, uintptr(capability))
+			if err != nil && err != syscall.EINVAL {
 				return fmt.Errorf("drop capability %d from bounding set: %w", capability, err)
 			}
 		}
@@ -112,7 +114,48 @@ func dropPrivilegesToWorkerUser() error {
 	if err := rejectLinuxCapabilities(euid == 0); err != nil {
 		return err
 	}
+	if err := setNoNewPrivileges(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// setNoNewPrivileges prevents a later exec from gaining privilege through a
+// set-user-ID bit or file capability. It is irreversible for this process and
+// its children, so fail closed when the kernel cannot enforce it.
+func setNoNewPrivileges() error {
+	if _, err := allThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1); err != nil {
+		return fmt.Errorf("set no-new-privileges on all threads: %w", err)
+	}
+	value, err := allThreadsPrctl(unix.PR_GET_NO_NEW_PRIVS, 0)
+	if err != nil {
+		return fmt.Errorf("verify no-new-privileges on all threads: %w", err)
+	}
+	if value != 1 {
+		return fmt.Errorf("no-new-privileges is not enabled on every thread")
+	}
+	return nil
+}
+
+// allThreadsPrctl applies a prctl operation to every Go runtime thread. Linux
+// stores capability and no-new-privileges state per thread, so a one-thread
+// syscall would leave a runtime thread able to regain privilege. The worker is
+// built with CGO_ENABLED=0 because the runtime cannot enumerate C-created
+// threads safely.
+func allThreadsPrctl(option, arg2 uintptr) (uintptr, error) {
+	value, _, errno := syscall.AllThreadsSyscall6(
+		syscall.SYS_PRCTL,
+		option,
+		arg2,
+		0,
+		0,
+		0,
+		0,
+	)
+	if errno != 0 {
+		return 0, errno
+	}
+	return value, nil
 }
 
 func rejectRootSupplementaryGroup() error {
@@ -128,26 +171,36 @@ func rejectRootSupplementaryGroup() error {
 	return nil
 }
 
+// rejectLinuxCapabilities checks every Go runtime thread. A non-root process
+// may inherit a non-zero bounding set from its container while having no
+// usable capabilities, so the bounding set is required to be empty only on a
+// root-to-worker transition (which also enables no-new-privileges below).
 func rejectLinuxCapabilities(checkBoundingSet bool) error {
-	status, err := os.ReadFile("/proc/self/status")
+	threads, err := os.ReadDir("/proc/self/task")
 	if err != nil {
-		return fmt.Errorf("inspect process capabilities: %w", err)
+		return fmt.Errorf("inspect worker threads: %w", err)
 	}
-	for _, line := range strings.Split(string(status), "\n") {
-		fields := []string{"CapInh:", "CapPrm:", "CapEff:", "CapAmb:"}
-		if checkBoundingSet {
-			fields = append(fields, "CapBnd:")
+	for _, thread := range threads {
+		status, err := os.ReadFile(filepath.Join("/proc/self/task", thread.Name(), "status"))
+		if err != nil {
+			return fmt.Errorf("inspect capabilities for thread %s: %w", thread.Name(), err)
 		}
-		for _, field := range fields {
-			if !strings.HasPrefix(line, field) {
-				continue
+		for _, line := range strings.Split(string(status), "\n") {
+			fields := []string{"CapInh:", "CapPrm:", "CapEff:", "CapAmb:"}
+			if checkBoundingSet {
+				fields = append(fields, "CapBnd:")
 			}
-			value, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(line, field)), 16, 64)
-			if err != nil {
-				return fmt.Errorf("parse %s capability set: %w", strings.TrimSuffix(field, ":"), err)
-			}
-			if value != 0 {
-				return fmt.Errorf("worker retains %s capabilities", strings.TrimSuffix(field, ":"))
+			for _, field := range fields {
+				if !strings.HasPrefix(line, field) {
+					continue
+				}
+				value, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(line, field)), 16, 64)
+				if err != nil {
+					return fmt.Errorf("parse %s capability set for thread %s: %w", strings.TrimSuffix(field, ":"), thread.Name(), err)
+				}
+				if value != 0 {
+					return fmt.Errorf("worker thread %s retains %s capabilities", thread.Name(), strings.TrimSuffix(field, ":"))
+				}
 			}
 		}
 	}
