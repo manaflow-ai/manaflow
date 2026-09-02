@@ -231,10 +231,15 @@ func (vp *vncProxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vp *vncProxy) serveStaticFile(w http.ResponseWriter, r *http.Request, filePath string) {
-	fullPath := filepath.Join(vp.noVNCDir, filepath.Clean(filePath))
-
-	// Security: prevent directory traversal
-	if !strings.HasPrefix(fullPath, vp.noVNCDir) {
+	// URL paths are rooted at "/", while noVNCDir is the filesystem root.
+	// Strip only that URL separator before applying the filesystem boundary
+	// check. A path such as "/../etc/passwd" remains rejected by the resolver.
+	filePath = strings.TrimPrefix(filePath, "/")
+	if filePath == "" {
+		filePath = "."
+	}
+	fullPath, err := resolveExistingPathWithin(vp.noVNCDir, filePath, true)
+	if err != nil {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -246,7 +251,14 @@ func (vp *vncProxy) serveStaticFile(w http.ResponseWriter, r *http.Request, file
 	}
 
 	if info.IsDir() {
-		fullPath = filepath.Join(fullPath, "index.html")
+		// Resolve the index from the validated URL-relative directory. Reusing
+		// the canonical path can look outside a lexical root such as /var on
+		// systems where the root itself is a symlink.
+		fullPath, err = resolveExistingPathWithin(vp.noVNCDir, filepath.Join(filePath, "index.html"), false)
+		if err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		info, err = os.Stat(fullPath)
 		if err != nil {
 			http.NotFound(w, r)
@@ -254,7 +266,7 @@ func (vp *vncProxy) serveStaticFile(w http.ResponseWriter, r *http.Request, file
 		}
 	}
 
-	f, err := os.Open(fullPath)
+	f, err := os.OpenFile(fullPath, os.O_RDONLY|noFollowFlag, 0)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -278,12 +290,12 @@ func (vp *vncProxy) serveStaticFile(w http.ResponseWriter, r *http.Request, file
 // Token and session management
 
 func (vp *vncProxy) validateToken(provided string) bool {
-	data, err := os.ReadFile(authTokenPath)
+	data, err := readSecretFile(authTokenPath)
 	if err != nil {
 		log.Printf("[vnc-proxy] Failed to read auth token: %v", err)
 		return false
 	}
-	return strings.TrimSpace(string(data)) == provided
+	return constantTimeTokenMatch(strings.TrimSpace(string(data)), provided)
 }
 
 func (vp *vncProxy) createSession(token string) string {
@@ -318,11 +330,11 @@ func (vp *vncProxy) validateSession(sessionID string) bool {
 	}
 
 	// Verify the token is still valid
-	data, err := os.ReadFile(authTokenPath)
+	data, err := readSecretFile(authTokenPath)
 	if err != nil {
 		return false
 	}
-	return session.token == strings.TrimSpace(string(data))
+	return constantTimeTokenMatch(session.token, strings.TrimSpace(string(data)))
 }
 
 func (vp *vncProxy) getSessionFromCookie(r *http.Request) string {

@@ -40,10 +40,10 @@ var (
 
 // sizePreset defines a machine size preset (cpu, memory, disk).
 type sizePreset struct {
-	CPU      float64
+	CPU       float64
 	MemoryMiB int
-	DiskGB   int
-	Label    string
+	DiskGB    int
+	Label     string
 }
 
 var sizePresets = map[string]sizePreset{
@@ -53,13 +53,34 @@ var sizePresets = map[string]sizePreset{
 	"xlarge": {CPU: 16, MemoryMiB: 65536, DiskGB: 160, Label: "16 vCPU, 64 GB RAM, 160 GB disk"},
 }
 
-// isGitURL checks if the string looks like a git URL
-func isGitURL(s string) bool {
-	return strings.HasPrefix(s, "git@") ||
-		strings.HasPrefix(s, "https://github.com/") ||
-		strings.HasPrefix(s, "https://gitlab.com/") ||
-		strings.HasPrefix(s, "https://bitbucket.org/") ||
-		strings.HasSuffix(s, ".git")
+// resolveStartArgument preserves the path-or-URL contract of the start command.
+// Existing local directories take precedence over GitHub shorthand, because a
+// relative path such as src/app is also syntactically owner/repo shorthand.
+func resolveStartArgument(arg string) (syncPath, gitURL string, err error) {
+	absPath, err := filepath.Abs(arg)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid path: %w", err)
+	}
+
+	info, statErr := os.Stat(absPath)
+	if statErr == nil {
+		if !info.IsDir() {
+			return "", "", fmt.Errorf("path must be a directory")
+		}
+		return absPath, "", nil
+	}
+	if !os.IsNotExist(statErr) {
+		return "", "", fmt.Errorf("path not found: %w", statErr)
+	}
+
+	if !isGitURL(arg) {
+		return "", "", fmt.Errorf("path not found: %w", statErr)
+	}
+	gitURL, err = normalizeGitSource(arg)
+	if err != nil {
+		return "", "", err
+	}
+	return "", gitURL, nil
 }
 
 var startCmd = &cobra.Command{
@@ -101,6 +122,11 @@ Examples:
   cloudrouter start https://github.com/u/r   # Clone git repo`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if startFlagBranch != "" {
+			if err := validateGitBranch(startFlagBranch); err != nil {
+				return err
+			}
+		}
 		teamSlug, err := getTeamSlug()
 		if err != nil {
 			return fmt.Errorf("failed to get team: %w", err)
@@ -113,57 +139,30 @@ Examples:
 
 		// Check --git flag first
 		if startFlagGit != "" {
-			gitURL = startFlagGit
-			// Support GitHub shorthand: user/repo -> https://github.com/user/repo
-			if !strings.Contains(gitURL, "://") && !strings.HasPrefix(gitURL, "git@") {
-				gitURL = "https://github.com/" + gitURL
+			gitURL, err = normalizeGitSource(startFlagGit)
+			if err != nil {
+				return err
 			}
 			// Extract repo name for sandbox name
 			if name == "" {
-				parts := strings.Split(strings.TrimSuffix(gitURL, ".git"), "/")
-				if len(parts) > 0 {
-					name = parts[len(parts)-1]
-				}
+				name = gitSourceName(gitURL)
 			}
 		} else if len(args) > 0 {
 			arg := args[0]
-
-			// Check if argument is a git URL
-			if isGitURL(arg) {
-				gitURL = arg
-				// Support GitHub shorthand
-				if !strings.Contains(gitURL, "://") && !strings.HasPrefix(gitURL, "git@") && strings.Count(gitURL, "/") == 1 {
-					gitURL = "https://github.com/" + gitURL
-				}
-				// Extract repo name for sandbox name
-				if name == "" {
-					parts := strings.Split(strings.TrimSuffix(gitURL, ".git"), "/")
-					if len(parts) > 0 {
-						name = parts[len(parts)-1]
-					}
-				}
-			} else {
-				// It's a local path
-				absPath, err := filepath.Abs(arg)
-				if err != nil {
-					return fmt.Errorf("invalid path: %w", err)
-				}
-
-				// Check path exists and is a directory
-				info, err := os.Stat(absPath)
-				if err != nil {
-					return fmt.Errorf("path not found: %w", err)
-				}
-				if !info.IsDir() {
-					return fmt.Errorf("path must be a directory")
-				}
-				syncPath = absPath
-
-				// Use directory name as sandbox name if not specified
-				if name == "" {
-					name = filepath.Base(absPath)
+			syncPath, gitURL, err = resolveStartArgument(arg)
+			if err != nil {
+				return err
+			}
+			if name == "" {
+				if gitURL != "" {
+					name = gitSourceName(gitURL)
+				} else {
+					name = filepath.Base(syncPath)
 				}
 			}
+		}
+		if startFlagBranch != "" && gitURL == "" {
+			return fmt.Errorf("--branch requires a git source")
 		}
 
 		// Gate expensive GPUs client-side
@@ -299,14 +298,21 @@ Examples:
 		}
 		fmt.Println()
 
+		// Build the remote command once. The API currently accepts a shell string,
+		// so every dynamic argument is quoted as one POSIX argv element and git's
+		// option terminator is included before the remote source.
+		cloneCommand := ""
+		if gitURL != "" {
+			cloneCommand, err = buildGitCloneCommand(gitURL, startFlagBranch)
+			if err != nil {
+				return err
+			}
+		}
+
 		// Clone git repo if specified (fast!)
 		if gitURL != "" && token != "" {
 			fmt.Printf("Cloning %s...\n", gitURL)
-			cloneCmd := fmt.Sprintf("cd /home/user/workspace && git clone %s .", gitURL)
-			if startFlagBranch != "" {
-				cloneCmd = fmt.Sprintf("cd /home/user/workspace && git clone -b %s %s .", startFlagBranch, gitURL)
-			}
-			execResp, err := client.Exec(teamSlug, resp.DevboxID, cloneCmd, 120)
+			execResp, err := client.Exec(teamSlug, resp.DevboxID, cloneCommand, 120)
 			if err != nil {
 				fmt.Printf("Warning: git clone failed: %v\n", err)
 			} else if execResp.ExitCode != 0 {
