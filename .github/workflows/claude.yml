@@ -161,12 +161,6 @@ jobs:
               printf 'base_sha=%s\n' "$DEFAULT_SHA"
             } >>"$GITHUB_OUTPUT"
           }
-          api() {
-            gh api \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2022-11-28' \
-              "$1"
-          }
           is_id() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
           is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
           is_trusted_association() {
@@ -177,6 +171,38 @@ jobs:
           }
           has_trigger() {
             grep -Eiq '(^|[[:space:]])@claude([[:space:].,!?;:]|$)' <<<"$1"
+          }
+          api() {
+            local endpoint="$1" response_file bytes gh_status head_status pipeline_status max_bytes=1048576
+            response_file="$(mktemp)" || return 1
+            set +e
+            gh api \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$endpoint" | head -c "$((max_bytes + 1))" >"$response_file"
+            pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+            gh_status="${pipeline_status[0]}"
+            head_status="${pipeline_status[1]}"
+            bytes="$(wc -c <"$response_file")" || {
+              rm -f "$response_file"
+              return 1
+            }
+            if (( bytes > max_bytes )); then
+              rm -f "$response_file"
+              echo "::error::GitHub API response exceeded the 1 MiB safety limit"
+              return 1
+            fi
+            if (( gh_status != 0 || head_status != 0 )); then
+              rm -f "$response_file"
+              return 1
+            fi
+            if cat "$response_file"; then
+              rm -f "$response_file"
+              return 0
+            fi
+            rm -f "$response_file"
+            return 1
           }
 
           [[ "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail_closed "The repository name is malformed"
@@ -383,10 +409,42 @@ jobs:
           [[ "$EXPECTED_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          pr_json="$(gh api \
-            --header 'Accept: application/vnd.github+json' \
-            --header 'X-GitHub-Api-Version: 2022-11-28' \
-            "repos/$GH_REPO/pulls/$EXPECTED_PR_NUMBER")"
+          api() {
+            local endpoint="$1" response_file bytes gh_status head_status pipeline_status max_bytes=1048576
+            response_file="$(mktemp)" || return 1
+            set +e
+            gh api \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$endpoint" | head -c "$((max_bytes + 1))" >"$response_file"
+            pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+            gh_status="${pipeline_status[0]}"
+            head_status="${pipeline_status[1]}"
+            bytes="$(wc -c <"$response_file")" || {
+              rm -f "$response_file"
+              return 1
+            }
+            if (( bytes > max_bytes )); then
+              rm -f "$response_file"
+              echo "::error::GitHub API response exceeded the 1 MiB safety limit"
+              return 1
+            fi
+            if (( gh_status != 0 || head_status != 0 )); then
+              rm -f "$response_file"
+              return 1
+            fi
+            if cat "$response_file"; then
+              rm -f "$response_file"
+              return 0
+            fi
+            rm -f "$response_file"
+            return 1
+          }
+          pr_json="$(api "repos/$GH_REPO/pulls/$EXPECTED_PR_NUMBER")" || {
+            echo "::error::The pull request could not be read"
+            exit 1
+          }
           jq -e --arg repo "$GH_REPO" --argjson repo_id "$GH_REPO_ID" --arg base "$EXPECTED_BASE_SHA" --arg head "$EXPECTED_HEAD_SHA" '
             .state == "open" and .base.ref == "main" and
             .base.repo.full_name == $repo and .base.repo.id == $repo_id and
