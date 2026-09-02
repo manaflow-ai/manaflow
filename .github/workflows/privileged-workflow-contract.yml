@@ -12,6 +12,7 @@ on:
       - .github/workflows/release-updates.yml
       - scripts/ci/test-verify-privileged-ref.sh
       - scripts/ci/test-privileged-workflow-gates.rb
+      - scripts/release-pr.ts
       - .github/workflows/privileged-workflow-contract.yml
       - docs/release-workflow.md
   push:
@@ -26,6 +27,7 @@ on:
       - .github/workflows/release-updates.yml
       - scripts/ci/test-verify-privileged-ref.sh
       - scripts/ci/test-privileged-workflow-gates.rb
+      - scripts/release-pr.ts
       - .github/workflows/privileged-workflow-contract.yml
       - docs/release-workflow.md
 
