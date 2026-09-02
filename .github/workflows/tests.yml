@@ -1,8 +1,12 @@
+# Keep the workflow identity used by existing branch-protection rules. The job
+# below is pull-request-only; the trusted main workflow has a separate name.
 name: Tests (Linux + macOS)
 
 on:
-  push:
-    branches: [main]
+  # This workflow is intentionally limited to pull requests. It checks
+  # contributor code with a read-only token and no repository or environment
+  # secrets. Secret-backed tests live in tests-trusted.yml, which only runs
+  # after code has landed on main.
   pull_request:
 
 permissions:
@@ -10,109 +14,14 @@ permissions:
 
 jobs:
   test:
-    name: Run tests on ${{ matrix.os }}
-    # Full tests use the dev environment and service credentials. Never run
-    # this job for a pull request whose head repository is outside this repo.
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.id == github.repository_id &&
-      github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    environment: dev
-    strategy:
-      fail-fast: false
-      matrix:
-        # os: [ubuntu-24.04, macos-13]
-        # os: [ubuntu-24.04, macos-13-large]
-        # TODO: enable macos when we can make it fast
-        os: [ubuntu-24.04]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.2.21
-
-      - name: Setup Node.js 24
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-
-      - name: Cache Bun install cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-install-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-install-
-
-      - name: Cache Cargo registry + build
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.8
-        with:
-          workspaces: apps/server/native/core
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build native-core addon
-        run: bun run build
-        working-directory: apps/server/native/core
-
-      - name: Run tests
-        env:
-          # CI environment flag
-          CI: "true"
-          # Keep default; set to 1 only if you want cross-builds for Linux
-          CMUX_BUILD_LINUX: "0"
-          # Skip Docker E2E tests in CI for stability/speed
-          CMUX_SKIP_DOCKER_TESTS: "1"
-          # Skip cargo crates handled in dedicated workflows
-          CMUX_SKIP_CARGO_CRATES: "sandbox,cmux-env,cmux-pty,cmux-proxy,global-proxy,server/native/core"
-          # Stack Auth env vars
-          STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
-          STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}
-          STACK_DATA_VAULT_SECRET: ${{ secrets.STACK_DATA_VAULT_SECRET }}
-          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          # GitHub App
-          CMUX_GITHUB_APP_ID: ${{ secrets.CMUX_GITHUB_APP_ID }}
-          CMUX_GITHUB_APP_PRIVATE_KEY: ${{ secrets.CMUX_GITHUB_APP_PRIVATE_KEY }}
-          CMUX_TASK_RUN_JWT_SECRET: ${{ secrets.CMUX_TASK_RUN_JWT_SECRET }}
-          # API Keys
-          MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          # Next.js public env vars
-          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-          NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-        run: bun run test
-
-  test-untrusted:
-    name: Run read-only tests on ubuntu-24.04
-    # Fork pull requests still receive useful feedback, but never receive the
-    # dev environment or any repository secret. Keep this suite limited to
-    # deterministic unit tests that do not require external services.
-    if: >-
-      github.event_name == 'pull_request' &&
-      (github.event.pull_request.head.repo.id != github.repository_id ||
-      github.event.pull_request.head.repo.full_name != github.repository)
+    # Keep this context stable for branch-protection rules. Every pull request
+    # gets this no-secrets job, including pull requests from forks.
+    name: Run tests on ubuntu-24.04
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    timeout-minutes: 15
+    timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
@@ -129,12 +38,25 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run deterministic unit tests
+      - name: Install dependencies without lifecycle scripts
         run: |
           set -euo pipefail
-          bunx vitest run --config apps/client/vitest.config.ts apps/client/src apps/client/electron
-          (cd packages/convex && bunx vitest run _shared convex/mobileInbox.test.ts)
-          bunx vitest run packages/shared/src
+          install_home="${RUNNER_TEMP:-/tmp}/cmux-untrusted-install-home"
+          mkdir -p "${install_home}"
+          env -i \
+            PATH="${PATH}" \
+            HOME="${install_home}" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            CI=true \
+            NPM_CONFIG_IGNORE_SCRIPTS=true \
+            NPM_CONFIG_USERCONFIG=/dev/null \
+            bun install --frozen-lockfile --ignore-scripts
+
+      - name: Run pull-request tests without secrets
+        run: |
+          set -euo pipefail
+          env -i \
+            PATH="${PATH}" \
+            RUNNER_TEMP="${RUNNER_TEMP:-/tmp}" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            bash scripts/ci/run-untrusted-tests.sh

@@ -36,7 +36,15 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install dependencies
+      - name: Verify workflow secret boundary
+        run: ruby scripts/ci/verify-workflow-secret-boundary.rb
+
+      - name: Install dependencies without lifecycle scripts (pull request)
+        if: github.event_name == 'pull_request'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install dependencies (main)
+        if: github.event_name != 'pull_request'
         run: bun install --frozen-lockfile
 
       - name: Checks and tests (parallel on one runner)
