@@ -57,7 +57,8 @@ elif [[ "${endpoint}" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/che
     printf '%s\n' '{"check_runs":[]}'
   elif [[ "${CLA_FIXTURE_WRONG_SOURCE_JOB:-false}" == "true" ]]; then
     jq -c '.source_check_runs | .check_runs[0].details_url = "https://github.com/manaflow-ai/manaflow/actions/runs/700/job/8801"' "${fixture}"
-  elif [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ]]; then
+  elif [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ||
+          "${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" ]]; then
     jq -c '.source_check_runs | .check_runs += [{
       "id": 8810,
       "name": "CLA Assistant v3",
@@ -70,7 +71,21 @@ elif [[ "${endpoint}" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/che
     jq -c '.source_check_runs' "${fixture}"
   fi
 elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
-  if [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ]]; then
+  runs_call_count=1
+  if [[ "${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" ]]; then
+    runs_call_log="${CLA_FIXTURE_RUNS_CALL_LOG:?CLA_FIXTURE_RUNS_CALL_LOG is required}"
+    if [[ -f "${runs_call_log}" ]]; then
+      runs_call_count="$(<"${runs_call_log}")"
+      [[ "${runs_call_count}" =~ ^[0-9]+$ ]] || {
+        echo "fixture workflow run call count is invalid" >&2
+        exit 2
+      }
+      runs_call_count=$((runs_call_count + 1))
+    fi
+    printf '%s\n' "${runs_call_count}" >"${runs_call_log}"
+  fi
+  if [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ||
+        ("${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" && ${runs_call_count} -ge 2) ]]; then
     jq -c '.runs | .workflow_runs += [{
       "id": 701,
       "path": ".github/workflows/cla.yml",
@@ -92,6 +107,9 @@ elif [[ "${endpoint}" == *"/actions/workflows"* ]]; then
 elif [[ "${endpoint}" == *"/actions/runs/700/jobs"* ]]; then
   jq -c --arg generation_marker "${generation_marker}" \
     '.jobs.jobs[0].steps[0].name = $generation_marker | .jobs' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/runs/701/jobs"* ]]; then
+  jq -c --arg generation_marker "${generation_marker}" \
+    '.success_jobs.jobs[0].steps[0].name = $generation_marker | .success_jobs' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/runs/700"* ]]; then
   jq -c '.run' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/jobs/8800"* ]]; then

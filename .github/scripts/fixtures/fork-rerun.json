@@ -128,6 +128,25 @@
       }
     ]
   },
+  "success_jobs": {
+    "total_count": 1,
+    "jobs": [
+      {
+        "id": 8810,
+        "run_id": 701,
+        "name": "CLA Assistant v3",
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "steps": [
+          {
+            "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed"
+          }
+        ]
+      }
+    ]
+  },
   "job": {
     "id": 8800,
     "run_id": 700,

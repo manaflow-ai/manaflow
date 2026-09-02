@@ -79,6 +79,17 @@ fi
 rg -q 'newer successful run superseded the failed attempt' "${temp_dir}/superseded.log"
 
 rm -f -- "${temp_dir}/post.log"
+if ! env "${common_env[@]}" \
+  CLA_FIXTURE_FINAL_NEWER_SUCCESS=true \
+  CLA_FIXTURE_RUNS_CALL_LOG="${temp_dir}/runs-call-count" \
+  bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/final-superseded.log" 2>&1; then
+  echo "a success that appeared during final recheck did not supersede the failed run" >&2
+  exit 1
+fi
+[[ ! -e "${temp_dir}/post.log" ]]
+rg -q 'newer successful run superseded the failed attempt' "${temp_dir}/final-superseded.log"
+
+rm -f -- "${temp_dir}/post.log"
 if env "${common_env[@]}" CLA_FIXTURE_OVERSIZE_ENDPOINT='repos/manaflow-ai/manaflow/actions/runs/700/jobs' bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/oversize.log" 2>&1; then
   echo "oversized direct API response was accepted" >&2
   exit 1

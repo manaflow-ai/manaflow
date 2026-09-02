@@ -112,6 +112,7 @@ checked_out_sha="$(git rev-parse HEAD 2>/dev/null)" || fail "Could not verify th
 readonly SIGNATURES_BRANCH='cla-signatures'
 readonly SIGNATURES_PATH='signatures/version2/cla.json'
 readonly MAX_RUN_PAGES=10
+readonly MAX_SUCCESS_RUNS_TO_VALIDATE=50
 readonly MAX_LEDGER_BYTES=1000000
 readonly MAX_LEDGER_SIGNATURES=10000
 # GitHub wraps Contents API Base64 responses with newlines. Allow that
@@ -460,6 +461,118 @@ validate_live_open_head_association() {
 }
 validate_live_open_head_association
 
+# Fetch the complete bounded job set for one exact run. The rerun endpoint
+# requires actions:write, so discovery must fail closed if pagination or shape
+# checks cannot prove that every failed job belongs to this CLA workflow.
+# The workflow-run response is authoritative for workflow name, head branch,
+# and source repository. GitHub's jobs endpoint does not document those fields
+# and omits them in production, so job validation uses only its documented
+# identity fields, plus optional source metadata when GitHub supplies it.
+fetch_jobs_for_run() {
+  local target_run_id="$1"
+  local page_json page_count page2_json page2_count
+  page_json="$(gh_api \
+    --method GET \
+    --header 'Accept: application/vnd.github+json' \
+    --raw-field per_page=100 \
+    --raw-field page=1 \
+    "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs")" || return 1
+  jq -e 'type == "object" and (.jobs | type == "array")' <<<"${page_json}" >/dev/null || return 1
+  page_count="$(jq -r '.jobs | length' <<<"${page_json}")"
+  [[ "${page_count}" =~ ^[0-9]+$ ]] || return 1
+  (( page_count <= 100 )) || return 1
+  if (( page_count == 100 )); then
+    page2_json="$(gh_api \
+      --method GET \
+      --header 'Accept: application/vnd.github+json' \
+      --raw-field per_page=100 \
+      --raw-field page=2 \
+      "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs")" || return 1
+    jq -e 'type == "object" and (.jobs | type == "array")' <<<"${page2_json}" >/dev/null || return 1
+    page2_count="$(jq -r '.jobs | length' <<<"${page2_json}")"
+    [[ "${page2_count}" =~ ^[0-9]+$ ]] || return 1
+    (( page2_count <= 100 )) || return 1
+    page_json="$(jq -c --argjson page2 "${page2_json}" '.jobs += $page2.jobs' <<<"${page_json}")"
+    (( page2_count < 100 )) || return 1
+  fi
+  jq -c '[.]' <<<"${page_json}"
+}
+
+# A successful run may only suppress an older failure when its required v3
+# job carries this workflow generation marker. Workflow IDs stay constant
+# across edits, so the job marker is the authenticated revision binding.
+current_generation_success_run_ids='[]'
+refresh_current_generation_successes() {
+  local bound_runs="$1"
+  local success_runs_json success_count success_runs_tsv
+  local success_id success_run_sha success_jobs_json
+
+  success_runs_json="$(jq -c '
+    . as $runs
+    | [
+        $runs[] as $success
+        | select(
+            $success.conclusion == "success" and
+            any($runs[]?;
+              .conclusion == "failure" and
+              (
+                .created_at < $success.created_at or
+                (.created_at == $success.created_at and .id < $success.id)
+              )
+            )
+          )
+        | {id: $success.id, head_sha: $success.head_sha}
+      ]
+    | unique_by(.id)
+  ' <<<"${bound_runs}")" || fail "Could not identify successful CLA workflow runs"
+  success_count="$(jq -r 'length' <<<"${success_runs_json}")"
+  [[ "${success_count}" =~ ^[0-9]+$ ]] || fail "Could not count successful CLA workflow runs"
+  (( success_count <= MAX_SUCCESS_RUNS_TO_VALIDATE )) ||
+    fail "Too many successful CLA workflow runs need generation validation; ask an administrator to resolve the workflow history before requesting a rerun"
+
+  current_generation_success_run_ids='[]'
+  success_runs_tsv="$(jq -r '.[] | [.id, .head_sha] | @tsv' <<<"${success_runs_json}")" ||
+    fail "Could not prepare successful CLA workflow runs"
+  while IFS=$'\t' read -r success_id success_run_sha; do
+    [[ -n "${success_id}" ]] || continue
+    safe_id "${success_id}" || fail "A successful CLA workflow run ID is invalid or unsafe"
+    [[ "${success_run_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+      fail "A successful CLA workflow run execution SHA is invalid"
+    success_jobs_json="$(fetch_jobs_for_run "${success_id}")" ||
+      fail "Could not query jobs for successful CLA workflow run ${success_id}"
+    if jq -e \
+      --arg run_id "${success_id}" \
+      --arg source_sha "${head_sha}" \
+      --arg run_sha "${success_run_sha}" \
+      --arg assistant_job "${CLA_ASSISTANT_JOB}" \
+      --arg generation_step "CLA generation ${CLA_GENERATION}" \
+      --arg head_repo "${head_repo}" \
+      --argjson head_repo_id "${head_repo_id}" '
+        any(.[] | .jobs[]?;
+          (.run_id | type == "number" and floor == . and . == ($run_id | tonumber)) and
+          .name == $assistant_job and
+          .status == "completed" and
+          .conclusion == "success" and
+          (.head_sha | type == "string") and
+          (.head_sha == $source_sha or .head_sha == $run_sha) and
+          (
+            (has("head_repository") | not) or
+            .head_repository == null or
+            ((.head_repository | type) == "object" and
+             .head_repository.full_name == $head_repo and
+             .head_repository.id == $head_repo_id)
+          ) and
+          any(.steps[]?;
+            .name == $generation_step and
+            .status == "completed"
+          )
+        )
+      ' <<<"${success_jobs_json}" >/dev/null; then
+      current_generation_success_run_ids="$(jq -c --arg id "${success_id}" '. + [$id]' <<<"${current_generation_success_run_ids}")"
+    fi
+  done <<<"${success_runs_tsv}"
+}
+
 # The REST workflow-run API can omit `pull_requests` for a fork. Most runs
 # still expose the source SHA in `head_sha`; when they do not, bind the run and
 # selected job to a failed CLA check that GitHub attached to this exact source
@@ -567,181 +680,181 @@ workflow_json="$(jq -c '[.]' <<<"${workflow_page}")"
 workflow_id="$(jq -r --arg path "${WORKFLOW_PATH}" '[.[] | .workflows[]? | select(.path == $path and .state == "active") | .id] | if length == 1 then .[0] else empty end' <<<"${workflow_json}")"
 safe_id "${workflow_id}" || fail "The expected CLA workflow ID is missing or unsafe"
 
-# Search a bounded first page, then choose the newest completed
-# failure created no later than this comment. Edited, reopened, and
-# synchronize events can leave several eligible failures for one
-# exact head, so sort by creation time and run ID and select the
-# newest one. Every candidate is tied to the exact workflow path,
-# event, and PR association. When GitHub includes pull_requests on a
-# run, bind the candidate to the exact PR object, including its
-# source head SHA.
-# GitHub can return an empty array for fork pull_request_target runs. Those
-# candidates are retained when the execution SHA is the live source SHA, or
-# when a GitHub Actions check on that source SHA identifies the same run. A
-# selected assistant job must match that check's run and job IDs below.
-runs_page="$(gh_api \
-  --method GET \
-  --header 'Accept: application/vnd.github+json' \
-  --raw-field event="${TARGET_EVENT}" \
-  --raw-field branch="${head_ref}" \
-  --raw-field per_page=100 \
-  --raw-field page=1 \
-  "repos/${GH_REPO}/actions/workflows/${workflow_id}/runs" 2>/dev/null)" || fail "Could not query CLA workflow runs"
-jq -e 'type == "object" and (.workflow_runs | type == "array")' <<<"${runs_page}" >/dev/null || fail "Could not validate CLA workflow runs"
-run_count="$(jq -r '.workflow_runs | length' <<<"${runs_page}")"
-[[ "${run_count}" =~ ^[0-9]+$ ]] || fail "Could not count CLA workflow runs"
-(( run_count <= 100 )) || fail "The CLA workflow run page is oversized"
-runs_json="$(jq -c '[.]' <<<"${runs_page}")"
-
-# The API returns newest runs first. Probe additional bounded pages when the
-# first page is full, so normal workflow history growth does not strand a
-# failed check. GitHub documents a 1,000-result cap for filtered workflow-run
-# queries, so ten 100-item pages cover the complete API result window. Search
-# the complete bounded window before deciding whether it is full: a valid
-# candidate on page ten is still actionable. If the window is full and no
-# candidate matches, fail with an actionable message instead of pretending page
-# 11 can reveal an unreported run. `runs_json` stays an array of response
-# objects; the candidate query below flattens each `.workflow_runs` array
-# explicitly.
-page_count="${run_count}"
-page_number=2
-while (( page_count == 100 && page_number <= MAX_RUN_PAGES )); do
-  next_runs_page="$(gh_api \
+# Fetch a complete, independently bounded workflow-run snapshot. The helper is
+# called once for discovery and again immediately before the mutation. Keeping
+# pagination here avoids a final check accidentally reading only the first page.
+fetch_workflow_runs_snapshot() {
+  local first_page first_count next_page page_count page_number
+  first_page="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field event="${TARGET_EVENT}" \
     --raw-field branch="${head_ref}" \
     --raw-field per_page=100 \
-    --raw-field page="${page_number}" \
-    "repos/${GH_REPO}/actions/workflows/${workflow_id}/runs" 2>/dev/null)" || fail "Could not query CLA workflow runs page ${page_number}"
-  jq -e 'type == "object" and (.workflow_runs | type == "array")' <<<"${next_runs_page}" >/dev/null || fail "Could not validate CLA workflow runs page ${page_number}"
-  page_count="$(jq -r '.workflow_runs | length' <<<"${next_runs_page}")"
-  [[ "${page_count}" =~ ^[0-9]+$ ]] || fail "Could not count CLA workflow runs page ${page_number}"
-  (( page_count <= 100 )) || fail "The CLA workflow returned an oversized run page"
-  runs_json="$(jq -c --argjson next_page "${next_runs_page}" '. + [$next_page]' <<<"${runs_json}")"
-  (( page_number++ ))
-done
-run_window_full=false
-(( page_count == 100 )) && run_window_full=true
+    --raw-field page=1 \
+    "repos/${GH_REPO}/actions/workflows/${workflow_id}/runs" 2>/dev/null)" || return 1
+  jq -e 'type == "object" and (.workflow_runs | type == "array")' <<<"${first_page}" >/dev/null || return 1
+  first_count="$(jq -r '.workflow_runs | length' <<<"${first_page}")"
+  [[ "${first_count}" =~ ^[0-9]+$ ]] || return 1
+  (( first_count <= 100 )) || return 1
+  runs_json="$(jq -c '[.]' <<<"${first_page}")" || return 1
 
-# `pull_requests` is optional for fork runs, but when GitHub sends it, the
-# field must keep its documented array shape. Treat a changed or malformed
-# response as an infrastructure error. Silently treating it as an unmatched
-# run could strand a required failed check with no recovery path.
-if ! jq -e '
-  all(.[] | .workflow_runs[]?;
-    (type == "object") and
-    (.pull_requests == null or (.pull_requests | type == "array"))
-  )
-' <<<"${runs_json}" >/dev/null; then
-  fail "The CLA workflow returned malformed pull request associations"
-fi
+  # GitHub documents a 1,000-result cap for filtered workflow-run queries.
+  # Ten 100-item pages cover the complete API result window. A full final page
+  # remains a deliberate fail-closed signal when no matching run is found.
+  page_count="${first_count}"
+  page_number=2
+  while (( page_count == 100 && page_number <= MAX_RUN_PAGES )); do
+    next_page="$(gh_api \
+      --method GET \
+      --header 'Accept: application/vnd.github+json' \
+      --raw-field event="${TARGET_EVENT}" \
+      --raw-field branch="${head_ref}" \
+      --raw-field per_page=100 \
+      --raw-field page="${page_number}" \
+      "repos/${GH_REPO}/actions/workflows/${workflow_id}/runs" 2>/dev/null)" || return 1
+    jq -e 'type == "object" and (.workflow_runs | type == "array")' <<<"${next_page}" >/dev/null || return 1
+    page_count="$(jq -r '.workflow_runs | length' <<<"${next_page}")"
+    [[ "${page_count}" =~ ^[0-9]+$ ]] || return 1
+    (( page_count <= 100 )) || return 1
+    runs_json="$(jq -c --argjson next_page "${next_page}" '. + [$next_page]' <<<"${runs_json}")" || return 1
+    (( page_number++ ))
+  done
+  run_window_full=false
+  (( page_count == 100 )) && run_window_full=true
 
-# Keep the run-binding predicate inline in each snapshot check below. These
-# jq programs consume independently fetched API responses; sharing a mutable
-# transformed result would make a later TOCTOU recheck look authoritative when
-# it is only a copy of the earlier response.
-#
-# Keep successful runs in the bounded candidate snapshot long enough to mark
-# an older failure as superseded. A later successful run for this exact PR
-# head means there is no failed CLA context left to refresh.
-if ! run_failure_candidates_json="$(jq -c \
-    --arg path "${WORKFLOW_PATH}" \
-    --arg event "${TARGET_EVENT}" \
-    --arg sha "${head_sha}" \
-    --arg workflow_id "${workflow_id}" \
-    --arg pr "${PR_NUMBER}" \
-    --arg repo "${GH_REPO}" \
-    --arg head_repo "${head_repo}" \
-    --argjson head_repo_id "${head_repo_id}" \
-    --argjson repo_id "${repo_id}" \
-    --argjson source_check_bindings "${source_check_bindings_json}" \
-    --arg base "${TARGET_BASE_REF}" \
-    --arg head_ref "${head_ref}" \
-    --arg before "${COMMENT_CREATED_AT}" '
-      def run_binds_to_pr:
-        (.pull_requests) as $raw_prs
-        | (if $raw_prs == null then []
-           elif ($raw_prs | type) == "array" then $raw_prs
-           else null end) as $prs
-        | if $prs == null then false
-          elif ($prs | length) == 0 then
-            (.id | tostring) as $run_id
-            | .head_branch == $head_ref and
-            (
-              ((.head_repository | type) == "object" and
-               .head_repository.full_name == $head_repo and
-               (.head_repository.id | type == "number") and
-               .head_repository.id == $head_repo_id) or
-              (.head_repository == null and
-               $head_repo == $repo and
-               $head_repo_id == $repo_id)
+  # `pull_requests` is optional for fork runs, but a present field must keep
+  # its documented array shape. Reject malformed objects instead of silently
+  # treating them as an unrelated run.
+  jq -e '
+    all(.[] | .workflow_runs[]?;
+      (type == "object") and
+      (.pull_requests == null or (.pull_requests | type == "array"))
+    )
+  ' <<<"${runs_json}" >/dev/null || return 1
+}
+
+# Classify one snapshot against the live PR. `before` is the comment timestamp
+# for initial discovery and empty for the final race check, which must include
+# a successful or in-progress run created after the comment.
+classify_workflow_runs_snapshot() {
+  local before="$1"
+  local snapshot="$2"
+  if ! all_bound_runs_json="$(jq -c \
+      --arg path "${WORKFLOW_PATH}" \
+      --arg event "${TARGET_EVENT}" \
+      --arg sha "${head_sha}" \
+      --arg workflow_id "${workflow_id}" \
+      --arg pr "${PR_NUMBER}" \
+      --arg repo "${GH_REPO}" \
+      --arg head_repo "${head_repo}" \
+      --argjson head_repo_id "${head_repo_id}" \
+      --argjson repo_id "${repo_id}" \
+      --argjson source_check_bindings "${source_check_bindings_json}" \
+      --arg base "${TARGET_BASE_REF}" \
+      --arg head_ref "${head_ref}" \
+      --arg before "${before}" '
+        def run_binds_to_pr:
+          (.pull_requests) as $raw_prs
+          | (if $raw_prs == null then []
+             elif ($raw_prs | type) == "array" then $raw_prs
+             else null end) as $prs
+          | if $prs == null then false
+            elif ($prs | length) == 0 then
+              (.id | tostring) as $run_id
+              | .head_branch == $head_ref and
+              (
+                ((.head_repository | type) == "object" and
+                 .head_repository.full_name == $head_repo and
+                 (.head_repository.id | type == "number") and
+                 .head_repository.id == $head_repo_id) or
+                (.head_repository == null and
+                 $head_repo == $repo and
+                 $head_repo_id == $repo_id)
+              )
+              and
+              (
+                .head_sha == $sha or
+                ($head_repo != $repo and
+                 any($source_check_bindings[]?; .run_id == $run_id))
+              )
+            else any($prs[]?;
+              (.number | type == "number") and
+              (.number | tostring) == $pr and
+              .base.ref == $base and
+              ((.base.repo.full_name // "") == "" or
+               .base.repo.full_name == $repo) and
+              (.base.repo.id | type == "number") and
+              .base.repo.id == $repo_id and
+              .head.ref == $head_ref and
+              .head.sha == $sha and
+              (.head.repo.id | type == "number") and
+              .head.repo.id == $head_repo_id and
+              ((.head.repo.full_name // "") == "" or
+               .head.repo.full_name == $head_repo)
             )
-            and
-            (
-              .head_sha == $sha or
-              ($head_repo != $repo and
-               any($source_check_bindings[]?; .run_id == $run_id))
+            end;
+        [ .[] | .workflow_runs[]?
+          | select(
+              (.path == $path or
+              ((.path | startswith($path + "@")) and
+               ((.path | length) > (($path | length) + 1)))) and
+              .event == $event and
+              (.workflow_id | type == "number") and
+              .workflow_id == ($workflow_id | tonumber) and
+              (.head_sha | type == "string") and
+              (.head_sha | test("^[0-9a-f]{40}$")) and
+              (.id | type == "number" and floor == . and . > 0 and . <= 9007199254740991) and
+              (.status | type == "string") and
+              (.conclusion == null or (.conclusion | type == "string")) and
+              (.created_at | type == "string") and
+              ($before == "" or .created_at <= $before) and
+              run_binds_to_pr
             )
-          else any($prs[]?;
-            (.number | type == "number") and
-            (.number | tostring) == $pr and
-            .base.ref == $base and
-            ((.base.repo.full_name // "") == "" or
-             .base.repo.full_name == $repo) and
-            (.base.repo.id | type == "number") and
-            .base.repo.id == $repo_id and
-            .head.ref == $head_ref and
-            .head.sha == $sha and
-            (.head.repo.id | type == "number") and
-            .head.repo.id == $head_repo_id and
-            ((.head.repo.full_name // "") == "" or
-             .head.repo.full_name == $head_repo)
-          )
-          end;
-      [ .[] | .workflow_runs[]?
-        | select(
-            (.path == $path or
-            ((.path | startswith($path + "@")) and
-             ((.path | length) > (($path | length) + 1)))) and
-            .event == $event and
-            (.workflow_id | type == "number") and
-            .workflow_id == ($workflow_id | tonumber) and
-            (.head_sha | type == "string") and
-            (.head_sha | test("^[0-9a-f]{40}$")) and
-            (.id | type == "number" and floor == . and . > 0 and . <= 9007199254740991) and
-            .status == "completed" and
-            (.conclusion | type == "string") and
-            (.created_at | type == "string") and
-            .created_at <= $before and
-            run_binds_to_pr
-          )
-      ] as $bound_runs
+        ]
+        | sort_by([.created_at, .id])
+      ' <<<"${snapshot}")"; then
+    return 1
+  fi
+  if ! jq -e 'all(.[]; .status != "completed" or (.conclusion | type == "string"))' <<<"${all_bound_runs_json}" >/dev/null; then
+    return 1
+  fi
+  bound_runs_json="$(jq -c '[.[] | select(.status == "completed" and (.conclusion | type == "string"))]' <<<"${all_bound_runs_json}")" || return 1
+  active_bound_runs_json="$(jq -c '[.[] | select(.status != "completed")]' <<<"${all_bound_runs_json}")" || return 1
+  refresh_current_generation_successes "${bound_runs_json}"
+  run_failure_candidates_json="$(jq -c \
+    --argjson current_successes "${current_generation_success_run_ids}" '
+      . as $bound_runs
       | [
           $bound_runs[]
           | select(.conclusion == "failure")
           | . as $failed
           | . + {
               superseded: any($bound_runs[]?;
-                .conclusion == "success" and
-                (
-                  .created_at > $failed.created_at or
-                  (.created_at == $failed.created_at and .id > $failed.id)
-                )
+                . as $success
+                | $success.conclusion == "success" and
+                  any($current_successes[]?; . == ($success.id | tostring)) and
+                  (
+                    $success.created_at > $failed.created_at or
+                    ($success.created_at == $failed.created_at and $success.id > $failed.id)
+                  )
               )
             }
         ]
       | sort_by([.created_at, .id])
-    ' <<<"${runs_json}")"; then
-  fail "Could not validate CLA workflow run data"
-fi
-if ! candidate_list_json="$(jq -c '[.[] | select(.superseded != true)]' <<<"${run_failure_candidates_json}")"; then
-  fail "Could not filter superseded CLA workflow runs"
-fi
-superseded_failure_count="$(jq -r '[.[] | select(.superseded == true)] | length' <<<"${run_failure_candidates_json}")"
-[[ "${superseded_failure_count}" =~ ^[0-9]+$ ]] || fail "Could not count superseded CLA workflow runs"
-candidate_count="$(jq -r 'length' <<<"${candidate_list_json}")"
-[[ "${candidate_count}" =~ ^[0-9]+$ ]] || fail "Could not count matching CLA workflow runs"
+    ' <<<"${bound_runs_json}")" || return 1
+  candidate_list_json="$(jq -c '[.[] | select(.superseded != true)]' <<<"${run_failure_candidates_json}")" || return 1
+  superseded_failure_count="$(jq -r '[.[] | select(.superseded == true)] | length' <<<"${run_failure_candidates_json}")"
+  [[ "${superseded_failure_count}" =~ ^[0-9]+$ ]] || return 1
+  candidate_count="$(jq -r 'length' <<<"${candidate_list_json}")"
+  [[ "${candidate_count}" =~ ^[0-9]+$ ]] || return 1
+}
+
+# Search a bounded first page, then choose the newest completed failure created
+# no later than this comment. The final snapshot below intentionally omits the
+# timestamp so a newer successful or in-progress run cannot race the POST.
+fetch_workflow_runs_snapshot || fail "Could not query or validate CLA workflow runs"
+classify_workflow_runs_snapshot "${COMMENT_CREATED_AT}" "${runs_json}" || fail "Could not classify CLA workflow runs"
 if [[ "${candidate_count}" == "0" ]]; then
   # Do not silently treat a failed run with an empty association and a
   # different execution SHA as a successful no-op. It is not eligible for a
@@ -1136,43 +1249,6 @@ if [[ "${run_has_pull_request_association}" != true &&
 fi
 set_run_job_binding "${run_execution_sha}"
 
-# Fetch the complete bounded job set for one exact run. The rerun endpoint
-# requires actions:write, so discovery must fail closed if pagination or shape
-# checks cannot prove that every failed job belongs to this CLA workflow.
-# The workflow-run response is authoritative for workflow name, head branch,
-# and source repository. GitHub's jobs endpoint does not document those fields
-# and omits them in production, so job validation uses only its documented
-# identity fields, plus optional source metadata when GitHub supplies it.
-fetch_jobs_for_run() {
-  local target_run_id="$1"
-  local page_json page_count page2_json page2_count
-  page_json="$(gh_api \
-    --method GET \
-    --header 'Accept: application/vnd.github+json' \
-    --raw-field per_page=100 \
-    --raw-field page=1 \
-    "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs")" || return 1
-  jq -e 'type == "object" and (.jobs | type == "array")' <<<"${page_json}" >/dev/null || return 1
-  page_count="$(jq -r '.jobs | length' <<<"${page_json}")"
-  [[ "${page_count}" =~ ^[0-9]+$ ]] || return 1
-  (( page_count <= 100 )) || return 1
-  if (( page_count == 100 )); then
-    page2_json="$(gh_api \
-      --method GET \
-      --header 'Accept: application/vnd.github+json' \
-      --raw-field per_page=100 \
-      --raw-field page=2 \
-      "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs")" || return 1
-    jq -e 'type == "object" and (.jobs | type == "array")' <<<"${page2_json}" >/dev/null || return 1
-    page2_count="$(jq -r '.jobs | length' <<<"${page2_json}")"
-    [[ "${page2_count}" =~ ^[0-9]+$ ]] || return 1
-    (( page2_count <= 100 )) || return 1
-    page_json="$(jq -c --argjson page2 "${page2_json}" '.jobs += $page2.jobs' <<<"${page_json}")"
-    (( page2_count < 100 )) || return 1
-  fi
-  jq -c '[.]' <<<"${page_json}"
-}
-
 jobs_json="$(fetch_jobs_for_run "${run_id}")" || fail "Could not query and validate jobs for the selected CLA run"
 
 # Validate every failed job before granting the state-changing API call. The
@@ -1481,6 +1557,60 @@ if [[ "${source_sha_fallback}" == true ]]; then
   # Re-read the source check immediately before the mutation. This keeps the
   # run/job binding from becoming stale while the PR and job checks execute.
   refresh_source_check_bindings
+  source_check_binding_for_job "${run_id}" "${job_id}" ||
+    fail "The selected CLA job is no longer bound to the current pull request head"
+fi
+
+# Re-fetch the bounded workflow-run history after every job, PR, comment, and
+# source-check validation. A successful lifecycle run can finish after the
+# discovery snapshot; rerunning the old failed job in that window would create
+# a duplicate check and can overwrite a newer result. The final snapshot also
+# blocks while another exact-head lifecycle run is active. A shared GitHub
+# concurrency group is not sufficient because GitHub replaces older pending
+# events, which can strand a required CLA check. The final read is the safer
+# serialization boundary.
+fetch_workflow_runs_snapshot || fail "Could not recheck CLA workflow runs before rerun"
+classify_workflow_runs_snapshot "" "${runs_json}" || fail "Could not classify final CLA workflow runs"
+
+# The selected run must still be the only exact failed run eligible for replay.
+# The shared classifier validates the current generation marker on every
+# successful run before marking an older failure as superseded.
+final_selected_count="$(jq -r --arg run_id "${run_id}" \
+  '[.[] | select((.id | tostring) == $run_id and .conclusion == "failure")] | length' \
+  <<<"${bound_runs_json}")"
+[[ "${final_selected_count}" =~ ^[0-9]+$ && ${final_selected_count} -eq 1 ]] ||
+  fail "The selected CLA workflow run changed before the rerun"
+
+final_selected_id="$(jq -r '.[-1].id // empty' <<<"${candidate_list_json}")"
+if [[ -z "${final_selected_id}" ]]; then
+  # A current-generation success now supersedes the failed attempt. The
+  # classifier has already checked the successful job and generation marker.
+  selected_superseded_count="$(jq -r --arg run_id "${run_id}" \
+    '[.[] | select((.id | tostring) == $run_id and .superseded == true)] | length' \
+    <<<"${run_failure_candidates_json}")"
+  [[ "${selected_superseded_count}" =~ ^[0-9]+$ ]] || fail "Could not classify final superseded CLA workflow runs"
+  (( selected_superseded_count == 1 )) ||
+    fail "The selected CLA workflow run disappeared before the rerun"
+  echo "No failed CLA run exists for this pull request head; a newer successful run superseded the failed attempt"
+  exit 0
+fi
+safe_id "${final_selected_id}" || fail "The final CLA workflow run selection is invalid"
+[[ "${final_selected_id}" == "${run_id}" ]] ||
+  fail "A newer failed CLA workflow run appeared before the rerun; retry the exact CLA comment"
+
+# Do not race an exact-head lifecycle run that is still queued or in progress.
+# It may publish a newer result after this read, so fail closed and let the
+# next explicit comment retry after it finishes.
+final_active_count="$(jq -r --arg run_id "${run_id}" \
+  '[.[] | select((.id | tostring) != $run_id)] | length' <<<"${active_bound_runs_json}")"
+[[ "${final_active_count}" =~ ^[0-9]+$ ]] || fail "Could not count active CLA workflow runs"
+(( final_active_count == 0 )) ||
+  fail "Another CLA workflow run for this pull request head is still active; retry after it finishes"
+
+# Reconfirm the source association after the final workflow snapshot. This
+# keeps the selected run tied to the same open PR if its fork ref was reused.
+validate_live_open_head_association
+if [[ "${source_sha_fallback}" == true ]]; then
   source_check_binding_for_job "${run_id}" "${job_id}" ||
     fail "The selected CLA job is no longer bound to the current pull request head"
 fi
