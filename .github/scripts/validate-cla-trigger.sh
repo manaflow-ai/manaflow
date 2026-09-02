@@ -80,7 +80,7 @@ if [[ "${EVENT_NAME:-}" == 'issue_comment' ]]; then
     fail 'The newly created comment is already edited'
 elif [[ "${EVENT_NAME:-}" == 'pull_request_target' ]]; then
   case "${EVENT_ACTION:-}" in
-    opened|edited|reopened|synchronize) ;;
+    opened|edited|ready_for_review|reopened|synchronize) ;;
     *) fail 'Pull-request action is not an accepted CLA transition' ;;
   esac
   [[ "${EVENT_PR_STATE:-}" == 'open' ]] || fail 'Pull request is not open'
