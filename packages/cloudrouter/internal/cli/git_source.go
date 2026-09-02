@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -20,7 +21,7 @@ func isGitURL(value string) bool {
 }
 
 func hasSupportedGitScheme(value string) bool {
-	for _, scheme := range []string{"https://", "ssh://", "git://"} {
+	for _, scheme := range []string{"http://", "https://", "ssh://", "git://"} {
 		if strings.HasPrefix(strings.ToLower(value), scheme) {
 			return true
 		}
@@ -130,6 +131,11 @@ func validateGitBranch(branch string) error {
 	}
 	cmd := exec.Command("git", "check-ref-format", "--branch", branch)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			// Branch validation is best effort when the local client does not
+			// have Git installed. The remote clone still validates the ref.
+			return nil
+		}
 		message := strings.TrimSpace(string(output))
 		if message == "" {
 			message = "invalid branch name"

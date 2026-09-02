@@ -470,11 +470,16 @@ func handleExec(w http.ResponseWriter, r *http.Request, body map[string]interfac
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	_ = cmd.Run()
+	runErr := cmd.Run()
 
 	exitCode := 0
 	if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
+	} else if runErr != nil {
+		exitCode = 1
+		if stderr.Len() == 0 {
+			stderr.WriteString(runErr.Error())
+		}
 	}
 
 	sendJSON(w, map[string]interface{}{

@@ -28,8 +28,11 @@ func dropPrivilegesToWorkerUser() error {
 	if err != nil {
 		return fmt.Errorf("parse worker gid: %w", err)
 	}
-	if targetUID == 0 {
-		return fmt.Errorf("worker account must not be root")
+	if targetUID <= 0 {
+		return fmt.Errorf("worker account must have a non-root uid")
+	}
+	if targetGID <= 0 {
+		return fmt.Errorf("worker account must have a non-root primary gid")
 	}
 
 	_, euid, _ := unix.Getresuid()
@@ -70,8 +73,8 @@ func dropPrivilegesToWorkerUser() error {
 			if err != nil {
 				return fmt.Errorf("parse worker group id: %w", err)
 			}
-			if gid == 0 {
-				return fmt.Errorf("worker account must not belong to the root group")
+			if gid <= 0 {
+				return fmt.Errorf("worker account must not belong to a privileged group")
 			}
 			if _, ok := seen[gid]; ok {
 				continue

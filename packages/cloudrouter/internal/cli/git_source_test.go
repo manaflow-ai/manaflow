@@ -19,6 +19,7 @@ func TestNormalizeGitSource(t *testing.T) {
 		{name: "https URL", input: "https://git.example.test/team/repo.git", want: "https://git.example.test/team/repo.git"},
 		{name: "SSH URL", input: "ssh://git@example.test/team/repo.git", want: "ssh://git@example.test/team/repo.git"},
 		{name: "scp URL", input: "git@example.test:team/repo.git", want: "git@example.test:team/repo.git"},
+		{name: "HTTP scheme rejected", input: "http://example.test/team/repo.git", wantErr: true},
 		{name: "credentials rejected", input: "https://token@example.test/team/repo.git", wantErr: true},
 		{name: "query rejected", input: "https://example.test/team/repo.git?token=secret", wantErr: true},
 		{name: "SSH option host rejected", input: "ssh://git@-oProxyCommand=touch%20/tmp/pwn/example.git", wantErr: true},
