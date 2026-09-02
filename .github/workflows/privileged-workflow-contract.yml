@@ -1,0 +1,52 @@
+name: Privileged Workflow Contract
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/verify-privileged-ref.sh
+      - .github/workflows/docker.yml
+      - .github/workflows/sandbox.yml
+      - .github/workflows/morph-snapshot.yml
+      - .github/workflows/host-screenshot-collector.yml
+      - .github/workflows/release-pr.yml
+      - .github/workflows/release-updates.yml
+      - scripts/ci/test-verify-privileged-ref.sh
+      - scripts/ci/test-privileged-workflow-gates.rb
+      - .github/workflows/privileged-workflow-contract.yml
+      - docs/release-workflow.md
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/verify-privileged-ref.sh
+      - .github/workflows/docker.yml
+      - .github/workflows/sandbox.yml
+      - .github/workflows/morph-snapshot.yml
+      - .github/workflows/host-screenshot-collector.yml
+      - .github/workflows/release-pr.yml
+      - .github/workflows/release-updates.yml
+      - scripts/ci/test-verify-privileged-ref.sh
+      - scripts/ci/test-privileged-workflow-gates.rb
+      - .github/workflows/privileged-workflow-contract.yml
+      - docs/release-workflow.md
+
+concurrency:
+  group: privileged-workflow-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify privileged workflow gates
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          persist-credentials: false
+      - name: Verify workflow contracts
+        run: |
+          set -euo pipefail
+          ruby scripts/ci/test-privileged-workflow-gates.rb
+          scripts/ci/test-verify-privileged-ref.sh

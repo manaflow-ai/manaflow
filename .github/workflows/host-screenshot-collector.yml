@@ -6,7 +6,6 @@ on:
     paths:
       - packages/host-screenshot-collector/**
       - .github/workflows/host-screenshot-collector.yml
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,9 +20,9 @@ env:
 jobs:
   build-and-sync:
     name: Build and Sync to Convex
-    # This job publishes to Convex with the electron environment secret. A
-    # manual run must use the protected main revision, never branch code.
-    if: github.ref == 'refs/heads/main'
+    # This job publishes to Convex with the electron environment secret. It
+    # runs only from a protected main push, never from a user-selected ref.
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
     runs-on: ubuntu-latest
     environment: electron
     steps:
@@ -31,7 +30,18 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify trusted publication ref
+        env:
+          TRUSTED_BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF_KIND: main
+          TRUSTED_SOURCE_SHA: ${{ github.sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/host-screenshot-collector.yml
+        shell: bash
+        run: .github/scripts/verify-privileged-ref.sh
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0

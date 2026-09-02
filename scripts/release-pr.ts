@@ -17,6 +17,9 @@ const semverPattern = /^\d+\.\d+\.\d+$/;
 const defaultBaseBranch = "main";
 
 const releaseBranchPrefix = "release/";
+const releaseManifestPath = "apps/client/package.json";
+const actionsBotName = "github-actions[bot]";
+const actionsBotEmail = "github-actions[bot]@users.noreply.github.com";
 
 type IncrementMode = "major" | "minor" | "patch";
 
@@ -102,10 +105,7 @@ function runGit(args: string[], options: RunOptions = {}): RunResult {
     return run("git", args, options);
   }
 
-  const configuredCount = Number.parseInt(
-    baseEnv.GIT_CONFIG_COUNT ?? "0",
-    10,
-  );
+  const configuredCount = Number.parseInt(baseEnv.GIT_CONFIG_COUNT ?? "0", 10);
   const configIndex =
     Number.isSafeInteger(configuredCount) && configuredCount >= 0
       ? configuredCount
@@ -180,7 +180,7 @@ function loadCurrentVersion(): string {
     version?: string;
   }
 
-  const packagePath = resolve("apps", "client", "package.json");
+  const packagePath = resolve(releaseManifestPath);
   const raw = readFileSync(packagePath, "utf8");
   const parsed: PackageJson = JSON.parse(raw);
 
@@ -221,12 +221,65 @@ function determineHighestTagVersion(): string {
 }
 
 function updateVersionFile(version: string): void {
-  const packagePath = resolve("apps", "client", "package.json");
+  const packagePath = resolve(releaseManifestPath);
   const raw = readFileSync(packagePath, "utf8");
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   parsed.version = version;
   writeFileSync(packagePath, `${JSON.stringify(parsed, null, 2)}\n`);
   run("git", ["add", packagePath]);
+}
+
+function verifyGeneratedReleaseCommit(
+  releaseSha: string,
+  baseSha: string,
+  version: string,
+): void {
+  const parentSha = run("git", [
+    "rev-parse",
+    "--verify",
+    `${releaseSha}^1`,
+  ]).stdout.trim();
+  if (parentSha !== baseSha) {
+    throw new Error(
+      `Release commit ${releaseSha} is not based on the checked-out main revision.`,
+    );
+  }
+
+  const changedFiles = run("git", [
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    releaseSha,
+  ])
+    .stdout.trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
+  if (changedFiles.length !== 1 || changedFiles[0] !== releaseManifestPath) {
+    throw new Error(`Release commit must change only ${releaseManifestPath}.`);
+  }
+
+  const metadata = run("git", [
+    "show",
+    "-s",
+    "--format=%an%n%ae%n%cn%n%ce%n%s",
+    releaseSha,
+  ])
+    .stdout.trim()
+    .split(/\r?\n/);
+  const [authorName, authorEmail, committerName, committerEmail, subject] =
+    metadata;
+  if (
+    authorName !== actionsBotName ||
+    authorEmail !== actionsBotEmail ||
+    committerName !== actionsBotName ||
+    committerEmail !== actionsBotEmail ||
+    subject !== `chore: release v${version}`
+  ) {
+    throw new Error(
+      "Release commit metadata does not match the trusted Actions bot format.",
+    );
+  }
 }
 
 function resolveRepository(): Repository {
@@ -457,6 +510,7 @@ async function main(): Promise<void> {
     runGit(["push", firstRemote, "--delete", branchName], { stdio: "inherit" });
   }
 
+  const baseSha = run("git", ["rev-parse", "HEAD"]).stdout.trim();
   updateVersionFile(newVersion);
 
   console.log(`Preparing release ${newVersion} (base was ${baseVersion})`);
@@ -466,6 +520,9 @@ async function main(): Promise<void> {
   run("git", ["commit", "-m", `chore: release v${newVersion}`], {
     stdio: "inherit",
   });
+
+  const releaseSha = run("git", ["rev-parse", "HEAD"]).stdout.trim();
+  verifyGeneratedReleaseCommit(releaseSha, baseSha, newVersion);
 
   runGit(["push", "-u", firstRemote, branchName], { stdio: "inherit" });
 

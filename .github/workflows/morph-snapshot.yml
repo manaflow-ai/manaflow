@@ -3,7 +3,6 @@ name: Daily Morph Snapshot
 on:
   schedule:
     - cron: "0 18 * * *" # 10am PST / 11am PDT
-  workflow_dispatch:
 
 concurrency:
   group: morph-snapshot
@@ -21,8 +20,8 @@ jobs:
   morph-snapshot:
     name: Build Morph Snapshot
     # This job has write permissions and a Morph API credential. Always run
-    # the checked-in main revision, including for a manual dispatch.
-    if: github.ref == 'refs/heads/main'
+    # the checked-in main revision.
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -33,7 +32,18 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify trusted publication ref
+        env:
+          TRUSTED_BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF_KIND: main
+          TRUSTED_SOURCE_SHA: ${{ github.sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/morph-snapshot.yml
+        shell: bash
+        run: .github/scripts/verify-privileged-ref.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
