@@ -123,6 +123,21 @@ elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
   else
     runs_json="$(jq -c '.runs' "${fixture}")"
   fi
+  if [[ "${CLA_FIXTURE_DEFAULT_SHA_COMMENT_RUN:-false}" == "true" ]]; then
+    runs_json="$(jq -c '.workflow_runs += [{
+      "id": 702,
+      "path": ".github/workflows/cla.yml",
+      "event": "issue_comment",
+      "workflow_id": 9000,
+      "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+      "head_branch": "main",
+      "head_repository": {"full_name": "manaflow-ai/manaflow", "id": 1026429198},
+      "pull_requests": [],
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-01T12:30:00Z"
+    }]' <<<"${runs_json}")"
+  fi
   if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
     run_pull_request="$(jq -c '.run_pull_request' "${fixture}")"
     runs_json="$(jq -c --argjson run_pull_request "${run_pull_request}" \
