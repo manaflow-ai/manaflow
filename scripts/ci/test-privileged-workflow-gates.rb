@@ -167,6 +167,9 @@ change_text = stringify(change_step || {})
 unless change_text.include?("git tag --list") && change_text.include?("--sort=-version:refname")
   errors << "release-pr.yml must find the latest version tag without ancestry-only lookup"
 end
+unless stringify(release_pr.fetch("jobs").fetch("open-release-pr")).include?("git fetch --force --tags origin")
+  errors << "release-pr.yml must fetch version tags before change detection"
+end
 release_script = File.read("scripts/release-pr.ts")
 unless release_script.include?("verifyGeneratedReleaseCommit")
   errors << "scripts/release-pr.ts must validate the generated commit before pushing"

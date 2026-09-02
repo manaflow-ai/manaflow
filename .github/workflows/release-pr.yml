@@ -64,6 +64,10 @@ jobs:
             exit 1
           fi
 
+      - name: Fetch version tags
+        shell: bash
+        run: git fetch --force --tags origin
+
       - name: Check for changes since last release
         id: release_changes
         run: |
