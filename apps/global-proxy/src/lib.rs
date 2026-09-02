@@ -33,6 +33,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 
 type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>;
+type ProxyResponseError = Box<Response<Body>>;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
@@ -626,7 +627,7 @@ async fn handle_websocket(
     let (backend_stream, backend_headers) =
         match connect_upstream_websocket(state.client.clone(), backend_request).await {
             Ok(result) => result,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
 
     let client_upgrade = hyper::upgrade::on(req);
@@ -762,13 +763,13 @@ fn check_upgrade_request(req: &Request<Body>) -> UpgradeCheck {
 async fn connect_upstream_websocket(
     client: HttpClient,
     request: Request<Body>,
-) -> Result<(Upgraded, HeaderMap), Response<Body>> {
+) -> Result<(Upgraded, HeaderMap), ProxyResponseError> {
     let response = client.request(request).await.map_err(|err| {
         error!(%err, "upstream websocket request error");
-        text_response(
+        Box::new(text_response(
             StatusCode::BAD_GATEWAY,
             "Failed to connect to websocket backend",
-        )
+        ))
     })?;
 
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
@@ -776,10 +777,12 @@ async fn connect_upstream_websocket(
         let body_bytes = body::to_bytes(response.into_body())
             .await
             .unwrap_or_else(|_| Bytes::new());
-        return Err(Response::builder()
-            .status(status)
-            .body(Body::from(body_bytes))
-            .unwrap());
+        return Err(Box::new(
+            Response::builder()
+                .status(status)
+                .body(Body::from(body_bytes))
+                .unwrap(),
+        ));
     }
 
     let headers = response.headers().clone();
@@ -787,10 +790,10 @@ async fn connect_upstream_websocket(
         Ok(upgraded) => Ok((upgraded, headers)),
         Err(err) => {
             error!(%err, "upstream websocket upgrade failed");
-            Err(text_response(
+            Err(Box::new(text_response(
                 StatusCode::BAD_GATEWAY,
                 "Failed to upgrade websocket backend",
-            ))
+            )))
         }
     }
 }

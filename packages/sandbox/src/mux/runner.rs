@@ -897,10 +897,8 @@ fn handle_input(
                                     tab.navigate(crate::mux::layout::NavDirection::Right);
                                 }
                             }
-                            KeyCode::Tab => {
-                                if app.sidebar.visible {
-                                    app.focus = FocusArea::Sidebar;
-                                }
+                            KeyCode::Tab if app.sidebar.visible => {
+                                app.focus = FocusArea::Sidebar;
                             }
                             _ => {}
                         }

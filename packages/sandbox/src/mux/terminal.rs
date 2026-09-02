@@ -2227,7 +2227,7 @@ impl Perform for VirtualTerminal {
                     // 29 = ANSI text locator
                     self.pending_responses
                         .push(b"\x1b[?64;1;2;6;9;15;16;17;18;21;22;28;29c".to_vec());
-                } else if intermediates == [b'>'] && is_query {
+                } else if intermediates == *b">" && is_query {
                     // Secondary Device Attributes (DA2): CSI > c or CSI > 0 c
                     // Respond as xterm version 314+:
                     // 41 = xterm terminal type
@@ -2313,13 +2313,13 @@ impl Perform for VirtualTerminal {
                 self.insert_chars(n);
             }
             // Soft Terminal Reset (DECSTR) - CSI ! p
-            'p' if intermediates == [b'!'] => {
+            'p' if intermediates == *b"!" => {
                 self.soft_reset();
             }
             // Private modes (DECSET/DECRST) and standard modes (SM/RM)
             'h' | 'l' => {
                 let enable = action == 'h';
-                if intermediates == [b'?'] {
+                if intermediates == *b"?" {
                     // Private (DEC) modes
                     for &param in &params_vec {
                         match param {
@@ -2524,7 +2524,7 @@ impl Perform for VirtualTerminal {
             }
             // DECRQCRA - Request Checksum of Rectangular Area
             // CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y
-            'y' if intermediates == [b'*'] => {
+            'y' if intermediates == *b"*" => {
                 let pid = params_vec.first().copied().unwrap_or(0);
                 let _page = params_vec.get(1).copied().unwrap_or(1); // page number, ignored
                 let top = params_vec.get(2).copied().unwrap_or(1).max(1) as usize;
@@ -2695,7 +2695,7 @@ impl Perform for VirtualTerminal {
                 self.pending_responses.push(response.into_bytes());
             }
             // DECFRA - Fill Rectangular Area: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
-            'x' if intermediates == [b'$'] => {
+            'x' if intermediates == *b"$" => {
                 let char_code = params_vec.first().copied().unwrap_or(32) as u8; // Default: space
                 let ch = if (32..127).contains(&char_code) {
                     char_code as char
@@ -2751,7 +2751,7 @@ impl Perform for VirtualTerminal {
                 }
             }
             // DECERA - Erase Rectangular Area: CSI Pt ; Pl ; Pb ; Pr $ z
-            'z' if intermediates == [b'$'] => {
+            'z' if intermediates == *b"$" => {
                 // Get rectangle bounds (1-based, convert to 0-based)
                 let top = params_vec.first().copied().unwrap_or(1).max(1) as usize - 1;
                 let left = params_vec.get(1).copied().unwrap_or(1).max(1) as usize - 1;
@@ -2806,7 +2806,7 @@ impl Perform for VirtualTerminal {
             // Ps=1: blinking block, Ps=2: steady block
             // Ps=3: blinking underline, Ps=4: steady underline
             // Ps=5: blinking bar, Ps=6: steady bar
-            'q' if intermediates == [b' '] => {
+            'q' if intermediates == *b" " => {
                 let style = params_vec.first().copied().unwrap_or(0);
                 self.cursor_style = style as u8;
                 // Odd values are blinking, even values (including 0) are steady
