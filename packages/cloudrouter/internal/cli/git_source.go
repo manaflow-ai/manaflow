@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -71,6 +72,9 @@ func normalizeGitSource(raw string) (string, error) {
 	if strings.ContainsAny(parsed.Host, "\x00\r\n\t") || strings.ContainsAny(parsed.Path, "\x00\r\n") {
 		return "", fmt.Errorf("git URL contains invalid control characters")
 	}
+	if !validGitHost(parsed.Hostname()) {
+		return "", fmt.Errorf("git URL contains an invalid host")
+	}
 	for _, component := range strings.Split(parsed.Path, "/") {
 		if component == ".." {
 			return "", fmt.Errorf("git URL path cannot contain ..")
@@ -85,12 +89,36 @@ func validScpGitSource(source string) bool {
 	if len(hostAndPath) != 2 || hostAndPath[0] == "" || hostAndPath[1] == "" {
 		return false
 	}
-	if strings.ContainsAny(hostAndPath[0], " \t/\\") || strings.ContainsAny(hostAndPath[1], "\x00\r\n") {
+	if !validGitHost(hostAndPath[0]) || strings.ContainsAny(hostAndPath[1], "\x00\r\n") {
 		return false
 	}
 	for _, component := range strings.Split(hostAndPath[1], "/") {
 		if component == ".." {
 			return false
+		}
+	}
+	return true
+}
+
+// validGitHost rejects hosts that SSH could interpret as command-line options
+// and accepts only DNS-style names or IP literals. Git forwards this value to
+// SSH, so a leading '-' must never reach the transport parser.
+func validGitHost(host string) bool {
+	if host == "" || strings.HasPrefix(host, "-") {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+				(char < '0' || char > '9') && char != '-' {
+				return false
+			}
 		}
 	}
 	return true
