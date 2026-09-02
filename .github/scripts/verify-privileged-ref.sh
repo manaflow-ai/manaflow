@@ -183,6 +183,12 @@ if [[ "$TRUSTED_REF_KIND" == "tag" ]]; then
     die "unable to resolve protected main"
   main_sha="$(printf '%s\n' "$main_ref_output" | awk 'NF == 2 && $2 == "refs/heads/main" { print $1; exit }')"
   [[ "$main_sha" =~ $HEX_SHA_RE ]] || die "protected main did not resolve to a commit"
+  if ! git cat-file -e "$main_sha^{commit}" 2>/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$main_sha" >/dev/null 2>&1 || \
+      die "unable to fetch protected main commit"
+  fi
+  git cat-file -e "$main_sha^{commit}" 2>/dev/null || \
+    die "protected main commit is not available locally"
   git merge-base --is-ancestor "$event_sha" "$main_sha" || \
     die "tag revision is not reachable from protected main"
 fi
@@ -198,6 +204,12 @@ if [[ "$TRUSTED_REF_KIND" == "release-branch" ]]; then
     die "unable to resolve protected main"
   main_sha="$(printf '%s\n' "$main_ref_output" | awk 'NF == 2 && $2 == "refs/heads/main" { print $1; exit }')"
   [[ "$main_sha" =~ $HEX_SHA_RE ]] || die "protected main did not resolve to a commit"
+  if ! git cat-file -e "$main_sha^{commit}" 2>/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$main_sha" >/dev/null 2>&1 || \
+      die "unable to fetch protected main commit"
+  fi
+  git cat-file -e "$main_sha^{commit}" 2>/dev/null || \
+    die "protected main commit is not available locally"
   git merge-base --is-ancestor "$TRUSTED_BASE_SHA" "$main_sha" || \
     die "trusted release base is not reachable from the current protected main revision"
   release_parent="$(git rev-parse --verify "$event_sha^1" 2>/dev/null)" || \

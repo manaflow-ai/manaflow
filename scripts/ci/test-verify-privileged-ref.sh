@@ -95,7 +95,9 @@ git -C "$repo_dir" push --quiet origin release/v1.2.3
 git -C "$repo_dir" -c tag.gpgSign=false tag -f v1.2.3 "$release_sha" >/dev/null
 git -C "$repo_dir" push --quiet --force origin refs/tags/v1.2.3
 
-run_called_gate() {
+run_called_gate_in() {
+  local gate_repo="$1"
+  shift
   local event_name="${1:-workflow_call}"
   local event_ref="${2:-refs/heads/release/v1.2.3}"
   local event_sha="${3:-$release_sha}"
@@ -104,7 +106,7 @@ run_called_gate() {
   local workflow_ref="${6:-manaflow-ai/manaflow/.github/workflows/release-pr.yml@$caller_ref}"
   local protected="${7:-true}"
   (
-    cd "$repo_dir"
+    cd "$gate_repo"
     git checkout --quiet --detach "$event_sha"
     GITHUB_REPOSITORY=manaflow-ai/manaflow \
     GITHUB_REF="$caller_ref" \
@@ -127,6 +129,10 @@ run_called_gate() {
     TRUSTED_WORKFLOW_PATH=.github/workflows/release-pr.yml \
     "$GATE_SCRIPT"
   )
+}
+
+run_called_gate() {
+  run_called_gate_in "$repo_dir" "$@"
 }
 
 expect_called_failure() {
@@ -156,6 +162,15 @@ git -C "$repo_dir" commit --quiet -m "test: advance main during release"
 git -C "$repo_dir" push --quiet origin main
 if ! run_called_gate >/dev/null; then
   echo "FAIL: release call should allow a protected main fast-forward" >&2
+  exit 1
+fi
+
+# A runner may only have the release tip and its base locally when main moves.
+# The gate must fetch the current protected-main commit before checking ancestry.
+shallow_dir="$tmp_dir/shallow"
+git clone --quiet --no-local --depth=3 --branch release/v1.2.3 "$remote_dir" "$shallow_dir"
+if ! run_called_gate_in "$shallow_dir" >/dev/null; then
+  echo "FAIL: release call should fetch an advanced protected main commit" >&2
   exit 1
 fi
 
