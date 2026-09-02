@@ -423,20 +423,20 @@ jobs:
           actor_identity="$(gh api \
             --header 'Accept: application/vnd.github+json' \
             --header 'X-GitHub-Api-Version: 2022-11-28' \
-            --jq '[.user.id, .user.login, .user.type, .permission] | @tsv' \
+            --jq '[.user.id, .user.login, .user.type, .permission, .role_name] | @tsv' \
             "repos/$GH_REPO/collaborators/$EVENT_SENDER_LOGIN/permission")" || {
             echo "::error::The event sender permission could not be read"
             exit 1
           }
-          IFS=$'\t' read -r actor_id actor_login actor_type actor_permission <<<"$actor_identity"
+          IFS=$'\t' read -r actor_id actor_login actor_type actor_permission actor_role <<<"$actor_identity"
           [[ "$actor_id" == "$EVENT_SENDER_ID" &&
             "${actor_login,,}" == "${EVENT_SENDER_LOGIN,,}" &&
             "$actor_type" == User ]] || {
             echo "::error::The live event sender identity does not match the webhook"
             exit 1
           }
-          case "$actor_permission" in
-            admin|write) ;;
+          case "$actor_permission:$actor_role" in
+            admin:*|write:*|push:*|maintain:*|*:admin|*:write|*:push|*:maintain) ;;
             *)
             echo "::error::The event sender does not have repository write access"
             exit 1
