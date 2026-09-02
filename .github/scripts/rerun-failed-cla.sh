@@ -972,21 +972,23 @@ validate_run_source_binding "${run_json}"
 # execution SHA is the base revision. Use that exact source SHA for every job
 # identity check in the fallback path; the run itself remains bound to its
 # immutable execution SHA above.
-run_job_sha="${run_execution_sha}"
-source_sha_fallback=false
-if [[ "${run_execution_sha}" != "${head_sha}" ]]; then
-  run_job_sha="${head_sha}"
-  if [[ "${run_has_pull_request_association}" == true ]]; then
-    # A populated pull_requests association is the authenticated source
-    # binding. GitHub can expose either the source or execution SHA on jobs;
-    # use the source form for the PR-facing check without requiring a second
-    # check-run lookup.
-    source_sha_fallback=false
-  else
+set_run_job_binding() {
+  run_job_sha="${1}"
+  source_sha_fallback=false
+  if [[ "${1}" != "${head_sha}" ]]; then
+    run_job_sha="${head_sha}"
+    if [[ "${run_has_pull_request_association}" == true ]]; then
+      # A populated pull_requests association is the authenticated source
+      # binding. GitHub can expose either the source or execution SHA on jobs;
+      # use the source form for the PR-facing check without requiring a second
+      # check-run lookup.
+      return 0
+    fi
     source_check_binding_for_run "${run_id}" || fail "The selected fork workflow run is not bound to the current pull request head"
     source_sha_fallback=true
   fi
-fi
+}
+set_run_job_binding "${run_execution_sha}"
 
 # Close the main TOCTOU window. A push, close, or another rerun can
 # happen while the API calls above run. Never rerun a stale head.
@@ -1079,6 +1081,13 @@ jq -e \
     run_binds_to_pr
 ' <<<"${final_run_json}" >/dev/null || fail "The exact failed CLA run is no longer eligible"
 validate_run_source_binding "${final_run_json}"
+if [[ "${run_has_pull_request_association}" != true &&
+      "${run_execution_sha}" != "${head_sha}" ]]; then
+  # The association shape can change between API reads. Refresh the source
+  # check before deriving the job binding when the fallback is still needed.
+  refresh_source_check_bindings
+fi
+set_run_job_binding "${run_execution_sha}"
 
 # Fetch the complete bounded job set for one exact run. The rerun endpoint
 # requires actions:write, so discovery must fail closed if pagination or shape
