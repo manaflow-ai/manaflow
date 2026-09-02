@@ -10,6 +10,12 @@ fixture="${CLA_FIXTURE:?CLA_FIXTURE is required}"
 endpoint=""
 method="GET"
 previous=""
+workflow_sha="${CLA_FIXTURE_WORKFLOW_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+[[ "${workflow_sha}" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "fixture workflow SHA is invalid" >&2
+  exit 2
+}
+generation_marker="CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-${workflow_sha}"
 for argument in "$@"; do
   if [[ "${previous}" == "--method" ]]; then
     method="${argument}"
@@ -22,6 +28,13 @@ done
   echo "fixture endpoint is missing" >&2
   exit 2
 }
+
+if [[ "${CLA_FIXTURE_OVERSIZE_ENDPOINT:-}" == "${endpoint}" ]]; then
+  printf '{"oversized":"'
+  head -c 8000001 /dev/zero | tr '\0' x
+  printf '"}\n'
+  exit 0
+fi
 
 if [[ "${method}" == "POST" ]]; then
   printf '%s\n' "${endpoint}" >"${CLA_POST_LOG:?CLA_POST_LOG is required}"
@@ -52,11 +65,13 @@ elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
 elif [[ "${endpoint}" == *"/actions/workflows"* ]]; then
   jq -c '.workflows' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/runs/700/jobs"* ]]; then
-  jq -c '.jobs' "${fixture}"
+  jq -c --arg generation_marker "${generation_marker}" \
+    '.jobs.jobs[0].steps[0].name = $generation_marker | .jobs' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/runs/700"* ]]; then
   jq -c '.run' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/jobs/8800"* ]]; then
-  jq -c '.job' "${fixture}"
+  jq -c --arg generation_marker "${generation_marker}" \
+    '.job.steps[0].name = $generation_marker | .job' "${fixture}"
 else
   echo "unmatched fixture endpoint: ${endpoint}" >&2
   exit 2

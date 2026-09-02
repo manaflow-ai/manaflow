@@ -9,11 +9,11 @@ on:
 
 permissions: {}
 
-# This marker changes only when the policy or maintained action changes. It
-# gives the rerun worker a stable generation that is independent of unrelated
-# commits on main.
+# This marker includes the maintained action and the exact workflow revision.
+# The rerun worker uses the step name to reject a failed run that would replay
+# an older privileged workflow definition.
 env:
-  CLA_GENERATION: "v2.2-action-212a0f2dd659b24b48a30ba35966e06dc41736af"
+  CLA_GENERATION: "v2.2-action-212a0f2dd659b24b48a30ba35966e06dc41736af-workflow-${{ github.workflow_sha }}"
 
 # Numeric IDs are immutable. They identify Austin Wang (@austinywang, 38676809)
 # and Abdulaziz Albahar (@azooz2003-bit, 67667005); names and e-mail addresses
@@ -269,7 +269,7 @@ jobs:
       # marker must remain visible when this result fails because the writer
       # failed in the original pull_request_target run. The immutable rerun
       # helper uses the rendered step name to reject older workflow runs.
-      - name: "CLA generation v2.2-action-212a0f2dd659b24b48a30ba35966e06dc41736af"
+      - name: "CLA generation v2.2-action-212a0f2dd659b24b48a30ba35966e06dc41736af-workflow-${{ github.workflow_sha }}"
         env:
           EVENT_NAME: ${{ github.event_name }}
           COMMENT_BODY: ${{ github.event.comment.body || '' }}

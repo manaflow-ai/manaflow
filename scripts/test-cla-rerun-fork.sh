@@ -36,7 +36,8 @@ common_env=(
   "COMMENT_AUTHOR_ASSOCIATION=NONE"
   "SIGNATURE_RECORDED="
   "CLA_PASSED=true"
-  "CLA_GENERATION=v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "CLA_GENERATION=v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-${workflow_sha}"
+  "CLA_FIXTURE_WORKFLOW_SHA=${workflow_sha}"
   "WORKFLOW_SHA=${workflow_sha}"
   "WORKFLOW_PATH=.github/workflows/cla.yml"
 )
@@ -60,5 +61,21 @@ if env "${common_env[@]}" CLA_FIXTURE_WRONG_SOURCE_JOB=true bash "${repo_root}/.
 fi
 [[ ! -e "${temp_dir}/post.log" ]]
 rg -q 'job is not the job bound|job is no longer bound' "${temp_dir}/wrong-job.log"
+
+rm -f -- "${temp_dir}/post.log"
+if env "${common_env[@]}" CLA_FIXTURE_WORKFLOW_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/old-generation.log" 2>&1; then
+  echo "failed run from an older workflow revision was accepted" >&2
+  exit 1
+fi
+[[ ! -e "${temp_dir}/post.log" ]]
+rg -q 'older workflow generation' "${temp_dir}/old-generation.log"
+
+rm -f -- "${temp_dir}/post.log"
+if env "${common_env[@]}" CLA_FIXTURE_OVERSIZE_ENDPOINT='repos/manaflow-ai/manaflow/actions/runs/700/jobs' bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/oversize.log" 2>&1; then
+  echo "oversized direct API response was accepted" >&2
+  exit 1
+fi
+[[ ! -e "${temp_dir}/post.log" ]]
+rg -q 'response exceeds 8000000 bytes' "${temp_dir}/oversize.log"
 
 echo "CLA fork rerun fixture passed"

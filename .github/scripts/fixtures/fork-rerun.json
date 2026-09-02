@@ -121,7 +121,7 @@
         "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "steps": [
           {
-            "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "status": "completed"
           }
         ]
@@ -137,7 +137,7 @@
     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "steps": [
       {
-        "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "CLA generation v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-workflow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "status": "completed"
       }
     ]

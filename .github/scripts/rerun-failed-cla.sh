@@ -13,14 +13,10 @@ readonly MAX_API_RESPONSE_BYTES=8000000
 
 # Every GitHub API response is bounded before a caller parses it. The helper
 # still applies endpoint-specific page and object limits below; this shared
-# cap prevents a malformed response from consuming unbounded shell memory.
-gh() {
+# cap rejects an unexpectedly large response before it reaches jq.
+gh_api() {
   local response response_bytes
-  if [[ "${1:-}" != "api" ]]; then
-    command gh "$@"
-    return
-  fi
-  if ! response="$(command gh "$@")"; then
+  if ! response="$(command gh api "$@")"; then
     return 1
   fi
   response_bytes="$(printf '%s' "${response}" | wc -c | tr -d '[:space:]')" || return 1
@@ -80,8 +76,10 @@ if [[ "${COMMENT_BODY}" == "I have read the CLA Document v2.2 and I hereby sign 
 elif [[ "${CLA_PASSED}" != "true" ]]; then
   fail "The CLA action did not report cla_passed=true for the recheck"
 fi
-[[ "${CLA_GENERATION}" =~ ^v[0-9]+\.[0-9]+-action-[0-9a-f]{40}$ ]] || fail "Invalid CLA generation marker"
 [[ "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ ]] || fail "Invalid trusted workflow revision"
+[[ "${CLA_GENERATION}" =~ ^v[0-9]+\.[0-9]+-action-[0-9a-f]{40}-workflow-[0-9a-f]{40}$ ]] || fail "Invalid CLA generation marker"
+generation_workflow_sha="${CLA_GENERATION##*-workflow-}"
+[[ "${generation_workflow_sha}" == "${WORKFLOW_SHA}" ]] || fail "CLA generation marker is for a different workflow revision"
 checked_out_sha="$(git rev-parse HEAD 2>/dev/null)" || fail "Could not verify the trusted workflow checkout"
 [[ "${checked_out_sha}" == "${WORKFLOW_SHA}" ]] || fail "The checkout is not the immutable workflow revision"
 [[ "${WORKFLOW_PATH}" == ".github/workflows/cla.yml" ]] || fail "Unexpected CLA workflow path"
@@ -131,7 +129,7 @@ source_check_binding_for_job() {
 
 validate_triggering_signature_record() {
   local ledger_response ledger_content ledger_content_compact ledger_json ledger_raw_bytes ledger_encoded_bytes ledger_decoded_bytes
-  ledger_response="$(gh api \
+  ledger_response="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field ref="${SIGNATURES_BRANCH}" \
@@ -186,7 +184,7 @@ validate_triggering_signature_record() {
      )' <<<"${ledger_json}" >/dev/null || fail "The signing comment was not the signature persisted by the CLA action"
 }
 
-issue_json="$(gh api "repos/${GH_REPO}/issues/${PR_NUMBER}" 2>/dev/null)" || fail "Could not query the issue"
+issue_json="$(gh_api "repos/${GH_REPO}/issues/${PR_NUMBER}" 2>/dev/null)" || fail "Could not query the issue"
 issue_state="$(jq -r '.state // empty' <<<"${issue_json}")"
 issue_pr_url="$(jq -r '.pull_request.url // empty' <<<"${issue_json}")"
 [[ "${issue_state}" == "open" ]] || fail "The issue is not an open pull request"
@@ -194,7 +192,7 @@ issue_pr_url="$(jq -r '.pull_request.url // empty' <<<"${issue_json}")"
 
 validate_live_triggering_comment() {
   local comment_json comment_body_bytes
-  comment_json="$(gh api \
+  comment_json="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --header 'X-GitHub-Api-Version: 2022-11-28' \
@@ -241,7 +239,7 @@ validate_live_triggering_comment() {
 # stale event payload must never authorize a rerun of the failed check.
 validate_live_triggering_comment
 
-pr_json="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not query the pull request"
+pr_json="$(gh_api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not query the pull request"
 jq -e --arg repo "${GH_REPO}" --argjson number "${PR_NUMBER}" --arg base "${TARGET_BASE_REF}" '
   .number == $number and
   .state == "open" and
@@ -296,7 +294,7 @@ cleanup_commit_association_stderr() {
   rm -f -- "${commit_association_stderr_file}"
 }
 trap cleanup_commit_association_stderr EXIT
-if commit_prs_json="$(gh api \
+if commit_prs_json="$(gh_api \
   --method GET \
   --header 'Accept: application/vnd.github+json' \
   --raw-field per_page=100 \
@@ -327,7 +325,7 @@ association_count="$(jq -r 'length' <<<"${commit_prs_json}")"
 [[ "${association_count}" =~ ^[0-9]+$ ]] || fail "Could not count pull request associations"
 (( association_count <= 100 )) || fail "The pull request association page is oversized"
 if (( association_count == 100 )); then
-  commit_prs_page2="$(gh api \
+  commit_prs_page2="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field per_page=100 \
@@ -375,7 +373,7 @@ validate_live_open_head_association() {
   head_owner="${head_repo%%/*}"
   head_name="${head_repo#*/}"
   [[ -n "${head_owner}" && -n "${head_name}" ]] || fail "The pull request head repository name is invalid"
-  open_prs_page="$(gh api \
+  open_prs_page="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field state=open \
@@ -389,7 +387,7 @@ validate_live_open_head_association() {
   [[ "${open_pr_count}" =~ ^[0-9]+$ ]] || fail "Could not count live open pull requests"
   (( open_pr_count <= 100 )) || fail "The live open pull request page is oversized"
   if (( open_pr_count == 100 )); then
-    open_prs_page2="$(gh api \
+    open_prs_page2="$(gh_api \
       --method GET \
       --header 'Accept: application/vnd.github+json' \
       --raw-field state=open \
@@ -456,7 +454,7 @@ refresh_source_check_bindings() {
   fi
 
   source_checks_error_file="$(mktemp)"
-  if source_checks_page="$(gh api \
+  if source_checks_page="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field per_page=100 \
@@ -480,7 +478,7 @@ refresh_source_check_bindings() {
   [[ "${source_check_count}" =~ ^[0-9]+$ ]] || fail "Could not count source check runs"
   (( source_check_count <= 100 )) || fail "The source check-run page is oversized"
   if (( source_check_count == 100 )); then
-    source_checks_page2="$(gh api \
+    source_checks_page2="$(gh_api \
       --method GET \
       --header 'Accept: application/vnd.github+json' \
       --raw-field per_page=100 \
@@ -519,7 +517,7 @@ refresh_source_check_bindings() {
 }
 refresh_source_check_bindings
 
-workflow_page="$(gh api \
+workflow_page="$(gh_api \
   --method GET \
   --header 'Accept: application/vnd.github+json' \
   --raw-field per_page=100 \
@@ -530,7 +528,7 @@ workflow_count="$(jq -r '.workflows | length' <<<"${workflow_page}")"
 [[ "${workflow_count}" =~ ^[0-9]+$ ]] || fail "Could not count repository workflows"
 (( workflow_count <= 100 )) || fail "The repository workflow page is oversized"
 if (( workflow_count == 100 )); then
-  workflow_page2="$(gh api \
+  workflow_page2="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field per_page=100 \
@@ -560,7 +558,7 @@ safe_id "${workflow_id}" || fail "The expected CLA workflow ID is missing or uns
 # candidates are retained when the execution SHA is the live source SHA, or
 # when a GitHub Actions check on that source SHA identifies the same run. A
 # selected assistant job must match that check's run and job IDs below.
-runs_page="$(gh api \
+runs_page="$(gh_api \
   --method GET \
   --header 'Accept: application/vnd.github+json' \
   --raw-field event="${TARGET_EVENT}" \
@@ -587,7 +585,7 @@ runs_json="$(jq -c '[.]' <<<"${runs_page}")"
 page_count="${run_count}"
 page_number=2
 while (( page_count == 100 && page_number <= MAX_RUN_PAGES )); do
-  next_runs_page="$(gh api \
+  next_runs_page="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field event="${TARGET_EVENT}" \
@@ -894,7 +892,7 @@ validate_run_source_binding() {
 
 # Re-read the individual run. The list response is only a discovery
 # result, not authorization to rerun it.
-run_json="$(gh api "repos/${GH_REPO}/actions/runs/${run_id}" 2>/dev/null)" || fail "Could not query the selected CLA run"
+run_json="$(gh_api "repos/${GH_REPO}/actions/runs/${run_id}" 2>/dev/null)" || fail "Could not query the selected CLA run"
 jq -e \
   --arg run_id "${run_id}" \
   --arg path "${WORKFLOW_PATH}" \
@@ -992,7 +990,7 @@ set_run_job_binding "${run_execution_sha}"
 
 # Close the main TOCTOU window. A push, close, or another rerun can
 # happen while the API calls above run. Never rerun a stale head.
-latest_pr_json="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not recheck the pull request"
+latest_pr_json="$(gh_api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not recheck the pull request"
 jq -e --arg repo "${GH_REPO}" --argjson number "${PR_NUMBER}" --arg sha "${head_sha}" --arg base "${TARGET_BASE_REF}" --arg head_ref "${head_ref}" --arg head_repo "${head_repo}" --argjson head_repo_id "${head_repo_id}" --argjson base_repo_id "${repo_id}" --arg opener "${pr_author_login}" --argjson opener_id "${pr_author_id}" '
   .number == $number and
   .state == "open" and
@@ -1008,7 +1006,7 @@ jq -e --arg repo "${GH_REPO}" --argjson number "${PR_NUMBER}" --arg sha "${head_
 ' <<<"${latest_pr_json}" >/dev/null || fail "The pull request changed while selecting the CLA run"
 
 # Ensure another queued invocation did not already rerun this run.
-final_run_json="$(gh api "repos/${GH_REPO}/actions/runs/${run_id}" 2>/dev/null)" || fail "Could not recheck the selected CLA run"
+final_run_json="$(gh_api "repos/${GH_REPO}/actions/runs/${run_id}" 2>/dev/null)" || fail "Could not recheck the selected CLA run"
 jq -e \
   --arg path "${WORKFLOW_PATH}" \
   --arg event "${TARGET_EVENT}" \
@@ -1099,23 +1097,23 @@ set_run_job_binding "${run_execution_sha}"
 fetch_jobs_for_run() {
   local target_run_id="$1"
   local page_json page_count page2_json page2_count
-  page_json="$(gh api \
+  page_json="$(gh_api \
     --method GET \
     --header 'Accept: application/vnd.github+json' \
     --raw-field per_page=100 \
     --raw-field page=1 \
-    "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs" 2>/dev/null)" || return 1
+    "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs")" || return 1
   jq -e 'type == "object" and (.jobs | type == "array")' <<<"${page_json}" >/dev/null || return 1
   page_count="$(jq -r '.jobs | length' <<<"${page_json}")"
   [[ "${page_count}" =~ ^[0-9]+$ ]] || return 1
   (( page_count <= 100 )) || return 1
   if (( page_count == 100 )); then
-    page2_json="$(gh api \
+    page2_json="$(gh_api \
       --method GET \
       --header 'Accept: application/vnd.github+json' \
       --raw-field per_page=100 \
       --raw-field page=2 \
-      "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs" 2>/dev/null)" || return 1
+      "repos/${GH_REPO}/actions/runs/${target_run_id}/jobs")" || return 1
     jq -e 'type == "object" and (.jobs | type == "array")' <<<"${page2_json}" >/dev/null || return 1
     page2_count="$(jq -r '.jobs | length' <<<"${page2_json}")"
     [[ "${page2_count}" =~ ^[0-9]+$ ]] || return 1
@@ -1299,7 +1297,7 @@ fi
 
 # Re-read the individual job. The jobs list is discovery only, just
 # like the workflow-run list above.
-job_json="$(gh api "repos/${GH_REPO}/actions/jobs/${job_id}" 2>/dev/null)" || fail "Could not query the selected CLA Assistant v3 job"
+job_json="$(gh_api "repos/${GH_REPO}/actions/jobs/${job_id}" 2>/dev/null)" || fail "Could not query the selected CLA Assistant v3 job"
 jq -e \
   --arg job_id "${job_id}" \
   --arg run_id "${run_id}" \
@@ -1331,7 +1329,7 @@ jq -e \
 # Recheck both resources immediately before the state-changing call.
 # This prevents a push or a concurrent rerun from making the job
 # stale while the preceding API requests were in flight.
-latest_pr_json="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not recheck the pull request before rerun"
+latest_pr_json="$(gh_api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not recheck the pull request before rerun"
 jq -e --arg repo "${GH_REPO}" --argjson number "${PR_NUMBER}" --arg sha "${head_sha}" --arg base "${TARGET_BASE_REF}" --arg head_ref "${head_ref}" --arg head_repo "${head_repo}" --argjson head_repo_id "${head_repo_id}" --argjson base_repo_id "${repo_id}" --arg opener "${pr_author_login}" '
   .number == $number and
   .state == "open" and
@@ -1344,7 +1342,7 @@ jq -e --arg repo "${GH_REPO}" --argjson number "${PR_NUMBER}" --arg sha "${head_
   .head.repo.id == $head_repo_id and
   .user.login == $opener
 ' <<<"${latest_pr_json}" >/dev/null || fail "The pull request changed while selecting the CLA job"
-final_job_json="$(gh api "repos/${GH_REPO}/actions/jobs/${job_id}" 2>/dev/null)" || fail "Could not recheck the selected CLA job"
+final_job_json="$(gh_api "repos/${GH_REPO}/actions/jobs/${job_id}" 2>/dev/null)" || fail "Could not recheck the selected CLA job"
 jq -e \
   --arg job_id "${job_id}" \
   --arg run_id "${run_id}" \
@@ -1445,7 +1443,7 @@ else
   rerun_endpoint="repos/${GH_REPO}/actions/jobs/${job_id}/rerun"
   rerun_description="CLA job ${job_id}"
 fi
-if ! gh api \
+if ! gh_api \
   --method POST \
   --header 'Accept: application/vnd.github+json' \
   --header 'X-GitHub-Api-Version: 2022-11-28' \
