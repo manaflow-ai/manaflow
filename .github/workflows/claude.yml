@@ -366,6 +366,7 @@ jobs:
       pull-requests: write # Update pull requests and review comments.
       issues: write # Create and update issue/PR tracking comments.
       actions: read # Read CI results on pull requests.
+      id-token: none # GitHub-token override means OIDC is not needed.
     steps:
       - name: Revalidate live pull request before privileged action
         if: ${{ needs.admission.outputs.pr_number != '' }}
