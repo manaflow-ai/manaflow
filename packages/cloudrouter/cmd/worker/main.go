@@ -768,7 +768,7 @@ func handlePTYWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[worker] Failed to accept WebSocket: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Spawn PTY
 	cmd := exec.Command(shell)
@@ -778,7 +778,7 @@ func handlePTYWebSocket(w http.ResponseWriter, r *http.Request) {
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
 	if err != nil {
 		log.Printf("[worker] Failed to start PTY: %v", err)
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
 	defer ptmx.Close()

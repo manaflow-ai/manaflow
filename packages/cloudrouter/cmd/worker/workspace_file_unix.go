@@ -15,7 +15,7 @@ func readWorkspaceFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return io.ReadAll(file)
 }
 
@@ -24,7 +24,7 @@ func readSecretFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func writeWorkspaceFile(path string, data []byte, perm os.FileMode) error {
 			return err
 		}
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	_, err = file.Write(data)
 	return err
 }

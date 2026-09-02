@@ -29,13 +29,13 @@ func (bm *browserManager) Screenshot() (map[string]interface{}, error) {
 	}
 	targetPath := tempFile.Name()
 	if err := tempFile.Close(); err != nil {
-		os.Remove(targetPath)
+		_ = os.Remove(targetPath)
 		return nil, fmt.Errorf("failed to prepare screenshot path: %w", err)
 	}
 	if err := os.Remove(targetPath); err != nil {
 		return nil, fmt.Errorf("failed to prepare screenshot path: %w", err)
 	}
-	defer os.Remove(targetPath)
+	defer func() { _ = os.Remove(targetPath) }()
 
 	cmd := exec.CommandContext(ctx, "agent-browser", "screenshot", targetPath)
 	cmd.Dir = workspaceDir
