@@ -54,9 +54,9 @@ func normalizeGitSource(raw string) (string, error) {
 		return "", fmt.Errorf("invalid git URL")
 	}
 	switch strings.ToLower(parsed.Scheme) {
-	case "https", "ssh", "git":
+	case "https", "ssh":
 	default:
-		return "", fmt.Errorf("git URL must use https, ssh, or git")
+		return "", fmt.Errorf("git URL must use https or ssh")
 	}
 	if parsed.User != nil {
 		username := parsed.User.Username()

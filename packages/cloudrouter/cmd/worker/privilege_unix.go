@@ -84,7 +84,7 @@ func dropPrivilegesToWorkerUser() error {
 			seen[gid] = struct{}{}
 			groups = append(groups, gid)
 		}
-		if err := unix.Setgroups(groups); err != nil {
+		if err := setWorkerGroups(groups); err != nil {
 			return fmt.Errorf("drop supplementary groups: %w", err)
 		}
 	} else if err := rejectRootSupplementaryGroup(); err != nil {
@@ -158,17 +158,92 @@ func allThreadsPrctl(option, arg2 uintptr) (uintptr, error) {
 	return value, nil
 }
 
-func rejectRootSupplementaryGroup() error {
-	groups, err := unix.Getgroups()
-	if err != nil {
-		return fmt.Errorf("inspect supplementary groups: %w", err)
+// setWorkerGroups updates supplementary groups on every Go runtime thread.
+// syscall.Setgroups uses Go's all-thread syscall path for static Linux builds;
+// unix.Setgroups would invoke the raw syscall on only the current thread.
+func setWorkerGroups(groups []int) error {
+	if err := syscall.Setgroups(groups); err != nil {
+		return err
 	}
-	for _, gid := range groups {
-		if gid == 0 {
-			return fmt.Errorf("daemon retains the root supplementary group")
+	return verifyWorkerGroups(groups)
+}
+
+func rejectRootSupplementaryGroup() error {
+	threads, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return fmt.Errorf("inspect worker threads: %w", err)
+	}
+	for _, thread := range threads {
+		groups, err := readThreadGroups(thread.Name())
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		for _, gid := range groups {
+			if gid == 0 {
+				return fmt.Errorf("worker thread %s retains the root supplementary group", thread.Name())
+			}
 		}
 	}
 	return nil
+}
+
+func verifyWorkerGroups(expected []int) error {
+	want := make(map[int]struct{}, len(expected))
+	for _, gid := range expected {
+		want[gid] = struct{}{}
+	}
+	threads, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return fmt.Errorf("inspect worker threads: %w", err)
+	}
+	for _, thread := range threads {
+		groups, err := readThreadGroups(thread.Name())
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		got := make(map[int]struct{}, len(groups))
+		for _, gid := range groups {
+			got[gid] = struct{}{}
+		}
+		if len(got) != len(want) {
+			return fmt.Errorf("worker thread %s has unexpected supplementary groups", thread.Name())
+		}
+		for gid := range want {
+			if _, ok := got[gid]; !ok {
+				return fmt.Errorf("worker thread %s has unexpected supplementary groups", thread.Name())
+			}
+		}
+	}
+	return nil
+}
+
+func readThreadGroups(threadID string) ([]int, error) {
+	status, err := os.ReadFile(filepath.Join("/proc/self/task", threadID, "status"))
+	if err != nil {
+		return nil, fmt.Errorf("inspect supplementary groups for thread %s: %w", threadID, err)
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if !strings.HasPrefix(line, "Groups:") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "Groups:"))
+		groups := make([]int, 0, len(fields))
+		for _, field := range fields {
+			gid, err := strconv.ParseUint(field, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("parse supplementary group %q for thread %s: %w", field, threadID, err)
+			}
+			groups = append(groups, int(gid))
+		}
+		return groups, nil
+	}
+	return nil, fmt.Errorf("thread %s status has no supplementary group list", threadID)
 }
 
 // rejectLinuxCapabilities checks every Go runtime thread. A non-root process
@@ -183,6 +258,9 @@ func rejectLinuxCapabilities(checkBoundingSet bool) error {
 	for _, thread := range threads {
 		status, err := os.ReadFile(filepath.Join("/proc/self/task", thread.Name(), "status"))
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return fmt.Errorf("inspect capabilities for thread %s: %w", thread.Name(), err)
 		}
 		for _, line := range strings.Split(string(status), "\n") {
