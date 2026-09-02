@@ -47,6 +47,10 @@ env "${common_env[@]}" bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >
 [[ "$(<"${temp_dir}/post.log")" == "repos/manaflow-ai/manaflow/actions/jobs/8800/rerun" ]]
 
 rm -f -- "${temp_dir}/post.log"
+env "${common_env[@]}" CLA_FIXTURE_POPULATED_EXECUTION=true bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/populated-execution.log" 2>&1
+[[ "$(<"${temp_dir}/post.log")" == "repos/manaflow-ai/manaflow/actions/jobs/8800/rerun" ]]
+
+rm -f -- "${temp_dir}/post.log"
 if env "${common_env[@]}" CLA_FIXTURE_NO_SOURCE_CHECK=true bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/negative.log" 2>&1; then
   echo "unbound fork run was accepted" >&2
   exit 1

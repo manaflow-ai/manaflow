@@ -778,7 +778,9 @@ classify_workflow_runs_snapshot() {
                 ($head_repo != $repo and
                  any($source_check_bindings[]?; .run_id == $run_id))
               )
-            else any($prs[]?;
+            else
+              (.id | tostring) as $run_id
+              | any($prs[]?;
               (.number | type == "number") and
               (.number | tostring) == $pr and
               .base.ref == $base and
@@ -787,7 +789,9 @@ classify_workflow_runs_snapshot() {
               (.base.repo.id | type == "number") and
               .base.repo.id == $repo_id and
               .head.ref == $head_ref and
-              .head.sha == $sha and
+              (.head.sha == $sha or
+               ($head_repo != $repo and
+                any($source_check_bindings[]?; .run_id == $run_id))) and
               (.head.repo.id | type == "number") and
               .head.repo.id == $head_repo_id and
               ((.head.repo.full_name // "") == "" or
@@ -965,7 +969,9 @@ if [[ "${candidate_count}" == "0" ]]; then
              ($head_repo != $repo and
               any($source_check_bindings[]?; .run_id == $run_id))
            )
-         else any($prs[]?;
+         else
+           (.id | tostring) as $run_id
+           | any($prs[]?;
            (.number | type == "number") and
            (.number | tostring) == $pr and
            .base.ref == $base and
@@ -974,7 +980,9 @@ if [[ "${candidate_count}" == "0" ]]; then
            (.base.repo.id | type == "number") and
            .base.repo.id == $repo_id and
            .head.ref == $head_ref and
-           .head.sha == $sha and
+           (.head.sha == $sha or
+            ($head_repo != $repo and
+             any($source_check_bindings[]?; .run_id == $run_id))) and
            (.head.repo.id | type == "number") and
            .head.repo.id == $head_repo_id and
            ((.head.repo.full_name // "") == "" or
@@ -1096,7 +1104,9 @@ jq -e \
             ($head_repo != $repo and
              any($source_check_bindings[]?; .run_id == $run_id))
           )
-        else any($prs[]?;
+        else
+          (.id | tostring) as $run_id
+          | any($prs[]?;
           (.number | type == "number") and
           (.number | tostring) == $pr and
           .base.ref == $base and
@@ -1105,7 +1115,9 @@ jq -e \
           (.base.repo.id | type == "number") and
           .base.repo.id == $repo_id and
           .head.ref == $head_ref and
-          .head.sha == $sha and
+          (.head.sha == $sha or
+           ($head_repo != $repo and
+            any($source_check_bindings[]?; .run_id == $run_id))) and
           (.head.repo.id | type == "number") and
           .head.repo.id == $head_repo_id and
           ((.head.repo.full_name // "") == "" or
@@ -1128,22 +1140,23 @@ jq -e \
   ' <<<"${run_json}" >/dev/null || fail "The selected run no longer matches the exact failed CLA check"
 validate_run_source_binding "${run_json}"
 
-# Jobs expose the source head even on GitHub responses where the parent run's
-# execution SHA is the base revision. Use that exact source SHA for every job
-# identity check in the fallback path; the run itself remains bound to its
-# immutable execution SHA above.
+# Jobs can expose either the source head or the pull_request_target execution
+# SHA. Keep both authenticated values available for job identity checks. The
+# source-check binding remains mandatory when the parent run has no populated
+# pull request association.
 set_run_job_binding() {
   run_job_sha="${1}"
+  run_job_sha_alt="${head_sha}"
   source_sha_fallback=false
   if [[ "${1}" != "${head_sha}" ]]; then
-    run_job_sha="${head_sha}"
     if [[ "${run_has_pull_request_association}" == true ]]; then
       # A populated pull_requests association is the authenticated source
       # binding. GitHub can expose either the source or execution SHA on jobs;
-      # use the source form for the PR-facing check without requiring a second
-      # check-run lookup.
+      # accept both forms without requiring a second check-run lookup.
       return 0
     fi
+    run_job_sha="${head_sha}"
+    run_job_sha_alt="${head_sha}"
     source_check_binding_for_run "${run_id}" || fail "The selected fork workflow run is not bound to the current pull request head"
     source_sha_fallback=true
   fi
@@ -1210,7 +1223,9 @@ jq -e \
             ($head_repo != $repo and
              any($source_check_bindings[]?; .run_id == $run_id))
           )
-        else any($prs[]?;
+        else
+          (.id | tostring) as $run_id
+          | any($prs[]?;
           (.number | type == "number") and
           (.number | tostring) == $pr and
           .base.ref == $base and
@@ -1219,7 +1234,9 @@ jq -e \
           (.base.repo.id | type == "number") and
           .base.repo.id == $repo_id and
           .head.ref == $head_ref and
-          .head.sha == $sha and
+          (.head.sha == $sha or
+           ($head_repo != $repo and
+            any($source_check_bindings[]?; .run_id == $run_id))) and
           (.head.repo.id | type == "number") and
           .head.repo.id == $head_repo_id and
           ((.head.repo.full_name // "") == "" or
@@ -1296,6 +1313,7 @@ validate_failed_job_set() {
      ! assistant_valid_count="$(jq -r \
        --arg run_id "${run_id}" \
        --arg run_sha "${run_job_sha}" \
+       --arg source_sha "${run_job_sha_alt}" \
        --arg head_repo "${head_repo}" \
        --argjson head_repo_id "${head_repo_id}" \
        --arg assistant_job "${CLA_ASSISTANT_JOB}" \
@@ -1304,7 +1322,7 @@ validate_failed_job_set() {
           .name == $assistant_job and
           .run_id == ($run_id | tonumber) and
           (.head_sha | type == "string") and
-          .head_sha == $run_sha and
+          (.head_sha == $run_sha or .head_sha == $source_sha) and
           ((has("head_repository") | not) or
            (.head_repository == null or
             ((.head_repository | type) == "object" and
@@ -1327,6 +1345,7 @@ validate_failed_job_set() {
      ! writer_valid_count="$(jq -r \
        --arg run_id "${run_id}" \
        --arg run_sha "${run_job_sha}" \
+       --arg source_sha "${run_job_sha_alt}" \
        --arg head_repo "${head_repo}" \
        --argjson head_repo_id "${head_repo_id}" \
        --arg writer_job "${CLA_WRITER_JOB}" \
@@ -1334,7 +1353,7 @@ validate_failed_job_set() {
           .name == $writer_job and
           .run_id == ($run_id | tonumber) and
           (.head_sha | type == "string") and
-          .head_sha == $run_sha and
+          (.head_sha == $run_sha or .head_sha == $source_sha) and
           ((has("head_repository") | not) or
            (.head_repository == null or
             ((.head_repository | type) == "object" and
@@ -1351,6 +1370,7 @@ validate_failed_job_set() {
   if ! compatibility_valid_count="$(jq -r \
       --arg run_id "${run_id}" \
       --arg run_sha "${run_job_sha}" \
+      --arg source_sha "${run_job_sha_alt}" \
       --arg head_repo "${head_repo}" \
       --argjson head_repo_id "${head_repo_id}" \
       --arg compatibility_job "${CLA_COMPATIBILITY_JOB}" \
@@ -1358,7 +1378,7 @@ validate_failed_job_set() {
          .name == $compatibility_job and
          .run_id == ($run_id | tonumber) and
          (.head_sha | type == "string") and
-         .head_sha == $run_sha and
+         (.head_sha == $run_sha or .head_sha == $source_sha) and
          ((has("head_repository") | not) or
           (.head_repository == null or
            ((.head_repository | type) == "object" and
@@ -1380,6 +1400,7 @@ validate_failed_job_set "${jobs_json}"
 if ! cla_job_json="$(jq -c \
     --arg run_id "${run_id}" \
     --arg run_sha "${run_job_sha}" \
+    --arg source_sha "${run_job_sha_alt}" \
     --arg assistant_job "${CLA_ASSISTANT_JOB}" \
     --arg generation_step "CLA generation ${CLA_GENERATION}" \
     --arg head_repo "${head_repo}" \
@@ -1391,7 +1412,7 @@ if ! cla_job_json="$(jq -c \
           .status == "completed" and
           .conclusion == "failure" and
           (.head_sha | type == "string") and
-          .head_sha == $run_sha and
+          (.head_sha == $run_sha or .head_sha == $source_sha) and
           (
             .head_repository == null or
             (.head_repository.full_name == $head_repo and
@@ -1427,6 +1448,7 @@ jq -e \
   --arg job_id "${job_id}" \
   --arg run_id "${run_id}" \
   --arg run_sha "${run_job_sha}" \
+  --arg source_sha "${run_job_sha_alt}" \
   --arg assistant_job "${CLA_ASSISTANT_JOB}" \
   --arg generation_step "CLA generation ${CLA_GENERATION}" \
   --arg head_repo "${head_repo}" \
@@ -1437,7 +1459,7 @@ jq -e \
     .status == "completed" and
     .conclusion == "failure" and
     (.head_sha | type == "string") and
-    .head_sha == $run_sha and
+    (.head_sha == $run_sha or .head_sha == $source_sha) and
     (
       (has("head_repository") | not) or
       .head_repository == null or
@@ -1472,6 +1494,7 @@ jq -e \
   --arg job_id "${job_id}" \
   --arg run_id "${run_id}" \
   --arg run_sha "${run_job_sha}" \
+  --arg source_sha "${run_job_sha_alt}" \
   --arg assistant_job "${CLA_ASSISTANT_JOB}" \
   --arg generation_step "CLA generation ${CLA_GENERATION}" \
   --arg head_repo "${head_repo}" \
@@ -1482,7 +1505,7 @@ jq -e \
     .status == "completed" and
     .conclusion == "failure" and
     (.head_sha | type == "string") and
-    .head_sha == $run_sha and
+    (.head_sha == $run_sha or .head_sha == $source_sha) and
     (
       (has("head_repository") | not) or
       .head_repository == null or
@@ -1508,6 +1531,7 @@ validate_failed_job_set "${final_jobs_json}"
 final_job_id="$(jq -r \
   --arg run_id "${run_id}" \
   --arg run_sha "${run_job_sha}" \
+  --arg source_sha "${run_job_sha_alt}" \
   --arg assistant_job "${CLA_ASSISTANT_JOB}" \
   --arg generation_step "CLA generation ${CLA_GENERATION}" \
   --arg head_repo "${head_repo}" \
@@ -1518,7 +1542,7 @@ final_job_id="$(jq -r \
       .status == "completed" and
       .conclusion == "failure" and
       (.head_sha | type == "string") and
-      .head_sha == $run_sha and
+      (.head_sha == $run_sha or .head_sha == $source_sha) and
       ((has("head_repository") | not) or
        (.head_repository == null or
         ((.head_repository | type) == "object" and

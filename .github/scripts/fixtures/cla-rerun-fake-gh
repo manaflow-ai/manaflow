@@ -86,7 +86,7 @@ elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
   fi
   if [[ "${CLA_FIXTURE_NEWER_SUCCESS:-false}" == "true" ||
         ("${CLA_FIXTURE_FINAL_NEWER_SUCCESS:-false}" == "true" && ${runs_call_count} -ge 2) ]]; then
-    jq -c '.runs | .workflow_runs += [{
+    runs_json="$(jq -c '.runs | .workflow_runs += [{
       "id": 701,
       "path": ".github/workflows/cla.yml",
       "event": "pull_request_target",
@@ -98,23 +98,45 @@ elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
       "status": "completed",
       "conclusion": "success",
       "created_at": "2026-09-01T11:30:00Z"
-    }]' "${fixture}"
+    }]' "${fixture}")"
   else
-    jq -c '.runs' "${fixture}"
+    runs_json="$(jq -c '.runs' "${fixture}")"
   fi
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    run_pull_request="$(jq -c '.run_pull_request' "${fixture}")"
+    runs_json="$(jq -c --argjson run_pull_request "${run_pull_request}" \
+      '.workflow_runs[0].pull_requests = [$run_pull_request] | .workflow_runs[0].head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+      <<<"${runs_json}")"
+  fi
+  printf '%s\n' "${runs_json}"
 elif [[ "${endpoint}" == *"/actions/workflows"* ]]; then
   jq -c '.workflows' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/runs/700/jobs"* ]]; then
-  jq -c --arg generation_marker "${generation_marker}" \
-    '.jobs.jobs[0].steps[0].name = $generation_marker | .jobs' "${fixture}"
+  jobs_json="$(jq -c --arg generation_marker "${generation_marker}" \
+    '.jobs.jobs[0].steps[0].name = $generation_marker | .jobs' "${fixture}")"
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    jobs_json="$(jq -c '.jobs[0].head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"${jobs_json}")"
+  fi
+  printf '%s\n' "${jobs_json}"
 elif [[ "${endpoint}" == *"/actions/runs/701/jobs"* ]]; then
   jq -c --arg generation_marker "${generation_marker}" \
     '.success_jobs.jobs[0].steps[0].name = $generation_marker | .success_jobs' "${fixture}"
 elif [[ "${endpoint}" == *"/actions/runs/700"* ]]; then
-  jq -c '.run' "${fixture}"
+  run_json="$(jq -c '.run' "${fixture}")"
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    run_pull_request="$(jq -c '.run_pull_request' "${fixture}")"
+    run_json="$(jq -c --argjson run_pull_request "${run_pull_request}" \
+      '.pull_requests = [$run_pull_request] | .head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+      <<<"${run_json}")"
+  fi
+  printf '%s\n' "${run_json}"
 elif [[ "${endpoint}" == *"/actions/jobs/8800"* ]]; then
-  jq -c --arg generation_marker "${generation_marker}" \
-    '.job.steps[0].name = $generation_marker | .job' "${fixture}"
+  job_json="$(jq -c --arg generation_marker "${generation_marker}" \
+    '.job.steps[0].name = $generation_marker | .job' "${fixture}")"
+  if [[ "${CLA_FIXTURE_POPULATED_EXECUTION:-false}" == "true" ]]; then
+    job_json="$(jq -c '.head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"${job_json}")"
+  fi
+  printf '%s\n' "${job_json}"
 else
   echo "unmatched fixture endpoint: ${endpoint}" >&2
   exit 2

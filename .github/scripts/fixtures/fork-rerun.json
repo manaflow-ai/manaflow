@@ -41,6 +41,24 @@
       "id": 1234
     }
   },
+  "run_pull_request": {
+    "number": 42,
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "manaflow-ai/manaflow",
+        "id": 1026429198
+      }
+    },
+    "head": {
+      "ref": "feature",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": {
+        "full_name": "fork-user/manaflow",
+        "id": 987654
+      }
+    }
+  },
   "source_check_runs": {
     "total_count": 1,
     "check_runs": [
