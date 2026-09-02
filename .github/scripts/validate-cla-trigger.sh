@@ -212,9 +212,12 @@ if [[ "${EVENT_NAME}" == 'pull_request_target' ]]; then
     # payload to the action. A later synchronize event or exact recheck can
     # evaluate the current base through the live API.
     emit base_stale true
-    emit ignored true
+    # This is an invalid lifecycle snapshot, not an ordinary comment to
+    # ignore. Keep the required result job active so branch protection sees a
+    # failure instead of treating a skipped job as successful.
+    emit ignored false
     emit admitted false
-    echo 'CLA lifecycle event ignored: the base branch advanced before execution'
+    echo 'CLA lifecycle event is stale: the required check will fail until a current event is processed'
     exit 0
   fi
 fi

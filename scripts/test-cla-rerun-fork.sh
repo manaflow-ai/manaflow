@@ -36,7 +36,7 @@ common_env=(
   "COMMENT_AUTHOR_ASSOCIATION=NONE"
   "SIGNATURE_RECORDED="
   "CLA_PASSED=true"
-  "CLA_GENERATION=v2.2-action-aaaaaaaaaaaaaaa"
+  "CLA_GENERATION=v2.2-action-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   "WORKFLOW_SHA=${workflow_sha}"
   "WORKFLOW_PATH=.github/workflows/cla.yml"
 )

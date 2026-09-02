@@ -9,6 +9,31 @@ fail() {
 readonly MAX_SAFE_INTEGER=9007199254740991
 readonly MAX_COMMENT_BYTES=65536
 readonly EXPECTED_REPOSITORY='manaflow-ai/manaflow'
+readonly MAX_API_RESPONSE_BYTES=8000000
+
+# Every GitHub API response is bounded before a caller parses it. The helper
+# still applies endpoint-specific page and object limits below; this shared
+# cap prevents a malformed response from consuming unbounded shell memory.
+gh() {
+  local response response_bytes
+  if [[ "${1:-}" != "api" ]]; then
+    command gh "$@"
+    return
+  fi
+  if ! response="$(command gh "$@")"; then
+    return 1
+  fi
+  response_bytes="$(printf '%s' "${response}" | wc -c | tr -d '[:space:]')" || return 1
+  [[ "${response_bytes}" =~ ^[0-9]+$ ]] || {
+    echo "GitHub API response size is invalid" >&2
+    return 1
+  }
+  (( response_bytes <= MAX_API_RESPONSE_BYTES )) || {
+    echo "GitHub API response exceeds ${MAX_API_RESPONSE_BYTES} bytes" >&2
+    return 1
+  }
+  printf '%s' "${response}"
+}
 
 safe_id() {
   local value="${1}"
@@ -55,7 +80,7 @@ if [[ "${COMMENT_BODY}" == "I have read the CLA Document v2.2 and I hereby sign 
 elif [[ "${CLA_PASSED}" != "true" ]]; then
   fail "The CLA action did not report cla_passed=true for the recheck"
 fi
-[[ "${CLA_GENERATION}" =~ ^v[0-9]+\.[0-9]+-action-[0-9a-f]{7,40}$ ]] || fail "Invalid CLA generation marker"
+[[ "${CLA_GENERATION}" =~ ^v[0-9]+\.[0-9]+-action-[0-9a-f]{40}$ ]] || fail "Invalid CLA generation marker"
 [[ "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ ]] || fail "Invalid trusted workflow revision"
 checked_out_sha="$(git rev-parse HEAD 2>/dev/null)" || fail "Could not verify the trusted workflow checkout"
 [[ "${checked_out_sha}" == "${WORKFLOW_SHA}" ]] || fail "The checkout is not the immutable workflow revision"
