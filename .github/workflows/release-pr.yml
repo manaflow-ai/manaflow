@@ -37,7 +37,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           # Keep a local branch because release-pr.ts creates a child branch.
-          ref: refs/heads/main
+          # Pin the generated branch to the scheduled revision. The trust gate
+          # separately permits a protected-main fast-forward while this runs.
+          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
           # release-pr.ts supplies a transient auth header for git pushes.
@@ -60,10 +62,30 @@ jobs:
           set -euo pipefail
           actual_sha="$(git rev-parse HEAD)"
           if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
-            echo "main advanced while the workflow was starting" >&2
+            echo "checked out revision does not match the scheduled source" >&2
             echo "expected $EXPECTED_SHA, checked out $actual_sha" >&2
             exit 1
           fi
+          main_sha="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main | awk '
+            NF == 2 && $2 == "refs/heads/main" { print $1; exit }
+          ')"
+          if [[ ! "$main_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "protected main did not resolve to a commit" >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$main_sha^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$main_sha" >/dev/null 2>&1 || {
+              echo "unable to fetch the current protected main commit" >&2
+              exit 1
+            }
+          fi
+          git merge-base --is-ancestor "$EXPECTED_SHA" "$main_sha" || {
+            echo "scheduled source is not reachable from the current protected main" >&2
+            exit 1
+          }
+
+      - name: Create local release base branch
+        run: git switch --create "release-run-${GITHUB_RUN_ID}"
 
       - name: Fetch version tags
         shell: bash
@@ -151,6 +173,74 @@ jobs:
           }
           printf 'release_sha=%s\n' "$release_sha" >> "$GITHUB_OUTPUT"
           printf 'base_sha=%s\n' "$parent_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Bind immutable release tag
+        id: release_tag
+        if: >-
+          steps.release_changes.outputs.proceed == 'true' &&
+          (steps.create_release_pr.outputs.release_pr_state == 'created' ||
+          (steps.create_release_pr.outputs.release_pr_state == 'existing' &&
+          steps.create_release_pr.outputs.release_pr_draft == 'true'))
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR_STATE: ${{ steps.create_release_pr.outputs.release_pr_state }}
+          RELEASE_BRANCH: ${{ steps.create_release_pr.outputs.release_branch }}
+          RELEASE_SHA: ${{ steps.release_revision.outputs.release_sha }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Unexpected release branch: $RELEASE_BRANCH" >&2
+            exit 1
+          }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Unexpected release SHA" >&2
+            exit 1
+          }
+
+          release_tag="v${RELEASE_BRANCH#release/v}"
+          branch_sha="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+            "refs/heads/$RELEASE_BRANCH" | awk -v ref="refs/heads/$RELEASE_BRANCH" '
+              NF == 2 && $2 == ref { print $1; exit }
+            ')"
+          [[ "$branch_sha" == "$RELEASE_SHA" ]] || {
+            echo "Release branch moved before immutable tag binding" >&2
+            echo "expected $RELEASE_SHA, found ${branch_sha:-<missing>}" >&2
+            exit 1
+          }
+
+          tag_refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+            "refs/tags/$release_tag" "refs/tags/$release_tag^{}")"
+          if [[ -z "$tag_refs" ]]; then
+            if [[ "$RELEASE_PR_STATE" != "created" ]]; then
+              target_commitish="$(gh release view "$release_tag" --repo "$REPO" \
+                --json targetCommitish --jq '.targetCommitish // empty' 2>/dev/null || true)"
+              echo "Existing draft release targetCommitish: ${target_commitish:-<unavailable>}" >&2
+              echo "Existing draft release has no immutable tag; refusing an automatic retry" >&2
+              exit 1
+            fi
+
+            echo "Creating immutable tag $release_tag at $RELEASE_SHA"
+            if ! gh api --method POST "repos/$REPO/git/refs" \
+              -f "ref=refs/tags/$release_tag" \
+              -f "sha=$RELEASE_SHA" >/dev/null; then
+              echo "Tag creation raced; validating the existing tag" >&2
+            fi
+            tag_refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+              "refs/tags/$release_tag" "refs/tags/$release_tag^{}")"
+          fi
+
+          printf '%s\n' "$tag_refs" | awk -v expected="$RELEASE_SHA" '
+            NF == 2 && $1 == expected { found = 1 }
+            END {
+              if (!found) {
+                print "Immutable release tag does not point at the generated release commit" > "/dev/stderr"
+                exit 1
+              }
+            }
+          '
+          printf 'tag=%s\n' "$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Skip release (no changes)
         if: steps.release_changes.outputs.proceed == 'false'

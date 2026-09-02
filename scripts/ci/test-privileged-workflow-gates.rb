@@ -174,6 +174,21 @@ end
 unless stringify(release_pr.fetch("jobs").fetch("open-release-pr")).include?("git fetch --force --tags origin")
   errors << "release-pr.yml must fetch version tags before change detection"
 end
+open_release_text = stringify(release_pr.fetch("jobs").fetch("open-release-pr"))
+release_checkout = release_pr.fetch("jobs").fetch("open-release-pr").fetch("steps").find do |step|
+  step.is_a?(Hash) && step.fetch("uses", "").to_s.start_with?("actions/checkout@")
+end
+unless release_checkout&.fetch("with", {})&.fetch("ref", nil) == "${{ github.sha }}"
+  errors << "release-pr.yml must checkout the immutable scheduled SHA"
+end
+unless open_release_text.include?("gh api --method POST") &&
+       open_release_text.include?("refs/tags/$release_tag") &&
+       open_release_text.include?("RELEASE_PR_STATE\" != \"created\"")
+  errors << "release-pr.yml must bind a new immutable tag and fail closed for missing retry tags"
+end
+unless open_release_text.include?("git merge-base --is-ancestor \"$EXPECTED_SHA\" \"$main_sha\"")
+  errors << "release-pr.yml must allow delayed runs only on protected-main ancestry"
+end
 release_script = File.read("scripts/release-pr.ts")
 unless release_script.include?("verifyGeneratedReleaseCommit")
   errors << "scripts/release-pr.ts must validate the generated commit before pushing"
@@ -198,11 +213,24 @@ prepare_release_text = stringify(release_updates.fetch("jobs").fetch("prepare-re
 if prepare_release_text.include?("inputs.release_base_sha == inputs.caller_sha")
   errors << "release-updates.yml must allow a validated release base ancestor"
 end
-unless prepare_release_text.include?('--target "$SOURCE_SHA"')
-  errors << "release-updates.yml does not bind a new release tag to the verified source SHA"
+unless prepare_release_text.include?("--verify-tag")
+  errors << "release-updates.yml must only create releases from an existing immutable tag"
 end
-unless prepare_release_text.include?("Release tag $resolved_tag does not point at $SOURCE_SHA")
+unless prepare_release_text.include?("Release tag $resolved_tag does not point at $SOURCE_SHA") &&
+       prepare_release_text.include?("Refusing to publish without a tag bound before this workflow call")
   errors << "release-updates.yml does not reject an existing tag at another source SHA"
+end
+
+gate_script = File.read(".github/scripts/verify-privileged-ref.sh")
+unless gate_script.include?("git merge-base --is-ancestor \"$event_sha\" \"$remote_ref_sha\"")
+  errors << "verify-privileged-ref.sh must accept only protected-main ancestry for delayed jobs"
+end
+unless gate_script.include?("release branch is not bound to its immutable release tag")
+  errors << "verify-privileged-ref.sh must bind release branches to immutable tags"
+end
+unless gate_script.include?("tag workflow is not the current protected workflow revision") &&
+       gate_script.include?("[[ \"$workflow_sha\" == \"$main_sha\" ]]")
+  errors << "verify-privileged-ref.sh must bind credentialed tag workflows to current protected main"
 end
 
 if errors.empty?

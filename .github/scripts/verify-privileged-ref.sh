@@ -183,11 +183,26 @@ remote_ref_output="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin "$event_ref" "$e
 remote_ref_lines="$(printf '%s\n' "$remote_ref_output" | awk 'NF == 2 { count += 1 } END { print count + 0 }')"
 (( remote_ref_lines > 0 && remote_ref_lines <= 2 )) || \
   die "remote ref response is missing or unexpectedly large"
-if ! printf '%s\n' "$remote_ref_output" | awk -v expected="$event_sha" '
-  NF == 2 && $1 == expected { found = 1 }
-  END { exit(found ? 0 : 1) }
-'; then
-  die "remote ref does not resolve to $event_sha"
+remote_ref_sha="$(printf '%s\n' "$remote_ref_output" | awk -v ref="$event_ref" '
+  NF == 2 && $2 == ref { print $1; exit }
+')"
+[[ "$remote_ref_sha" =~ $HEX_SHA_RE ]] || die "remote ref did not resolve to a commit"
+if [[ "$TRUSTED_REF_KIND" == "main" ]]; then
+  if ! git cat-file -e "$remote_ref_sha^{commit}" 2>/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$remote_ref_sha" >/dev/null 2>&1 || \
+      die "unable to fetch current protected main commit"
+  fi
+  git cat-file -e "$remote_ref_sha^{commit}" 2>/dev/null || \
+    die "current protected main commit is not available locally"
+  git merge-base --is-ancestor "$event_sha" "$remote_ref_sha" || \
+    die "triggering main revision is not reachable from protected main"
+else
+  if ! printf '%s\n' "$remote_ref_output" | awk -v expected="$event_sha" '
+    NF == 2 && $1 == expected { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '; then
+    die "remote ref does not resolve to $event_sha"
+  fi
 fi
 
 if [[ "$TRUSTED_REF_KIND" == "tag" ]]; then
@@ -204,6 +219,8 @@ if [[ "$TRUSTED_REF_KIND" == "tag" ]]; then
   fi
   git cat-file -e "$main_sha^{commit}" 2>/dev/null || \
     die "protected main commit is not available locally"
+  [[ "$workflow_sha" == "$main_sha" ]] || \
+    die "tag workflow is not the current protected workflow revision"
   git merge-base --is-ancestor "$workflow_sha" "$main_sha" || \
     die "trusted workflow SHA is not reachable from protected main"
   git merge-base --is-ancestor "$event_sha" "$main_sha" || \
@@ -255,6 +272,16 @@ if [[ "$TRUSTED_REF_KIND" == "release-branch" ]]; then
   changed_files="$(git diff-tree --no-commit-id --name-only -r "$event_sha")"
   [[ "$changed_files" == "apps/client/package.json" ]] || \
     die "release branch commit changes files outside the version manifest"
+
+  release_tag_ref="refs/tags/v$release_version"
+  release_tag_output="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin "$release_tag_ref" "$release_tag_ref^{}" 2>/dev/null)" || \
+    die "unable to resolve immutable release tag"
+  if ! printf '%s\n' "$release_tag_output" | awk -v expected="$event_sha" '
+    NF == 2 && $1 == expected { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '; then
+    die "release branch is not bound to its immutable release tag"
+  fi
 fi
 
 echo "trusted-ref: verified $GITHUB_REPOSITORY $event_ref at $event_sha"

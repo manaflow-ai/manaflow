@@ -50,7 +50,7 @@ type PullRequest = {
     sha?: string;
     repo?: { full_name?: string } | null;
   };
-  base?: { ref?: string };
+  base?: { ref?: string; sha?: string };
 };
 
 function writeGithubOutput(key: string, value: string): void {
@@ -373,6 +373,89 @@ function verifyExistingReleasePullRequest(
   }
 }
 
+async function resumeExistingRelease(
+  version: string,
+  firstRemote: string,
+  baseBranch: string,
+  repo: Repository,
+  token: string,
+): Promise<boolean> {
+  const branchName = buildReleaseBranch(version);
+  const branchCheck = runGit(
+    ["ls-remote", "--heads", firstRemote, branchName],
+    { allowNonZeroExit: true },
+  );
+  if (!branchCheck.stdout.trim()) {
+    return false;
+  }
+
+  const existing = await findExistingPullRequest(branchName, repo, token);
+  if (!existing) {
+    throw new Error(
+      `Release branch ${branchName} has no open draft PR; refusing to replace it automatically.`,
+    );
+  }
+
+  runGit(
+    ["fetch", firstRemote, `refs/heads/${branchName}:refs/heads/${branchName}`],
+    { stdio: "inherit" },
+  );
+  const releaseSha = run("git", [
+    "rev-parse",
+    "--verify",
+    `refs/heads/${branchName}^{commit}`,
+  ]).stdout.trim();
+  verifyExistingReleasePullRequest(
+    existing,
+    branchName,
+    baseBranch,
+    releaseSha,
+    repo,
+  );
+
+  const protectedBaseSha = existing.base?.sha;
+  if (!protectedBaseSha || !/^[0-9a-f]{40}$/i.test(protectedBaseSha)) {
+    throw new Error(
+      "Existing release PR does not expose an immutable base revision.",
+    );
+  }
+  const releaseBaseSha = run("git", [
+    "rev-parse",
+    "--verify",
+    `${releaseSha}^1`,
+  ]).stdout.trim();
+  const baseCheck = runGit(["cat-file", "-e", `${protectedBaseSha}^{commit}`], {
+    allowNonZeroExit: true,
+  });
+  if (baseCheck.status !== 0) {
+    runGit(["fetch", "--no-tags", firstRemote, protectedBaseSha], {
+      stdio: "inherit",
+    });
+  }
+  verifyGeneratedReleaseCommit(releaseSha, releaseBaseSha, version);
+  const ancestryCheck = runGit(
+    ["merge-base", "--is-ancestor", releaseBaseSha, protectedBaseSha],
+    { allowNonZeroExit: true },
+  );
+  if (ancestryCheck.status !== 0) {
+    throw new Error(
+      "Existing release branch is not based on the protected base revision.",
+    );
+  }
+
+  console.log(
+    `Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`,
+  );
+  writeGithubOutput("release_branch", branchName);
+  writeGithubOutput("release_version", version);
+  writeGithubOutput("release_pr_state", "existing");
+  writeGithubOutput("release_pr_draft", String(existing.draft));
+  writeGithubOutput("release_pr_number", existing.number.toString());
+  writeGithubOutput("release_pr_url", existing.html_url);
+  writeGithubOutput("release_branch_created", "false");
+  return true;
+}
+
 async function createPullRequest(
   repo: Repository,
   token: string,
@@ -462,31 +545,59 @@ async function main(): Promise<void> {
   runGit(["fetch", "--tags", firstRemote], { stdio: "inherit" });
 
   const packageVersion = loadCurrentVersion();
-  const highestTagVersion = determineHighestTagVersion();
-
-  let baseVersion = packageVersion;
-  if (highestTagVersion && compareSemver(highestTagVersion, baseVersion) > 0) {
-    baseVersion = highestTagVersion;
-  }
-
   const bumpTarget = args[0] ?? "";
 
-  let newVersion: string;
-
+  let bumpMode: IncrementMode | undefined;
+  let manualTarget: string | undefined;
   if (!bumpTarget) {
-    newVersion = incrementVersion("patch", baseVersion);
+    bumpMode = "patch";
   } else if (
     bumpTarget === "major" ||
     bumpTarget === "minor" ||
     bumpTarget === "patch"
   ) {
-    newVersion = incrementVersion(bumpTarget, baseVersion);
+    bumpMode = bumpTarget;
   } else {
-    const manualTarget = bumpTarget.startsWith("v")
+    manualTarget = bumpTarget.startsWith("v")
       ? bumpTarget.slice(1)
       : bumpTarget;
-    newVersion = manualTarget;
   }
+  const incrementMode = bumpMode ?? "patch";
+
+  const baseBranch = getBaseBranch();
+  const repo = resolveRepository();
+  const token = ensureToken();
+
+  // A pre-merge immutable tag can be present while the base package version
+  // still lags behind it. Resume that exact draft before calculating a newer
+  // version from the tag list.
+  const packageCandidate =
+    manualTarget ?? incrementVersion(incrementMode, packageVersion);
+  if (!isSemver(packageCandidate)) {
+    throw new Error(
+      `Version "${packageCandidate}" is not a valid semver (x.y.z).`,
+    );
+  }
+  if (
+    await resumeExistingRelease(
+      packageCandidate,
+      firstRemote,
+      baseBranch,
+      repo,
+      token,
+    )
+  ) {
+    return;
+  }
+
+  const highestTagVersion = determineHighestTagVersion();
+  let baseVersion = packageVersion;
+  if (highestTagVersion && compareSemver(highestTagVersion, baseVersion) > 0) {
+    baseVersion = highestTagVersion;
+  }
+
+  const newVersion =
+    manualTarget ?? incrementVersion(incrementMode, baseVersion);
 
   if (!isSemver(newVersion)) {
     throw new Error(`Version "${newVersion}" is not a valid semver (x.y.z).`);
@@ -497,8 +608,6 @@ async function main(): Promise<void> {
       `New version ${newVersion} must be greater than existing version ${baseVersion}.`,
     );
   }
-
-  const baseBranch = getBaseBranch();
 
   const localTagCheck = run(
     "git",
@@ -522,51 +631,26 @@ async function main(): Promise<void> {
   }
 
   const branchName = buildReleaseBranch(newVersion);
+  if (
+    await resumeExistingRelease(
+      newVersion,
+      firstRemote,
+      baseBranch,
+      repo,
+      token,
+    )
+  ) {
+    return;
+  }
 
   const branchCheck = runGit(
     ["ls-remote", "--heads", firstRemote, branchName],
     { allowNonZeroExit: true },
   );
   if (branchCheck.stdout.trim()) {
-    const repo = resolveRepository();
-    const token = ensureToken();
-    const existing = await findExistingPullRequest(branchName, repo, token);
-    if (existing) {
-      runGit(
-        [
-          "fetch",
-          firstRemote,
-          `refs/heads/${branchName}:refs/heads/${branchName}`,
-        ],
-        { stdio: "inherit" },
-      );
-      const releaseSha = run("git", [
-        "rev-parse",
-        "--verify",
-        `refs/heads/${branchName}^{commit}`,
-      ]).stdout.trim();
-      verifyExistingReleasePullRequest(
-        existing,
-        branchName,
-        baseBranch,
-        releaseSha,
-        repo,
-      );
-      console.log(
-        `Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`,
-      );
-      writeGithubOutput("release_branch", branchName);
-      writeGithubOutput("release_version", newVersion);
-      writeGithubOutput("release_pr_state", "existing");
-      writeGithubOutput("release_pr_draft", String(existing.draft));
-      writeGithubOutput("release_pr_number", existing.number.toString());
-      writeGithubOutput("release_pr_url", existing.html_url);
-      writeGithubOutput("release_branch_created", "false");
-      return;
-    }
-    // Branch exists but no open PR - delete the stale branch and continue
-    console.log(`Deleting stale branch ${branchName} (no open PR found)`);
-    runGit(["push", firstRemote, "--delete", branchName], { stdio: "inherit" });
+    throw new Error(
+      `Release branch ${branchName} exists but could not be resumed safely.`,
+    );
   }
 
   const baseSha = run("git", ["rev-parse", "HEAD"]).stdout.trim();
@@ -589,9 +673,6 @@ async function main(): Promise<void> {
   writeGithubOutput("release_version", newVersion);
   writeGithubOutput("release_pr_draft", "true");
   writeGithubOutput("release_branch_created", "true");
-
-  const repo = resolveRepository();
-  const token = ensureToken();
 
   const pullRequest = await createPullRequest(
     repo,

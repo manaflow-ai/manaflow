@@ -140,11 +140,18 @@ jobs:
           tag_refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
             "refs/tags/$resolved_tag" "refs/tags/$resolved_tag^{}")"
           if [[ -z "$tag_refs" ]]; then
-            if [[ "$release_exists" == true && \
-              ( "$release_is_draft" != true || "$release_target" != "$SOURCE_SHA" ) ]]; then
-              echo "Draft release $resolved_tag has no tag at the verified source SHA" >&2
-              exit 1
+            if [[ "$release_exists" == true ]]; then
+              echo "Release $resolved_tag has no immutable tag" >&2
+              if [[ "$release_is_draft" == true && "$release_target" == "$SOURCE_SHA" ]]; then
+                echo "Its draft targetCommitish matches the source, but an existing draft retry still requires a pre-bound tag" >&2
+              else
+                echo "Draft targetCommitish is not the verified source SHA" >&2
+              fi
+            else
+              echo "Release $resolved_tag is missing its immutable tag" >&2
             fi
+            echo "Refusing to publish without a tag bound before this workflow call" >&2
+            exit 1
           elif ! printf '%s\n' "$tag_refs" | awk -v expected="$SOURCE_SHA" '
             NF == 2 && $1 == expected { found = 1 }
             END { exit(found ? 0 : 1) }
@@ -157,7 +164,7 @@ jobs:
             echo "Creating draft release $resolved_tag"
             gh release create "$resolved_tag" \
               --repo "$repo" \
-              --target "$SOURCE_SHA" \
+              --verify-tag \
               --draft \
               --title "$resolved_tag" \
               --notes ""

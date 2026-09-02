@@ -79,7 +79,10 @@ expect_failure() {
 }
 
 expect_success "protected main" main refs/heads/main branch "$source_sha" true "$source_sha" "$workflow_sha"
-expect_success "protected tag" tag refs/tags/v1.2.3 tag "$source_sha" true "$source_sha" "$workflow_sha"
+expect_success "protected tag" tag refs/tags/v1.2.3 tag "$source_sha" true "$source_sha" "$source_sha"
+expect_failure \
+  "tag workflow must be the current protected-main revision" \
+  tag refs/tags/v1.2.3 tag "$source_sha" true "$source_sha" "$workflow_sha"
 
 git -C "$repo_dir" checkout --quiet -b release/v1.2.3
 git -C "$repo_dir" config user.name "github-actions[bot]"
@@ -270,11 +273,26 @@ printf '%s\n' '{"version":"1.2.6"}' > "$repo_dir/apps/client/package.json"
 git -C "$repo_dir" add apps/client/package.json
 git -C "$repo_dir" commit --quiet -m "chore: release v1.2.6"
 unpublished_sha="$(git -C "$repo_dir" rev-parse HEAD)"
+git -C "$repo_dir" push --quiet origin release/v1.2.6
 expect_called_failure \
-  "release revision is not published at its claimed ref" \
+  "release revision has no immutable release tag" \
   workflow_call \
   refs/heads/release/v1.2.6 \
   "$unpublished_sha"
+
+git -C "$repo_dir" checkout --quiet -b release/v1.2.8 "$source_sha"
+printf '%s\n' '{"version":"1.2.8"}' > "$repo_dir/apps/client/package.json"
+git -C "$repo_dir" add apps/client/package.json
+git -C "$repo_dir" commit --quiet -m "chore: release v1.2.8"
+mismatched_tag_sha="$(git -C "$repo_dir" rev-parse HEAD)"
+git -C "$repo_dir" push --quiet origin release/v1.2.8
+git -C "$repo_dir" -c tag.gpgSign=false tag v1.2.8 "$source_sha"
+git -C "$repo_dir" push --quiet origin refs/tags/v1.2.8
+expect_called_failure \
+  "release tag points at a different commit" \
+  workflow_call \
+  refs/heads/release/v1.2.8 \
+  "$mismatched_tag_sha"
 
 git -C "$repo_dir" checkout --quiet main
 git -C "$repo_dir" config user.name "CI test"
@@ -291,9 +309,23 @@ fi
 expect_called_failure \
   "post-merge main SHA cannot replace the pre-merge release source" \
   workflow_call \
-  refs/heads/main \
+  refs/heads/release/v1.2.3 \
   "$post_merge_sha" \
   "$source_sha"
-expect_failure "main moved after the run started" main refs/heads/main branch "$source_sha" true "$source_sha" "$workflow_sha"
+expect_success "main advanced after the run started" main refs/heads/main branch "$source_sha" true "$source_sha" "$workflow_sha"
+
+# A protected-main ref that diverges from the triggering revision must still
+# fail. Ancestry tolerates a fast-forward only; it does not trust an unrelated
+# history merely because the ref is named main.
+git -C "$repo_dir" checkout --quiet --orphan divergent-main
+git -C "$repo_dir" rm --quiet -r --cached .
+printf '%s\n' 'unrelated main history' > "$repo_dir/divergent.txt"
+git -C "$repo_dir" add divergent.txt
+git -C "$repo_dir" commit --quiet -m "test: divergent protected main"
+divergent_main_sha="$(git -C "$repo_dir" rev-parse HEAD)"
+git -C "$repo_dir" push --quiet --force origin "$divergent_main_sha:refs/heads/main"
+git -C "$repo_dir" clean --quiet -fd
+git -C "$repo_dir" checkout --quiet --detach "$source_sha"
+expect_failure "divergent protected main history" main refs/heads/main branch "$source_sha" true "$source_sha" "$workflow_sha"
 
 echo "verify-privileged-ref behavior tests passed"
