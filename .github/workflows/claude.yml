@@ -221,7 +221,12 @@ jobs:
               (.user.id | tostring) == $sender_id and
               (.user.login | ascii_downcase) == ($sender_login | ascii_downcase) and
               .user.type == "User" and
-              (.permission == "admin" or .permission == "write")
+              (.permission | type == "string") and
+              (.role_name | type == "string") and
+              (.permission == "admin" or .permission == "write" or
+                .permission == "push" or .permission == "maintain" or
+                .role_name == "admin" or .role_name == "write" or
+                .role_name == "push" or .role_name == "maintain")
             ' <<<"$actor_permission_json" >/dev/null || reject "The event sender does not have repository write access"
           }
 
