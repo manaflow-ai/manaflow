@@ -2,7 +2,11 @@
 
 Pull requests run `.github/workflows/tests.yml`. That workflow uses the
 read-only `pull_request` event, grants only `contents: read`, disables package
-lifecycle scripts, and does not bind an environment or a secret.
+lifecycle scripts, and does not bind an environment or a secret. It invokes
+`scripts/ci/run-untrusted-tests.sh`, which runs the workspace unit suites with
+an isolated, allowlisted environment. Native-core tests and authenticated
+GitHub, Morph, and Sandbox integration tests stay in the trusted suite because
+they require service credentials or a native build.
 
 The full integration suite runs from
 `.github/workflows/tests-trusted.yml`. It is triggered only by a push to
@@ -17,3 +21,5 @@ contributor-controlled code with repository credentials.
 The workflow contract is verified by
 `scripts/ci/verify-workflow-secret-boundary.rb` from the read-only `Checks`
 workflow. Keep that test green when adding a workflow trigger or a secret.
+Protect `.github/workflows` with required owner review so a pull request cannot
+change this policy and its verifier in the same change.

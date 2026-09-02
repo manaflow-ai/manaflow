@@ -57,7 +57,7 @@ end
 def contains_secret_reference?(value)
   found = false
   walk(value) do |node|
-    found ||= node.is_a?(String) && node.match?(/\$\{\{[^}]*\bsecrets\b/)
+    found ||= node.is_a?(String) && node.match?(/\$\{\{[^}]*\bsecrets(?:\b|\s*\[)/)
   end
   found
 end
@@ -76,12 +76,36 @@ def contains_write_permission?(value)
     next unless node.is_a?(Hash) && node.key?("permissions")
 
     permissions = node["permissions"]
-    found ||= permissions == "write" || permissions == "admin"
+    found ||= %w[write admin write-all].include?(permissions.to_s)
     if permissions.is_a?(Hash)
-      found ||= permissions.values.any? { |permission| %w[write admin].include?(permission.to_s) }
+      found ||= permissions.values.any? { |permission| %w[write admin write-all].include?(permission.to_s) }
     end
   end
   found
+end
+
+READ_ONLY_PERMISSION_VALUES = %w[read none].freeze
+
+def read_only_permissions?(permissions)
+  case permissions
+  when Hash
+    !permissions.empty? && permissions.values.all? { |value| READ_ONLY_PERMISSION_VALUES.include?(value.to_s) }
+  when String
+    permissions == "read-all" || permissions == "none"
+  else
+    false
+  end
+end
+
+def assert_read_only_permissions(document, filename)
+  permissions = document["permissions"]
+  fail_contract("#{filename} must declare top-level read-only permissions") unless read_only_permissions?(permissions)
+
+  jobs(document, filename).each do |job_name, job|
+    next unless job.is_a?(Hash) && job.key?("permissions")
+
+    fail_contract("#{filename}:#{job_name} has non-read-only permissions") unless read_only_permissions?(job["permissions"])
+  end
 end
 
 def jobs(document, filename)
@@ -115,6 +139,9 @@ end
 def assert_pull_request_workflow_is_untrusted(document, filename)
   names = trigger_names(trigger_config(document, filename), filename)
   fail_contract("#{filename} must only run for pull_request") unless names == ["pull_request"]
+  assert_read_only_permissions(document, filename)
+  fail_contract("#{filename} contains a secret reference") if contains_secret_reference?(document)
+  fail_contract("#{filename} binds an environment") if contains_environment_binding?(document)
 
   jobs(document, filename).each do |job_name, job|
     fail_contract("#{filename}:#{job_name} contains a secret reference") if contains_secret_reference?(job)
@@ -145,6 +172,7 @@ def assert_trusted_main_workflow(document, filename)
   push = config["push"]
   branches = push.is_a?(Hash) ? push["branches"] : nil
   fail_contract("#{filename} must be restricted to main") unless branches == ["main"]
+  assert_read_only_permissions(document, filename)
 
   secret_jobs = jobs(document, filename).select do |_job_name, job|
     contains_secret_reference?(job) || contains_environment_binding?(job)
@@ -165,6 +193,7 @@ def assert_checks_workflow_is_read_only(document, filename)
   names = trigger_names(trigger_config(document, filename), filename)
   expected = %w[push pull_request]
   fail_contract("#{filename} trigger set changed: #{names.inspect}") unless names.sort == expected.sort
+  assert_read_only_permissions(document, filename)
   fail_contract("#{filename} contains a secret reference") if contains_secret_reference?(document)
   fail_contract("#{filename} binds an environment") if contains_environment_binding?(document)
   fail_contract("#{filename} grants write permission") if contains_write_permission?(document)

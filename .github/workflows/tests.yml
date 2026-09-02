@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -37,13 +37,11 @@ jobs:
           node-version: 24
 
       - name: Install dependencies without lifecycle scripts
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Run deterministic unit tests
         env:
           CI: "true"
-        run: |
-          set -euo pipefail
-          bunx vitest run --config apps/client/vitest.config.ts apps/client/src apps/client/electron
-          (cd packages/convex && bunx vitest run _shared convex/mobileInbox.test.ts)
-          bunx vitest run packages/shared/src
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          NPM_CONFIG_USERCONFIG: /dev/null
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Run pull-request tests without secrets
+        run: bash scripts/ci/run-untrusted-tests.sh
