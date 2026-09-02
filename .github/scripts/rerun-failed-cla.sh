@@ -13,22 +13,43 @@ readonly MAX_API_RESPONSE_BYTES=8000000
 
 # Every GitHub API response is bounded before a caller parses it. The helper
 # still applies endpoint-specific page and object limits below; this shared
-# cap rejects an unexpectedly large response before it reaches jq.
+# cap limits the bytes retained before the response reaches jq.
 gh_api() {
-  local response response_bytes
-  if ! response="$(command gh api "$@")"; then
-    return 1
+  local response_file response_bytes command_status
+  response_file="$(mktemp)" || return 1
+  # Keep reading after the retained prefix so gh can report its real exit
+  # status without a SIGPIPE. Only MAX+1 bytes are written to disk; the extra
+  # byte lets the size check distinguish an exact-limit response from an
+  # oversized one without buffering the complete body in shell memory.
+  if command gh api "$@" |
+    { head -c "$((MAX_API_RESPONSE_BYTES + 1))"; cat >/dev/null; } >"${response_file}"; then
+    command_status=0
+  else
+    command_status=$?
   fi
-  response_bytes="$(printf '%s' "${response}" | wc -c | tr -d '[:space:]')" || return 1
+  if (( command_status != 0 )); then
+    rm -f -- "${response_file}"
+    return "${command_status}"
+  fi
+  response_bytes="$(wc -c <"${response_file}" | tr -d '[:space:]')" || {
+    rm -f -- "${response_file}"
+    return 1
+  }
   [[ "${response_bytes}" =~ ^[0-9]+$ ]] || {
+    rm -f -- "${response_file}"
     echo "GitHub API response size is invalid" >&2
     return 1
   }
   (( response_bytes <= MAX_API_RESPONSE_BYTES )) || {
+    rm -f -- "${response_file}"
     echo "GitHub API response exceeds ${MAX_API_RESPONSE_BYTES} bytes" >&2
     return 1
   }
-  printf '%s' "${response}"
+  if ! cat -- "${response_file}"; then
+    rm -f -- "${response_file}"
+    return 1
+  fi
+  rm -f -- "${response_file}"
 }
 
 safe_id() {
