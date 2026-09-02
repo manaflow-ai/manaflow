@@ -96,6 +96,7 @@ rg -q 'newer successful run superseded the failed attempt' "${temp_dir}/final-su
 rm -f -- "${temp_dir}/post.log"
 if env "${common_env[@]}" \
   CLA_FIXTURE_ACTIVE_SOURCE_RUN=true \
+  CLA_FIXTURE_POPULATED_EXECUTION=true \
   CLA_FIXTURE_RUNS_CALL_LOG="${temp_dir}/active-runs-call-count" \
   bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/active-run.log" 2>&1; then
   echo "an in-progress source-bound CLA run was not blocked" >&2

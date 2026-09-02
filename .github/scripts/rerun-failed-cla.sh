@@ -1582,10 +1582,14 @@ fi
 # immediately before the Actions mutation. The API cannot provide a
 # transaction, so this is the narrowest practical final race window.
 validate_live_open_head_association
-if [[ "${source_sha_fallback}" == true ]]; then
-  # Re-read the source check immediately before the mutation. This keeps the
-  # run/job binding from becoming stale while the PR and job checks execute.
+if [[ "${head_repo}" != "${GH_REPO}" ]]; then
+  # Re-read source checks for every fork immediately before the final workflow
+  # snapshot. A populated pull_requests association can use the source SHA,
+  # while a newly started run may expose only its base execution SHA; both
+  # shapes need a fresh binding for active-run and supersession checks.
   refresh_source_check_bindings
+fi
+if [[ "${source_sha_fallback}" == true ]]; then
   source_check_binding_for_job "${run_id}" "${job_id}" ||
     fail "The selected CLA job is no longer bound to the current pull request head"
 fi
