@@ -78,7 +78,7 @@ func normalizeGitSource(raw string) (string, error) {
 	}
 	for _, component := range strings.Split(parsed.Path, "/") {
 		if component == ".." {
-			return "", fmt.Errorf("git URL path cannot contain ..")
+			return "", fmt.Errorf("git URL path cannot contain a %q component", "..")
 		}
 	}
 	return parsed.String(), nil
