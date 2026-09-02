@@ -94,6 +94,17 @@ fi
 rg -q 'newer successful run superseded the failed attempt' "${temp_dir}/final-superseded.log"
 
 rm -f -- "${temp_dir}/post.log"
+if env "${common_env[@]}" \
+  CLA_FIXTURE_ACTIVE_SOURCE_RUN=true \
+  CLA_FIXTURE_RUNS_CALL_LOG="${temp_dir}/active-runs-call-count" \
+  bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/active-run.log" 2>&1; then
+  echo "an in-progress source-bound CLA run was not blocked" >&2
+  exit 1
+fi
+[[ ! -e "${temp_dir}/post.log" ]]
+rg -q 'another CLA workflow run.*still active' "${temp_dir}/active-run.log"
+
+rm -f -- "${temp_dir}/post.log"
 if env "${common_env[@]}" CLA_FIXTURE_OVERSIZE_ENDPOINT='repos/manaflow-ai/manaflow/actions/runs/700/jobs' bash "${repo_root}/.github/scripts/rerun-failed-cla.sh" >"${temp_dir}/oversize.log" 2>&1; then
   echo "oversized direct API response was accepted" >&2
   exit 1

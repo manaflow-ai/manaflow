@@ -635,7 +635,12 @@ refresh_source_check_bindings() {
             .name == $assistant_job and
             (.head_sha | type == "string") and
             .head_sha == $sha and
-            (.conclusion == "success" or .conclusion == "failure") and
+            (
+              .conclusion == "success" or
+              .conclusion == "failure" or
+              (.conclusion == null and
+               (.status == "queued" or .status == "in_progress"))
+            ) and
             (.app.slug | type == "string") and
             .app.slug == "github-actions" and
             (.details_url | type == "string") and
