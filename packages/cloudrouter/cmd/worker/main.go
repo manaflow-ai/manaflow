@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -29,11 +31,11 @@ import (
 )
 
 const (
-	httpPort    = 39377
-	sshPort     = 10000
-	cdpPort     = 9222
-	vscodePort  = 39378
-	vncPort     = 39380
+	httpPort     = 39377
+	sshPort      = 10000
+	cdpPort      = 9222
+	vscodePort   = 39378
+	vncPort      = 39380
 	workspaceDir = "/home/user/workspace"
 
 	authTokenPath   = "/home/user/.worker-auth-token"
@@ -69,6 +71,9 @@ type ptySession struct {
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("[worker] Starting cmux worker daemon...")
+	if err := dropPrivilegesToWorkerUser(); err != nil {
+		log.Fatalf("[worker] refusing to start with unsafe privileges: %v", err)
+	}
 
 	// Initialize auth token
 	initAuthToken()
@@ -99,7 +104,7 @@ func initAuthToken() {
 		existing := getExistingToken()
 		if existing != "" {
 			authToken = existing
-			log.Printf("[worker] Using existing token: %s...", authToken[:8])
+			log.Printf("[worker] Using existing auth token")
 		} else {
 			authToken = generateFreshToken()
 		}
@@ -115,7 +120,7 @@ func getCurrentBootID() string {
 }
 
 func getSavedBootID() string {
-	data, err := os.ReadFile(bootIDPath)
+	data, err := readSecretFile(bootIDPath)
 	if err != nil {
 		return ""
 	}
@@ -123,7 +128,7 @@ func getSavedBootID() string {
 }
 
 func getExistingToken() string {
-	data, err := os.ReadFile(authTokenPath)
+	data, err := readSecretFile(authTokenPath)
 	if err != nil {
 		return ""
 	}
@@ -140,20 +145,57 @@ func generateFreshToken() string {
 	bootID := getCurrentBootID()
 
 	// Write token files
-	if err := os.WriteFile(authTokenPath, []byte(token), 0644); err != nil {
+	if err := writeSecretFile(authTokenPath, token); err != nil {
 		log.Printf("[worker] Failed to write auth token: %v", err)
+		return ""
 	}
-	if err := os.WriteFile(vscodeTokenPath, []byte(token), 0644); err != nil {
+	if err := writeSecretFile(vscodeTokenPath, token); err != nil {
 		log.Printf("[worker] Failed to write vscode token: %v", err)
+		return ""
 	}
 	if bootID != "" {
-		if err := os.WriteFile(bootIDPath, []byte(bootID), 0644); err != nil {
+		if err := writeSecretFile(bootIDPath, bootID); err != nil {
 			log.Printf("[worker] Failed to write boot ID: %v", err)
+			return ""
 		}
 	}
 
-	log.Printf("[worker] Fresh auth token generated: %s...", token[:8])
+	log.Printf("[worker] Fresh auth token generated")
 	return token
+}
+
+func writeSecretFile(path, value string) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".worker-secret-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.WriteString(value); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	removeTemp = false
+	return nil
 }
 
 func ensureValidToken() string {
@@ -181,30 +223,43 @@ func ensureValidToken() string {
 }
 
 func verifyAuth(r *http.Request) bool {
-	token := ensureValidToken()
+	return requestHasValidToken(r, ensureValidToken())
+}
 
+func requestHasValidToken(r *http.Request, token string) bool {
 	// Check Authorization header
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		if strings.HasPrefix(auth, "Bearer ") {
-			if auth[7:] == token {
+			if constantTimeTokenMatch(auth[7:], token) {
 				return true
 			}
-		} else if auth == token {
+		} else if constantTimeTokenMatch(auth, token) {
 			return true
 		}
 	}
 
-	// Check query parameter
-	if r.URL.Query().Get("token") == token {
-		return true
+	// Query tokens are retained only for WebSocket clients that cannot set an
+	// Authorization header through the SSH proxy. Ordinary HTTP API requests
+	// must use the header or cookie so URLs do not carry bearer credentials.
+	if r.URL.Path == "/pty" || r.URL.Path == "/ssh" {
+		if constantTimeTokenMatch(r.URL.Query().Get("token"), token) {
+			return true
+		}
 	}
 
 	// Check cookie
-	if cookie, err := r.Cookie(authCookieName); err == nil && cookie.Value == token {
+	if cookie, err := r.Cookie(authCookieName); err == nil && constantTimeTokenMatch(cookie.Value, token) {
 		return true
 	}
 
 	return false
+}
+
+func constantTimeTokenMatch(provided, expected string) bool {
+	if provided == "" || expected == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }
 
 // =============================================================================
@@ -245,7 +300,6 @@ func startHTTPServer(vncProxySrv *vncProxy) {
 	}()
 
 	log.Printf("[worker] HTTP server listening on port %d", httpPort)
-	log.Printf("[worker] Auth token: %s...", authToken[:8])
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("[worker] HTTP server error: %v", err)
 	}
@@ -256,6 +310,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
@@ -287,12 +343,12 @@ func handleAuthToken(w http.ResponseWriter, r *http.Request) {
 func handleAuthCookie(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	returnPath := r.URL.Query().Get("return")
-	if returnPath == "" {
+	if !isSafeRedirectPath(returnPath) {
 		returnPath = "/"
 	}
 
 	currentToken := ensureValidToken()
-	if token == "" || token != currentToken {
+	if !constantTimeTokenMatch(token, currentToken) {
 		w.WriteHeader(http.StatusUnauthorized)
 		sendJSON(w, map[string]string{"error": "Invalid token"})
 		return
@@ -304,8 +360,13 @@ func handleAuthCookie(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   86400,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, returnPath, http.StatusFound)
+}
+
+func isSafeRedirectPath(path string) bool {
+	return path != "" && strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.Contains(path, "\\")
 }
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
@@ -400,17 +461,16 @@ func handleExec(w http.ResponseWriter, r *http.Request, body map[string]interfac
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	// The endpoint intentionally executes a user-requested shell command, but
+	// the daemon itself has already dropped to the unprivileged worker user.
+	cmd := exec.CommandContext(ctx, "/bin/bash", "-lc", command)
 	cmd.Dir = workspaceDir
 	cmd.Env = append(os.Environ(), "FORCE_COLOR=0")
 
-	stdout, _ := cmd.Output()
-	var stderr []byte
-	if exitErr, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && exitErr.ExitStatus() != 0 {
-		if ee, ok := cmd.ProcessState.Sys().(interface{ Stderr() []byte }); ok {
-			stderr = ee.Stderr()
-		}
-	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	_ = cmd.Run()
 
 	exitCode := 0
 	if cmd.ProcessState != nil {
@@ -418,21 +478,27 @@ func handleExec(w http.ResponseWriter, r *http.Request, body map[string]interfac
 	}
 
 	sendJSON(w, map[string]interface{}{
-		"stdout":    strings.TrimSpace(string(stdout)),
-		"stderr":    strings.TrimSpace(string(stderr)),
+		"stdout":    strings.TrimSpace(stdout.String()),
+		"stderr":    strings.TrimSpace(stderr.String()),
 		"exit_code": exitCode,
 	})
 }
 
 func handleReadFile(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
-	path, _ := body["path"].(string)
-	if path == "" {
+	rawPath, _ := body["path"].(string)
+	if rawPath == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		sendJSON(w, map[string]string{"error": "path required"})
 		return
 	}
+	path, err := resolveWorkspacePath(rawPath, false)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		sendJSON(w, map[string]string{"error": "path must be inside workspace"})
+		return
+	}
 
-	content, err := os.ReadFile(path)
+	content, err := readWorkspaceFile(path)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		sendJSON(w, map[string]string{"error": err.Error()})
@@ -443,11 +509,17 @@ func handleReadFile(w http.ResponseWriter, r *http.Request, body map[string]inte
 }
 
 func handleWriteFile(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
-	path, _ := body["path"].(string)
+	rawPath, _ := body["path"].(string)
 	content, hasContent := body["content"].(string)
-	if path == "" || !hasContent {
+	if rawPath == "" || !hasContent {
 		w.WriteHeader(http.StatusBadRequest)
 		sendJSON(w, map[string]string{"error": "path and content required"})
+		return
+	}
+	path, err := resolveWorkspacePath(rawPath, false)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		sendJSON(w, map[string]string{"error": "path must be inside workspace"})
 		return
 	}
 
@@ -458,7 +530,7 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request, body map[string]int
 		return
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := writeWorkspaceFile(path, []byte(content), 0644); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		sendJSON(w, map[string]string{"error": err.Error()})
 		return
@@ -468,10 +540,16 @@ func handleWriteFile(w http.ResponseWriter, r *http.Request, body map[string]int
 }
 
 func handleDeleteFile(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
-	path, _ := body["path"].(string)
-	if path == "" {
+	rawPath, _ := body["path"].(string)
+	if rawPath == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		sendJSON(w, map[string]string{"error": "path required"})
+		return
+	}
+	path, err := resolveWorkspacePath(rawPath, false)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		sendJSON(w, map[string]string{"error": "path must be inside workspace"})
 		return
 	}
 
@@ -485,9 +563,20 @@ func handleDeleteFile(w http.ResponseWriter, r *http.Request, body map[string]in
 }
 
 func handleListFiles(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
-	dirPath, _ := body["path"].(string)
-	if dirPath == "" {
-		dirPath = workspaceDir
+	rawPath, _ := body["path"].(string)
+	if rawPath == "" {
+		rawPath = workspaceDir
+	}
+	dirPath, err := resolveWorkspacePath(rawPath, true)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		sendJSON(w, map[string]string{"error": "path must be inside workspace"})
+		return
+	}
+	if info, statErr := os.Stat(dirPath); statErr != nil || !info.IsDir() {
+		w.WriteHeader(http.StatusBadRequest)
+		sendJSON(w, map[string]string{"error": "path must be a directory"})
+		return
 	}
 
 	recursive := true
@@ -515,7 +604,9 @@ func handleListFiles(w http.ResponseWriter, r *http.Request, body map[string]int
 
 			if entry.IsDir() {
 				if recursive {
-					walkDir(fullPath, relativePath)
+					if err := walkDir(fullPath, relativePath); err != nil {
+						return err
+					}
 				}
 			} else {
 				info, err := entry.Info()
@@ -607,12 +698,18 @@ func handleScreenshot(w http.ResponseWriter, r *http.Request, body map[string]in
 
 	// If a custom path was requested, save there too.
 	if p, ok := body["path"].(string); ok && p != "" {
+		path, err := resolveWorkspacePath(p, false)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			sendJSON(w, map[string]string{"error": "path must be inside workspace"})
+			return
+		}
 		if b64, ok := result["base64"].(string); ok {
 			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
-				if err := os.WriteFile(p, raw, 0644); err != nil {
-					log.Printf("[worker] failed to save screenshot to %s: %v", p, err)
+				if err := writeWorkspaceFile(path, raw, 0644); err != nil {
+					log.Printf("[worker] failed to save screenshot: %v", err)
 				} else {
-					result["path"] = p
+					result["path"] = path
 				}
 			}
 		}
@@ -636,28 +733,37 @@ func handleBrowserAgent(w http.ResponseWriter, r *http.Request, body map[string]
 // =============================================================================
 
 func handlePTYWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Parse options from query
+	q := r.URL.Query()
+	cols := parseUint16(q.Get("cols"), 80)
+	rows := parseUint16(q.Get("rows"), 24)
+	cwd := q.Get("cwd")
+	if cwd == "" {
+		cwd = workspaceDir
+	}
+	var err error
+	cwd, err = resolveWorkspacePath(cwd, true)
+	if err != nil {
+		http.Error(w, "cwd must be inside workspace", http.StatusBadRequest)
+		return
+	}
+	if info, statErr := os.Stat(cwd); statErr != nil || !info.IsDir() {
+		http.Error(w, "cwd must be a directory", http.StatusBadRequest)
+		return
+	}
+
+	shell, err := workerShell(q.Get("shell"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[worker] Failed to accept WebSocket: %v", err)
 		return
 	}
 	defer conn.Close()
-
-	// Parse options from query
-	q := r.URL.Query()
-	cols := parseUint16(q.Get("cols"), 80)
-	rows := parseUint16(q.Get("rows"), 24)
-	shell := q.Get("shell")
-	if shell == "" {
-		shell = os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/bash"
-		}
-	}
-	cwd := q.Get("cwd")
-	if cwd == "" {
-		cwd = workspaceDir
-	}
 
 	// Spawn PTY
 	cmd := exec.Command(shell)
@@ -821,7 +927,7 @@ func startSSHServer() {
 		// Password can be anything (we use empty string from client)
 		PasswordCallback: func(conn cryptossh.ConnMetadata, password []byte) (*cryptossh.Permissions, error) {
 			token := ensureValidToken()
-			if conn.User() == token {
+			if constantTimeTokenMatch(conn.User(), token) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("invalid credentials")
@@ -977,15 +1083,11 @@ func sendExitStatus(channel cryptossh.Channel, exitCode int) {
 }
 
 func runSSHExec(channel cryptossh.Channel, cmdStr string) int {
-	hasUser := userExists()
-	var c *exec.Cmd
-	if hasUser {
-		c = exec.Command("su", "-", "user", "-c", cmdStr)
-		c.Env = append(os.Environ(), "HOME=/home/user", "USER=user")
-	} else {
-		c = exec.Command("bash", "-c", cmdStr)
-		c.Env = append(os.Environ(), "HOME=/home/user")
-	}
+	// The daemon starts only after dropping to the dedicated worker account.
+	// Execute directly as that account instead of invoking a root-capable su
+	// fallback or inheriting a root shell.
+	c := exec.Command("/bin/bash", "-lc", cmdStr)
+	c.Env = append(os.Environ(), "HOME=/home/user", "USER=user", "LOGNAME=user")
 	c.Dir = workspaceDir
 
 	stdin, _ := c.StdinPipe()
@@ -1008,22 +1110,17 @@ func runSSHExec(channel cryptossh.Channel, cmdStr string) int {
 }
 
 func runSSHShellPTY(channel cryptossh.Channel, requests <-chan *cryptossh.Request, pr *sshPtyRequest) int {
-	hasUser := userExists()
-	var shell *exec.Cmd
-	if hasUser {
-		shell = exec.Command("su", "-", "user")
-		shell.Env = append(os.Environ(),
-			"TERM="+pr.Term,
-			"HOME=/home/user",
-			"USER=user",
-		)
-	} else {
-		shell = exec.Command("/bin/bash")
-		shell.Env = append(os.Environ(),
-			"TERM="+pr.Term,
-			"HOME=/home/user",
-		)
+	shellPath, err := workerShell("")
+	if err != nil {
+		return 1
 	}
+	shell := exec.Command(shellPath)
+	shell.Env = append(os.Environ(),
+		"TERM="+sanitizeTerm(pr.Term),
+		"HOME=/home/user",
+		"USER=user",
+		"LOGNAME=user",
+	)
 	shell.Dir = workspaceDir
 
 	ptmx, err := pty.StartWithSize(shell, &pty.Winsize{
@@ -1065,6 +1162,13 @@ func runSSHShellPTY(channel cryptossh.Channel, requests <-chan *cryptossh.Reques
 	return 0
 }
 
+func sanitizeTerm(term string) string {
+	if term == "" || strings.ContainsAny(term, "\x00\r\n") {
+		return "xterm-256color"
+	}
+	return term
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -1092,10 +1196,33 @@ func generateSessionID() string {
 	return hex.EncodeToString(bytes)
 }
 
-// userExists checks if the "user" account exists on the system
-func userExists() bool {
-	_, err := exec.Command("id", "user").Output()
-	return err == nil
+func workerShell(requested string) (string, error) {
+	shell := requested
+	if shell == "" {
+		shell = os.Getenv("SHELL")
+	}
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+	if !filepath.IsAbs(shell) || strings.ContainsAny(shell, "\x00\r\n") {
+		return "", fmt.Errorf("shell must be an absolute path")
+	}
+
+	base := filepath.Base(shell)
+	switch base {
+	case "bash", "sh", "zsh", "fish":
+	default:
+		return "", fmt.Errorf("unsupported shell")
+	}
+	dir := filepath.Clean(filepath.Dir(shell))
+	if dir != "/bin" && dir != "/usr/bin" {
+		return "", fmt.Errorf("shell must be installed in /bin or /usr/bin")
+	}
+	info, err := os.Stat(shell)
+	if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("shell is not executable")
+	}
+	return shell, nil
 }
 
 func isProcessRunning(pattern string) bool {
@@ -1127,4 +1254,3 @@ func getCDPWebSocketURL() string {
 	}
 	return data.WebSocketDebuggerURL
 }
-

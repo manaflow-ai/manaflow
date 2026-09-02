@@ -161,10 +161,10 @@ RUN chmod +x /home/user/.vnc/xstartup \
 COPY worker/start-services-docker.sh /usr/local/bin/start-services.sh
 RUN chmod +x /usr/local/bin/start-services.sh
 
-# Install Go for building worker daemon
-RUN wget -q https://go.dev/dl/go1.24.2.linux-amd64.tar.gz \
-    && tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz \
-    && rm go1.24.2.linux-amd64.tar.gz
+# Install the patched Go toolchain used by go.mod for the worker daemon.
+RUN wget -q https://go.dev/dl/go1.26.8.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz \
+    && rm go1.26.8.linux-amd64.tar.gz
 ENV PATH="/usr/local/go/bin:$PATH"
 
 # Build Go worker daemon (standalone binary, no internal dependencies)
@@ -189,9 +189,6 @@ RUN pip3 install --no-cache-dir \
     anthropic
 
 # VNC auth proxy and browser agent are now built into the Go worker daemon
-
-# Make sure user can run services - add to sudoers
-RUN echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Set working directory
 WORKDIR /home/user/workspace

@@ -11,13 +11,10 @@ startxfce4 &
 # Wait for desktop to initialize
 sleep 5
 
-# Ensure user owns their home directory (fix permissions if needed)
-chown -R user:user /home/user 2>/dev/null || true
-
 # Launch Chrome browser as user (visible in VNC AND controllable via CDP)
 # --remote-debugging-port=9222 enables Chrome DevTools Protocol
 # --test-type suppresses the "unsupported --no-sandbox" warning
-sudo -u user google-chrome \
+google-chrome \
     --no-sandbox \
     --test-type \
     --disable-gpu \
