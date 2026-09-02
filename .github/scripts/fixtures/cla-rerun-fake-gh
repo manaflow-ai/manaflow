@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "${1:-}" == "api" ]] || {
+  echo "fixture only supports gh api" >&2
+  exit 2
+}
+
+fixture="${CLA_FIXTURE:?CLA_FIXTURE is required}"
+endpoint=""
+method="GET"
+previous=""
+for argument in "$@"; do
+  if [[ "${previous}" == "--method" ]]; then
+    method="${argument}"
+  elif [[ "${argument}" == repos/* ]]; then
+    endpoint="${argument}"
+  fi
+  previous="${argument}"
+done
+[[ -n "${endpoint}" ]] || {
+  echo "fixture endpoint is missing" >&2
+  exit 2
+}
+
+if [[ "${method}" == "POST" ]]; then
+  printf '%s\n' "${endpoint}" >"${CLA_POST_LOG:?CLA_POST_LOG is required}"
+  printf '%s\n' '{}'
+  exit 0
+fi
+
+if [[ "${endpoint}" == *"/issues/comments/9001"* ]]; then
+  jq -c '.comment' "${fixture}"
+elif [[ "${endpoint}" == *"/issues/42"* ]]; then
+  jq -c '.issue' "${fixture}"
+elif [[ "${endpoint}" == *"/pulls/42"* ]]; then
+  jq -c '.pull_request' "${fixture}"
+elif [[ "${endpoint}" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pulls"* ]]; then
+  printf '%s\n' '[]'
+elif [[ "${endpoint}" == *"/pulls"* ]]; then
+  printf '%s\n' '[{"number":42,"state":"open","base":{"ref":"main","repo":{"full_name":"manaflow-ai/manaflow","id":1026429198}},"head":{"ref":"feature","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork-user/manaflow","id":987654}}}]'
+elif [[ "${endpoint}" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs"* ]]; then
+  if [[ "${CLA_FIXTURE_NO_SOURCE_CHECK:-false}" == "true" ]]; then
+    printf '%s\n' '{"check_runs":[]}'
+  elif [[ "${CLA_FIXTURE_WRONG_SOURCE_JOB:-false}" == "true" ]]; then
+    jq -c '.source_check_runs | .check_runs[0].details_url = "https://github.com/manaflow-ai/manaflow/actions/runs/700/job/8801"' "${fixture}"
+  else
+    jq -c '.source_check_runs' "${fixture}"
+  fi
+elif [[ "${endpoint}" == *"/actions/workflows/9000/runs"* ]]; then
+  jq -c '.runs' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/workflows"* ]]; then
+  jq -c '.workflows' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/runs/700/jobs"* ]]; then
+  jq -c '.jobs' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/runs/700"* ]]; then
+  jq -c '.run' "${fixture}"
+elif [[ "${endpoint}" == *"/actions/jobs/8800"* ]]; then
+  jq -c '.job' "${fixture}"
+else
+  echo "unmatched fixture endpoint: ${endpoint}" >&2
+  exit 2
+fi

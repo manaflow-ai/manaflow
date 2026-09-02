@@ -81,6 +81,28 @@ readonly MAX_LEDGER_RAW_BYTES=2000000
 readonly CLA_ASSISTANT_JOB='CLA Assistant v3'
 readonly CLA_WRITER_JOB='CLA ledger writer'
 readonly CLA_COMPATIBILITY_JOB='CLA Assistant'
+# A pull_request_target run normally reports the source head in `head_sha`,
+# but GitHub has also returned a base execution SHA for fork runs.  The check
+# run attached to the live source SHA is the authoritative fallback binding.
+# Keep only the numeric run/job IDs parsed from GitHub's fixed Actions URL.
+source_check_bindings_json='[]'
+run_has_pull_request_association=false
+
+source_check_binding_for_run() {
+  local target_run_id="$1"
+  jq -e --arg run_id "${target_run_id}" \
+    'any(.[]?; .run_id == $run_id)' <<<"${source_check_bindings_json}" >/dev/null
+}
+
+source_check_binding_for_job() {
+  local target_run_id="$1"
+  local target_job_id="$2"
+  jq -e \
+    --arg run_id "${target_run_id}" \
+    --arg job_id "${target_job_id}" \
+    'any(.[]?; .run_id == $run_id and .job_id == $job_id)' \
+    <<<"${source_check_bindings_json}" >/dev/null
+}
 
 validate_triggering_signature_record() {
   local ledger_response ledger_content ledger_content_compact ledger_json ledger_raw_bytes ledger_encoded_bytes ledger_decoded_bytes
@@ -235,9 +257,10 @@ fi
 
 # The workflow-run list can omit pull_requests for pull_request_target runs.
 # The exact live PR plus the run head_repository/head_branch binding below is
-# used for populated source-head runs. Empty associations are accepted only
-# when the run execution SHA equals the live PR head SHA; a base or merge SHA
-# is not sufficient evidence for a privileged rerun.
+# used for populated source-head runs. Empty associations are accepted when
+# the run execution SHA equals the live PR head SHA, or when the source-bound
+# CLA check identifies the same run and job. A bare base or merge SHA is not
+# sufficient evidence for a privileged rerun.
 # GitHub may return a not-found or validation response when the source commit
 # exists only in a fork. Treat only that documented missing-commit response as
 # an empty association list; every other API failure remains fatal.
@@ -393,6 +416,84 @@ validate_live_open_head_association() {
 }
 validate_live_open_head_association
 
+# The REST workflow-run API can omit `pull_requests` for a fork. Most runs
+# still expose the source SHA in `head_sha`; when they do not, bind the run and
+# selected job to a failed CLA check that GitHub attached to this exact source
+# SHA. A check run is created by the GitHub Actions app, so an untrusted fork
+# cannot forge this association in the base repository. The later job and PR
+# rechecks still require the same source repository, branch, and current SHA.
+refresh_source_check_bindings() {
+  local source_checks_page source_checks_page2 source_checks_error source_checks_error_file
+  local source_check_count source_check_count2
+  if [[ "${head_repo}" == "${GH_REPO}" ]]; then
+    source_check_bindings_json='[]'
+    return 0
+  fi
+
+  source_checks_error_file="$(mktemp)"
+  if source_checks_page="$(gh api \
+    --method GET \
+    --header 'Accept: application/vnd.github+json' \
+    --raw-field per_page=100 \
+    --raw-field page=1 \
+    "repos/${GH_REPO}/commits/${head_sha}/check-runs" 2>"${source_checks_error_file}")"; then
+    rm -f -- "${source_checks_error_file}"
+  else
+    source_checks_error="$(cat "${source_checks_error_file}")"
+    rm -f -- "${source_checks_error_file}"
+    if grep -Eq 'HTTP 404|HTTP 422' <<<"${source_checks_error}" &&
+       grep -Eq 'Not Found|Resource not found|No commit found for SHA: [0-9a-f]{40}' <<<"${source_checks_error}"; then
+      # A fork-only commit may not be addressable through the base repository.
+      # The strict source-SHA run path remains available in that case.
+      source_checks_page='{"check_runs":[]}'
+    else
+      fail "Could not query check runs for the live pull request head"
+    fi
+  fi
+  jq -e 'type == "object" and (.check_runs | type == "array")' <<<"${source_checks_page}" >/dev/null || fail "Could not validate source check runs"
+  source_check_count="$(jq -r '.check_runs | length' <<<"${source_checks_page}")"
+  [[ "${source_check_count}" =~ ^[0-9]+$ ]] || fail "Could not count source check runs"
+  (( source_check_count <= 100 )) || fail "The source check-run page is oversized"
+  if (( source_check_count == 100 )); then
+    source_checks_page2="$(gh api \
+      --method GET \
+      --header 'Accept: application/vnd.github+json' \
+      --raw-field per_page=100 \
+      --raw-field page=2 \
+      "repos/${GH_REPO}/commits/${head_sha}/check-runs" 2>/dev/null)" || fail "Could not query source check runs page 2"
+    jq -e 'type == "object" and (.check_runs | type == "array")' <<<"${source_checks_page2}" >/dev/null || fail "Could not validate source check runs page 2"
+    source_check_count2="$(jq -r '.check_runs | length' <<<"${source_checks_page2}")"
+    [[ "${source_check_count2}" =~ ^[0-9]+$ ]] || fail "Could not count source check runs page 2"
+    (( source_check_count2 <= 100 )) || fail "The source check-run page is oversized"
+    source_checks_page="$(jq -c --argjson page2 "${source_checks_page2}" '.check_runs += $page2.check_runs' <<<"${source_checks_page}")"
+    source_check_count=$((source_check_count + source_check_count2))
+    (( source_check_count2 < 100 )) || fail "Too many source check runs for this head; ask an administrator to resolve the check history before requesting a rerun"
+  fi
+  source_check_bindings_json="$(jq -c \
+    --arg sha "${head_sha}" \
+    --arg assistant_job "${CLA_ASSISTANT_JOB}" '
+      [ .check_runs[]?
+        | select(
+            (.name | type == "string") and
+            .name == $assistant_job and
+            (.head_sha | type == "string") and
+            .head_sha == $sha and
+            .conclusion == "failure" and
+            (.app.slug | type == "string") and
+            .app.slug == "github-actions" and
+            (.details_url | type == "string") and
+            (.details_url | test("^https://github\\.com/manaflow-ai/manaflow/actions/runs/[0-9]+/job/[0-9]+$"))
+          )
+        | .details_url
+        | capture("/actions/runs/(?<run>[1-9][0-9]*)/job/(?<job>[1-9][0-9]*)$")
+        | {run_id: .run, job_id: .job}
+      ]
+      | unique_by([.run_id, .job_id])
+    ' <<<"${source_checks_page}")" || fail "Could not identify the source-bound CLA check"
+  jq -e 'all(.[]; (.run_id | type == "string" and test("^[1-9][0-9]{0,15}$")) and (.job_id | type == "string" and test("^[1-9][0-9]{0,15}$")))' <<<"${source_check_bindings_json}" >/dev/null || fail "The source-bound CLA check identity is malformed"
+}
+refresh_source_check_bindings
+
 workflow_page="$(gh api \
   --method GET \
   --header 'Accept: application/vnd.github+json' \
@@ -430,10 +531,10 @@ safe_id "${workflow_id}" || fail "The expected CLA workflow ID is missing or uns
 # event, and PR association. When GitHub includes pull_requests on a
 # run, bind the candidate to the exact PR object, including its
 # source head SHA.
-# GitHub can return an empty array for fork pull_request_target runs,
-# so those candidates are retained only when the run's execution SHA equals
-# the live PR source SHA. Populated pull_requests records may bind a different
-# execution SHA to the exact source PR object.
+# GitHub can return an empty array for fork pull_request_target runs. Those
+# candidates are retained when the execution SHA is the live source SHA, or
+# when a GitHub Actions check on that source SHA identifies the same run. A
+# selected assistant job must match that check's run and job IDs below.
 runs_page="$(gh api \
   --method GET \
   --header 'Accept: application/vnd.github+json' \
@@ -492,6 +593,10 @@ if ! jq -e '
   fail "The CLA workflow returned malformed pull request associations"
 fi
 
+# Keep the run-binding predicate inline in each snapshot check below. These
+# jq programs consume independently fetched API responses; sharing a mutable
+# transformed result would make a later TOCTOU recheck look authoritative when
+# it is only a copy of the earlier response.
 if ! candidate_list_json="$(jq -c \
     --arg path "${WORKFLOW_PATH}" \
     --arg event "${TARGET_EVENT}" \
@@ -502,6 +607,7 @@ if ! candidate_list_json="$(jq -c \
     --arg head_repo "${head_repo}" \
     --argjson head_repo_id "${head_repo_id}" \
     --argjson repo_id "${repo_id}" \
+    --argjson source_check_bindings "${source_check_bindings_json}" \
     --arg base "${TARGET_BASE_REF}" \
     --arg head_ref "${head_ref}" \
     --arg before "${COMMENT_CREATED_AT}" '
@@ -512,8 +618,8 @@ if ! candidate_list_json="$(jq -c \
            else null end) as $prs
         | if $prs == null then false
           elif ($prs | length) == 0 then
-            .head_sha == $sha and
-            .head_branch == $head_ref and
+            (.id | tostring) as $run_id
+            | .head_branch == $head_ref and
             (
               ((.head_repository | type) == "object" and
                .head_repository.full_name == $head_repo and
@@ -523,9 +629,12 @@ if ! candidate_list_json="$(jq -c \
                $head_repo == $repo and
                $head_repo_id == $repo_id)
             )
-            # Empty associations are eligible only for the exact current
-            # source SHA. A base or merge SHA must never shadow an older
-            # eligible run for this pull request.
+            and
+            (
+              .head_sha == $sha or
+              ($head_repo != $repo and
+               any($source_check_bindings[]?; .run_id == $run_id))
+            )
           else any($prs[]?;
             (.number | type == "number") and
             (.number | tostring) == $pr and
@@ -586,9 +695,11 @@ if [[ "${candidate_count}" == "0" ]]; then
     --arg head_repo "${head_repo}" \
     --argjson head_repo_id "${head_repo_id}" \
     --argjson repo_id "${repo_id}" \
+    --argjson source_check_bindings "${source_check_bindings_json}" \
     --arg head_ref "${head_ref}" \
     --arg before "${COMMENT_CREATED_AT}" \
     '[ .[] | .workflow_runs[]?
+      | (.id | tostring) as $run_id
       | select(
           (.path == $path or
            ((.path | startswith($path + "@")) and
@@ -617,7 +728,9 @@ if [[ "${candidate_count}" == "0" ]]; then
             (.head_repository == null and
              $head_repo == $repo and
              $head_repo_id == $repo_id)
-          )
+          ) and
+          (($head_repo != $repo and
+            any($source_check_bindings[]?; .run_id == $run_id)) | not)
         )
     ] | length' <<<"${runs_json}")"
   [[ "${empty_execution_mismatch_count}" =~ ^[0-9]+$ ]] || fail "Could not count unbound CLA workflow runs"
@@ -640,6 +753,7 @@ if [[ "${candidate_count}" == "0" ]]; then
     --arg head_repo "${head_repo}" \
     --argjson head_repo_id "${head_repo_id}" \
     --argjson repo_id "${repo_id}" \
+    --argjson source_check_bindings "${source_check_bindings_json}" \
     --arg base "${TARGET_BASE_REF}" \
     --arg before "${COMMENT_CREATED_AT}" \
     'def run_binds_to_pr:
@@ -649,8 +763,8 @@ if [[ "${candidate_count}" == "0" ]]; then
           else null end) as $prs
        | if $prs == null then false
          elif ($prs | length) == 0 then
-           .head_sha == $sha and
-           .head_branch == $head_ref and
+           (.id | tostring) as $run_id
+           | .head_branch == $head_ref and
            (
              ((.head_repository | type) == "object" and
               .head_repository.full_name == $head_repo and
@@ -659,6 +773,12 @@ if [[ "${candidate_count}" == "0" ]]; then
              (.head_repository == null and
               $head_repo == $repo and
               $head_repo_id == $repo_id)
+           )
+           and
+           (
+             .head_sha == $sha or
+             ($head_repo != $repo and
+              any($source_check_bindings[]?; .run_id == $run_id))
            )
          else any($prs[]?;
            (.number | type == "number") and
@@ -716,14 +836,15 @@ run_head_branch="$(jq -r '.head_branch // empty' <<<"${candidate_json}")"
 [[ -n "${run_head_branch}" && "${run_head_branch}" != *$'\n'* && "${run_head_branch}" != *$'\r'* ]] || fail "The selected CLA run head branch is invalid"
 
 # A run with a populated pull_requests array already carries an
-# authenticated source-PR association. Some GitHub API responses
-# omit that array, so prove a differing execution SHA through the
-# commit association endpoint before allowing the fallback. A bare
-# branch/repository match is not enough because a branch can be
-# reused after a push.
+# authenticated source-PR association. Some GitHub API responses omit that
+# array. For those responses, a source execution SHA is preferred; a fork run
+# with a different execution SHA is accepted only when its failed CLA check is
+# independently attached to the live source SHA. A bare branch/repository
+# match is never enough because a branch can be reused after a push.
 validate_run_source_binding() {
   local run_payload="$1"
   local execution_sha pull_requests_type pull_request_count
+  run_has_pull_request_association=false
   execution_sha="$(jq -r '.head_sha // empty' <<<"${run_payload}")"
   [[ "${execution_sha}" =~ ^[0-9a-f]{40}$ ]] || fail "The workflow run execution SHA is invalid"
   pull_requests_type="$(jq -r 'if .pull_requests == null then "null" else (.pull_requests | type) end' <<<"${run_payload}")"
@@ -734,12 +855,15 @@ validate_run_source_binding() {
   esac
   [[ "${pull_request_count}" =~ ^[0-9]+$ ]] || fail "The workflow run pull request association count is invalid"
   if (( pull_request_count == 0 )); then
-    # GitHub may omit pull_requests on a pull_request_target run. Without an
-    # authenticated PR object, accept only the source-head form. A base or
-    # merge execution SHA cannot be proved to belong to this PR, so fail
-    # closed instead of querying commit associations that may describe an
-    # ancestor or another pull request.
-    [[ "${execution_sha}" == "${head_sha}" ]] || fail "The workflow run has no pull request association and its execution SHA does not match the current pull request head"
+    if [[ "${execution_sha}" == "${head_sha}" ]]; then
+      return 0
+    fi
+    [[ "${head_repo}" != "${GH_REPO}" ]] ||
+      fail "The base-repository workflow run has no pull request association"
+    source_check_binding_for_run "${run_id}" ||
+      fail "The fork workflow run has no check bound to the current pull request head"
+  else
+    run_has_pull_request_association=true
   fi
 }
 
@@ -757,6 +881,7 @@ jq -e \
   --arg repo "${GH_REPO}" \
   --arg head_repo "${head_repo}" \
   --argjson head_repo_id "${head_repo_id}" \
+  --argjson source_check_bindings "${source_check_bindings_json}" \
   --argjson repo_id "${repo_id}" \
   --arg head_ref "${head_ref}" \
   --arg workflow_id "${workflow_id}" \
@@ -769,7 +894,8 @@ jq -e \
          else null end) as $prs
       | if $prs == null then false
         elif ($prs | length) == 0 then
-          .head_branch == $head_ref and
+          (.id | tostring) as $run_id
+          | .head_branch == $head_ref and
           (
             ((.head_repository | type) == "object" and
              .head_repository.full_name == $head_repo and
@@ -778,6 +904,12 @@ jq -e \
             (.head_repository == null and
              $head_repo == $repo and
              $head_repo_id == $repo_id)
+          )
+          and
+          (
+            .head_sha == $sha or
+            ($head_repo != $repo and
+             any($source_check_bindings[]?; .run_id == $run_id))
           )
         else any($prs[]?;
           (.number | type == "number") and
@@ -811,6 +943,26 @@ jq -e \
   ' <<<"${run_json}" >/dev/null || fail "The selected run no longer matches the exact failed CLA check"
 validate_run_source_binding "${run_json}"
 
+# Jobs expose the source head even on GitHub responses where the parent run's
+# execution SHA is the base revision. Use that exact source SHA for every job
+# identity check in the fallback path; the run itself remains bound to its
+# immutable execution SHA above.
+run_job_sha="${run_execution_sha}"
+source_sha_fallback=false
+if [[ "${run_execution_sha}" != "${head_sha}" ]]; then
+  run_job_sha="${head_sha}"
+  if [[ "${run_has_pull_request_association}" == true ]]; then
+    # A populated pull_requests association is the authenticated source
+    # binding. GitHub can expose either the source or execution SHA on jobs;
+    # use the source form for the PR-facing check without requiring a second
+    # check-run lookup.
+    source_sha_fallback=false
+  else
+    source_check_binding_for_run "${run_id}" || fail "The selected fork workflow run is not bound to the current pull request head"
+    source_sha_fallback=true
+  fi
+fi
+
 # Close the main TOCTOU window. A push, close, or another rerun can
 # happen while the API calls above run. Never rerun a stale head.
 latest_pr_json="$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" 2>/dev/null)" || fail "Could not recheck the pull request"
@@ -840,6 +992,7 @@ jq -e \
   --arg repo "${GH_REPO}" \
   --arg head_repo "${head_repo}" \
   --argjson head_repo_id "${head_repo_id}" \
+  --argjson source_check_bindings "${source_check_bindings_json}" \
   --argjson repo_id "${repo_id}" \
   --arg head_ref "${head_ref}" \
   --arg workflow_id "${workflow_id}" \
@@ -853,7 +1006,8 @@ jq -e \
          else null end) as $prs
       | if $prs == null then false
         elif ($prs | length) == 0 then
-          .head_branch == $head_ref and
+          (.id | tostring) as $run_id
+          | .head_branch == $head_ref and
           (
             ((.head_repository | type) == "object" and
              .head_repository.full_name == $head_repo and
@@ -862,6 +1016,12 @@ jq -e \
             (.head_repository == null and
              $head_repo == $repo and
              $head_repo_id == $repo_id)
+          )
+          and
+          (
+            .head_sha == $sha or
+            ($head_repo != $repo and
+             any($source_check_bindings[]?; .run_id == $run_id))
           )
         else any($prs[]?;
           (.number | type == "number") and
@@ -978,7 +1138,7 @@ validate_failed_job_set() {
       '[.[] | select(.name == $assistant_job)] | length' <<<"${failed_jobs_json}")" ||
      ! assistant_valid_count="$(jq -r \
        --arg run_id "${run_id}" \
-       --arg run_sha "${run_execution_sha}" \
+       --arg run_sha "${run_job_sha}" \
        --arg head_repo "${head_repo}" \
        --argjson head_repo_id "${head_repo_id}" \
        --arg assistant_job "${CLA_ASSISTANT_JOB}" \
@@ -1009,7 +1169,7 @@ validate_failed_job_set() {
       '[.[] | select(.name == $writer_job)] | length' <<<"${failed_jobs_json}")" ||
      ! writer_valid_count="$(jq -r \
        --arg run_id "${run_id}" \
-       --arg run_sha "${run_execution_sha}" \
+       --arg run_sha "${run_job_sha}" \
        --arg head_repo "${head_repo}" \
        --argjson head_repo_id "${head_repo_id}" \
        --arg writer_job "${CLA_WRITER_JOB}" \
@@ -1033,7 +1193,7 @@ validate_failed_job_set() {
   compatibility_count="$(jq -r --arg compatibility_job "${CLA_COMPATIBILITY_JOB}" '[.[] | select(.name == $compatibility_job)] | length' <<<"${failed_jobs_json}")"
   if ! compatibility_valid_count="$(jq -r \
       --arg run_id "${run_id}" \
-      --arg run_sha "${run_execution_sha}" \
+      --arg run_sha "${run_job_sha}" \
       --arg head_repo "${head_repo}" \
       --argjson head_repo_id "${head_repo_id}" \
       --arg compatibility_job "${CLA_COMPATIBILITY_JOB}" \
@@ -1062,7 +1222,7 @@ validate_failed_job_set() {
 validate_failed_job_set "${jobs_json}"
 if ! cla_job_json="$(jq -c \
     --arg run_id "${run_id}" \
-    --arg run_sha "${run_execution_sha}" \
+    --arg run_sha "${run_job_sha}" \
     --arg assistant_job "${CLA_ASSISTANT_JOB}" \
     --arg generation_step "CLA generation ${CLA_GENERATION}" \
     --arg head_repo "${head_repo}" \
@@ -1098,6 +1258,10 @@ if [[ -z "${cla_job_json}" ]]; then
 fi
 job_id="$(jq -r '.id // empty' <<<"${cla_job_json}")"
 safe_id "${job_id}" || fail "The selected CLA job ID is invalid or unsafe"
+if [[ "${source_sha_fallback}" == true ]]; then
+  source_check_binding_for_job "${run_id}" "${job_id}" ||
+    fail "The selected CLA job is not the job bound to the current pull request head"
+fi
 
 # Re-read the individual job. The jobs list is discovery only, just
 # like the workflow-run list above.
@@ -1105,7 +1269,7 @@ job_json="$(gh api "repos/${GH_REPO}/actions/jobs/${job_id}" 2>/dev/null)" || fa
 jq -e \
   --arg job_id "${job_id}" \
   --arg run_id "${run_id}" \
-  --arg run_sha "${run_execution_sha}" \
+  --arg run_sha "${run_job_sha}" \
   --arg assistant_job "${CLA_ASSISTANT_JOB}" \
   --arg generation_step "CLA generation ${CLA_GENERATION}" \
   --arg head_repo "${head_repo}" \
@@ -1150,7 +1314,7 @@ final_job_json="$(gh api "repos/${GH_REPO}/actions/jobs/${job_id}" 2>/dev/null)"
 jq -e \
   --arg job_id "${job_id}" \
   --arg run_id "${run_id}" \
-  --arg run_sha "${run_execution_sha}" \
+  --arg run_sha "${run_job_sha}" \
   --arg assistant_job "${CLA_ASSISTANT_JOB}" \
   --arg generation_step "CLA generation ${CLA_GENERATION}" \
   --arg head_repo "${head_repo}" \
@@ -1173,7 +1337,11 @@ jq -e \
       .name == $generation_step and
       .status == "completed"
     )
-  ' <<<"${final_job_json}" >/dev/null || fail "The exact failed CLA Assistant v3 job is no longer eligible"
+' <<<"${final_job_json}" >/dev/null || fail "The exact failed CLA Assistant v3 job is no longer eligible"
+if [[ "${source_sha_fallback}" == true ]]; then
+  source_check_binding_for_job "${run_id}" "${job_id}" ||
+    fail "The selected CLA job is no longer bound to the current pull request head"
+fi
 
 # Re-fetch the whole job set immediately before the state-changing call. This
 # catches a newly cancelled or unrelated failed job that could otherwise be
@@ -1182,7 +1350,7 @@ final_jobs_json="$(fetch_jobs_for_run "${run_id}")" || fail "Could not recheck a
 validate_failed_job_set "${final_jobs_json}"
 final_job_id="$(jq -r \
   --arg run_id "${run_id}" \
-  --arg run_sha "${run_execution_sha}" \
+  --arg run_sha "${run_job_sha}" \
   --arg assistant_job "${CLA_ASSISTANT_JOB}" \
   --arg generation_step "CLA generation ${CLA_GENERATION}" \
   --arg head_repo "${head_repo}" \
@@ -1228,6 +1396,13 @@ fi
 # immediately before the Actions mutation. The API cannot provide a
 # transaction, so this is the narrowest practical final race window.
 validate_live_open_head_association
+if [[ "${source_sha_fallback}" == true ]]; then
+  # Re-read the source check immediately before the mutation. This keeps the
+  # run/job binding from becoming stale while the PR and job checks execute.
+  refresh_source_check_bindings
+  source_check_binding_for_job "${run_id}" "${job_id}" ||
+    fail "The selected CLA job is no longer bound to the current pull request head"
+fi
 
 if [[ "${RERUN_FAILED_JOBS}" == true ]]; then
   rerun_endpoint="repos/${GH_REPO}/actions/runs/${run_id}/rerun-failed-jobs"
