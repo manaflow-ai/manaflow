@@ -6,7 +6,11 @@ on:
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened, assigned]
+    # Assignment events are intentionally excluded. The action only treats an
+    # assignment as a trigger when an explicit assignee_trigger is configured,
+    # and the workflow token cannot authoritatively resolve the assigner
+    # permission without an additional privileged credential.
+    types: [opened]
   pull_request_review:
     types: [submitted]
 
@@ -60,10 +64,7 @@ jobs:
         (
           github.event_name == 'issues' &&
           (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
-          (
-            github.event.action == 'assigned' ||
-            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
-          )
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
         )
       )
     # This job is the only event-data reader before the secret-bearing job.
@@ -90,7 +91,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
           EVENT_SENDER_ID: ${{ github.event.sender.id }}
-          EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
           EVENT_SENDER_TYPE: ${{ github.event.sender.type }}
           EVENT_REPOSITORY: ${{ github.event.repository.full_name }}
           EVENT_REPOSITORY_ID: ${{ github.event.repository.id }}
@@ -166,7 +166,6 @@ jobs:
           }
           is_id() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
           is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
-          is_login() { [[ "$1" =~ ^[A-Za-z0-9-]{1,39}$ ]]; }
           is_trusted_association() {
             case "$1" in
               OWNER|MEMBER|COLLABORATOR) return 0 ;;
@@ -209,27 +208,6 @@ jobs:
             return 1
           }
 
-          validate_actor() {
-            # The webhook author_association is an event snapshot. Resolve the
-            # sender's current repository permission before exposing any
-            # privileged job outputs. The endpoint returns legacy base roles:
-            # maintain maps to write, while triage maps to read.
-            is_login "$EVENT_SENDER_LOGIN" || fail_closed "The event sender login is malformed"
-            actor_permission_json="$(api "repos/$GH_REPO/collaborators/$EVENT_SENDER_LOGIN/permission")" ||
-              fail_closed "The event sender permission could not be read"
-            jq -e --arg sender_id "$EVENT_SENDER_ID" --arg sender_login "$EVENT_SENDER_LOGIN" '
-              (.user.id | tostring) == $sender_id and
-              (.user.login | ascii_downcase) == ($sender_login | ascii_downcase) and
-              .user.type == "User" and
-              (.permission | type == "string") and
-              (.role_name | type == "string") and
-              (.permission == "admin" or .permission == "write" or
-                .permission == "push" or .permission == "maintain" or
-                .role_name == "admin" or .role_name == "write" or
-                .role_name == "push" or .role_name == "maintain")
-            ' <<<"$actor_permission_json" >/dev/null || reject "The event sender does not have repository write access"
-          }
-
           [[ "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail_closed "The repository name is malformed"
           is_id "$GH_REPO_ID" || fail_closed "The repository ID is malformed"
           is_id "$EVENT_REPOSITORY_ID" || fail_closed "The event repository ID is malformed"
@@ -249,10 +227,9 @@ jobs:
           is_sha "$DEFAULT_SHA" || fail_closed "The trusted main ref is not an immutable commit"
 
           case "$EVENT_NAME:$EVENT_ACTION" in
-            issue_comment:created|pull_request_review_comment:created|pull_request_review:submitted|issues:opened|issues:assigned) ;;
+            issue_comment:created|pull_request_review_comment:created|pull_request_review:submitted|issues:opened) ;;
             *) fail_closed "The event action is not an accepted Claude trigger" ;;
           esac
-          validate_actor
 
           validate_pr() {
             PR_NUMBER="$1"
@@ -390,10 +367,8 @@ jobs:
               live_issue_user_id="$(jq -r '.user.id' <<<"$ISSUE_JSON")"
               live_issue_association="$(jq -r '.author_association // empty' <<<"$ISSUE_JSON")"
               [[ "$EVENT_ISSUE_USER_ID" == "$live_issue_user_id" && "$EVENT_ISSUE_USER_TYPE" == User ]] || fail_closed "The event issue opener does not match the live issue"
-              if [[ "$EVENT_ACTION" == opened ]]; then
-                [[ "$EVENT_SENDER_ID" == "$live_issue_user_id" ]] || fail_closed "The event sender does not match the issue opener"
-                is_trusted_association "$live_issue_association" || reject "The issue opener is not a trusted repository participant"
-              fi
+              [[ "$EVENT_SENDER_ID" == "$live_issue_user_id" ]] || fail_closed "The event sender does not match the issue opener"
+              is_trusted_association "$live_issue_association" || reject "The issue opener is not a trusted repository participant"
               jq -e --arg body "$EVENT_ISSUE_BODY" --arg title "$EVENT_ISSUE_TITLE" '.body == $body and .title == $title' <<<"$ISSUE_JSON" >/dev/null || fail_closed "The live issue no longer matches the event"
               output_issue
               ;;
@@ -423,6 +398,51 @@ jobs:
       actions: read # Read CI results on pull requests.
       id-token: none # GitHub-token override means OIDC is not needed.
     steps:
+      - name: Authorize triggering actor
+        # The admission job has a read-only token. Resolve the current actor
+        # here with the write-scoped job token, before checkout or the action
+        # receives any secret. The pinned action repeats this check as well.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_SENDER_ID: ${{ github.event.sender.id }}
+          EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          is_id() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
+          is_login() { [[ "$1" =~ ^[A-Za-z0-9-]{1,39}$ ]]; }
+          is_id "$EVENT_SENDER_ID" || {
+            echo "::error::The event sender ID is malformed"
+            exit 1
+          }
+          is_login "$EVENT_SENDER_LOGIN" || {
+            echo "::error::The event sender login is malformed"
+            exit 1
+          }
+          actor_identity="$(gh api \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --jq '[.user.id, .user.login, .user.type, .permission] | @tsv' \
+            "repos/$GH_REPO/collaborators/$EVENT_SENDER_LOGIN/permission")" || {
+            echo "::error::The event sender permission could not be read"
+            exit 1
+          }
+          IFS=$'\t' read -r actor_id actor_login actor_type actor_permission <<<"$actor_identity"
+          [[ "$actor_id" == "$EVENT_SENDER_ID" &&
+            "${actor_login,,}" == "${EVENT_SENDER_LOGIN,,}" &&
+            "$actor_type" == User ]] || {
+            echo "::error::The live event sender identity does not match the webhook"
+            exit 1
+          }
+          case "$actor_permission" in
+            admin|write) ;;
+            *)
+            echo "::error::The event sender does not have repository write access"
+            exit 1
+            ;;
+          esac
+
       - name: Revalidate live pull request before privileged action
         if: ${{ needs.admission.outputs.pr_number != '' }}
         env:
