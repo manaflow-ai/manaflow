@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 # Validate the event boundary for workflows that execute repository code. This
-# is a policy test, not a source-shape test: it parses the workflow documents,
-# classifies their events, and rejects any pull-request workflow that can carry
-# a secret or environment binding.
+# security-contract test parses the workflow documents, classifies their events,
+# and rejects any pull-request workflow that can carry a secret or environment
+# binding.
 
 require "yaml"
 
@@ -57,7 +57,7 @@ end
 def contains_secret_reference?(value)
   found = false
   walk(value) do |node|
-    found ||= node.is_a?(String) && node.match?(/\$\{\{\s*secrets\./)
+    found ||= node.is_a?(String) && node.match?(/\$\{\{\s*secrets(?:\.|\[)/)
   end
   found
 end
@@ -124,7 +124,8 @@ def assert_pull_request_workflow_is_untrusted(document, filename)
     checkouts = checkout_steps(job)
     fail_contract("#{filename}:#{job_name} has no checkout credential hardening") if checkouts.empty?
     checkouts.each do |step|
-      persist = step.fetch("with", {})["persist-credentials"]
+      with = step["with"]
+      persist = with.is_a?(Hash) ? with["persist-credentials"] : nil
       fail_contract("#{filename}:#{job_name} persists checkout credentials") unless persist == false
     end
 
@@ -153,7 +154,8 @@ def assert_trusted_main_workflow(document, filename)
   jobs(document, filename).each do |job_name, job|
     fail_contract("#{filename}:#{job_name} grants write permission") if contains_write_permission?(job)
     checkout_steps(job).each do |step|
-      persist = step.fetch("with", {})["persist-credentials"]
+      with = step["with"]
+      persist = with.is_a?(Hash) ? with["persist-credentials"] : nil
       fail_contract("#{filename}:#{job_name} persists checkout credentials") unless persist == false
     end
   end
@@ -162,7 +164,7 @@ end
 def assert_checks_workflow_is_read_only(document, filename)
   names = trigger_names(trigger_config(document, filename), filename)
   expected = %w[push pull_request]
-  fail_contract("#{filename} trigger set changed: #{names.inspect}") unless names == expected
+  fail_contract("#{filename} trigger set changed: #{names.inspect}") unless names.sort == expected.sort
   fail_contract("#{filename} contains a secret reference") if contains_secret_reference?(document)
   fail_contract("#{filename} binds an environment") if contains_environment_binding?(document)
   fail_contract("#{filename} grants write permission") if contains_write_permission?(document)
