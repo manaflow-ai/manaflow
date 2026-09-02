@@ -4,8 +4,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/user"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -43,6 +45,20 @@ func dropPrivilegesToWorkerUser() error {
 	// privilege. Keep the worker's configured groups (for example, docker)
 	// without retaining root's groups.
 	if euid == 0 {
+		// Do not carry capabilities across the identity transition. A retained
+		// capability can bypass the UID checks below and recreate a root shell.
+		if err := unix.Prctl(unix.PR_SET_KEEPCAPS, 0, 0, 0, 0); err != nil {
+			return fmt.Errorf("disable retained capabilities: %w", err)
+		}
+		if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil && err != unix.EINVAL {
+			return fmt.Errorf("clear ambient capabilities: %w", err)
+		}
+		for capability := 0; capability <= unix.CAP_LAST_CAP; capability++ {
+			err := unix.Prctl(unix.PR_CAPBSET_DROP, uintptr(capability), 0, 0, 0)
+			if err != nil && err != unix.EINVAL {
+				return fmt.Errorf("drop capability %d from bounding set: %w", capability, err)
+			}
+		}
 		groupIDs, err := target.GroupIds()
 		if err != nil {
 			return fmt.Errorf("lookup worker groups: %w", err)
@@ -69,6 +85,11 @@ func dropPrivilegesToWorkerUser() error {
 	} else if err := rejectRootSupplementaryGroup(); err != nil {
 		return err
 	}
+	if euid != 0 {
+		if err := rejectLinuxCapabilities(false); err != nil {
+			return err
+		}
+	}
 
 	// Set all three credential slots, not only the effective IDs. This clears a
 	// retained root real or saved ID from a setuid/capability-based launcher.
@@ -85,6 +106,9 @@ func dropPrivilegesToWorkerUser() error {
 		checkRGID != targetGID || checkEGID != targetGID || checkSGID != targetGID {
 		return fmt.Errorf("privilege drop did not clear all credentials")
 	}
+	if err := rejectLinuxCapabilities(euid == 0); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -96,6 +120,32 @@ func rejectRootSupplementaryGroup() error {
 	for _, gid := range groups {
 		if gid == 0 {
 			return fmt.Errorf("daemon retains the root supplementary group")
+		}
+	}
+	return nil
+}
+
+func rejectLinuxCapabilities(checkBoundingSet bool) error {
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return fmt.Errorf("inspect process capabilities: %w", err)
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := []string{"CapInh:", "CapPrm:", "CapEff:", "CapAmb:"}
+		if checkBoundingSet {
+			fields = append(fields, "CapBnd:")
+		}
+		for _, field := range fields {
+			if !strings.HasPrefix(line, field) {
+				continue
+			}
+			value, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(line, field)), 16, 64)
+			if err != nil {
+				return fmt.Errorf("parse %s capability set: %w", strings.TrimSuffix(field, ":"), err)
+			}
+			if value != 0 {
+				return fmt.Errorf("worker retains %s capabilities", strings.TrimSuffix(field, ":"))
+			}
 		}
 	}
 	return nil

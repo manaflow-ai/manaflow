@@ -235,6 +235,9 @@ func (vp *vncProxy) serveStaticFile(w http.ResponseWriter, r *http.Request, file
 	// Strip only that URL separator before applying the filesystem boundary
 	// check. A path such as "/../etc/passwd" remains rejected by the resolver.
 	filePath = strings.TrimPrefix(filePath, "/")
+	if filePath == "" {
+		filePath = "."
+	}
 	fullPath, err := resolveExistingPathWithin(vp.noVNCDir, filePath, true)
 	if err != nil {
 		http.Error(w, "Forbidden", http.StatusForbidden)
@@ -248,8 +251,10 @@ func (vp *vncProxy) serveStaticFile(w http.ResponseWriter, r *http.Request, file
 	}
 
 	if info.IsDir() {
-		fullPath = filepath.Join(fullPath, "index.html")
-		fullPath, err = resolveExistingPathWithin(vp.noVNCDir, fullPath, false)
+		// Resolve the index from the validated URL-relative directory. Reusing
+		// the canonical path can look outside a lexical root such as /var on
+		// systems where the root itself is a symlink.
+		fullPath, err = resolveExistingPathWithin(vp.noVNCDir, filepath.Join(filePath, "index.html"), false)
 		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return

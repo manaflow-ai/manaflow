@@ -491,7 +491,7 @@ func handleReadFile(w http.ResponseWriter, r *http.Request, body map[string]inte
 		sendJSON(w, map[string]string{"error": "path required"})
 		return
 	}
-	path, err := resolveWorkspacePath(rawPath, false)
+	path, err := resolveExistingPathWithin(workspaceDir, rawPath, false)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		sendJSON(w, map[string]string{"error": "path must be inside workspace"})

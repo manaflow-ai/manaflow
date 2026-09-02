@@ -161,10 +161,15 @@ RUN chmod +x /home/user/.vnc/xstartup \
 COPY worker/start-services-docker.sh /usr/local/bin/start-services.sh
 RUN chmod +x /usr/local/bin/start-services.sh
 
-# Install the patched Go toolchain used by go.mod for the worker daemon.
-RUN wget -q https://go.dev/dl/go1.26.8.linux-amd64.tar.gz \
-    && tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz \
-    && rm go1.26.8.linux-amd64.tar.gz
+# Install the patched Go toolchain used by go.mod for the worker daemon. The
+# checksum pins the archive listed by the official Go release manifest.
+ARG GO_VERSION=1.26.8
+ARG GO_LINUX_AMD64_SHA256=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
+RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz \
+    && echo "${GO_LINUX_AMD64_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \
+    && test "$(/usr/local/go/bin/go env GOVERSION)" = "go${GO_VERSION}" \
+    && rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:$PATH"
 
 # Build Go worker daemon (standalone binary, no internal dependencies)

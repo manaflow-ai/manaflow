@@ -139,6 +139,72 @@ func TestWorkspaceFileWriteDoesNotFollowFinalSymlink(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFileWritePreservesExistingMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file modes are required for this behavior")
+	}
+	path := filepath.Join(t.TempDir(), "script.sh")
+	if err := os.WriteFile(path, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorkspaceFile(path, []byte("new"), 0644); err != nil {
+		t.Fatalf("writeWorkspaceFile: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0755 {
+		t.Fatalf("existing file mode = %04o, want 0755", mode)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "new" {
+		t.Fatalf("file content = %q, want new", content)
+	}
+}
+
+func TestWorkspaceFileReadAllowsOnlyInternalSymlinkTargets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation may require extra privileges on Windows")
+	}
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "target"), []byte("inside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(workspace, "internal")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workspace, "external")); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := resolveExistingPathWithin(workspace, "internal", false)
+	if err != nil {
+		t.Fatalf("resolve internal symlink: %v", err)
+	}
+	content, err := readWorkspaceFile(path)
+	if err != nil {
+		t.Fatalf("read internal symlink target: %v", err)
+	}
+	if string(content) != "inside" {
+		t.Fatalf("internal symlink content = %q, want inside", content)
+	}
+	if _, err := resolveExistingPathWithin(workspace, "external", false); !errors.Is(err, errWorkspacePath) {
+		t.Fatalf("external symlink error = %v, want workspace boundary error", err)
+	}
+}
+
 func TestWorkerShellRejectsUntrustedExecutablePaths(t *testing.T) {
 	if _, err := workerShell("/tmp/attacker-shell"); err == nil {
 		t.Fatal("workerShell accepted an executable outside the system shell directories")
@@ -201,6 +267,12 @@ func TestVNCStaticFilesStayUsableAndConfined(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "leak.txt")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := resolveExistingPathWithin(root, ".", true); err != nil {
+		t.Fatalf("resolve static root: %v", err)
+	}
+	if _, err := resolveExistingPathWithin(root, filepath.Join(".", "index.html"), false); err != nil {
+		t.Fatalf("resolve static index: %v", err)
+	}
 
 	proxy := &vncProxy{noVNCDir: root}
 	request := httptest.NewRequest(http.MethodGet, "/vnc.html", nil)
@@ -217,7 +289,7 @@ func TestVNCStaticFilesStayUsableAndConfined(t *testing.T) {
 		t.Fatalf("static file body = %q, want vnc", body)
 	}
 
-	for _, path := range []string{"/index.html"} {
+	for _, path := range []string{"/", "/index.html"} {
 		response := httptest.NewRecorder()
 		proxy.serveStaticFile(response, request, path)
 		if response.Code != http.StatusOK {

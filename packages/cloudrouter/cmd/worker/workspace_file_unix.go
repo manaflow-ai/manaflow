@@ -36,14 +36,19 @@ func readSecretFile(path string) ([]byte, error) {
 }
 
 func writeWorkspaceFile(path string, data []byte, perm os.FileMode) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|noFollowFlag, perm)
+	// Create first with O_EXCL so the requested mode applies only to a new file.
+	// An existing executable keeps its mode when its contents are replaced.
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|noFollowFlag, perm)
 	if err != nil {
-		return err
+		if !os.IsExist(err) {
+			return err
+		}
+		file, err = os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|noFollowFlag, 0)
+		if err != nil {
+			return err
+		}
 	}
 	defer file.Close()
-	if err := file.Chmod(perm); err != nil {
-		return err
-	}
 	_, err = file.Write(data)
 	return err
 }
