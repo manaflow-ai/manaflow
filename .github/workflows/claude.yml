@@ -209,6 +209,22 @@ jobs:
             return 1
           }
 
+          validate_actor() {
+            # The webhook author_association is an event snapshot. Resolve the
+            # sender's current repository permission before exposing any
+            # privileged job outputs. The endpoint returns legacy base roles:
+            # maintain maps to write, while triage maps to read.
+            is_login "$EVENT_SENDER_LOGIN" || fail_closed "The event sender login is malformed"
+            actor_permission_json="$(api "repos/$GH_REPO/collaborators/$EVENT_SENDER_LOGIN/permission")" ||
+              fail_closed "The event sender permission could not be read"
+            jq -e --arg sender_id "$EVENT_SENDER_ID" --arg sender_login "$EVENT_SENDER_LOGIN" '
+              (.user.id | tostring) == $sender_id and
+              (.user.login | ascii_downcase) == ($sender_login | ascii_downcase) and
+              .user.type == "User" and
+              (.permission == "admin" or .permission == "write")
+            ' <<<"$actor_permission_json" >/dev/null || reject "The event sender does not have repository write access"
+          }
+
           [[ "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail_closed "The repository name is malformed"
           is_id "$GH_REPO_ID" || fail_closed "The repository ID is malformed"
           is_id "$EVENT_REPOSITORY_ID" || fail_closed "The event repository ID is malformed"
@@ -231,6 +247,7 @@ jobs:
             issue_comment:created|pull_request_review_comment:created|pull_request_review:submitted|issues:opened|issues:assigned) ;;
             *) fail_closed "The event action is not an accepted Claude trigger" ;;
           esac
+          validate_actor
 
           validate_pr() {
             PR_NUMBER="$1"
@@ -286,22 +303,6 @@ jobs:
               .url == ("https://api.github.com/repos/" + $repo + "/issues/" + ($number | tostring)) and
               (.user.type == "User") and (.user.id | type == "number")
             ' <<<"$ISSUE_JSON" >/dev/null || fail_closed "The live issue is not open or has a different identity"
-          }
-
-          validate_assignment_actor() {
-            # Issues webhooks do not include the sender's author_association.
-            # Resolve the sender through the live collaborator permission API;
-            # admin/write covers trusted OWNER/MEMBER/COLLABORATOR actors that
-            # can authorize the action's write operations.
-            is_login "$EVENT_SENDER_LOGIN" || fail_closed "The assignment actor login is malformed"
-            assignment_actor_json="$(api "repos/$GH_REPO/collaborators/$EVENT_SENDER_LOGIN/permission")" ||
-              reject "The assignment actor is not a trusted repository collaborator"
-            jq -e --arg sender_id "$EVENT_SENDER_ID" --arg sender_login "$EVENT_SENDER_LOGIN" '
-              (.user.id | tostring) == $sender_id and
-              (.user.login | ascii_downcase) == ($sender_login | ascii_downcase) and
-              .user.type == "User" and
-              (.permission == "admin" or .permission == "write")
-            ' <<<"$assignment_actor_json" >/dev/null || reject "The assignment actor does not have repository write access"
           }
 
           case "$EVENT_NAME" in
@@ -387,8 +388,6 @@ jobs:
               if [[ "$EVENT_ACTION" == opened ]]; then
                 [[ "$EVENT_SENDER_ID" == "$live_issue_user_id" ]] || fail_closed "The event sender does not match the issue opener"
                 is_trusted_association "$live_issue_association" || reject "The issue opener is not a trusted repository participant"
-              else
-                validate_assignment_actor
               fi
               jq -e --arg body "$EVENT_ISSUE_BODY" --arg title "$EVENT_ISSUE_TITLE" '.body == $body and .title == $title' <<<"$ISSUE_JSON" >/dev/null || fail_closed "The live issue no longer matches the event"
               output_issue
