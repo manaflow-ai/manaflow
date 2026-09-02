@@ -35,6 +35,9 @@ run_untrusted() {
       NO_COLOR=1 \
       GIT_TERMINAL_PROMPT=0 \
       NPM_CONFIG_IGNORE_SCRIPTS=true \
+      CMUX_BUILD_LINUX=0 \
+      CMUX_SKIP_DOCKER_TESTS=1 \
+      CMUX_SKIP_CARGO_CRATES=sandbox,cmux-env,cmux-pty,cmux-proxy,global-proxy,server/native/core \
       GITHUB_TOKEN= \
       ACTIONS_RUNTIME_TOKEN= \
       ACTIONS_ID_TOKEN_REQUEST_TOKEN= \

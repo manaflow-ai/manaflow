@@ -1,4 +1,6 @@
-name: Tests (pull requests)
+# Keep the workflow identity used by existing branch-protection rules. The job
+# below is pull-request-only; the trusted main workflow has a separate name.
+name: Tests (Linux + macOS)
 
 on:
   # This workflow is intentionally limited to pull requests. It checks
