@@ -37,11 +37,24 @@ jobs:
           node-version: 24
 
       - name: Install dependencies without lifecycle scripts
-        env:
-          CI: "true"
-          NPM_CONFIG_IGNORE_SCRIPTS: "true"
-          NPM_CONFIG_USERCONFIG: /dev/null
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: |
+          set -euo pipefail
+          install_home="${RUNNER_TEMP:-/tmp}/cmux-untrusted-install-home"
+          mkdir -p "${install_home}"
+          env -i \
+            PATH="${PATH}" \
+            HOME="${install_home}" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            CI=true \
+            NPM_CONFIG_IGNORE_SCRIPTS=true \
+            NPM_CONFIG_USERCONFIG=/dev/null \
+            bun install --frozen-lockfile --ignore-scripts
 
       - name: Run pull-request tests without secrets
-        run: bash scripts/ci/run-untrusted-tests.sh
+        run: |
+          set -euo pipefail
+          env -i \
+            PATH="${PATH}" \
+            RUNNER_TEMP="${RUNNER_TEMP:-/tmp}" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            bash scripts/ci/run-untrusted-tests.sh
