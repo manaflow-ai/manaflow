@@ -2,13 +2,24 @@
 name: Build & Publish Electron Updates (GitHub Releases)
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - package.json
-      - apps/client/package.json
+  workflow_call:
+    inputs:
+      release_ref:
+        description: Exact generated release branch to build
+        required: true
+        type: string
+      release_sha:
+        description: Exact generated release-branch commit to build
+        required: true
+        type: string
+      release_base_sha:
+        description: Protected main commit used to create the release branch
+        required: true
+        type: string
+      caller_sha:
+        description: Protected main commit containing the caller and called workflows
+        required: true
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -23,77 +34,137 @@ env:
 jobs:
   prepare-release:
     name: Prepare Release
-    # Publishing uses repository write access and signing credentials. Permit
-    # only main, generated release branches, and version tags.
+    # Publishing uses repository write access and signing credentials. The
+    # protected release-pr workflow is the only permitted caller.
     if: >-
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/v') ||
-      startsWith(github.ref, 'refs/tags/v')
+      github.ref_protected == true &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'manaflow-ai/manaflow/.github/workflows/release-pr.yml@refs/heads/main' &&
+      startsWith(inputs.release_ref, 'release/v') &&
+      inputs.release_sha != '' &&
+      inputs.release_base_sha != '' &&
+      inputs.caller_sha == github.sha
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.tag }}
     permissions:
       # Required to create the draft release record.
-      contents: write
+      contents: write # Create the draft release record for the verified commit.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify trusted release ref
+        env:
+          TRUSTED_BASE_SHA: ${{ inputs.release_base_sha }}
+          TRUSTED_CALLED_WORKFLOW_PATH: .github/workflows/release-updates.yml
+          TRUSTED_CALLER_REF: ${{ github.ref }}
+          TRUSTED_EVENT_REF: ${{ format('refs/heads/{0}', inputs.release_ref) }}
+          TRUSTED_EVENT_REF_TYPE: branch
+          TRUSTED_EVENT_SHA: ${{ inputs.release_sha }}
+          TRUSTED_REF_KIND: release-branch
+          TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+          TRUSTED_SOURCE_SHA: ${{ inputs.release_sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ inputs.caller_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/release-pr.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ && \
+            "$TRUSTED_WORKFLOW_SHA" == "$GITHUB_SHA" ]] || {
+            echo "Caller SHA does not match the protected workflow SHA" >&2
+            exit 1
+          }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
+          trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
+          git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
+          chmod 700 "$trusted_gate"
+          "$trusted_gate"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Resolve release tag
         id: resolve
         env:
-          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.release_ref }}
+          SOURCE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
 
-          release_tag="${EVENT_RELEASE_TAG:-}"
           repo="${GITHUB_REPOSITORY}"
 
           version="$(node -p "require('./apps/client/package.json').version")"
-          if [[ -z "$version" ]]; then
-            echo "Unable to determine app version from apps/client/package.json" >&2
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "App version is not an exact semantic version: $version" >&2
+            exit 1
+          fi
+          if [[ -n "$RELEASE_REF" && "$RELEASE_REF" != "release/v$version" ]]; then
+            echo "Release branch does not match app version: $RELEASE_REF" >&2
             exit 1
           fi
 
-          declare -a candidates
-          candidates=()
-
-          if [[ -n "$release_tag" ]]; then
-            candidates+=("$release_tag")
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            candidates+=("$GITHUB_REF_NAME")
+          resolved_tag="v$version"
+          release_json=""
+          if ! release_json="$(gh release view "$resolved_tag" --repo "$repo" \
+            --json isDraft,targetCommitish,tagName 2>&1)"; then
+            release_error="$release_json"
+            [[ "$release_error" == *"release not found"* ]] || {
+              echo "Unable to inspect release $resolved_tag: $release_error" >&2
+              exit 1
+            }
+            release_json=""
+          fi
+          release_exists=false
+          release_is_draft=false
+          release_target=""
+          if [[ -n "$release_json" ]]; then
+            release_exists=true
+            release_is_draft="$(jq -r '.isDraft // false' <<<"$release_json")"
+            release_target="$(jq -r '.targetCommitish // empty' <<<"$release_json")"
+            release_tag_name="$(jq -r '.tagName // empty' <<<"$release_json")"
+            [[ "$release_tag_name" == "$resolved_tag" ]] || {
+              echo "Release lookup returned an unexpected tag: $release_tag_name" >&2
+              exit 1
+            }
           fi
 
-          candidates+=("v$version" "$version")
+          tag_refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+            "refs/tags/$resolved_tag" "refs/tags/$resolved_tag^{}")"
+          if [[ -z "$tag_refs" ]]; then
+            if [[ "$release_exists" == true ]]; then
+              echo "Release $resolved_tag has no immutable tag" >&2
+              if [[ "$release_is_draft" == true && "$release_target" == "$SOURCE_SHA" ]]; then
+                echo "Its draft targetCommitish matches the source, but an existing draft retry still requires a pre-bound tag" >&2
+              else
+                echo "Draft targetCommitish is not the verified source SHA" >&2
+              fi
+            else
+              echo "Release $resolved_tag is missing its immutable tag" >&2
+            fi
+            echo "Refusing to publish without a tag bound before this workflow call" >&2
+            exit 1
+          elif ! printf '%s\n' "$tag_refs" | awk -v expected="$SOURCE_SHA" '
+            NF == 2 && $1 == expected { found = 1 }
+            END { exit(found ? 0 : 1) }
+          '; then
+            echo "Release tag $resolved_tag does not point at $SOURCE_SHA" >&2
+            exit 1
+          fi
 
-          resolved_tag=""
-          for tag in "${candidates[@]}"; do
-            if [[ -z "$tag" ]]; then
-              continue
-            fi
-            if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-              resolved_tag="$tag"
-              break
-            fi
-          done
-
-          if [[ -z "$resolved_tag" ]]; then
-            resolved_tag="${candidates[0]}"
-            if [[ -z "$resolved_tag" ]]; then
-              echo "Unable to resolve a release tag candidate" >&2
-              exit 1
-            fi
+          if [[ "$release_exists" == false ]]; then
             echo "Creating draft release $resolved_tag"
             gh release create "$resolved_tag" \
               --repo "$repo" \
+              --verify-tag \
               --draft \
               --title "$resolved_tag" \
               --notes ""
@@ -224,13 +295,17 @@ jobs:
     name: macOS arm64
     needs: prepare-release
     if: >-
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/v') ||
-      startsWith(github.ref, 'refs/tags/v')
+      github.ref_protected == true &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'manaflow-ai/manaflow/.github/workflows/release-pr.yml@refs/heads/main' &&
+      startsWith(inputs.release_ref, 'release/v') &&
+      inputs.release_sha != '' &&
+      inputs.release_base_sha != '' &&
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to upload signed artifacts to the GitHub release.
-      contents: write
+      contents: write # Upload signed macOS arm64 artifacts to the verified release.
     runs-on: self-hosted
     defaults:
       run:
@@ -238,8 +313,40 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify trusted release ref
+        env:
+          TRUSTED_BASE_SHA: ${{ inputs.release_base_sha }}
+          TRUSTED_CALLED_WORKFLOW_PATH: .github/workflows/release-updates.yml
+          TRUSTED_CALLER_REF: ${{ github.ref }}
+          TRUSTED_EVENT_REF: ${{ format('refs/heads/{0}', inputs.release_ref) }}
+          TRUSTED_EVENT_REF_TYPE: branch
+          TRUSTED_EVENT_SHA: ${{ inputs.release_sha }}
+          TRUSTED_REF_KIND: release-branch
+          TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+          TRUSTED_SOURCE_SHA: ${{ inputs.release_sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ inputs.caller_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/release-pr.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ && \
+            "$TRUSTED_WORKFLOW_SHA" == "$GITHUB_SHA" ]] || {
+            echo "Caller SHA does not match the protected workflow SHA" >&2
+            exit 1
+          }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
+          trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
+          git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
+          chmod 700 "$trusted_gate"
+          "$trusted_gate"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -366,13 +473,17 @@ jobs:
     name: macOS universal
     needs: prepare-release
     if: >-
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/v') ||
-      startsWith(github.ref, 'refs/tags/v')
+      github.ref_protected == true &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'manaflow-ai/manaflow/.github/workflows/release-pr.yml@refs/heads/main' &&
+      startsWith(inputs.release_ref, 'release/v') &&
+      inputs.release_sha != '' &&
+      inputs.release_base_sha != '' &&
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to upload signed artifacts to the GitHub release.
-      contents: write
+      contents: write # Upload signed macOS universal artifacts to the verified release.
     runs-on: self-hosted
     defaults:
       run:
@@ -380,8 +491,41 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify trusted release ref
+        env:
+          TRUSTED_BASE_SHA: ${{ inputs.release_base_sha }}
+          TRUSTED_CALLED_WORKFLOW_PATH: .github/workflows/release-updates.yml
+          TRUSTED_CALLER_REF: ${{ github.ref }}
+          TRUSTED_EVENT_REF: ${{ format('refs/heads/{0}', inputs.release_ref) }}
+          TRUSTED_EVENT_REF_TYPE: branch
+          TRUSTED_EVENT_SHA: ${{ inputs.release_sha }}
+          TRUSTED_REF_KIND: release-branch
+          TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+          TRUSTED_SOURCE_SHA: ${{ inputs.release_sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ inputs.caller_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/release-pr.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ && \
+            "$TRUSTED_WORKFLOW_SHA" == "$GITHUB_SHA" ]] || {
+            echo "Caller SHA does not match the protected workflow SHA" >&2
+            exit 1
+          }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
+          trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
+          git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
+          chmod 700 "$trusted_gate"
+          "$trusted_gate"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -653,13 +797,17 @@ jobs:
     name: Windows x64
     needs: prepare-release
     if: >-
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/v') ||
-      startsWith(github.ref, 'refs/tags/v')
+      github.ref_protected == true &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'manaflow-ai/manaflow/.github/workflows/release-pr.yml@refs/heads/main' &&
+      startsWith(inputs.release_ref, 'release/v') &&
+      inputs.release_sha != '' &&
+      inputs.release_base_sha != '' &&
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to publish the Windows artifact to the GitHub release.
-      contents: write
+      contents: write # Upload the signed Windows artifact to the verified release.
     runs-on: windows-latest
     defaults:
       run:
@@ -667,8 +815,40 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify trusted release ref
+        env:
+          TRUSTED_BASE_SHA: ${{ inputs.release_base_sha }}
+          TRUSTED_CALLED_WORKFLOW_PATH: .github/workflows/release-updates.yml
+          TRUSTED_CALLER_REF: ${{ github.ref }}
+          TRUSTED_EVENT_REF: ${{ format('refs/heads/{0}', inputs.release_ref) }}
+          TRUSTED_EVENT_REF_TYPE: branch
+          TRUSTED_EVENT_SHA: ${{ inputs.release_sha }}
+          TRUSTED_REF_KIND: release-branch
+          TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+          TRUSTED_SOURCE_SHA: ${{ inputs.release_sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ inputs.caller_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/release-pr.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ && \
+            "$TRUSTED_WORKFLOW_SHA" == "$GITHUB_SHA" ]] || {
+            echo "Caller SHA does not match the protected workflow SHA" >&2
+            exit 1
+          }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
+          trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
+          git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
+          chmod 700 "$trusted_gate"
+          "$trusted_gate"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -726,19 +906,55 @@ jobs:
     name: Linux x64
     needs: prepare-release
     if: >-
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/v') ||
-      startsWith(github.ref, 'refs/tags/v')
+      github.ref_protected == true &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'manaflow-ai/manaflow/.github/workflows/release-pr.yml@refs/heads/main' &&
+      startsWith(inputs.release_ref, 'release/v') &&
+      inputs.release_sha != '' &&
+      inputs.release_base_sha != '' &&
+      inputs.caller_sha == github.sha
     environment: electron
     permissions:
       # Required to publish the Linux artifact to the GitHub release.
-      contents: write
+      contents: write # Upload the signed Linux artifact to the verified release.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify trusted release ref
+        env:
+          TRUSTED_BASE_SHA: ${{ inputs.release_base_sha }}
+          TRUSTED_CALLED_WORKFLOW_PATH: .github/workflows/release-updates.yml
+          TRUSTED_CALLER_REF: ${{ github.ref }}
+          TRUSTED_EVENT_REF: ${{ format('refs/heads/{0}', inputs.release_ref) }}
+          TRUSTED_EVENT_REF_TYPE: branch
+          TRUSTED_EVENT_SHA: ${{ inputs.release_sha }}
+          TRUSTED_REF_KIND: release-branch
+          TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+          TRUSTED_SOURCE_SHA: ${{ inputs.release_sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ inputs.caller_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/release-pr.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ && \
+            "$TRUSTED_WORKFLOW_SHA" == "$GITHUB_SHA" ]] || {
+            echo "Caller SHA does not match the protected workflow SHA" >&2
+            exit 1
+          }
+          if ! git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$TRUSTED_WORKFLOW_SHA" >/dev/null 2>&1 || {
+              echo "Unable to fetch the protected caller commit" >&2
+              exit 1
+            }
+          fi
+          trusted_gate="${RUNNER_TEMP:?}/verify-privileged-ref-${GITHUB_JOB}.sh"
+          git show "$TRUSTED_WORKFLOW_SHA:.github/scripts/verify-privileged-ref.sh" > "$trusted_gate"
+          chmod 700 "$trusted_gate"
+          "$trusted_gate"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}

@@ -29,7 +29,10 @@ on:
       - crates/**
       # Shell scripts
       - prompt-wrapper.sh
-  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -41,11 +44,9 @@ env:
 jobs:
   docker-build:
     name: Build Docker image (${{ matrix.platform }})
-    # The build pushes to Docker Hub with repository credentials. A manual
-    # dispatch must use the protected main ref, never arbitrary branch code.
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # The build pushes to Docker Hub with repository credentials. It runs only
+    # from a protected main push, never from a user-selected ref.
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -59,6 +60,23 @@ jobs:
             runner: ubuntu-24.04-arm
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted publication ref
+        env:
+          TRUSTED_BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF_KIND: main
+          TRUSTED_SOURCE_SHA: ${{ github.sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/docker.yml
+        shell: bash
+        run: .github/scripts/verify-privileged-ref.sh
+
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
@@ -69,12 +87,6 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
-
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
@@ -129,14 +141,29 @@ jobs:
 
   docker-merge:
     name: Create multi-arch manifest
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
     runs-on: ubuntu-24.04
     needs: docker-build
     permissions:
       contents: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted publication ref
+        env:
+          TRUSTED_BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF_KIND: main
+          TRUSTED_SOURCE_SHA: ${{ github.sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/docker.yml
+        shell: bash
+        run: .github/scripts/verify-privileged-ref.sh
+
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

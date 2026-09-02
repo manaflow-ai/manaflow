@@ -4,7 +4,6 @@ on:
   schedule:
     - cron: "30 12 * * *" # 4:30 AM PT
     - cron: "0 3 * * *" # 7:00 PM PT
-  workflow_dispatch:
 
 concurrency:
   group: release-pr
@@ -20,25 +19,41 @@ env:
 jobs:
   open-release-pr:
     name: Open draft release PR
-    # The job creates a branch and dispatches a publishing workflow. Restrict
-    # manual runs to the protected main revision so a caller cannot execute a
-    # modified branch with write-capable credentials.
-    if: github.ref == 'refs/heads/main'
+    # The scheduled job creates a branch and calls the publishing workflow.
+    # There is no user-selectable secret-bearing dispatch path.
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
     runs-on: ubuntu-latest
     permissions:
       contents: write # Create the generated release branch.
       pull-requests: write # Create the draft release pull request.
-      actions: write # Dispatch the signed electron build workflow.
+    outputs:
+      release_pr_state: ${{ steps.create_release_pr.outputs.release_pr_state }}
+      release_pr_draft: ${{ steps.create_release_pr.outputs.release_pr_draft }}
+      release_branch: ${{ steps.create_release_pr.outputs.release_branch }}
+      release_sha: ${{ steps.release_revision.outputs.release_sha }}
+      release_base_sha: ${{ steps.release_revision.outputs.base_sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           # Keep a local branch because release-pr.ts creates a child branch.
-          ref: refs/heads/main
+          # Pin the generated branch to the scheduled revision. The trust gate
+          # separately permits a protected-main fast-forward while this runs.
+          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
           # release-pr.ts supplies a transient auth header for git pushes.
           persist-credentials: false
+
+      - name: Verify trusted release ref
+        env:
+          TRUSTED_BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF_KIND: main
+          TRUSTED_SOURCE_SHA: ${{ github.sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_WORKFLOW_PATH: .github/workflows/release-pr.yml
+        shell: bash
+        run: .github/scripts/verify-privileged-ref.sh
 
       - name: Verify main revision
         env:
@@ -47,15 +62,42 @@ jobs:
           set -euo pipefail
           actual_sha="$(git rev-parse HEAD)"
           if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
-            echo "main advanced while the workflow was starting" >&2
+            echo "checked out revision does not match the scheduled source" >&2
             echo "expected $EXPECTED_SHA, checked out $actual_sha" >&2
             exit 1
           fi
+          main_sha="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin refs/heads/main | awk '
+            NF == 2 && $2 == "refs/heads/main" { print $1; exit }
+          ')"
+          if [[ ! "$main_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "protected main did not resolve to a commit" >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$main_sha^{commit}" 2>/dev/null; then
+            GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$main_sha" >/dev/null 2>&1 || {
+              echo "unable to fetch the current protected main commit" >&2
+              exit 1
+            }
+          fi
+          git merge-base --is-ancestor "$EXPECTED_SHA" "$main_sha" || {
+            echo "scheduled source is not reachable from the current protected main" >&2
+            exit 1
+          }
+
+      - name: Create local release base branch
+        run: git switch --create "release-run-${GITHUB_RUN_ID}"
+
+      - name: Fetch version tags
+        shell: bash
+        run: git fetch --force --tags origin
 
       - name: Check for changes since last release
         id: release_changes
         run: |
-          last_tag=$(git describe --tags --match "v[0-9]*" --abbrev=0 2>/dev/null || echo "")
+          # Tags point at the immutable generated release commit. That commit
+          # may not be reachable from main when the PR is squash-merged, so
+          # do not use git describe's ancestry-only lookup here.
+          last_tag=$(git tag --list "v[0-9]*" --sort=-version:refname | head -n1)
 
           if [ -z "$last_tag" ]; then
             echo "No release tags found. Proceeding with release." >> "$GITHUB_STEP_SUMMARY"
@@ -87,12 +129,6 @@ jobs:
         if: steps.release_changes.outputs.proceed == 'true'
         run: bun install --frozen-lockfile
 
-      - name: Configure git user
-        if: steps.release_changes.outputs.proceed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
       - name: Create draft release PR
         id: create_release_pr
         if: steps.release_changes.outputs.proceed == 'true'
@@ -101,28 +137,122 @@ jobs:
           RELEASE_BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: bun ./scripts/release-pr.ts
 
-      - name: Trigger electron build workflow
-        if: steps.release_changes.outputs.proceed == 'true' && steps.create_release_pr.outputs.release_pr_state == 'created'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+      - name: Capture release revision
+        id: release_revision
+        if: >-
+          steps.release_changes.outputs.proceed == 'true' &&
+          (steps.create_release_pr.outputs.release_pr_state == 'created' ||
+          (steps.create_release_pr.outputs.release_pr_state == 'existing' &&
+          steps.create_release_pr.outputs.release_pr_draft == 'true'))
         env:
+          BASE_SHA: ${{ github.sha }}
           RELEASE_BRANCH: ${{ steps.create_release_pr.outputs.release_branch }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const branch = process.env.RELEASE_BRANCH;
-            if (!branch) {
-              core.setFailed('Release branch output missing; cannot dispatch electron build workflow.');
-              return;
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Unexpected release branch: $RELEASE_BRANCH" >&2
+            exit 1
+          }
+          git show-ref --verify --quiet "refs/heads/$RELEASE_BRANCH" || {
+            echo "Generated release branch is not present in the checkout" >&2
+            exit 1
+          }
+          release_sha="$(git rev-parse --verify "refs/heads/$RELEASE_BRANCH^{commit}")"
+          parent_sha="$(git rev-parse --verify "$release_sha^1")"
+          git cat-file -e "$BASE_SHA^{commit}"
+          git merge-base --is-ancestor "$parent_sha" "$BASE_SHA" || {
+            echo "Release branch base is not reachable from the checked-out main revision" >&2
+            exit 1
+          }
+          printf 'release_sha=%s\n' "$release_sha" >> "$GITHUB_OUTPUT"
+          printf 'base_sha=%s\n' "$parent_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Bind immutable release tag
+        id: release_tag
+        if: >-
+          steps.release_changes.outputs.proceed == 'true' &&
+          (steps.create_release_pr.outputs.release_pr_state == 'created' ||
+          (steps.create_release_pr.outputs.release_pr_state == 'existing' &&
+          steps.create_release_pr.outputs.release_pr_draft == 'true'))
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR_STATE: ${{ steps.create_release_pr.outputs.release_pr_state }}
+          RELEASE_BRANCH: ${{ steps.create_release_pr.outputs.release_branch }}
+          RELEASE_SHA: ${{ steps.release_revision.outputs.release_sha }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Unexpected release branch: $RELEASE_BRANCH" >&2
+            exit 1
+          }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Unexpected release SHA" >&2
+            exit 1
+          }
+
+          release_tag="v${RELEASE_BRANCH#release/v}"
+          branch_sha="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+            "refs/heads/$RELEASE_BRANCH" | awk -v ref="refs/heads/$RELEASE_BRANCH" '
+              NF == 2 && $2 == ref { print $1; exit }
+            ')"
+          [[ "$branch_sha" == "$RELEASE_SHA" ]] || {
+            echo "Release branch moved before immutable tag binding" >&2
+            echo "expected $RELEASE_SHA, found ${branch_sha:-<missing>}" >&2
+            exit 1
+          }
+
+          tag_refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+            "refs/tags/$release_tag" "refs/tags/$release_tag^{}")"
+          if [[ -z "$tag_refs" ]]; then
+            if [[ "$RELEASE_PR_STATE" != "created" ]]; then
+              target_commitish="$(gh release view "$release_tag" --repo "$REPO" \
+                --json targetCommitish --jq '.targetCommitish // empty' 2>/dev/null || true)"
+              echo "Existing draft release targetCommitish: ${target_commitish:-<unavailable>}" >&2
+              echo "Existing draft release has no immutable tag; refusing an automatic retry" >&2
+              exit 1
+            fi
+
+            echo "Creating immutable tag $release_tag at $RELEASE_SHA"
+            if ! gh api --method POST "repos/$REPO/git/refs" \
+              -f "ref=refs/tags/$release_tag" \
+              -f "sha=$RELEASE_SHA" >/dev/null; then
+              echo "Tag creation raced; validating the existing tag" >&2
+            fi
+            tag_refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin \
+              "refs/tags/$release_tag" "refs/tags/$release_tag^{}")"
+          fi
+
+          printf '%s\n' "$tag_refs" | awk -v expected="$RELEASE_SHA" '
+            NF == 2 && $1 == expected { found = 1 }
+            END {
+              if (!found) {
+                print "Immutable release tag does not point at the generated release commit" > "/dev/stderr"
+                exit 1
+              }
             }
-            const workflowId = 'release-updates.yml';
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: workflowId,
-              ref: branch,
-            });
-            core.info(`Triggered ${workflowId} on ${branch}`);
+          '
+          printf 'tag=%s\n' "$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Skip release (no changes)
         if: steps.release_changes.outputs.proceed == 'false'
         run: echo "Skipping release because no changes were detected since the last tag."
+
+  build-release:
+    name: Build generated release
+    needs: open-release-pr
+    if: >-
+      github.ref == 'refs/heads/main' && github.ref_protected == true &&
+      (needs.open-release-pr.outputs.release_pr_state == 'created' ||
+      (needs.open-release-pr.outputs.release_pr_state == 'existing' &&
+      needs.open-release-pr.outputs.release_pr_draft == 'true'))
+    permissions:
+      contents: write # Let the called workflow create and update the release.
+    uses: ./.github/workflows/release-updates.yml
+    with:
+      release_ref: ${{ needs.open-release-pr.outputs.release_branch }}
+      release_sha: ${{ needs.open-release-pr.outputs.release_sha }}
+      release_base_sha: ${{ needs.open-release-pr.outputs.release_base_sha }}
+      caller_sha: ${{ github.sha }}
