@@ -40,7 +40,7 @@ setTimeout(async () => {
     return;
   }
   console.log(
-    "\x1b[31m✗\x1b[0m Server failed to start after 30 seconds. Please email founders@manaflow.com with the contents of ~/.cmux/logs/*"
+    "\x1b[31m✗\x1b[0m Server failed to start after 30 seconds. Please email founders@cmux.com with the contents of ~/.cmux/logs/*"
   );
   await logger.info(
     `Server failed to start after 30 seconds. convexReady=${status.convexReady} serverReady=${status.serverReady}`
