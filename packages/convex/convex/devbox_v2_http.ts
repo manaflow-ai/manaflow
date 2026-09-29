@@ -1,7 +1,7 @@
 /**
- * v2/devbox HTTP API - Multi-provider devbox management (E2B + Modal).
+ * v2/devbox HTTP API - Multi-provider devbox management (E2B + Modal + Vercel).
  *
- * This API supports E2B and Modal as backend providers.
+ * This API supports E2B, Modal, and Vercel as backend providers.
  * Provider is selected via "provider" field in request body (defaults to "e2b").
  * All endpoints require Stack Auth authentication.
  * Instance data is tracked in devboxInstances table, with provider info in devboxInfo.
@@ -18,8 +18,12 @@ import {
   MODAL_TEMPLATE_PRESETS,
   isModalGpuGated,
 } from "@cmux/shared/modal-templates";
+import {
+  DEFAULT_VERCEL_TEMPLATE_ID,
+  VERCEL_TEMPLATE_PRESETS,
+} from "@cmux/shared/vercel-templates";
 
-type SandboxProvider = "e2b" | "modal";
+type SandboxProvider = "e2b" | "modal" | "vercel";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -100,6 +104,15 @@ const modalActionsApi = (internal as any).modal_actions as {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vercelActionsApi = (internal as any).vercel_actions as {
+  startInstance: FunctionReference<"action", "internal">;
+  getInstance: FunctionReference<"action", "internal">;
+  execCommand: FunctionReference<"action", "internal">;
+  extendTimeout: FunctionReference<"action", "internal">;
+  stopInstance: FunctionReference<"action", "internal">;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const e2bInstancesApi = (internal as any).e2bInstances as {
   recordResumeInternal: FunctionReference<"mutation", "internal">;
   recordPauseInternal: FunctionReference<"mutation", "internal">;
@@ -108,6 +121,13 @@ const e2bInstancesApi = (internal as any).e2bInstances as {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const modalInstancesApi = (internal as any).modalInstances as {
+  recordResumeInternal: FunctionReference<"mutation", "internal">;
+  recordPauseInternal: FunctionReference<"mutation", "internal">;
+  recordStopInternal: FunctionReference<"mutation", "internal">;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vercelInstancesApi = (internal as any).vercelInstances as {
   recordResumeInternal: FunctionReference<"mutation", "internal">;
   recordPauseInternal: FunctionReference<"mutation", "internal">;
   recordStopInternal: FunctionReference<"mutation", "internal">;
@@ -125,7 +145,11 @@ async function recordProviderActivity(
 ): Promise<void> {
   try {
     const activityApi =
-      provider === "modal" ? modalInstancesApi : e2bInstancesApi;
+      provider === "modal"
+        ? modalInstancesApi
+        : provider === "vercel"
+          ? vercelInstancesApi
+          : e2bInstancesApi;
     if (action === "resume") {
       await ctx.runMutation(activityApi.recordResumeInternal, {
         instanceId: providerInstanceId,
@@ -184,6 +208,12 @@ export const createInstance = httpAction(async (ctx, req) => {
     cpu?: number;
     memoryMiB?: number;
     image?: string;
+    // Vercel-specific options
+    runtime?: string;
+    vcpus?: number;
+    ports?: number[];
+    gitUrl?: string;
+    gitRevision?: string;
   };
 
   try {
@@ -280,6 +310,60 @@ export const createInstance = httpAction(async (ctx, req) => {
         status: result.status,
         templateId,
         gpu: result.gpu ?? undefined,
+        jupyterUrl: result.jupyterUrl,
+        vscodeUrl: result.vscodeUrl,
+        workerUrl: result.workerUrl,
+        vncUrl: result.vncUrl,
+      });
+    }
+
+    if (provider === "vercel") {
+      const templateId = body.templateId ?? DEFAULT_VERCEL_TEMPLATE_ID;
+
+      const result = (await ctx.runAction(vercelActionsApi.startInstance, {
+        templateId,
+        runtime: body.runtime,
+        vcpus: body.vcpus,
+        ttlSeconds: body.ttlSeconds ?? 300,
+        metadata: {
+          app: "cmux-devbox-v2",
+          userId: identity!.subject,
+          ...(body.metadata || {}),
+        },
+        ports: body.ports,
+        gitUrl: body.gitUrl,
+        gitRevision: body.gitRevision,
+      })) as {
+        instanceId: string;
+        status: string;
+        runtime?: string;
+        workerUrl?: string;
+        vscodeUrl?: string;
+        vncUrl?: string;
+        jupyterUrl?: string;
+      };
+
+      const instanceResult = (await ctx.runMutation(devboxApi.create, {
+        teamSlugOrId: body.teamSlugOrId,
+        providerInstanceId: result.instanceId,
+        provider: "vercel",
+        name: body.name,
+        templateId,
+        vscodeUrl: result.vscodeUrl,
+        workerUrl: result.workerUrl,
+        metadata: {
+          ...(body.metadata || {}),
+          ...(result.runtime ? { runtime: result.runtime } : {}),
+        },
+        source: "cli",
+      })) as { id: string; isExisting: boolean };
+
+      return jsonResponse({
+        id: instanceResult.id,
+        provider: "vercel",
+        status: result.status,
+        templateId,
+        runtime: result.runtime,
         jupyterUrl: result.jupyterUrl,
         vscodeUrl: result.vscodeUrl,
         workerUrl: result.workerUrl,
@@ -435,7 +519,11 @@ async function handleGetInstance(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      provider === "modal"
+        ? modalActionsApi
+        : provider === "vercel"
+          ? vercelActionsApi
+          : e2bActionsApi;
 
     const providerResult = (await ctx.runAction(actionsApi.getInstance, {
       instanceId: providerInstanceId,
@@ -511,7 +599,11 @@ async function handleExecCommand(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      provider === "modal"
+        ? modalActionsApi
+        : provider === "vercel"
+          ? vercelActionsApi
+          : e2bActionsApi;
 
     const commandStr = Array.isArray(command) ? command.join(" ") : command;
     const result = await ctx.runAction(actionsApi.execCommand, {
@@ -558,7 +650,7 @@ async function handlePauseInstance(
 
     const { provider, providerInstanceId } = providerInfo;
 
-    // Neither E2B nor Modal has native pause
+    // None of E2B, Modal, or Vercel have native pause
     if (provider === "e2b") {
       try {
         await ctx.runAction(e2bActionsApi.extendTimeout, {
@@ -568,6 +660,15 @@ async function handlePauseInstance(
       } catch (error) {
         // E2B sandbox may have already expired — still update our status
         console.error("[devbox_v2.pause] E2B extendTimeout failed (sandbox may have expired):", error);
+      }
+    } else if (provider === "vercel") {
+      try {
+        await ctx.runAction(vercelActionsApi.extendTimeout, {
+          instanceId: providerInstanceId,
+          timeoutMs: 60 * 60 * 1000,
+        });
+      } catch (error) {
+        console.error("[devbox_v2.pause] Vercel extendTimeout failed (sandbox may have expired):", error);
       }
     }
 
@@ -579,13 +680,16 @@ async function handlePauseInstance(
 
     await recordProviderActivity(ctx, provider, providerInstanceId, "pause");
 
+    const noteMap: Record<SandboxProvider, string> = {
+      modal: "Modal status updated (no true pause)",
+      e2b: "E2B timeout extended (no true pause)",
+      vercel: "Vercel timeout extended (no true pause)",
+    };
+
     return jsonResponse({
       paused: true,
       provider,
-      note:
-        provider === "modal"
-          ? "Modal status updated (no true pause)"
-          : "E2B timeout extended (no true pause)",
+      note: noteMap[provider],
     });
   } catch (error) {
     console.error("[devbox_v2.pause] Error:", error);
@@ -691,7 +795,11 @@ async function handleStopInstance(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      provider === "modal"
+        ? modalActionsApi
+        : provider === "vercel"
+          ? vercelActionsApi
+          : e2bActionsApi;
 
     try {
       await ctx.runAction(actionsApi.stopInstance, {
@@ -745,7 +853,11 @@ async function handleDeleteInstance(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      provider === "modal"
+        ? modalActionsApi
+        : provider === "vercel"
+          ? vercelActionsApi
+          : e2bActionsApi;
 
     // Terminate the sandbox at the provider level
     try {
@@ -810,6 +922,11 @@ async function handleUpdateTtl(
         instanceId: providerInstanceId,
         timeoutMs: ttlSeconds * 1000,
       });
+    } else if (provider === "vercel") {
+      await ctx.runAction(vercelActionsApi.extendTimeout, {
+        instanceId: providerInstanceId,
+        timeoutMs: ttlSeconds * 1000,
+      });
     }
     // Modal sandbox timeout is set at creation; TTL extension is a no-op
 
@@ -828,7 +945,7 @@ export const getConfig = httpAction(async (ctx) => {
   if (error) return error;
 
   return jsonResponse({
-    providers: ["e2b", "modal"],
+    providers: ["e2b", "modal", "vercel"],
     defaultProvider: "e2b",
     e2b: {
       defaultTemplateId: DEFAULT_E2B_TEMPLATE_ID,
@@ -836,6 +953,10 @@ export const getConfig = httpAction(async (ctx) => {
     modal: {
       defaultTemplateId: DEFAULT_MODAL_TEMPLATE_ID,
       gpuOptions: ["T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", "H200", "B200"],
+    },
+    vercel: {
+      defaultTemplateId: DEFAULT_VERCEL_TEMPLATE_ID,
+      runtimes: ["node24", "node22", "python3.13"],
     },
   });
 });
@@ -941,7 +1062,11 @@ async function handleGetAuthToken(
 
     const { provider, providerInstanceId } = providerInfo;
     const actionsApi =
-      provider === "modal" ? modalActionsApi : e2bActionsApi;
+      provider === "modal"
+        ? modalActionsApi
+        : provider === "vercel"
+          ? vercelActionsApi
+          : e2bActionsApi;
 
     const result = (await ctx.runAction(actionsApi.execCommand, {
       instanceId: providerInstanceId,
@@ -1114,7 +1239,20 @@ export const listTemplates = httpAction(async (ctx, req) => {
         }))
       : [];
 
+  const vercelTemplates =
+    !providerFilter || providerFilter === "vercel"
+      ? VERCEL_TEMPLATE_PRESETS.map((preset) => ({
+          provider: "vercel" as const,
+          templateId: preset.templateId,
+          name: preset.label,
+          description: preset.description,
+          cpu: preset.cpu,
+          memory: preset.memory,
+          runtime: preset.runtime,
+        }))
+      : [];
+
   return jsonResponse({
-    templates: [...e2bTemplates, ...modalTemplates],
+    templates: [...e2bTemplates, ...modalTemplates, ...vercelTemplates],
   });
 });
