@@ -637,10 +637,6 @@ export type SandboxSshResponse = {
      * Full SSH command to connect to this sandbox
      */
     sshCommand: string;
-    /**
-     * SSH access token for this sandbox
-     */
-    accessToken: string;
     user: string;
     /**
      * Current instance status
@@ -2678,6 +2674,10 @@ export type PostApiSandboxesByIdStopErrors = {
      */
     401: unknown;
     /**
+     * Forbidden - not authorized to access this instance
+     */
+    403: unknown;
+    /**
      * Not found
      */
     404: unknown;
@@ -2710,6 +2710,14 @@ export type GetApiSandboxesByIdStatusErrors = {
      * Unauthorized
      */
     401: unknown;
+    /**
+     * Forbidden - not authorized to access this instance
+     */
+    403: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
     /**
      * Failed to get status
      */
