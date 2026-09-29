@@ -161,18 +161,26 @@ RUN chmod +x /home/user/.vnc/xstartup \
 COPY worker/start-services-docker.sh /usr/local/bin/start-services.sh
 RUN chmod +x /usr/local/bin/start-services.sh
 
-# Install Go for building worker daemon
-RUN wget -q https://go.dev/dl/go1.24.2.linux-amd64.tar.gz \
-    && tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz \
-    && rm go1.24.2.linux-amd64.tar.gz
+# Install the patched Go toolchain used by go.mod for the worker daemon. The
+# checksum pins the archive listed by the official Go release manifest.
+ARG GO_VERSION=1.26.8
+ARG GO_LINUX_AMD64_SHA256=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
+RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz \
+    && echo "${GO_LINUX_AMD64_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \
+    && test "$(/usr/local/go/bin/go env GOVERSION)" = "go${GO_VERSION}" \
+    && rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:$PATH"
 
 # Build Go worker daemon (standalone binary, no internal dependencies)
 COPY go.mod go.sum /tmp/worker-build/
 COPY cmd/worker /tmp/worker-build/cmd/worker/
+# The worker applies PR_SET_NO_NEW_PRIVS to every Go runtime thread. A cgo
+# binary can contain threads outside that runtime, so build this daemon
+# statically and fail closed rather than leave an unprotected thread behind.
 RUN cd /tmp/worker-build && \
     go mod download && \
-    go build -ldflags="-s -w" -o /usr/local/bin/worker-daemon ./cmd/worker && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/worker-daemon ./cmd/worker && \
     rm -rf /tmp/worker-build
 
 # Install JupyterLab + basic data science packages
@@ -189,9 +197,6 @@ RUN pip3 install --no-cache-dir \
     anthropic
 
 # VNC auth proxy and browser agent are now built into the Go worker daemon
-
-# Make sure user can run services - add to sudoers
-RUN echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Set working directory
 WORKDIR /home/user/workspace

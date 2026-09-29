@@ -23,7 +23,20 @@ func (bm *browserManager) Screenshot() (map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	targetPath := "/tmp/screenshot.png"
+	tempFile, err := os.CreateTemp(workspaceDir, ".cmux-screenshot-*.png")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create screenshot path: %w", err)
+	}
+	targetPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(targetPath)
+		return nil, fmt.Errorf("failed to prepare screenshot path: %w", err)
+	}
+	if err := os.Remove(targetPath); err != nil {
+		return nil, fmt.Errorf("failed to prepare screenshot path: %w", err)
+	}
+	defer func() { _ = os.Remove(targetPath) }()
+
 	cmd := exec.CommandContext(ctx, "agent-browser", "screenshot", targetPath)
 	cmd.Dir = workspaceDir
 	cmd.Env = append(os.Environ(),
