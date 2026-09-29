@@ -12,6 +12,22 @@ const DEFAULT_SETTINGS = {
   minContainersToKeep: 0,
 };
 
+type ContainerSettingsUpdatePayload = {
+  teamSlugOrId: string;
+  maxRunningContainers?: number;
+  reviewPeriodMinutes?: number;
+  autoCleanupEnabled?: boolean;
+  stopImmediatelyOnCompletion?: boolean;
+  minContainersToKeep?: number;
+};
+
+export function buildContainerSettingsUpdatePayload({
+  teamSlugOrId: _teamSlugOrId,
+  ...settings
+}: ContainerSettingsUpdatePayload) {
+  return settings;
+}
+
 // Get container settings
 export const get = authQuery({
   args: { teamSlugOrId: v.string() },
@@ -53,6 +69,7 @@ export const update = authMutation({
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const settings = buildContainerSettingsUpdatePayload(args);
     const existing = await ctx.db
       .query("containerSettings")
       .withIndex("by_team_user", (q) =>
@@ -63,14 +80,14 @@ export const update = authMutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        ...args,
+        ...settings,
         userId,
         teamId,
         updatedAt: now,
       });
     } else {
       await ctx.db.insert("containerSettings", {
-        ...args,
+        ...settings,
         userId,
         teamId,
         createdAt: now,

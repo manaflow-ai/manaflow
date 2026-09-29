@@ -5,11 +5,13 @@ import {
   type ResolvedTheme,
   ThemeProviderContext,
 } from "./theme-context";
+import {
+  settleThemeViewTransition,
+  shouldStartThemeViewTransition,
+} from "./theme-transition";
 
 type DocumentWithStartViewTransition = Document & {
-  startViewTransition?: (
-    callback: () => void
-  ) => ViewTransition;
+  startViewTransition?: (callback: () => void) => ViewTransition;
 };
 
 type ThemeProviderProps = {
@@ -22,9 +24,7 @@ const getInitialResolvedTheme = (): ResolvedTheme => {
   if (typeof document === "undefined") {
     return "light";
   }
-  return document.documentElement.classList.contains("dark")
-    ? "dark"
-    : "light";
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
 };
 
 export function ThemeProvider({
@@ -34,11 +34,11 @@ export function ThemeProvider({
   ...props
 }: ThemeProviderProps) {
   const [theme, setThemeState] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
+    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme,
   );
   const resolvedThemeRef = useRef<ResolvedTheme>(getInitialResolvedTheme());
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(
-    resolvedThemeRef.current
+    resolvedThemeRef.current,
   );
   const isInitialRenderRef = useRef(true);
 
@@ -46,14 +46,15 @@ export function ThemeProvider({
     const root = window.document.documentElement;
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const computeSystem = (): ResolvedTheme => (mediaQuery.matches ? "dark" : "light");
-    const prefersReducedMotion = window
-      .matchMedia("(prefers-reduced-motion: reduce)")
-      .matches;
+    const computeSystem = (): ResolvedTheme =>
+      mediaQuery.matches ? "dark" : "light";
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
 
     const applyTheme = (
       next: ResolvedTheme,
-      { withTransition }: { withTransition: boolean }
+      { withTransition }: { withTransition: boolean },
     ) => {
       const updateTheme = () => {
         root.classList.remove("light", "dark");
@@ -65,21 +66,31 @@ export function ThemeProvider({
         }
       };
 
-      const documentWithTransition = document as DocumentWithStartViewTransition;
-      const startViewTransition = documentWithTransition.startViewTransition?.bind(
-        documentWithTransition
-      );
-      const shouldAnimate =
-        withTransition &&
-        !prefersReducedMotion &&
-        typeof startViewTransition === "function";
+      const documentWithTransition =
+        document as DocumentWithStartViewTransition;
+      const startViewTransition =
+        documentWithTransition.startViewTransition?.bind(
+          documentWithTransition,
+        );
+      const shouldAnimate = shouldStartThemeViewTransition({
+        withTransition,
+        prefersReducedMotion,
+        visibilityState: document.visibilityState,
+        hasViewTransitionAPI: typeof startViewTransition === "function",
+      });
 
-      if (shouldAnimate) {
-        startViewTransition(() => {
-          flushSync(() => {
-            updateTheme();
+      if (shouldAnimate && startViewTransition) {
+        try {
+          const transition = startViewTransition(() => {
+            flushSync(() => {
+              updateTheme();
+            });
           });
-        });
+          void settleThemeViewTransition(transition);
+        } catch (error) {
+          console.error("Failed to start theme view transition", error);
+          updateTheme();
+        }
         return;
       }
 
