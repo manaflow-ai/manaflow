@@ -178,7 +178,7 @@
     "@types/react-dom": "^19.2.2",
     "@types/semver": "^7.7.1",
     "@vitejs/plugin-react": "^4.5.2",
-    "electron": "38.0.0",
+    "electron": "41.10.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
     "eslint": "^9.29.0",
