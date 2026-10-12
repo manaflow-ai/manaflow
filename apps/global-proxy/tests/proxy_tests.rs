@@ -244,6 +244,11 @@ impl TestWsBackend {
         }
     }
 
+    // Tungstenite fixes the callback error type to its large HTTP response.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the dependency fixes this callback error type"
+    )]
     async fn spawn_with_handshake(protocol: Option<&str>, extensions: Option<&str>) -> Self {
         let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
@@ -325,6 +330,11 @@ impl TestWsBackend {
         }
     }
 
+    // Tungstenite fixes the callback error type to its large HTTP response.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the dependency fixes this callback error type"
+    )]
     async fn spawn_capture_workspace_header()
     -> (Self, tokio::sync::oneshot::Receiver<Option<String>>) {
         let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))

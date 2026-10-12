@@ -31,6 +31,9 @@ use http::header::{CONNECTION, HOST, UPGRADE};
 type BoxBody =
     http_body_util::combinators::BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
+type ProxyResponse = Response<BoxBody>;
+type ProxyResponseError = Box<ProxyResponse>;
+type ProxyResult<T> = Result<T, ProxyResponseError>;
 const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HOST_OVERRIDE_HEADER: &str = "X-Cmux-Host-Override";
 const HTTP2_KEEP_ALIVE_INTERVAL_SECS: u64 = 30;
@@ -512,12 +515,11 @@ async fn sniff_http2_preface(stream: TcpStream) -> io::Result<(BufferedStream, b
     Ok((BufferedStream::new(stream, buffer), is_http2))
 }
 
-#[allow(clippy::result_large_err)]
-fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<BoxBody>> {
+fn get_port_from_header(headers: &HeaderMap) -> ProxyResult<u16> {
     const HDR: &str = "X-Cmux-Port-Internal";
     if let Some(val) = headers.get(HDR) {
         let s = val.to_str().map_err(|_| {
-            response_with(
+            response_error(
                 StatusCode::BAD_REQUEST,
                 "invalid header value (not UTF-8)".to_string(),
             )
@@ -525,14 +527,14 @@ fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<BoxBody>> {
 
         let s = s.trim();
         if s.is_empty() {
-            return Err(response_with(
+            return Err(response_error(
                 StatusCode::BAD_REQUEST,
                 "header value cannot be empty".to_string(),
             ));
         }
 
         let port: u16 = s.parse().map_err(|_| {
-            response_with(
+            response_error(
                 StatusCode::BAD_REQUEST,
                 "invalid port in X-Cmux-Port-Internal".to_string(),
             )
@@ -545,7 +547,7 @@ fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<BoxBody>> {
         return Ok(port);
     }
 
-    Err(response_with(
+    Err(response_error(
         StatusCode::BAD_REQUEST,
         format!("missing required header: {}", HDR),
     ))
@@ -585,29 +587,28 @@ pub fn workspace_ip_from_name(name: &str) -> Option<std::net::Ipv4Addr> {
     Some(Ipv4Addr::new(127, 18, b2, b3))
 }
 
-#[allow(clippy::result_large_err)]
 fn upstream_host_from_headers(
     headers: &HeaderMap,
     default_host: &str,
     allow_default_without_workspace: bool,
-) -> Result<String, Response<BoxBody>> {
+) -> ProxyResult<String> {
     const HDR_WS: &str = "X-Cmux-Workspace-Internal";
     if let Some(val) = headers.get(HDR_WS) {
         let v = val.to_str().map_err(|_| {
-            response_with(
+            response_error(
                 StatusCode::BAD_REQUEST,
                 format!("invalid header value (not UTF-8): {}", HDR_WS),
             )
         })?;
         let ws = v.trim();
         if ws.is_empty() {
-            return Err(response_with(
+            return Err(response_error(
                 StatusCode::BAD_REQUEST,
                 format!("{} cannot be empty", HDR_WS),
             ));
         }
         let ip = workspace_ip_from_name(ws).ok_or_else(|| {
-            response_with(
+            response_error(
                 StatusCode::BAD_REQUEST,
                 format!("invalid workspace name: {}", ws),
             )
@@ -624,7 +625,7 @@ fn upstream_host_from_headers(
         if let Some(ip) = workspace_ip_from_name(&ws) {
             return Ok(ip.to_string());
         } else {
-            return Err(response_with(
+            return Err(response_error(
                 StatusCode::BAD_REQUEST,
                 format!("invalid workspace name: {}", ws),
             ));
@@ -684,16 +685,11 @@ fn strip_hop_by_hop_headers(h: &mut HeaderMap) {
     }
 }
 
-#[allow(clippy::result_large_err)]
-fn build_upstream_uri(
-    upstream_host: &str,
-    port: u16,
-    orig: &Uri,
-) -> Result<Uri, Response<BoxBody>> {
+fn build_upstream_uri(upstream_host: &str, port: u16, orig: &Uri) -> ProxyResult<Uri> {
     let path_and_query = orig.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
     let uri_str = format!("http://{}:{}{}", upstream_host, port, path_and_query);
     Uri::from_str(&uri_str)
-        .map_err(|_| response_with(StatusCode::BAD_GATEWAY, "invalid upstream uri".into()))
+        .map_err(|_| response_error(StatusCode::BAD_GATEWAY, "invalid upstream uri".into()))
 }
 
 // Attempt to parse a pattern like: <workspace>-<port>.localhost[:...]
@@ -733,18 +729,14 @@ fn parse_workspace_port_from_host(headers: &HeaderMap) -> Option<(String, u16)> 
     Some((ws_part.to_string(), port))
 }
 
-#[allow(clippy::result_large_err)]
-fn enforce_local_host_header(
-    headers: &HeaderMap,
-    host_override: Option<&str>,
-) -> Result<(), Response<BoxBody>> {
+fn enforce_local_host_header(headers: &HeaderMap, host_override: Option<&str>) -> ProxyResult<()> {
     if host_override.is_some() {
         return Ok(());
     }
 
     if let Some(value) = headers.get(HOST) {
         value.to_str().map_err(|_| {
-            response_with(
+            response_error(
                 StatusCode::BAD_REQUEST,
                 "invalid Host header (not UTF-8)".to_string(),
             )
@@ -762,6 +754,10 @@ fn response_with(status: StatusCode, msg: String) -> Response<BoxBody> {
         .unwrap()
 }
 
+fn response_error(status: StatusCode, msg: String) -> ProxyResponseError {
+    Box::new(response_with(status, msg))
+}
+
 async fn handle(
     client: Client<HttpConnector, BoxBody>,
     cfg: ProxyConfig,
@@ -774,18 +770,18 @@ async fn handle(
     match method {
         Method::CONNECT => match handle_connect(req, &cfg, remote_addr).await {
             Ok(resp) => Ok(resp),
-            Err(resp) => Ok(resp),
+            Err(resp) => Ok(*resp),
         },
         _ => {
             if is_upgrade {
                 match handle_upgrade(client, cfg, remote_addr, req).await {
                     Ok(resp) => Ok(resp),
-                    Err(resp) => Ok(resp),
+                    Err(resp) => Ok(*resp),
                 }
             } else {
                 match handle_http(client, &cfg, remote_addr, req).await {
                     Ok(resp) => Ok(resp),
-                    Err(resp) => Ok(resp),
+                    Err(resp) => Ok(*resp),
                 }
             }
         }
@@ -797,7 +793,7 @@ async fn handle_http(
     cfg: &ProxyConfig,
     remote_addr: SocketAddr,
     req: Request<Incoming>,
-) -> Result<Response<BoxBody>, Response<BoxBody>> {
+) -> ProxyResult<ProxyResponse> {
     let (mut parts, incoming) = req.into_parts();
 
     let port = get_port_from_header(&parts.headers)?;
@@ -844,7 +840,7 @@ async fn handle_http(
     );
 
     let upstream_resp = client.request(new_req).await.map_err(|e| {
-        response_with(
+        response_error(
             StatusCode::BAD_GATEWAY,
             format!("upstream request error: {}", e),
         )
@@ -863,7 +859,7 @@ async fn handle_http(
 
     let body = incoming_to_box(upstream_resp.into_body());
     let resp = client_resp_builder.body(body).map_err(|_| {
-        response_with(
+        response_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to build response".into(),
         )
@@ -876,7 +872,7 @@ async fn handle_upgrade(
     cfg: ProxyConfig,
     remote_addr: SocketAddr,
     req: Request<Incoming>,
-) -> Result<Response<BoxBody>, Response<BoxBody>> {
+) -> ProxyResult<ProxyResponse> {
     // Treat as reverse-proxied upgrade (e.g., WebSocket). We forward the request to upstream,
     // then mirror the 101 response headers to the client and tunnel bytes between both upgrades.
 
@@ -916,7 +912,7 @@ async fn handle_upgrade(
     let (parts, incoming) = req.into_parts();
     let proxied_body: BoxBody = incoming_to_box(incoming);
     let mut proxied_req = proxied_req_builder.body(proxied_body).map_err(|_| {
-        response_with(
+        response_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to build upgrade request".into(),
         )
@@ -938,7 +934,7 @@ async fn handle_upgrade(
 
     // Send to upstream and get its response (should be 101)
     let upstream_resp = client.request(proxied_req).await.map_err(|e| {
-        response_with(
+        response_error(
             StatusCode::BAD_GATEWAY,
             format!("upstream upgrade error: {}", e),
         )
@@ -954,7 +950,7 @@ async fn handle_upgrade(
         }
         let body = incoming_to_box(upstream_resp.into_body());
         return builder.body(body).map_err(|_| {
-            response_with(
+            response_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to build response".into(),
             )
@@ -974,7 +970,7 @@ async fn handle_upgrade(
 
     // Prepare response to client (empty body; the connection upgrades)
     let client_resp = client_resp_builder.body(empty_body()).map_err(|_| {
-        response_with(
+        response_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to build upgrade response".into(),
         )
@@ -1014,7 +1010,7 @@ async fn handle_connect(
     req: Request<Incoming>,
     cfg: &ProxyConfig,
     remote_addr: SocketAddr,
-) -> Result<Response<BoxBody>, Response<BoxBody>> {
+) -> ProxyResult<ProxyResponse> {
     let port = get_port_from_header(req.headers())?;
     let upstream_host = upstream_host_from_headers(
         req.headers(),
@@ -1033,7 +1029,7 @@ async fn handle_connect(
         .header(CONNECTION, HeaderValue::from_static("upgrade"))
         .body(empty_body())
         .map_err(|_| {
-            response_with(
+            response_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to build CONNECT response".into(),
             )

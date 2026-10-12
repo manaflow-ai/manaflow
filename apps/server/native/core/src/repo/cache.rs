@@ -146,7 +146,7 @@ fn update_cache_index(root: &Path, repo_path: &Path) -> Result<()> {
         });
     }
     idx.entries
-        .sort_by(|a, b| b.last_access_ms.cmp(&a.last_access_ms));
+        .sort_by_key(|entry| std::cmp::Reverse(entry.last_access_ms));
     idx.entries.dedup_by(|a, b| a.slug == b.slug);
     save_index(root, &idx)?;
     Ok(())
@@ -186,7 +186,7 @@ fn update_cache_index_with(
         });
     }
     idx.entries
-        .sort_by(|a, b| b.last_access_ms.cmp(&a.last_access_ms));
+        .sort_by_key(|entry| std::cmp::Reverse(entry.last_access_ms));
     idx.entries.dedup_by(|a, b| a.slug == b.slug);
     save_index(root, &idx)?;
     Ok(())
@@ -265,7 +265,7 @@ fn enforce_cache_limit(root: &Path) -> Result<()> {
         return Ok(());
     }
     idx.entries
-        .sort_by(|a, b| b.last_access_ms.cmp(&a.last_access_ms));
+        .sort_by_key(|entry| std::cmp::Reverse(entry.last_access_ms));
     let survivors = idx.entries[..MAX_CACHE_REPOS].to_vec();
     let victims = idx.entries[MAX_CACHE_REPOS..].to_vec();
     for v in &victims {
