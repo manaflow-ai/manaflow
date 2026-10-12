@@ -23,6 +23,7 @@ type IncrementMode = "major" | "minor" | "patch";
 type RunOptions = {
   allowNonZeroExit?: boolean;
   stdio?: "pipe" | "inherit";
+  env?: NodeJS.ProcessEnv;
 };
 
 type RunResult = {
@@ -51,16 +52,23 @@ function writeGithubOutput(key: string, value: string): void {
 
 function usage(): never {
   console.error(
-    `Usage: ./scripts/${scriptName} [major|minor|patch|<semver>]\nExamples:\n  ./scripts/${scriptName}\n  ./scripts/${scriptName} minor\n  ./scripts/${scriptName} 1.2.3`
+    `Usage: ./scripts/${scriptName} [major|minor|patch|<semver>]\nExamples:\n  ./scripts/${scriptName}\n  ./scripts/${scriptName} minor\n  ./scripts/${scriptName} 1.2.3`,
   );
   return process.exit(1);
 }
 
-function run(command: string, args: string[], options: RunOptions = {}): RunResult {
+function run(
+  command: string,
+  args: string[],
+  options: RunOptions = {},
+): RunResult {
   const spawnOptions: SpawnSyncOptions = {
     cwd: process.cwd(),
     stdio: options.stdio ?? "pipe",
   };
+  if (options.env) {
+    spawnOptions.env = options.env;
+  }
 
   if ((options.stdio ?? "pipe") === "pipe") {
     spawnOptions.encoding = "utf8";
@@ -77,11 +85,41 @@ function run(command: string, args: string[], options: RunOptions = {}): RunResu
   const status = typeof result.status === "number" ? result.status : 0;
 
   if (status !== 0 && !options.allowNonZeroExit) {
-    const errorMessage = stderr.trim() || stdout.trim() || `${command} ${args.join(" ")}`;
-    throw new Error(`Command failed (${command} ${args.join(" ")}): ${errorMessage}`);
+    const errorMessage =
+      stderr.trim() || stdout.trim() || `${command} ${args.join(" ")}`;
+    throw new Error(
+      `Command failed (${command} ${args.join(" ")}): ${errorMessage}`,
+    );
   }
 
   return { stdout, stderr, status };
+}
+
+function runGit(args: string[], options: RunOptions = {}): RunResult {
+  const baseEnv = { ...process.env, ...options.env };
+  const token = baseEnv.GITHUB_TOKEN;
+  if (!token) {
+    return run("git", args, options);
+  }
+
+  const configuredCount = Number.parseInt(
+    baseEnv.GIT_CONFIG_COUNT ?? "0",
+    10,
+  );
+  const configIndex =
+    Number.isSafeInteger(configuredCount) && configuredCount >= 0
+      ? configuredCount
+      : 0;
+
+  return run("git", args, {
+    ...options,
+    env: {
+      ...baseEnv,
+      GIT_CONFIG_COUNT: String(configIndex + 1),
+      [`GIT_CONFIG_KEY_${configIndex}`]: "http.https://github.com/.extraheader",
+      [`GIT_CONFIG_VALUE_${configIndex}`]: `AUTHORIZATION: bearer ${token}`,
+    },
+  });
 }
 
 function ensureGitAvailable(): void {
@@ -103,7 +141,9 @@ function parseSemverParts(value: string): [number, number, number] {
   if (!isSemver(value)) {
     throw new Error(`Version "${value}" is not a valid semver (x.y.z).`);
   }
-  const [major, minor, patch] = value.split(".").map((part) => Number.parseInt(part, 10));
+  const [major, minor, patch] = value
+    .split(".")
+    .map((part) => Number.parseInt(part, 10));
   return [major, minor, patch];
 }
 
@@ -145,11 +185,15 @@ function loadCurrentVersion(): string {
   const parsed: PackageJson = JSON.parse(raw);
 
   if (typeof parsed.version !== "string" || !parsed.version) {
-    throw new Error("Unable to read current version from apps/client/package.json.");
+    throw new Error(
+      "Unable to read current version from apps/client/package.json.",
+    );
   }
 
   if (!isSemver(parsed.version)) {
-    throw new Error(`Current version "${parsed.version}" is not in the expected x.y.z format.`);
+    throw new Error(
+      `Current version "${parsed.version}" is not in the expected x.y.z format.`,
+    );
   }
 
   return parsed.version;
@@ -188,7 +232,9 @@ function updateVersionFile(version: string): void {
 function resolveRepository(): Repository {
   const repository = process.env.GITHUB_REPOSITORY ?? "";
   if (!repository.includes("/")) {
-    throw new Error("GITHUB_REPOSITORY is not set. This script must run in GitHub Actions.");
+    throw new Error(
+      "GITHUB_REPOSITORY is not set. This script must run in GitHub Actions.",
+    );
   }
   const [owner, name] = repository.split("/");
   return { owner, name };
@@ -210,8 +256,14 @@ function getBaseBranch(): string {
   return process.env.RELEASE_BASE_BRANCH?.trim() || defaultBaseBranch;
 }
 
-async function findExistingPullRequest(branchName: string, repo: Repository, token: string): Promise<PullRequest | null> {
-  const url = new URL(`https://api.github.com/repos/${repo.owner}/${repo.name}/pulls`);
+async function findExistingPullRequest(
+  branchName: string,
+  repo: Repository,
+  token: string,
+): Promise<PullRequest | null> {
+  const url = new URL(
+    `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls`,
+  );
   url.searchParams.set("head", `${repo.owner}:${branchName}`);
   url.searchParams.set("state", "open");
 
@@ -237,28 +289,31 @@ async function createPullRequest(
   token: string,
   branchName: string,
   version: string,
-  baseBranch: string
+  baseBranch: string,
 ): Promise<PullRequest> {
-  const response = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}/pulls`, {
-    method: "POST",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+  const response = await fetch(
+    `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({
+        title: `chore: release v${version}`,
+        head: branchName,
+        base: baseBranch,
+        draft: true,
+        body: [
+          `Automated release for v${version}.`,
+          "- Bumps the app version in apps/client/package.json.",
+          "- Please review and merge to publish the release.",
+        ].join("\n"),
+      }),
     },
-    body: JSON.stringify({
-      title: `chore: release v${version}`,
-      head: branchName,
-      base: baseBranch,
-      draft: true,
-      body: [
-        `Automated release for v${version}.`,
-        "- Bumps the app version in apps/client/package.json.",
-        "- Please review and merge to publish the release.",
-      ].join("\n"),
-    }),
-  });
+  );
 
   if (!response.ok) {
     const message = await response.text();
@@ -282,18 +337,30 @@ async function main(): Promise<void> {
 
   ensureGitAvailable();
 
-  const statusOutput = run("git", ["status", "--porcelain", "--untracked-files=no"]).stdout.trim();
+  const statusOutput = run("git", [
+    "status",
+    "--porcelain",
+    "--untracked-files=no",
+  ]).stdout.trim();
   if (statusOutput) {
-    throw new Error("Working tree has tracked changes. Commit or stash them before releasing.");
+    throw new Error(
+      "Working tree has tracked changes. Commit or stash them before releasing.",
+    );
   }
 
-  const currentBranch = run("git", ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
+  const currentBranch = run("git", [
+    "rev-parse",
+    "--abbrev-ref",
+    "HEAD",
+  ]).stdout.trim();
   if (currentBranch === "HEAD") {
-    throw new Error("You are in a detached HEAD state. Check out a branch before releasing.");
+    throw new Error(
+      "You are in a detached HEAD state. Check out a branch before releasing.",
+    );
   }
 
-  const remotes = run("git", ["remote"]).stdout
-    .split(/\r?\n/)
+  const remotes = run("git", ["remote"])
+    .stdout.split(/\r?\n/)
     .map((remote) => remote.trim())
     .filter(Boolean);
 
@@ -303,7 +370,7 @@ async function main(): Promise<void> {
 
   const firstRemote = remotes[0] ?? "";
 
-  run("git", ["fetch", "--tags", firstRemote], { stdio: "inherit" });
+  runGit(["fetch", "--tags", firstRemote], { stdio: "inherit" });
 
   const packageVersion = loadCurrentVersion();
   const highestTagVersion = determineHighestTagVersion();
@@ -319,10 +386,16 @@ async function main(): Promise<void> {
 
   if (!bumpTarget) {
     newVersion = incrementVersion("patch", baseVersion);
-  } else if (bumpTarget === "major" || bumpTarget === "minor" || bumpTarget === "patch") {
+  } else if (
+    bumpTarget === "major" ||
+    bumpTarget === "minor" ||
+    bumpTarget === "patch"
+  ) {
     newVersion = incrementVersion(bumpTarget, baseVersion);
   } else {
-    const manualTarget = bumpTarget.startsWith("v") ? bumpTarget.slice(1) : bumpTarget;
+    const manualTarget = bumpTarget.startsWith("v")
+      ? bumpTarget.slice(1)
+      : bumpTarget;
     newVersion = manualTarget;
   }
 
@@ -331,32 +404,46 @@ async function main(): Promise<void> {
   }
 
   if (compareSemver(newVersion, baseVersion) <= 0) {
-    throw new Error(`New version ${newVersion} must be greater than existing version ${baseVersion}.`);
+    throw new Error(
+      `New version ${newVersion} must be greater than existing version ${baseVersion}.`,
+    );
   }
 
-  const localTagCheck = run("git", ["rev-parse", "-q", "--verify", `refs/tags/v${newVersion}`], {
-    allowNonZeroExit: true,
-  });
+  const localTagCheck = run(
+    "git",
+    ["rev-parse", "-q", "--verify", `refs/tags/v${newVersion}`],
+    {
+      allowNonZeroExit: true,
+    },
+  );
   if (localTagCheck.status === 0) {
     throw new Error(`Tag v${newVersion} already exists locally.`);
   }
 
-  const remoteTagCheck = run("git", ["ls-remote", "--tags", firstRemote, `refs/tags/v${newVersion}`], {
-    allowNonZeroExit: true,
-  });
+  const remoteTagCheck = runGit(
+    ["ls-remote", "--tags", firstRemote, `refs/tags/v${newVersion}`],
+    {
+      allowNonZeroExit: true,
+    },
+  );
   if (remoteTagCheck.stdout.trim()) {
     throw new Error(`Tag v${newVersion} already exists on ${firstRemote}.`);
   }
 
   const branchName = buildReleaseBranch(newVersion);
 
-  const branchCheck = run("git", ["ls-remote", "--heads", firstRemote, branchName], { allowNonZeroExit: true });
+  const branchCheck = runGit(
+    ["ls-remote", "--heads", firstRemote, branchName],
+    { allowNonZeroExit: true },
+  );
   if (branchCheck.stdout.trim()) {
     const repo = resolveRepository();
     const token = ensureToken();
     const existing = await findExistingPullRequest(branchName, repo, token);
     if (existing) {
-      console.log(`Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`);
+      console.log(
+        `Release branch ${branchName} already has open PR #${existing.number}: ${existing.html_url}`,
+      );
       writeGithubOutput("release_branch", branchName);
       writeGithubOutput("release_version", newVersion);
       writeGithubOutput("release_pr_state", "existing");
@@ -367,7 +454,7 @@ async function main(): Promise<void> {
     }
     // Branch exists but no open PR - delete the stale branch and continue
     console.log(`Deleting stale branch ${branchName} (no open PR found)`);
-    run("git", ["push", firstRemote, "--delete", branchName], { stdio: "inherit" });
+    runGit(["push", firstRemote, "--delete", branchName], { stdio: "inherit" });
   }
 
   updateVersionFile(newVersion);
@@ -376,9 +463,11 @@ async function main(): Promise<void> {
 
   run("git", ["checkout", "-b", branchName], { stdio: "inherit" });
 
-  run("git", ["commit", "-m", `chore: release v${newVersion}`], { stdio: "inherit" });
+  run("git", ["commit", "-m", `chore: release v${newVersion}`], {
+    stdio: "inherit",
+  });
 
-  run("git", ["push", "-u", firstRemote, branchName], { stdio: "inherit" });
+  runGit(["push", "-u", firstRemote, branchName], { stdio: "inherit" });
 
   writeGithubOutput("release_branch", branchName);
   writeGithubOutput("release_version", newVersion);
@@ -388,13 +477,21 @@ async function main(): Promise<void> {
   const token = ensureToken();
   const baseBranch = getBaseBranch();
 
-  const pullRequest = await createPullRequest(repo, token, branchName, newVersion, baseBranch);
+  const pullRequest = await createPullRequest(
+    repo,
+    token,
+    branchName,
+    newVersion,
+    baseBranch,
+  );
 
   writeGithubOutput("release_pr_state", "created");
   writeGithubOutput("release_pr_number", pullRequest.number.toString());
   writeGithubOutput("release_pr_url", pullRequest.html_url);
 
-  console.log(`Created draft release PR #${pullRequest.number}: ${pullRequest.html_url}`);
+  console.log(
+    `Created draft release PR #${pullRequest.number}: ${pullRequest.html_url}`,
+  );
 }
 
 void (async () => {

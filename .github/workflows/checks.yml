@@ -5,18 +5,25 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
+    name: Verify
     runs-on: ubuntu-24.04
-    environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.2.21
 
       - name: Cache Bun install cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.bun/install/cache
@@ -25,35 +32,25 @@ jobs:
             ${{ runner.os }}-bun-install-
 
       - name: Use Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Checks and tests (parallel on one runner)
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
-          STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}
-          STACK_DATA_VAULT_SECRET: ${{ secrets.STACK_DATA_VAULT_SECRET }}
-          CMUX_GITHUB_APP_ID: ${{ secrets.CMUX_GITHUB_APP_ID }}
-          CMUX_GITHUB_APP_PRIVATE_KEY: ${{ secrets.CMUX_GITHUB_APP_PRIVATE_KEY }}
-          CMUX_TASK_RUN_JWT_SECRET: ${{ secrets.CMUX_TASK_RUN_JWT_SECRET }}
-          MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          CI: "true"
         run: |
           set -euo pipefail
           bun run check & pid1=$!
           (cd packages/cmux && bun run test) & pid2=$!
-          wait $pid1; s1=$?
-          wait $pid2; s2=$?
+          s1=0
+          s2=0
+          wait "$pid1" || s1=$?
+          wait "$pid2" || s2=$?
           if [ $s1 -ne 0 ] || [ $s2 -ne 0 ]; then
             echo "At least one task failed"
             exit 1

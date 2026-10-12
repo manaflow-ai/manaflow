@@ -10,8 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   NODE_VERSION: "24"
@@ -21,32 +20,41 @@ env:
 jobs:
   morph-snapshot:
     name: Build Morph Snapshot
+    # This job has write permissions and a Morph API credential. Always run
+    # the checked-in main revision, including for a manual dispatch.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: dev
+    permissions:
+      contents: write # Push the generated snapshot branch.
+      pull-requests: write # Open the generated snapshot pull request.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.5.0
 
       - name: Cache Bun install cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.bun/install/cache
@@ -99,6 +107,12 @@ jobs:
       - name: Create branch and commit
         if: steps.changes.outputs.has_changes == 'true'
         id: commit
+        env:
+          # Supply GitHub authentication through process environment config,
+          # not a command-line argument that other local processes can read.
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: http.https://github.com/.extraheader
+          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
         run: |
           BRANCH_NAME="morph-snapshot-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH_NAME"
@@ -111,6 +125,7 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_BRANCH: ${{ steps.commit.outputs.branch }}
         run: |
           gh pr create \
             --title "chore: daily morph snapshot update" \
@@ -122,5 +137,5 @@ jobs:
 
           ## Test plan
           - [ ] Verify new snapshots work by starting a sandbox session" \
-            --head "${{ steps.commit.outputs.branch }}" \
+            --head "$SNAPSHOT_BRANCH" \
             --base main

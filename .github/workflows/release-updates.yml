@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NODE_VERSION: "24"
@@ -23,14 +23,24 @@ env:
 jobs:
   prepare-release:
     name: Prepare Release
+    # Publishing uses repository write access and signing credentials. Permit
+    # only main, generated release branches, and version tags.
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/v') ||
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.tag }}
     permissions:
+      # Required to create the draft release record.
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Resolve release tag
@@ -101,18 +111,18 @@ jobs:
   #     run:
   #       working-directory: ./
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
   #       with:
   #         ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-  #     - uses: actions/setup-node@v4
+  #     - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
   #       with:
   #         node-version: ${{ env.NODE_VERSION }}
   #     - name: Setup Bun
-  #       uses: oven-sh/setup-bun@v2
+  #       uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
   #       with:
   #         bun-version: 1.2.21
   #     - name: Install Rust toolchain
-  #       uses: dtolnay/rust-toolchain@stable
+  #       uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
   #       with:
   #         toolchain: stable
   #         profile: minimal
@@ -213,16 +223,24 @@ jobs:
   mac-arm64:
     name: macOS arm64
     needs: prepare-release
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/v') ||
+      startsWith(github.ref, 'refs/tags/v')
     environment: electron
+    permissions:
+      # Required to upload signed artifacts to the GitHub release.
+      contents: write
     runs-on: self-hosted
     defaults:
       run:
         working-directory: ./
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: actions/setup-node@v4
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Configure Cargo home
@@ -236,10 +254,12 @@ jobs:
           cargo_target_dir="$temp_dir/cargo-target-${GITHUB_RUN_ID}-${GITHUB_JOB}"
           mkdir -p "$cargo_home/bin"
           mkdir -p "$cargo_target_dir"
-          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$cargo_target_dir" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=$cargo_home" >> "$GITHUB_ENV"
-          echo "PATH=$cargo_home/bin:$PATH" >> "$GITHUB_ENV"
+          {
+            echo "CARGO_HOME=$cargo_home"
+            echo "CARGO_TARGET_DIR=$cargo_target_dir"
+            echo "RUSTUP_HOME=$cargo_home"
+            echo "PATH=$cargo_home/bin:$PATH"
+          } >> "$GITHUB_ENV"
       - name: Configure Bun install dir
         run: |
           set -euo pipefail
@@ -251,12 +271,12 @@ jobs:
           mkdir -p "$bun_install"
           echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.2.21
           no-cache: true
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: stable
           targets: aarch64-apple-darwin
@@ -267,14 +287,21 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Write .env for build
         shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
         run: |
-          cat > .env <<EOF
-          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-          EOF
+          set -euo pipefail
+          {
+            printf 'NEXT_PUBLIC_CONVEX_URL=%s\n' "$NEXT_PUBLIC_CONVEX_URL"
+            printf 'NEXT_PUBLIC_STACK_PROJECT_ID=%s\n' "$NEXT_PUBLIC_STACK_PROJECT_ID"
+            printf 'NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=%s\n' "$NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY"
+            printf 'NEXT_PUBLIC_WWW_ORIGIN=%s\n' "$NEXT_PUBLIC_WWW_ORIGIN"
+            printf 'NEXT_PUBLIC_GITHUB_APP_SLUG=%s\n' "$NEXT_PUBLIC_GITHUB_APP_SLUG"
+          } > .env
       - name: Build native Rust addon
         working-directory: apps/server/native/core
         shell: bash
@@ -338,17 +365,25 @@ jobs:
   mac-universal:
     name: macOS universal
     needs: prepare-release
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/v') ||
+      startsWith(github.ref, 'refs/tags/v')
     environment: electron
+    permissions:
+      # Required to upload signed artifacts to the GitHub release.
+      contents: write
     runs-on: self-hosted
     defaults:
       run:
         working-directory: ./
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -363,10 +398,12 @@ jobs:
           cargo_target_dir="$temp_dir/cargo-target-${GITHUB_RUN_ID}-${GITHUB_JOB}"
           mkdir -p "$cargo_home/bin"
           mkdir -p "$cargo_target_dir"
-          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$cargo_target_dir" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=$cargo_home" >> "$GITHUB_ENV"
-          echo "PATH=$cargo_home/bin:$PATH" >> "$GITHUB_ENV"
+          {
+            echo "CARGO_HOME=$cargo_home"
+            echo "CARGO_TARGET_DIR=$cargo_target_dir"
+            echo "RUSTUP_HOME=$cargo_home"
+            echo "PATH=$cargo_home/bin:$PATH"
+          } >> "$GITHUB_ENV"
 
       - name: Configure Bun install dir
         run: |
@@ -379,7 +416,7 @@ jobs:
           mkdir -p "$bun_install"
           echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.2.21
           no-cache: true
@@ -392,7 +429,7 @@ jobs:
           /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
 
       - name: Install Rust toolchain and mac targets
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: stable
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -409,14 +446,21 @@ jobs:
 
       - name: Write .env for build
         shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
         run: |
-          cat > .env <<EOF
-          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-          EOF
+          set -euo pipefail
+          {
+            printf 'NEXT_PUBLIC_CONVEX_URL=%s\n' "$NEXT_PUBLIC_CONVEX_URL"
+            printf 'NEXT_PUBLIC_STACK_PROJECT_ID=%s\n' "$NEXT_PUBLIC_STACK_PROJECT_ID"
+            printf 'NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=%s\n' "$NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY"
+            printf 'NEXT_PUBLIC_WWW_ORIGIN=%s\n' "$NEXT_PUBLIC_WWW_ORIGIN"
+            printf 'NEXT_PUBLIC_GITHUB_APP_SLUG=%s\n' "$NEXT_PUBLIC_GITHUB_APP_SLUG"
+          } > .env
 
       - name: Remove stale macOS native binaries
         working-directory: apps/server/native/core
@@ -489,7 +533,6 @@ jobs:
       - name: Prepare signing credentials
         env:
           MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
-          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -500,7 +543,6 @@ jobs:
           cert_path="$tmpdir_cert/mac_signing_cert.p12"
           node -e "process.stdout.write(Buffer.from(process.env.MAC_CERT_BASE64,'base64'))" > "$cert_path"
           echo "CSC_LINK=$cert_path" >> "$GITHUB_ENV"
-          echo "CSC_KEY_PASSWORD=${MAC_CERT_PASSWORD}" >> "$GITHUB_ENV"
           if [[ -n "${APPLE_API_KEY:-}" && ! -f "${APPLE_API_KEY}" ]]; then
             tmpdir_key="$(mktemp -d)"
             key_path="$tmpdir_key/AuthKey_${APPLE_API_KEY_ID:-api}.p8"
@@ -511,6 +553,8 @@ jobs:
       - name: Build universal DMG/ZIP with electron-builder
         working-directory: apps/client
         shell: bash
+        env:
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
           set -euo pipefail
           ENTITLEMENTS="$PWD/build/entitlements.mac.plist"
@@ -537,17 +581,26 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          DMG="$(ls -1 *.dmg | head -n1 || true)"
+          dmg_files=(./*.dmg)
+          DMG=""
+          if (( ${#dmg_files[@]} > 0 )); then
+            DMG="${dmg_files[0]#./}"
+          fi
           if [[ -z "$DMG" ]]; then
             echo "No DMG found in $(pwd)" >&2
             exit 1
           fi
           echo "Submitting $DMG for notarization..."
-          set +e
-          OUT=$(xcrun notarytool submit "$DMG" --wait --output-format json --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" 2>&1)
-          CODE=$?
-          set -e
-          echo "$OUT" | sed -e 's/^/notarytool: /'
+          if ! OUT=$(xcrun notarytool submit "$DMG" --wait --output-format json --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" 2>&1); then
+            while IFS= read -r line; do
+              printf 'notarytool: %s\n' "$line"
+            done <<< "$OUT"
+            echo "Notarization command failed" >&2
+            exit 1
+          fi
+          while IFS= read -r line; do
+            printf 'notarytool: %s\n' "$line"
+          done <<< "$OUT"
           echo "$OUT" | grep -qi '"status" *: *"Accepted"\|status: Accepted\|Accepted' || { echo "Notarization failed"; exit 1; }
 
       - name: Staple and prepare update manifest
@@ -556,7 +609,12 @@ jobs:
         run: |
           set -euo pipefail
           APP="$(find . -maxdepth 2 -type d -name '*.app' | head -n1 || true)"
-          DMG="$(ls -1 *.dmg 2>/dev/null | head -n1 || true)"
+          shopt -s nullglob
+          dmg_files=(./*.dmg)
+          DMG=""
+          if (( ${#dmg_files[@]} > 0 )); then
+            DMG="${dmg_files[0]#./}"
+          fi
           if [[ -n "$APP" ]]; then xcrun stapler staple "$APP" || true; fi
           if [[ -n "$DMG" ]]; then xcrun stapler staple "$DMG" || true; fi
           if [[ -f "latest-mac.yml" ]]; then
@@ -594,24 +652,32 @@ jobs:
   windows-x64:
     name: Windows x64
     needs: prepare-release
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/v') ||
+      startsWith(github.ref, 'refs/tags/v')
     environment: electron
+    permissions:
+      # Required to publish the Windows artifact to the GitHub release.
+      contents: write
     runs-on: windows-latest
     defaults:
       run:
         working-directory: ./
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: actions/setup-node@v4
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.2.21
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
@@ -619,18 +685,27 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Write .env for build
         shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
         run: |
-          cat > .env <<EOF
-          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-          EOF
+          set -euo pipefail
+          {
+            printf 'NEXT_PUBLIC_CONVEX_URL=%s\n' "$NEXT_PUBLIC_CONVEX_URL"
+            printf 'NEXT_PUBLIC_STACK_PROJECT_ID=%s\n' "$NEXT_PUBLIC_STACK_PROJECT_ID"
+            printf 'NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=%s\n' "$NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY"
+            printf 'NEXT_PUBLIC_WWW_ORIGIN=%s\n' "$NEXT_PUBLIC_WWW_ORIGIN"
+            printf 'NEXT_PUBLIC_GITHUB_APP_SLUG=%s\n' "$NEXT_PUBLIC_GITHUB_APP_SLUG"
+          } > .env
       - name: Build native Rust addon
         working-directory: apps/server/native/core
         shell: pwsh
-        run: bunx --bun @napi-rs/cli build --platform --release
+        run: |
+          bunx --bun @napi-rs/cli build --platform --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Generate icons
         working-directory: apps/client
         run: bun run ./scripts/generate-icons.mjs
@@ -638,27 +713,41 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_FLAG: ${{ github.event_name == 'release' && 'always' || 'never' }}
+          RELEASE_OWNER: ${{ github.repository_owner }}
+          RELEASE_REPOSITORY: ${{ github.event.repository.name }}
         working-directory: apps/client
-        run: bunx electron-vite build -c electron.vite.config.ts && bunx electron-builder --config electron-builder.json --win --x64 --publish always --config.publish.provider=github --config.publish.owner="${{ github.repository_owner }}" --config.publish.repo="${{ github.event.repository.name }}"
+        run: |
+          bunx electron-vite build -c electron.vite.config.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bunx electron-builder --config electron-builder.json --win --x64 --publish always --config.publish.provider=github --config.publish.owner="$env:RELEASE_OWNER" --config.publish.repo="$env:RELEASE_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   linux-x64:
     name: Linux x64
     needs: prepare-release
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/v') ||
+      startsWith(github.ref, 'refs/tags/v')
     environment: electron
+    permissions:
+      # Required to publish the Linux artifact to the GitHub release.
+      contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: actions/setup-node@v4
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.2.21
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: stable
           targets: x86_64-unknown-linux-gnu
@@ -666,14 +755,21 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Write .env for build
         shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN: ${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG: ${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
         run: |
-          cat > .env <<EOF
-          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
-          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
-          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
-          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
-          EOF
+          set -euo pipefail
+          {
+            printf 'NEXT_PUBLIC_CONVEX_URL=%s\n' "$NEXT_PUBLIC_CONVEX_URL"
+            printf 'NEXT_PUBLIC_STACK_PROJECT_ID=%s\n' "$NEXT_PUBLIC_STACK_PROJECT_ID"
+            printf 'NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=%s\n' "$NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY"
+            printf 'NEXT_PUBLIC_WWW_ORIGIN=%s\n' "$NEXT_PUBLIC_WWW_ORIGIN"
+            printf 'NEXT_PUBLIC_GITHUB_APP_SLUG=%s\n' "$NEXT_PUBLIC_GITHUB_APP_SLUG"
+          } > .env
       - name: Build native Rust addon
         working-directory: apps/server/native/core
         shell: bash
@@ -685,5 +781,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_FLAG: ${{ github.event_name == 'release' && 'always' || 'never' }}
+          RELEASE_OWNER: ${{ github.repository_owner }}
+          RELEASE_REPOSITORY: ${{ github.event.repository.name }}
         working-directory: apps/client
-        run: bunx electron-vite build -c electron.vite.config.ts && bunx electron-builder --config electron-builder.json --linux AppImage --x64 --publish always --config.publish.provider=github --config.publish.owner="${{ github.repository_owner }}" --config.publish.repo="${{ github.event.repository.name }}"
+        run: |
+          bunx electron-vite build -c electron.vite.config.ts
+          bunx electron-builder --config electron-builder.json --linux AppImage --x64 --publish always --config.publish.provider=github --config.publish.owner="$RELEASE_OWNER" --config.publish.repo="$RELEASE_REPOSITORY"
