@@ -1563,7 +1563,7 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
         .collect();
 
     // Sort by age (oldest first)
-    to_prune.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    to_prune.sort_by_key(|a| a.created_at);
 
     if to_prune.is_empty() {
         let filter_desc = if args.all {

@@ -759,6 +759,9 @@ fn check_upgrade_request(req: &Request<Body>) -> UpgradeCheck {
     UpgradeCheck::NotUpgrade
 }
 
+// The error is a ready HTTP response returned to the client as is; boxing it
+// would only add an allocation on the error path.
+#[allow(clippy::result_large_err)]
 async fn connect_upstream_websocket(
     client: HttpClient,
     request: Request<Body>,

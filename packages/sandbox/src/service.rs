@@ -31,6 +31,9 @@ pub struct CachedGhAuth {
 /// Cache for gh auth status, shared across connections.
 pub type GhAuthCache = Arc<Mutex<Option<CachedGhAuth>>>;
 
+// async_trait adds #[must_use] to the boxed futures it returns (rust 1.99
+// clippy::double_must_use fires inside the macro expansion).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait SandboxService: Send + Sync + 'static {
     async fn create(&self, request: CreateSandboxRequest) -> SandboxResult<SandboxSummary>;
