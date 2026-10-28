@@ -18,7 +18,7 @@ env:
 jobs:
   build-and-sync:
     name: Build and Sync to Convex
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: electron
     steps:
       - name: Checkout

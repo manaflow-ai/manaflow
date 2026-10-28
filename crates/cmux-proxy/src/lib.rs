@@ -792,6 +792,9 @@ async fn handle(
     }
 }
 
+// The error is a ready HTTP response returned to the client as is; boxing it
+// would only add an allocation on the error path.
+#[allow(clippy::result_large_err)]
 async fn handle_http(
     client: Client<HttpConnector, BoxBody>,
     cfg: &ProxyConfig,
@@ -871,6 +874,9 @@ async fn handle_http(
     Ok(resp)
 }
 
+// The error is a ready HTTP response returned to the client as is; boxing it
+// would only add an allocation on the error path.
+#[allow(clippy::result_large_err)]
 async fn handle_upgrade(
     client: Client<HttpConnector, BoxBody>,
     cfg: ProxyConfig,
@@ -1010,6 +1016,9 @@ async fn handle_upgrade(
     Ok(client_resp)
 }
 
+// The error is a ready HTTP response returned to the client as is; boxing it
+// would only add an allocation on the error path.
+#[allow(clippy::result_large_err)]
 async fn handle_connect(
     req: Request<Incoming>,
     cfg: &ProxyConfig,

@@ -1,3 +1,5 @@
+// tungstenite handshake callbacks must return its large ErrorResponse type.
+#![allow(clippy::result_large_err)]
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
