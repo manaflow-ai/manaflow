@@ -46,9 +46,9 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: blacksmith-4vcpu-ubuntu-2404
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
 
     steps:
       - name: Free disk space
@@ -116,7 +116,7 @@ jobs:
 
   docker-merge:
     name: Create multi-arch manifest
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: docker-build
     permissions:
       contents: read

@@ -15,7 +15,7 @@ on:
 jobs:
   rust-checks:
     name: Rust checks
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       CARGO_TERM_COLOR: always
     steps:

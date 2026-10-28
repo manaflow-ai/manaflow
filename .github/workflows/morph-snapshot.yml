@@ -21,7 +21,7 @@ env:
 jobs:
   morph-snapshot:
     name: Build Morph Snapshot
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: dev
     steps:
       - name: Checkout repository

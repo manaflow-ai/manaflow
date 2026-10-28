@@ -8,7 +8,7 @@ on:
 jobs:
   test:
     name: Run tests on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-24.04' && 'blacksmith-4vcpu-ubuntu-2404' || matrix.os }} # matrix.os stays the label in the required check name
     environment: dev
     strategy:
       fail-fast: false

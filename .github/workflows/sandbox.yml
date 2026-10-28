@@ -19,7 +19,7 @@ env:
 jobs:
   rust-checks:
     name: Rust checks
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -61,9 +61,9 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: blacksmith-4vcpu-ubuntu-2404
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
 
     steps:
       - name: Checkout
@@ -144,7 +144,7 @@ jobs:
 
   docker-merge:
     name: Create multi-arch manifest
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: docker-build
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
